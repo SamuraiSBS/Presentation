@@ -1,0 +1,22 @@
+{
+  "name": "studydeck-ai-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "check": "node --check server.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.11.0",
+    "multer": "^2.0.2",
+    "openai": "^6.10.0",
+    "pdf-parse": "^2.4.5",
+    "pptxgenjs": "^4.0.1"
+  },
+  "devDependencies": {}
+}

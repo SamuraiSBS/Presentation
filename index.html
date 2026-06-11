@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>StudyDeck AI - учебные презентации из файлов и идей</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#workspace" aria-label="StudyDeck AI">
+        <span class="brand-mark">S</span>
+        <span>StudyDeck AI</span>
+      </a>
+      <nav class="nav" aria-label="Основная навигация">
+        <a href="#workspace">Создать</a>
+        <a href="#editor">Редактор</a>
+        <a href="#examples">Сценарии</a>
+        <a href="#architecture">MVP</a>
+      </nav>
+      <div class="top-actions">
+        <button class="ghost-button" type="button">Войти</button>
+        <button class="primary-button small" type="button">Начать</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="workspace-shell" id="workspace" aria-labelledby="hero-title">
+        <div class="workspace-copy">
+          <p class="eyebrow">AI-помощник для учебных презентаций</p>
+          <h1 id="hero-title">Доклады и презентации из темы, конспектов и файлов</h1>
+          <p class="lead">
+            Загрузите учебник, статью, конспект или методичку. AI соберет план,
+            напишет понятные слайды, добавит источники и подготовит текст для выступления.
+          </p>
+          <div class="trust-row" aria-label="Ключевые преимущества">
+            <span>Структурированные слайды</span>
+            <span>Источники</span>
+            <span>Заметки спикера</span>
+            <span>PDF/PPTX</span>
+          </div>
+        </div>
+
+        <section class="composer-panel" aria-label="Создание учебной презентации">
+          <div class="composer-tabs" role="tablist" aria-label="Сценарии">
+            <button class="tab active" type="button" data-scenario="Школьный доклад">Школьный доклад</button>
+            <button class="tab" type="button" data-scenario="Студенческий семинар">Семинар</button>
+            <button class="tab" type="button" data-scenario="Защита проекта">Защита проекта</button>
+            <button class="tab" type="button" data-scenario="Презентация по статье">По статье</button>
+            <button class="tab" type="button" data-scenario="Урок">Урок</button>
+          </div>
+
+          <label class="prompt-label" for="prompt">Что нужно подготовить?</label>
+          <textarea id="prompt" rows="5">Сделай презентацию на 10 слайдов по теме "Искусственный интеллект в образовании". Используй загруженные материалы, объясни простыми словами, добавь список источников и заметки для выступления.</textarea>
+
+          <div class="upload-zone" id="dropZone">
+            <input id="fileInput" type="file" multiple accept=".pdf,.docx,.txt,.pptx,.md,.csv" aria-label="Загрузить файлы" />
+            <div>
+              <strong>Перетащите файлы или выберите вручную</strong>
+              <p>PDF, DOCX, PPTX, TXT, ссылки и конспекты до 50 МБ</p>
+            </div>
+          </div>
+
+          <div class="file-chips" id="fileChips" aria-live="polite">
+            <span class="chip">Можно начать без файлов</span>
+          </div>
+
+          <div class="controls-grid">
+            <label>
+              Слайдов
+              <select id="slideCount">
+                <option>6</option>
+                <option>8</option>
+                <option selected>10</option>
+                <option>12</option>
+              </select>
+            </label>
+            <label>
+              Уровень
+              <select id="tone">
+                <option>5-7 класс</option>
+                <option selected>8-11 класс</option>
+                <option>Колледж</option>
+                <option>Университет</option>
+              </select>
+            </label>
+            <label>
+              Режим
+              <select id="mode">
+                <option>Быстрый черновик</option>
+                <option selected>С источниками</option>
+                <option>Объяснить проще</option>
+              </select>
+            </label>
+          </div>
+
+          <button class="primary-button create-button" id="generateBtn" type="button">
+            Собрать учебную презентацию
+          </button>
+        </section>
+      </section>
+
+      <section class="editor-preview" id="editor" aria-label="Редактор презентации">
+        <aside class="sidebar">
+          <div class="sidebar-title">Моя учеба</div>
+          <button class="side-item active" type="button">Новая презентация</button>
+          <button class="side-item" type="button">Шаблоны</button>
+          <button class="side-item" type="button">Предметы</button>
+          <button class="side-item" type="button">Источники</button>
+          <div class="mode-pill" id="generationMode">demo</div>
+        </aside>
+
+        <div class="slides-list" id="slidesList" aria-label="Слайды"></div>
+
+        <section class="canvas-panel">
+          <div class="editor-toolbar">
+            <div>
+              <strong id="deckTitle">Доклад: AI в образовании</strong>
+              <span id="jobStatus">Черновик готов</span>
+            </div>
+            <div class="toolbar-actions">
+              <button class="icon-button" id="prevSlideBtn" type="button" aria-label="Предыдущий слайд">‹</button>
+              <button class="icon-button" id="nextSlideBtn" type="button" aria-label="Следующий слайд">›</button>
+              <button class="ghost-button compact" id="printBtn" type="button">PDF</button>
+              <button class="primary-button compact" id="pptxBtn" type="button">PPTX</button>
+            </div>
+          </div>
+
+          <article class="slide-canvas" id="slideCanvas" aria-label="Текущий слайд"></article>
+
+          <div class="editor-details">
+            <label class="notes-box">
+              <span>Заметки для выступления</span>
+              <textarea id="notesEditor" rows="5"></textarea>
+            </label>
+            <div class="study-box">
+              <div>
+                <span>Источники</span>
+                <div id="sourceList" class="mini-list"></div>
+              </div>
+              <div>
+                <span>Вопросы для защиты</span>
+                <div id="questionList" class="mini-list"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="ai-panel">
+          <div class="panel-heading">
+            <span>AI actions</span>
+            <strong id="activeSlideLabel">Слайд 1</strong>
+          </div>
+          <button type="button" data-action="shorten">Сделать короче</button>
+          <button type="button" data-action="source">Добавить источник</button>
+          <button type="button" data-action="simplify">Объяснить проще</button>
+          <button type="button" data-action="questions">Добавить вопросы для защиты</button>
+          <div class="generation-card">
+            <span>Pipeline</span>
+            <ol id="pipelineSteps">
+              <li class="done">Материалы разобраны</li>
+              <li class="done">План создан</li>
+              <li class="active">Слайды готовы к правке</li>
+            </ol>
+          </div>
+        </aside>
+      </section>
+
+      <section class="examples-section" id="examples">
+        <div class="section-heading">
+          <p class="eyebrow">Учебные сценарии</p>
+          <h2>Не просто красивые слайды, а подготовка к выступлению</h2>
+        </div>
+        <div class="examples-grid">
+          <article class="example-card">
+            <span>School</span>
+            <h3>Доклад по теме</h3>
+            <p>Из темы, конспекта и учебника AI собирает план, слайды и короткий текст выступления.</p>
+          </article>
+          <article class="example-card">
+            <span>College</span>
+            <h3>Семинар по статье</h3>
+            <p>PDF статьи превращается в понятные тезисы, определения, примеры и список источников.</p>
+          </article>
+          <article class="example-card">
+            <span>Project</span>
+            <h3>Защита проекта</h3>
+            <p>AI помогает выделить цель, гипотезу, этапы работы, результаты и вопросы для защиты.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="architecture-section" id="architecture">
+        <div class="section-heading">
+          <p class="eyebrow">MVP architecture</p>
+          <h2>Основа: понятный план, источники и заметки для выступления</h2>
+        </div>
+        <div class="pipeline">
+          <div>Материалы</div>
+          <div>Источники</div>
+          <div>План</div>
+          <div>Слайды</div>
+          <div>Речь</div>
+          <div>PDF/PPTX</div>
+        </div>
+      </section>
+
+      <section class="pricing-section">
+        <div>
+          <p class="eyebrow">Go-to-market</p>
+          <h2>Стартовый сценарий: школьный доклад или семинар из конспекта и PDF</h2>
+        </div>
+        <a class="primary-button" href="#workspace">Собрать первый доклад</a>
+      </section>
+    </main>
+
+    <div id="printDeck" aria-hidden="true"></div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
