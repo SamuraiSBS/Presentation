@@ -53,27 +53,6 @@ app.post("/api/generate", upload.array("files", 8), async (req, res) => {
   }
 });
 
-app.post("/api/rewrite-slide", async (req, res) => {
-  try {
-    const { action, slide, presentation } = req.body || {};
-
-    if (!slide || !action) {
-      return res.status(400).json({ ok: false, error: "Нужен слайд и действие AI-панели." });
-    }
-
-    const rewritten = await rewriteSlide({
-      action: cleanText(action),
-      slide,
-      presentation,
-    });
-
-    return res.json({ ok: true, slide: rewritten });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ ok: false, error: "Не удалось применить правку к слайду." });
-  }
-});
-
 app.post("/api/export/pptx", async (req, res) => {
   try {
     const presentation = req.body?.presentation || req.body;
@@ -89,6 +68,21 @@ app.post("/api/export/pptx", async (req, res) => {
     console.error(error);
     return res.status(400).json({ ok: false, error: "Не удалось экспортировать PPTX." });
   }
+});
+
+const pageRoutes = {
+  "/": "index.html",
+  "/prompt": "prompt.html",
+  "/files": "files.html",
+  "/plan": "plan.html",
+  "/editor": "editor.html",
+  "/export": "export.html",
+};
+
+Object.entries(pageRoutes).forEach(([route, fileName]) => {
+  app.get(route, (_req, res) => {
+    res.sendFile(path.join(__dirname, fileName));
+  });
 });
 
 app.listen(port, () => {
@@ -123,7 +117,7 @@ async function generateWithOpenAI(input, sources) {
       {
         role: "system",
         content:
-          "Ты создаешь учебные презентации. Не делай работу вместо ученика: объясняй материал, показывай источники, добавляй заметки спикера и вопросы для защиты. Верни только структурированный документ по схеме.",
+          "Ты создаешь учебные презентации. Не делай работу вместо ученика: объясняй материал, показывай источники, добавляй заметки спикера и отдельный рассказ для выступления по каждому слайду. Верни только структурированный документ по схеме.",
       },
       {
         role: "user",
@@ -133,6 +127,7 @@ async function generateWithOpenAI(input, sources) {
           `Уровень: ${input.level}`,
           `Количество слайдов: ${input.slideCount}`,
           `Режим: ${input.mode}`,
+          "Для поля speechScript напиши связный текст выступления по каждому слайду в формате: Слайд 1: Сегодня я расскажу... Текст должен опираться на запрос пользователя и загруженные материалы.",
           `Источники и фрагменты:\n${sourceText || "Источник только из запроса пользователя."}`,
         ].join("\n\n"),
       },
@@ -151,54 +146,6 @@ async function generateWithOpenAI(input, sources) {
   const presentation = normalizePresentation(parsed, input, sources);
   presentation.generationMode = "openai";
   return presentation;
-}
-
-async function rewriteSlide({ action, slide, presentation }) {
-  if (process.env.OPENAI_API_KEY) {
-    try {
-      return await rewriteSlideWithOpenAI({ action, slide, presentation });
-    } catch (error) {
-      console.warn("OpenAI rewrite failed, using demo fallback:", error.message);
-    }
-  }
-
-  return rewriteSlideFallback({ action, slide, presentation });
-}
-
-async function rewriteSlideWithOpenAI({ action, slide, presentation }) {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const model = process.env.OPENAI_MODEL || "gpt-5.5";
-
-  const response = await client.responses.create({
-    model,
-    input: [
-      {
-        role: "system",
-        content:
-          "Ты редактируешь один учебный слайд. Сохраняй структуру JSON, источники и учебный стиль. Не добавляй неподтвержденные факты без пометки.",
-      },
-      {
-        role: "user",
-        content: JSON.stringify({
-          action,
-          presentationTitle: presentation?.title || "",
-          sources: presentation?.sources || [],
-          slide,
-        }),
-      },
-    ],
-    text: {
-      format: {
-        type: "json_schema",
-        name: "studydeck_slide",
-        strict: true,
-        schema: slideSchema,
-      },
-    },
-  });
-
-  const parsed = parseOpenAIJson(response);
-  return normalizeSlide(parsed, slide.order || 1, presentation?.sources || [], slide);
 }
 
 async function extractFiles(files) {
@@ -328,9 +275,9 @@ function createDemoPresentation(input, sources, generationMode) {
       speakerNotes: buildSpeakerNotes({ index, title, topic, sentence, source: relatedSource }),
       timingSeconds: isFirst || isLast ? 45 : 55,
       sourceRefs: [relatedSource],
-      defenseQuestions: buildQuestions(topic, index, sentence),
     };
   });
+  const speechScript = buildSpeechScript(slides, input, topic);
 
   return normalizePresentation(
     {
@@ -342,6 +289,7 @@ function createDemoPresentation(input, sources, generationMode) {
       generationMode,
       sources: sources.map(publicSource),
       outline: slides.map((slide) => slide.title),
+      speechScript,
       slides,
     },
     input,
@@ -363,13 +311,13 @@ function normalizePresentation(raw, input, sources) {
           blocks: [{ type: "bullets", items: ["Добавьте тезис из материала", "Свяжите мысль с источником"] }],
           speakerNotes: "Коротко объясните, почему этот тезис важен для темы.",
           sourceRefs: [sourceRefFromSource(publicSources[0])],
-          defenseQuestions: ["Как этот тезис подтверждается источником?"],
         },
         normalizedSlides.length + 1,
         publicSources,
       ),
     );
   }
+  const speechScript = normalizeSpeechScript(raw.speechScript, normalizedSlides, input);
 
   return {
     id: raw.id || crypto.randomUUID(),
@@ -380,6 +328,7 @@ function normalizePresentation(raw, input, sources) {
     generationMode: raw.generationMode || "demo",
     sources: publicSources,
     outline: Array.isArray(raw.outline) && raw.outline.length ? raw.outline : normalizedSlides.map((slide) => slide.title),
+    speechScript,
     slides: normalizedSlides,
   };
 }
@@ -404,10 +353,21 @@ function normalizeSlide(slide, order, sources, fallback = {}) {
       excerpt: cleanText(ref.excerpt || sources.find((source) => source.id === ref.sourceId)?.excerpt || ""),
       page: ref.page || null,
     })),
-    defenseQuestions: Array.isArray(slide.defenseQuestions) && slide.defenseQuestions.length
-      ? slide.defenseQuestions.map(cleanText).filter(Boolean)
-      : fallback.defenseQuestions || ["Почему этот тезис важен для темы?"],
   };
+}
+
+function normalizeSpeechScript(rawScript, slides, input) {
+  const script = Array.isArray(rawScript) ? rawScript : [];
+  const normalized = slides.map((slide, index) => {
+    const source = script.find((item) => Number(item?.slideOrder) === slide.order) || script[index] || {};
+    return {
+      slideOrder: slide.order || index + 1,
+      slideTitle: cleanText(source.slideTitle || slide.title || `Слайд ${index + 1}`),
+      text: cleanText(source.text || buildSpeechText(slide, input, index)),
+    };
+  });
+
+  return normalized.filter((item) => item.text);
 }
 
 function normalizeBlock(block) {
@@ -426,42 +386,6 @@ function normalizeBlock(block) {
     type: block.type === "quote" ? "quote" : "callout",
     content: cleanText(block.content || ""),
   };
-}
-
-function rewriteSlideFallback({ action, slide, presentation }) {
-  const next = structuredClone(slide);
-  const primaryBlock = next.blocks.find((block) => block.type === "bullets");
-  const source = presentation?.sources?.[0];
-
-  if (action === "shorten") {
-    next.blocks = next.blocks.map((block) => {
-      if (block.type !== "bullets") return block;
-      return { ...block, items: block.items.slice(0, 3).map((item) => shortenSentence(item)) };
-    });
-    next.speakerNotes = shortenSentence(next.speakerNotes);
-  } else if (action === "simplify") {
-    next.blocks.push({
-      type: "callout",
-      content: "Проще: объясните это как связь причины и результата, а затем приведите один пример из источника.",
-    });
-    next.speakerNotes = `${next.speakerNotes}\n\nСкажите проще: сначала назовите идею, потом пример, затем вывод.`;
-  } else if (action === "questions") {
-    next.defenseQuestions = Array.from(
-      new Set([
-        ...(next.defenseQuestions || []),
-        "Какой источник подтверждает главный тезис этого слайда?",
-        "Как объяснить эту идею человеку, который не читал материал?",
-      ]),
-    );
-  } else if (action === "source") {
-    const ref = sourceRefFromSource(source);
-    next.sourceRefs = Array.from(new Map([...(next.sourceRefs || []), ref].map((refItem) => [refItem.sourceId, refItem])).values());
-    if (primaryBlock) {
-      primaryBlock.items = [...primaryBlock.items, `Тезис связан с источником: ${ref.label}.`].slice(0, 5);
-    }
-  }
-
-  return normalizeSlide(next, next.order, presentation?.sources || [], slide);
 }
 
 async function createPptx(presentation) {
@@ -550,11 +474,14 @@ async function createPptx(presentation) {
     });
 
     if (typeof slide.addNotes === "function") {
+      const scriptItem =
+        (presentation.speechScript || []).find((entry) => Number(entry.slideOrder) === Number(item.order)) ||
+        (presentation.speechScript || [])[Number(item.order || 1) - 1];
       slide.addNotes([
         item.speakerNotes || "",
         "",
-        "Вопросы для защиты:",
-        ...(item.defenseQuestions || []).map((question) => `- ${question}`),
+        "Рассказ:",
+        scriptItem?.text || "",
       ].join("\n"));
     }
   }
@@ -609,7 +536,7 @@ function buildSlideTitles(scenario, topic, count) {
     "Пример или кейс",
     "Что говорят источники",
     "Объяснение простыми словами",
-    "Вопросы для защиты",
+    "Рассказ для выступления",
     "Выводы",
     "Список источников",
   ];
@@ -621,7 +548,7 @@ function buildSlideTitles(scenario, topic, count) {
     "Что получилось",
     "Доказательства из источников",
     "Риски и ограничения",
-    "Вопросы комиссии",
+    "Рассказ о результате",
     "Вывод",
     "Источники",
   ];
@@ -652,7 +579,7 @@ function buildBullets({ index, topic, sentence, scenario, level, isLast }) {
     return [
       `Коротко повторить главную идею темы "${topic}".`,
       "Назвать 2-3 доказательства из источников.",
-      "Показать, какие вопросы остались для обсуждения.",
+      "Показать, какой вывод слушатель должен запомнить.",
     ];
   }
 
@@ -682,12 +609,23 @@ function buildSpeakerNotes({ index, title, topic, sentence, source }) {
   ].join("\n");
 }
 
-function buildQuestions(topic, index, sentence) {
-  return [
-    `Почему этот слайд важен для темы "${topic}"?`,
-    "Каким источником подтверждается главный тезис?",
-    index % 2 === 0 ? "Как привести пример своими словами?" : `Что может быть спорным в тезисе: "${shortenSentence(sentence)}"?`,
-  ];
+function buildSpeechScript(slides, input, topic) {
+  return slides.map((slide, index) => ({
+    slideOrder: slide.order || index + 1,
+    slideTitle: slide.title,
+    text: buildSpeechText(slide, input, index, topic),
+  }));
+}
+
+function buildSpeechText(slide, input, index, topic = extractTopic(input.prompt)) {
+  const bullets = slideBullets(slide).slice(0, 3).map(shortenSentence);
+  const source = slide.sourceRefs?.[0]?.label || "материалов";
+  const spokenTopic = cleanText(topic).replace(/^(про|о|об)\s+/i, "");
+  const intro = index === 0
+    ? `Сегодня я расскажу вам про ${spokenTopic || topic}.`
+    : `На этом слайде я объясню раздел "${slide.title}".`;
+  const body = bullets.length ? bullets.join(" ") : slide.speakerNotes || "";
+  return `${intro} ${body} Эта часть опирается на ${source}, поэтому ее можно связать с загруженными материалами.`;
 }
 
 function extractKeySentences(sources) {
@@ -854,9 +792,19 @@ const slideSchema = {
     speakerNotes: { type: "string" },
     timingSeconds: { type: "number" },
     sourceRefs: { type: "array", items: sourceRefSchema },
-    defenseQuestions: { type: "array", items: { type: "string" } },
   },
-  required: ["id", "order", "title", "layout", "blocks", "speakerNotes", "timingSeconds", "sourceRefs", "defenseQuestions"],
+  required: ["id", "order", "title", "layout", "blocks", "speakerNotes", "timingSeconds", "sourceRefs"],
+};
+
+const speechScriptItemSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    slideOrder: { type: "number" },
+    slideTitle: { type: "string" },
+    text: { type: "string" },
+  },
+  required: ["slideOrder", "slideTitle", "text"],
 };
 
 const presentationSchema = {
@@ -884,7 +832,8 @@ const presentationSchema = {
       },
     },
     outline: { type: "array", items: { type: "string" } },
+    speechScript: { type: "array", items: speechScriptItemSchema },
     slides: { type: "array", items: slideSchema },
   },
-  required: ["id", "title", "scenario", "level", "slideCount", "generationMode", "sources", "outline", "slides"],
+  required: ["id", "title", "scenario", "level", "slideCount", "generationMode", "sources", "outline", "speechScript", "slides"],
 };

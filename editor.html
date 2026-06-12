@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Редактор - StudyDeck AI</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-page="editor">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="StudyDeck AI">
+        <span class="brand-mark">S</span>
+        <span>StudyDeck AI</span>
+      </a>
+      <nav class="nav" aria-label="Основная навигация">
+        <a href="/">Лендинг</a>
+        <a href="/prompt">Промт</a>
+        <a href="/files">Файлы</a>
+        <a href="/plan">План</a>
+        <a href="/editor" aria-current="page">Редактор</a>
+      </nav>
+      <div class="top-actions">
+        <a class="ghost-button" href="/plan">План</a>
+        <a class="primary-button small" href="/export">Экспорт</a>
+      </div>
+    </header>
+
+    <main class="editor-page">
+      <nav class="flow-progress" aria-label="Шаги создания">
+        <a href="/prompt">Промт</a>
+        <a href="/files">Файлы</a>
+        <a href="/plan">План</a>
+        <a class="active" href="/editor">Редактор</a>
+        <a href="/export">Экспорт</a>
+      </nav>
+
+      <div id="emptyState" class="empty-page-state editor-empty" hidden>
+        <strong>Нет презентации для редактирования</strong>
+        <p>Создайте черновик, чтобы открыть слайды, заметки и рассказ для выступления.</p>
+        <a class="primary-button" href="/prompt">Начать с промта</a>
+      </div>
+
+      <div class="mobile-rail" aria-label="Мобильные шаги редактора">
+        <button class="mobile-step active" type="button">План</button>
+        <button class="mobile-step" type="button">Слайд</button>
+        <button class="mobile-step" type="button">Рассказ</button>
+        <a class="mobile-step link-step" href="/export">Экспорт</a>
+      </div>
+
+      <section class="editor-preview" id="editor" aria-label="Редактор презентации">
+        <aside class="outline-panel">
+          <div class="sidebar-title">План презентации</div>
+          <a class="side-item active" href="/editor">Слайды</a>
+          <a class="side-item" href="/plan">План и источники</a>
+          <a class="side-item" href="/files">Материалы</a>
+          <a class="side-item" href="/export">Экспорт</a>
+          <div class="mode-pill" id="generationMode">demo</div>
+          <div class="slides-list" id="slidesList" aria-label="Слайды"></div>
+          <div class="progress-card">
+            <span>Study workflow</span>
+            <ol id="pipelineSteps">
+              <li class="done">Материалы разобраны</li>
+              <li class="done">План создан</li>
+              <li class="active">Слайды готовы к правке</li>
+            </ol>
+          </div>
+        </aside>
+
+        <section class="canvas-panel">
+          <div class="editor-toolbar">
+            <div>
+              <strong id="deckTitle">Доклад</strong>
+              <span id="jobStatus">Черновик готов к проверке</span>
+            </div>
+            <div class="toolbar-actions">
+              <button class="icon-button" id="prevSlideBtn" type="button" aria-label="Предыдущий слайд">‹</button>
+              <button class="icon-button" id="nextSlideBtn" type="button" aria-label="Следующий слайд">›</button>
+              <a class="ghost-button compact" href="/export">Экспорт</a>
+            </div>
+          </div>
+
+          <article class="slide-canvas" id="slideCanvas" aria-label="Текущий слайд"></article>
+
+          <div class="editor-details">
+            <label class="notes-box">
+              <span>Заметки для выступления</span>
+              <textarea id="notesEditor" rows="5"></textarea>
+            </label>
+          </div>
+        </section>
+
+        <aside class="speech-panel">
+          <div class="panel-heading">
+            <span>Рассказ</span>
+            <strong id="activeSlideLabel">Слайд 1</strong>
+          </div>
+          <div id="speechScript" class="speech-script" aria-label="Рассказ по презентации"></div>
+          <div class="export-ready">
+            <strong>Готовность к экспорту</strong><br />
+            Когда слайды, заметки и рассказ проверены, можно скачать PDF или PPTX.
+          </div>
+        </aside>
+      </section>
+      <div class="state-alert editor-state" id="stateAlert" role="status" aria-live="polite"></div>
+    </main>
+
+    <script src="script.js"></script>
+  </body>
+</html>

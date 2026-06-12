@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Файлы - StudyDeck AI</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-page="files">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="StudyDeck AI">
+        <span class="brand-mark">S</span>
+        <span>StudyDeck AI</span>
+      </a>
+      <nav class="nav" aria-label="Основная навигация">
+        <a href="/">Лендинг</a>
+        <a href="/prompt">Промт</a>
+        <a href="/files" aria-current="page">Файлы</a>
+        <a href="/plan">План</a>
+        <a href="/editor">Редактор</a>
+      </nav>
+      <div class="top-actions">
+        <a class="ghost-button" href="/prompt">Промт</a>
+        <a class="primary-button small" href="#fileInput">Файлы</a>
+      </div>
+    </header>
+
+    <main class="flow-page">
+      <nav class="flow-progress" aria-label="Шаги создания">
+        <a href="/prompt">Промт</a>
+        <a class="active" href="/files">Файлы</a>
+        <a href="/plan">План</a>
+        <a href="/editor">Редактор</a>
+        <a href="/export">Экспорт</a>
+      </nav>
+
+      <section class="flow-card files-card" aria-labelledby="files-title">
+        <div class="flow-copy">
+          <p class="panel-kicker">Шаг 2</p>
+          <h1 id="files-title">Прикрепи материалы</h1>
+          <p class="lead" id="draftSummary">Файлы не обязательны, но с ними источники будут точнее.</p>
+        </div>
+
+        <div class="upload-zone large-upload" id="dropZone">
+          <input id="fileInput" type="file" multiple accept=".pdf,.docx,.txt,.pptx,.md,.csv" aria-label="Загрузить файлы" />
+          <div>
+            <strong>Перетащи материалы или выбери вручную</strong>
+            <p>PDF, DOCX, PPTX, TXT, конспекты и таблицы до 50 МБ</p>
+          </div>
+        </div>
+
+        <div class="file-chips" id="fileChips" aria-live="polite">
+          <span class="chip warning">Можно продолжить без файлов, но источники будут слабее</span>
+        </div>
+
+        <div class="progress-card light-progress">
+          <span>Генерация</span>
+          <ol id="pipelineSteps">
+            <li class="active">Файлы готовы к отправке</li>
+            <li>План появится на следующей странице</li>
+          </ol>
+        </div>
+
+        <button class="primary-button create-button" id="generateBtn" type="button">Собрать презентацию</button>
+        <span id="jobStatus" class="sr-status">Ожидаем материалы</span>
+        <div class="state-alert" id="stateAlert" role="status" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <script src="script.js"></script>
+  </body>
+</html>

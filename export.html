@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Экспорт - StudyDeck AI</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-page="export">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="StudyDeck AI">
+        <span class="brand-mark">S</span>
+        <span>StudyDeck AI</span>
+      </a>
+      <nav class="nav" aria-label="Основная навигация">
+        <a href="/">Лендинг</a>
+        <a href="/prompt">Промт</a>
+        <a href="/files">Файлы</a>
+        <a href="/plan">План</a>
+        <a href="/editor">Редактор</a>
+      </nav>
+      <div class="top-actions">
+        <a class="ghost-button" href="/editor">Редактор</a>
+        <a class="primary-button small" href="#exportContent">Экспорт</a>
+      </div>
+    </header>
+
+    <main class="flow-page">
+      <nav class="flow-progress" aria-label="Шаги создания">
+        <a href="/prompt">Промт</a>
+        <a href="/files">Файлы</a>
+        <a href="/plan">План</a>
+        <a href="/editor">Редактор</a>
+        <a class="active" href="/export">Экспорт</a>
+      </nav>
+
+      <section class="flow-card export-card" aria-labelledby="export-title">
+        <div class="flow-copy">
+          <p class="panel-kicker">Шаг 5</p>
+          <h1 id="export-title">Экспортируй готовую презентацию</h1>
+          <p class="lead" id="exportSummary">Перед скачиванием проверь заметки, источники и рассказ для выступления.</p>
+        </div>
+
+        <div id="emptyState" class="empty-page-state" hidden>
+          <strong>Пока нечего экспортировать</strong>
+          <p>Создайте презентацию, затем вернитесь сюда для PDF или PPTX.</p>
+          <a class="primary-button" href="/prompt">Начать с промта</a>
+        </div>
+
+        <div id="exportContent" class="export-layout">
+          <div class="export-checklist">
+            <h2>Финальная проверка</h2>
+            <div id="sourceAudit" class="mini-list"></div>
+          </div>
+          <div class="export-actions">
+            <button class="ghost-button" id="printBtn" type="button">Скачать PDF через печать</button>
+            <button class="primary-button" id="pptxBtn" type="button">Скачать PPTX</button>
+            <span id="jobStatus" class="sr-status">Готово к экспорту</span>
+          </div>
+        </div>
+
+        <div class="state-alert" id="stateAlert" role="status" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <div id="printDeck" aria-hidden="true"></div>
+
+    <script src="script.js"></script>
+  </body>
+</html>

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Промт - StudyDeck AI</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-page="prompt">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="StudyDeck AI">
+        <span class="brand-mark">S</span>
+        <span>StudyDeck AI</span>
+      </a>
+      <nav class="nav" aria-label="Основная навигация">
+        <a href="/">Лендинг</a>
+        <a href="/prompt" aria-current="page">Промт</a>
+        <a href="/files">Файлы</a>
+        <a href="/plan">План</a>
+        <a href="/editor">Редактор</a>
+      </nav>
+      <div class="top-actions">
+        <a class="ghost-button" href="/">Назад</a>
+        <a class="primary-button small" href="/files">Файлы</a>
+      </div>
+    </header>
+
+    <main class="flow-page">
+      <nav class="flow-progress" aria-label="Шаги создания">
+        <a class="active" href="/prompt">Промт</a>
+        <a href="/files">Файлы</a>
+        <a href="/plan">План</a>
+        <a href="/editor">Редактор</a>
+        <a href="/export">Экспорт</a>
+      </nav>
+
+      <section class="flow-card prompt-card" aria-labelledby="prompt-title">
+        <div class="flow-copy">
+          <p class="panel-kicker">Шаг 1</p>
+          <h1 id="prompt-title">Опиши тему и требования</h1>
+          <p class="lead">
+            Чем точнее задача, тем полезнее будут план, источники, заметки и рассказ для выступления.
+          </p>
+        </div>
+
+        <div class="composer-tabs" role="tablist" aria-label="Учебные сценарии">
+          <button class="tab active" type="button" data-scenario="Школьный доклад">Школьный доклад</button>
+          <button class="tab" type="button" data-scenario="Студенческий семинар">Семинар</button>
+          <button class="tab" type="button" data-scenario="Защита проекта">Защита проекта</button>
+          <button class="tab" type="button" data-scenario="Презентация по статье">По статье</button>
+          <button class="tab" type="button" data-scenario="Урок">Урок</button>
+        </div>
+
+        <label class="prompt-label" for="prompt">Промт для презентации</label>
+        <textarea id="prompt" rows="7">Сделай презентацию на 10 слайдов по теме "Искусственный интеллект в образовании". Используй загруженные материалы, объясни простыми словами, добавь список источников, заметки и рассказ для выступления.</textarea>
+
+        <div class="prompt-helper" aria-label="Подсказки к запросу">
+          <span class="helper-chip">добавь цель выступления</span>
+          <span class="helper-chip">укажи уровень</span>
+          <span class="helper-chip">попроси рассказ по слайдам</span>
+        </div>
+
+        <div class="controls-grid">
+          <label>
+            Слайдов
+            <select id="slideCount">
+              <option>6</option>
+              <option>8</option>
+              <option selected>10</option>
+              <option>12</option>
+            </select>
+          </label>
+          <label>
+            Уровень
+            <select id="tone">
+              <option>5-7 класс</option>
+              <option selected>8-11 класс</option>
+              <option>Колледж</option>
+              <option>Университет</option>
+            </select>
+          </label>
+          <label>
+            Режим
+            <select id="mode">
+              <option>Быстрый черновик</option>
+              <option selected>С источниками</option>
+              <option>Объяснить проще</option>
+            </select>
+          </label>
+        </div>
+
+        <button class="primary-button create-button" id="savePromptBtn" type="button">Продолжить к файлам</button>
+        <div class="state-alert" id="stateAlert" role="status" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <script src="script.js"></script>
+  </body>
+</html>

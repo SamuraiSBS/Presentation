@@ -1,237 +1,436 @@
-const fileInput = document.querySelector("#fileInput");
-const fileChips = document.querySelector("#fileChips");
-const dropZone = document.querySelector("#dropZone");
-const generateBtn = document.querySelector("#generateBtn");
+const storageKeys = {
+  draft: "studydeck:draft-input",
+  presentation: "studydeck:presentation",
+  activeSlide: "studydeck:active-slide",
+};
+
+const uiStates = {
+  idle: "idle",
+  uploading: "uploading",
+  generating: "generating",
+  reviewingOutline: "reviewingOutline",
+  editing: "editing",
+  exporting: "exporting",
+  error: "error",
+};
+
+const defaultDraft = {
+  prompt:
+    'Сделай презентацию на 10 слайдов по теме "Искусственный интеллект в образовании". Используй загруженные материалы, объясни простыми словами, добавь список источников, заметки и рассказ для выступления.',
+  scenario: "Школьный доклад",
+  level: "8-11 класс",
+  mode: "С источниками",
+  slideCount: "10",
+};
+
+const page = document.body.dataset.page || "home";
+const stateAlert = document.querySelector("#stateAlert");
 const jobStatus = document.querySelector("#jobStatus");
-const tabs = document.querySelectorAll(".tab");
-const slideCount = document.querySelector("#slideCount");
-const tone = document.querySelector("#tone");
-const mode = document.querySelector("#mode");
-const promptInput = document.querySelector("#prompt");
-const slidesList = document.querySelector("#slidesList");
-const slideCanvas = document.querySelector("#slideCanvas");
-const deckTitle = document.querySelector("#deckTitle");
-const generationMode = document.querySelector("#generationMode");
-const activeSlideLabel = document.querySelector("#activeSlideLabel");
-const notesEditor = document.querySelector("#notesEditor");
-const sourceList = document.querySelector("#sourceList");
-const questionList = document.querySelector("#questionList");
 const pipelineSteps = document.querySelector("#pipelineSteps");
-const printBtn = document.querySelector("#printBtn");
-const pptxBtn = document.querySelector("#pptxBtn");
-const prevSlideBtn = document.querySelector("#prevSlideBtn");
-const nextSlideBtn = document.querySelector("#nextSlideBtn");
+const emptyState = document.querySelector("#emptyState");
 const printDeck = document.querySelector("#printDeck");
-const aiPanel = document.querySelector(".ai-panel");
 
-let presentation = createInitialPresentation();
-let activeSlideIndex = 0;
+let draftInput = loadDraftInput();
+let presentation = loadPresentation();
+let activeSlideIndex = loadActiveSlideIndex();
 let progressTimer = null;
+let currentUiState = uiStates.idle;
 
-renderEditor();
+setUiState(uiStates.idle);
+initTabs();
+initPage();
 
-fileInput.addEventListener("change", () => {
-  renderFileChips(Array.from(fileInput.files || []));
+window.addEventListener("afterprint", () => {
+  if (!printDeck) return;
+  printDeck.innerHTML = "";
+  setUiState(uiStates.editing, "PDF готов через окно печати. Можно вернуться к редактору.");
 });
 
-dropZone.addEventListener("dragover", (event) => {
-  event.preventDefault();
-  dropZone.classList.add("dragging");
-});
+function initPage() {
+  if (page === "prompt") {
+    initPromptPage();
+  }
 
-dropZone.addEventListener("dragleave", () => {
-  dropZone.classList.remove("dragging");
-});
+  if (page === "files") {
+    initFilesPage();
+  }
 
-dropZone.addEventListener("drop", (event) => {
-  event.preventDefault();
-  dropZone.classList.remove("dragging");
+  if (page === "plan") {
+    initPlanPage();
+  }
 
-  if (!event.dataTransfer?.files?.length) return;
+  if (page === "editor") {
+    initEditorPage();
+  }
 
-  const transfer = new DataTransfer();
-  Array.from(event.dataTransfer.files).forEach((file) => transfer.items.add(file));
-  fileInput.files = transfer.files;
-  renderFileChips(Array.from(fileInput.files || []));
-});
+  if (page === "export") {
+    initExportPage();
+  }
+}
 
-tabs.forEach((tab) => {
-  tab.addEventListener("click", () => {
-    tabs.forEach((item) => item.classList.remove("active"));
-    tab.classList.add("active");
-  });
-});
+function initPromptPage() {
+  const promptInput = document.querySelector("#prompt");
+  const slideCount = document.querySelector("#slideCount");
+  const tone = document.querySelector("#tone");
+  const mode = document.querySelector("#mode");
+  const savePromptBtn = document.querySelector("#savePromptBtn");
 
-generateBtn.addEventListener("click", async () => {
-  const formData = new FormData();
-  const scenario = document.querySelector(".tab.active")?.dataset.scenario || "Школьный доклад";
+  promptInput.value = draftInput.prompt;
+  setSelectValue(slideCount, draftInput.slideCount);
+  setSelectValue(tone, draftInput.level);
+  setSelectValue(mode, draftInput.mode);
+  setActiveScenario(draftInput.scenario);
 
-  formData.append("prompt", promptInput.value);
-  formData.append("scenario", scenario);
-  formData.append("level", tone.value);
-  formData.append("mode", mode.value);
-  formData.append("slideCount", slideCount.value);
-  Array.from(fileInput.files || []).forEach((file) => formData.append("files", file));
+  savePromptBtn.addEventListener("click", () => {
+    const prompt = promptInput.value.trim();
 
-  setBusy(true);
-  startProgress(["Загружаем материалы", "Извлекаем текст", "Собираем план", "Пишем слайды", "Проверяем источники"]);
-
-  try {
-    const response = await fetch("/api/generate", {
-      method: "POST",
-      body: formData,
-    });
-    const result = await response.json();
-
-    if (!response.ok || !result.ok) {
-      throw new Error(result.error || "Не удалось собрать презентацию.");
+    if (prompt.length < 18) {
+      setUiState(uiStates.error, "Добавьте тему, предмет или требования. Так AI соберет более полезный план.");
+      promptInput.focus();
+      return;
     }
 
-    presentation = result.presentation;
-    activeSlideIndex = 0;
-    stopProgress("Черновик готов");
-    updatePipeline(["Материалы разобраны", "План создан", "Слайды готовы к правке"], 2);
-    renderEditor();
-    document.querySelector("#editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  } catch (error) {
-    stopProgress(error.message || "Ошибка генерации");
-    updatePipeline(["Материалы не разобраны", "План не создан", "Попробуйте другой запрос"], 0);
-  } finally {
-    setBusy(false);
-  }
-});
+    draftInput = {
+      prompt,
+      scenario: document.querySelector(".tab.active")?.dataset.scenario || defaultDraft.scenario,
+      level: tone.value,
+      mode: mode.value,
+      slideCount: slideCount.value,
+    };
 
-slidesList.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-slide-index]");
-  if (!button) return;
-  activeSlideIndex = Number(button.dataset.slideIndex);
-  renderEditor();
-});
+    saveDraftInput(draftInput);
+    setUiState(uiStates.idle, "Промт сохранен. Переходим к материалам.");
+    window.location.href = "/files";
+  });
+}
 
-prevSlideBtn.addEventListener("click", () => {
-  activeSlideIndex = Math.max(0, activeSlideIndex - 1);
-  renderEditor();
-});
+function initFilesPage() {
+  const fileInput = document.querySelector("#fileInput");
+  const fileChips = document.querySelector("#fileChips");
+  const dropZone = document.querySelector("#dropZone");
+  const generateBtn = document.querySelector("#generateBtn");
+  const draftSummary = document.querySelector("#draftSummary");
 
-nextSlideBtn.addEventListener("click", () => {
-  activeSlideIndex = Math.min(presentation.slides.length - 1, activeSlideIndex + 1);
-  renderEditor();
-});
+  draftSummary.textContent = draftInput.prompt
+    ? `${draftInput.scenario}, ${draftInput.level}, ${draftInput.slideCount} слайдов. Файлы не обязательны, но с ними источники будут точнее.`
+    : "Файлы не обязательны, но с ними источники будут точнее.";
 
-slideCanvas.addEventListener("input", (event) => {
-  const target = event.target;
-  const slide = getActiveSlide();
-  if (!slide) return;
+  fileInput.addEventListener("change", () => {
+    renderFileChips(fileInput, fileChips);
+  });
 
-  if (target.matches("[data-edit='title']")) {
-    slide.title = cleanText(target.textContent);
-    renderSlideListOnly();
-    deckTitle.textContent = presentation.title;
+  dropZone.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    setUiState(uiStates.uploading, "Отпустите файлы здесь - добавим их к презентации.");
+    dropZone.classList.add("dragging");
+  });
+
+  dropZone.addEventListener("dragleave", () => {
+    dropZone.classList.remove("dragging");
+    setUiState(uiStates.idle);
+  });
+
+  dropZone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    dropZone.classList.remove("dragging");
+
+    if (!event.dataTransfer?.files?.length) {
+      setUiState(uiStates.idle);
+      return;
+    }
+
+    const transfer = new DataTransfer();
+    Array.from(event.dataTransfer.files).forEach((file) => transfer.items.add(file));
+    fileInput.files = transfer.files;
+    renderFileChips(fileInput, fileChips);
+    setUiState(uiStates.idle, "Файлы добавлены. Теперь можно собрать план и слайды.");
+  });
+
+  generateBtn.addEventListener("click", async () => {
+    const files = Array.from(fileInput.files || []);
+
+    if (!draftInput.prompt || draftInput.prompt.trim().length < 18) {
+      setUiState(uiStates.error, "Сначала заполните промт. Без темы презентация получится слишком общей.");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("prompt", draftInput.prompt);
+    formData.append("scenario", draftInput.scenario);
+    formData.append("level", draftInput.level);
+    formData.append("mode", draftInput.mode);
+    formData.append("slideCount", draftInput.slideCount);
+    files.forEach((file) => formData.append("files", file));
+
+    setBusy(generateBtn, true);
+    setUiState(
+      uiStates.generating,
+      files.length
+        ? "Разбираем материалы и связываем тезисы с источниками."
+        : "Файлов нет. Соберем черновик по запросу, но источники лучше проверить вручную.",
+    );
+    startProgress(["Загружаем материалы", "Извлекаем главное", "Собираем план", "Пишем слайды", "Проверяем источники"]);
+
+    try {
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        body: formData,
+      });
+      const result = await response.json();
+
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error || "Не удалось собрать презентацию.");
+      }
+
+      presentation = result.presentation;
+      activeSlideIndex = 0;
+      savePresentation();
+      saveActiveSlideIndex();
+      stopProgress("Черновик готов к проверке");
+      setUiState(uiStates.reviewingOutline, "План и слайды готовы. Сейчас откроется проверка структуры.");
+      window.location.href = "/plan";
+    } catch (error) {
+      stopProgress(error.message || "Ошибка генерации");
+      setUiState(uiStates.error, error.message || "Не удалось собрать презентацию. Попробуйте уточнить запрос.");
+      updatePipeline(["Материалы не разобраны", "План не создан", "Попробуйте другой запрос"], 0);
+    } finally {
+      setBusy(generateBtn, false);
+    }
+  });
+}
+
+function initPlanPage() {
+  const planContent = document.querySelector("#planContent");
+  const deckTitle = document.querySelector("#deckTitle");
+  const planMeta = document.querySelector("#planMeta");
+  const outlineList = document.querySelector("#outlineList");
+  const planSources = document.querySelector("#planSources");
+
+  if (!hasPresentation()) {
+    showEmptyState(planContent);
     return;
   }
 
-  const blockIndex = Number(target.dataset.blockIndex);
-  const itemIndex = Number(target.dataset.itemIndex);
-  const block = slide.blocks[blockIndex];
+  hideEmptyState(planContent);
+  deckTitle.textContent = presentation.title;
+  planMeta.textContent = `${presentation.scenario} · ${presentation.level} · ${presentation.slides.length} слайдов`;
 
-  if (!block) return;
+  outlineList.innerHTML = (presentation.outline?.length ? presentation.outline : presentation.slides.map((slide) => slide.title))
+    .map((item, index) => `<li><span>${String(index + 1).padStart(2, "0")}</span>${escapeHtml(item)}</li>`)
+    .join("");
 
-  if (block.type === "bullets" && Number.isFinite(itemIndex)) {
-    block.items[itemIndex] = cleanText(target.textContent);
-  } else if (target.dataset.blockContent === "true") {
-    block.content = cleanText(target.textContent);
+  const sources = presentation.sources || [];
+  planSources.innerHTML = sources.length
+    ? sources
+        .map(
+          (source) => `
+            <div class="mini-item">
+              <strong>${escapeHtml(source.label)}</strong>
+              <span>${escapeHtml(source.excerpt || "Фрагмент источника не указан.")}</span>
+            </div>
+          `,
+        )
+        .join("")
+    : '<div class="warning-state">Источников нет. Проверьте важные тезисы вручную или вернитесь к загрузке файлов.</div>';
+}
+
+function initEditorPage() {
+  const editorPreview = document.querySelector("#editor");
+  const mobileRail = document.querySelector(".mobile-rail");
+
+  if (!hasPresentation()) {
+    showEmptyState(editorPreview);
+    if (mobileRail) mobileRail.hidden = true;
+    return;
   }
-});
 
-notesEditor.addEventListener("input", () => {
-  const slide = getActiveSlide();
-  if (!slide) return;
-  slide.speakerNotes = notesEditor.value;
-});
+  hideEmptyState(editorPreview);
+  if (mobileRail) mobileRail.hidden = false;
+  bindEditorEvents();
+  renderEditor();
+}
 
-aiPanel.addEventListener("click", async (event) => {
-  const button = event.target.closest("[data-action]");
-  if (!button) return;
+function initExportPage() {
+  const exportContent = document.querySelector("#exportContent");
+  const exportSummary = document.querySelector("#exportSummary");
+  const sourceAudit = document.querySelector("#sourceAudit");
+  const printBtn = document.querySelector("#printBtn");
+  const pptxBtn = document.querySelector("#pptxBtn");
 
-  const slide = getActiveSlide();
-  if (!slide) return;
+  if (!hasPresentation()) {
+    showEmptyState(exportContent);
+    return;
+  }
 
-  button.disabled = true;
-  jobStatus.textContent = "AI правит слайд";
+  hideEmptyState(exportContent);
+  const sourceCount = (presentation.sources || []).length;
+  const speechCount = getSpeechScript().length;
+  exportSummary.textContent = `${presentation.title}: ${presentation.slides.length} слайдов, ${sourceCount} источников, ${speechCount} частей рассказа.`;
 
-  try {
-    const response = await fetch("/api/rewrite-slide", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: button.dataset.action,
-        slide,
-        presentation,
-      }),
+  sourceAudit.innerHTML = [
+    {
+      label: "Слайды",
+      value: `${presentation.slides.length} шт.`,
+      ok: presentation.slides.length > 0,
+    },
+    {
+      label: "Источники",
+      value: sourceCount ? `${sourceCount} шт.` : "нет источников",
+      ok: sourceCount > 0,
+    },
+    {
+      label: "Рассказ",
+      value: speechCount ? `${speechCount} частей` : "нужно добавить",
+      ok: speechCount > 0,
+    },
+  ]
+    .map(
+      (item) => `
+        <div class="mini-item ${item.ok ? "" : "needs-review"}">
+          <strong>${escapeHtml(item.label)}</strong>
+          <span>${escapeHtml(item.value)}</span>
+        </div>
+      `,
+    )
+    .join("");
+
+  printBtn.addEventListener("click", () => {
+    setUiState(uiStates.exporting, "Готовим PDF через печать браузера.");
+    buildPrintDeck();
+    window.print();
+  });
+
+  pptxBtn.addEventListener("click", () => exportPptx(pptxBtn));
+}
+
+function bindEditorEvents() {
+  const slidesList = document.querySelector("#slidesList");
+  const slideCanvas = document.querySelector("#slideCanvas");
+  const notesEditor = document.querySelector("#notesEditor");
+  const prevSlideBtn = document.querySelector("#prevSlideBtn");
+  const nextSlideBtn = document.querySelector("#nextSlideBtn");
+  const mobileSteps = document.querySelectorAll(".mobile-step");
+  const editorPreview = document.querySelector("#editor");
+
+  mobileSteps.forEach((step, index) => {
+    if (step.tagName === "A") return;
+    step.addEventListener("click", () => {
+      const panels = ["outline", "canvas", "speech", "canvas"];
+      mobileSteps.forEach((item) => item.classList.remove("active"));
+      step.classList.add("active");
+      editorPreview.dataset.mobilePanel = panels[index] || "canvas";
     });
-    const result = await response.json();
+  });
 
-    if (!response.ok || !result.ok) {
-      throw new Error(result.error || "Не удалось применить правку.");
-    }
-
-    presentation.slides[activeSlideIndex] = result.slide;
-    jobStatus.textContent = "Правка применена";
+  slidesList.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-slide-index]");
+    if (!button) return;
+    activeSlideIndex = Number(button.dataset.slideIndex);
+    saveActiveSlideIndex();
+    setUiState(uiStates.editing);
     renderEditor();
-  } catch (error) {
-    jobStatus.textContent = error.message || "Ошибка AI-правки";
-  } finally {
-    button.disabled = false;
-  }
-});
+  });
 
-printBtn.addEventListener("click", () => {
-  buildPrintDeck();
-  window.print();
-});
+  prevSlideBtn.addEventListener("click", () => {
+    activeSlideIndex = Math.max(0, activeSlideIndex - 1);
+    saveActiveSlideIndex();
+    setUiState(uiStates.editing);
+    renderEditor();
+  });
 
-pptxBtn.addEventListener("click", async () => {
-  pptxBtn.disabled = true;
-  jobStatus.textContent = "Готовим PPTX";
+  nextSlideBtn.addEventListener("click", () => {
+    activeSlideIndex = Math.min(presentation.slides.length - 1, activeSlideIndex + 1);
+    saveActiveSlideIndex();
+    setUiState(uiStates.editing);
+    renderEditor();
+  });
 
-  try {
-    const response = await fetch("/api/export/pptx", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ presentation }),
-    });
+  slideCanvas.addEventListener("input", (event) => {
+    const target = event.target;
+    const slide = getActiveSlide();
+    if (!slide) return;
 
-    if (!response.ok) {
-      const result = await response.json().catch(() => ({}));
-      throw new Error(result.error || "Не удалось экспортировать PPTX.");
+    setUiState(uiStates.editing, "Правки сохраняются в текущем черновике.");
+
+    if (target.matches("[data-edit='title']")) {
+      slide.title = cleanText(target.textContent);
+      savePresentation();
+      renderSlideListOnly();
+      document.querySelector("#deckTitle").textContent = presentation.title;
+      return;
     }
 
-    const blob = await response.blob();
-    downloadBlob(blob, `${slugify(presentation.title)}.pptx`);
-    jobStatus.textContent = "PPTX готов";
-  } catch (error) {
-    jobStatus.textContent = error.message || "Ошибка экспорта";
-  } finally {
-    pptxBtn.disabled = false;
-  }
-});
+    const blockIndex = Number(target.dataset.blockIndex);
+    const itemIndex = Number(target.dataset.itemIndex);
+    const block = slide.blocks[blockIndex];
 
-window.addEventListener("afterprint", () => {
-  printDeck.innerHTML = "";
-});
+    if (!block) return;
+
+    if (block.type === "bullets" && Number.isFinite(itemIndex)) {
+      block.items[itemIndex] = cleanText(target.textContent);
+    } else if (target.dataset.blockContent === "true") {
+      block.content = cleanText(target.textContent);
+    }
+
+    savePresentation();
+  });
+
+  notesEditor.addEventListener("input", () => {
+    const slide = getActiveSlide();
+    if (!slide) return;
+    slide.speakerNotes = notesEditor.value;
+    savePresentation();
+    setUiState(uiStates.editing, "Заметки обновлены. Используйте их для репетиции выступления.");
+  });
+}
+
+function initTabs() {
+  const tabs = document.querySelectorAll(".tab");
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      tabs.forEach((item) => item.classList.remove("active"));
+      tab.classList.add("active");
+    });
+  });
+}
+
+function setUiState(state, message = "") {
+  currentUiState = state;
+  document.body.dataset.state = state;
+
+  if (!stateAlert) return;
+
+  const defaults = {
+    [uiStates.idle]: "",
+    [uiStates.uploading]: "Добавьте материалы, чтобы источники были точнее.",
+    [uiStates.generating]: "Собираем черновик. Сначала появится план, затем слайды.",
+    [uiStates.reviewingOutline]: "Проверьте план, источники и сложные места перед редактурой.",
+    [uiStates.editing]: "",
+    [uiStates.exporting]: "Подготовка экспорта.",
+    [uiStates.error]: "Что-то пошло не так. Исправьте запрос или попробуйте еще раз.",
+  };
+
+  const nextMessage = message || defaults[state] || "";
+  stateAlert.textContent = nextMessage;
+  stateAlert.classList.toggle("visible", Boolean(nextMessage));
+}
 
 function renderEditor() {
-  if (!presentation.slides.length) return;
+  if (!hasPresentation()) return;
   activeSlideIndex = Math.min(activeSlideIndex, presentation.slides.length - 1);
+  const editorPreview = document.querySelector("#editor");
+  editorPreview.dataset.mobilePanel ||= "canvas";
   renderSlideListOnly();
   renderCanvas();
   renderDetails();
-  deckTitle.textContent = presentation.title;
-  generationMode.textContent = presentation.generationMode || "demo";
-  activeSlideLabel.textContent = `Слайд ${activeSlideIndex + 1}`;
+  renderSpeechScript();
+  document.querySelector("#deckTitle").textContent = presentation.title;
+  document.querySelector("#generationMode").textContent = presentation.generationMode || "demo";
+  document.querySelector("#activeSlideLabel").textContent = `Слайд ${activeSlideIndex + 1}`;
 }
 
 function renderSlideListOnly() {
+  const slidesList = document.querySelector("#slidesList");
   slidesList.innerHTML = presentation.slides
     .map(
       (slide, index) => `
@@ -245,7 +444,9 @@ function renderSlideListOnly() {
 }
 
 function renderCanvas() {
+  const slideCanvas = document.querySelector("#slideCanvas");
   const slide = getActiveSlide();
+  const sourceCount = (slide.sourceRefs || []).length;
   const sourceLine = (slide.sourceRefs || [])
     .map((ref) => `${escapeHtml(ref.label)}${ref.page ? `, ${escapeHtml(ref.page)}` : ""}`)
     .join("; ");
@@ -285,41 +486,49 @@ function renderCanvas() {
       </div>
       <div class="metric-stack">
         <div>
-          <strong>${(slide.sourceRefs || []).length}</strong>
-          <span>источники</span>
+          <strong>${sourceCount}</strong>
+          <span>${sourceCount ? "источники" : "нет источников"}</span>
         </div>
         <div>
-          <strong>${(slide.defenseQuestions || []).length}</strong>
-          <span>вопросы</span>
+          <strong>${getSpeechScript().length}</strong>
+          <span>части рассказа</span>
         </div>
       </div>
     </div>
     <div class="source-strip">
-      <span>Источник: ${sourceLine || "добавьте источник"}</span>
+      <span>${sourceLine ? `Источник: ${sourceLine}` : "Источник не указан - проверьте тезис вручную"}</span>
       <span>${escapeHtml(presentation.level)}</span>
     </div>
   `;
 }
 
 function renderDetails() {
+  const notesEditor = document.querySelector("#notesEditor");
   const slide = getActiveSlide();
   notesEditor.value = slide.speakerNotes || "";
-  sourceList.innerHTML = (slide.sourceRefs || [])
-    .map(
-      (ref) => `
-        <div class="mini-item">
-          <strong>${escapeHtml(ref.label)}</strong>
-          <span>${escapeHtml(ref.excerpt || "Фрагмент источника не указан.")}</span>
-        </div>
-      `,
-    )
-    .join("");
-  questionList.innerHTML = (slide.defenseQuestions || [])
-    .map((question) => `<div class="mini-item">${escapeHtml(question)}</div>`)
-    .join("");
+}
+
+function renderSpeechScript() {
+  const speechScript = document.querySelector("#speechScript");
+  if (!speechScript) return;
+
+  const items = getSpeechScript();
+  speechScript.innerHTML = items.length
+    ? items
+        .map(
+          (item, index) => `
+            <article class="speech-item ${index === activeSlideIndex ? "active" : ""}">
+              <strong>Слайд ${item.slideOrder || index + 1}: ${escapeHtml(item.slideTitle || presentation.slides[index]?.title || "")}</strong>
+              <p>${escapeHtml(item.text || "")}</p>
+            </article>
+          `,
+        )
+        .join("")
+    : '<div class="empty-state">Рассказ появится после генерации презентации.</div>';
 }
 
 function buildPrintDeck() {
+  if (!printDeck || !hasPresentation()) return;
   printDeck.innerHTML = (presentation.slides || [])
     .map((slide) => {
       const bulletHtml = slide.blocks
@@ -348,7 +557,42 @@ function buildPrintDeck() {
     .join("");
 }
 
+async function exportPptx(button) {
+  if (!hasPresentation()) {
+    setUiState(uiStates.error, "Нет презентации для экспорта.");
+    return;
+  }
+
+  button.disabled = true;
+  setUiState(uiStates.exporting, "Готовим PPTX для скачивания.");
+  if (jobStatus) jobStatus.textContent = "Готовим PPTX";
+
+  try {
+    const response = await fetch("/api/export/pptx", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ presentation: { ...presentation, speechScript: getSpeechScript() } }),
+    });
+
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.error || "Не удалось экспортировать PPTX.");
+    }
+
+    const blob = await response.blob();
+    downloadBlob(blob, `${slugify(presentation.title)}.pptx`);
+    if (jobStatus) jobStatus.textContent = "PPTX готов";
+    setUiState(uiStates.editing, "PPTX скачан. Можно продолжить правки и экспортировать еще раз.");
+  } catch (error) {
+    if (jobStatus) jobStatus.textContent = error.message || "Ошибка экспорта";
+    setUiState(uiStates.error, error.message || "PPTX не скачался. Попробуйте PDF или повторите экспорт.");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function startProgress(states) {
+  if (!jobStatus || !pipelineSteps) return;
   let index = 0;
   jobStatus.textContent = states[index];
   updatePipeline(states, index);
@@ -363,10 +607,11 @@ function startProgress(states) {
 function stopProgress(status) {
   window.clearInterval(progressTimer);
   progressTimer = null;
-  jobStatus.textContent = status;
+  if (jobStatus) jobStatus.textContent = status;
 }
 
 function updatePipeline(states, activeIndex) {
+  if (!pipelineSteps) return;
   pipelineSteps.innerHTML = states
     .map((state, index) => {
       const className = index < activeIndex ? "done" : index === activeIndex ? "active" : "";
@@ -375,16 +620,17 @@ function updatePipeline(states, activeIndex) {
     .join("");
 }
 
-function setBusy(isBusy) {
-  generateBtn.disabled = isBusy;
-  generateBtn.textContent = isBusy ? "Собираем..." : "Собрать учебную презентацию";
+function setBusy(button, isBusy) {
+  button.disabled = isBusy;
+  button.textContent = isBusy ? "Собираем..." : "Собрать презентацию";
 }
 
-function renderFileChips(files) {
+function renderFileChips(fileInput, fileChips) {
+  const files = Array.from(fileInput.files || []);
   fileChips.innerHTML = "";
 
   if (!files.length) {
-    fileChips.innerHTML = '<span class="chip">Можно начать без файлов</span>';
+    fileChips.innerHTML = '<span class="chip warning">Можно продолжить без файлов, но источники будут слабее</span>';
     return;
   }
 
@@ -403,8 +649,97 @@ function renderFileChips(files) {
   }
 }
 
+function showEmptyState(contentNode) {
+  if (emptyState) emptyState.hidden = false;
+  if (contentNode) contentNode.hidden = true;
+  const flowActions = document.querySelector(".flow-actions");
+  if (flowActions) flowActions.hidden = true;
+}
+
+function hideEmptyState(contentNode) {
+  if (emptyState) emptyState.hidden = true;
+  if (contentNode) contentNode.hidden = false;
+  const flowActions = document.querySelector(".flow-actions");
+  if (flowActions) flowActions.hidden = false;
+}
+
+function hasPresentation() {
+  return Boolean(presentation && Array.isArray(presentation.slides) && presentation.slides.length);
+}
+
 function getActiveSlide() {
   return presentation.slides[activeSlideIndex];
+}
+
+function getSpeechScript() {
+  const script = Array.isArray(presentation?.speechScript) ? presentation.speechScript : [];
+
+  if (script.length) {
+    return script
+      .map((item, index) => ({
+        slideOrder: Number(item.slideOrder || index + 1),
+        slideTitle: cleanText(item.slideTitle || presentation.slides?.[index]?.title || `Слайд ${index + 1}`),
+        text: cleanText(item.text || ""),
+      }))
+      .filter((item) => item.text);
+  }
+
+  return (presentation?.slides || []).map((slide, index) => ({
+    slideOrder: slide.order || index + 1,
+    slideTitle: slide.title || `Слайд ${index + 1}`,
+    text: slide.speakerNotes || "Коротко расскажите основную мысль этого слайда своими словами.",
+  }));
+}
+
+function loadDraftInput() {
+  const stored = readJson(storageKeys.draft);
+  return { ...defaultDraft, ...(stored || {}) };
+}
+
+function saveDraftInput(value) {
+  sessionStorage.setItem(storageKeys.draft, JSON.stringify(value));
+}
+
+function loadPresentation() {
+  return readJson(storageKeys.presentation);
+}
+
+function savePresentation() {
+  sessionStorage.setItem(storageKeys.presentation, JSON.stringify(presentation));
+}
+
+function loadActiveSlideIndex() {
+  return Number(sessionStorage.getItem(storageKeys.activeSlide) || 0);
+}
+
+function saveActiveSlideIndex() {
+  sessionStorage.setItem(storageKeys.activeSlide, String(activeSlideIndex));
+}
+
+function readJson(key) {
+  try {
+    const value = sessionStorage.getItem(key);
+    return value ? JSON.parse(value) : null;
+  } catch {
+    return null;
+  }
+}
+
+function setSelectValue(select, value) {
+  if (!select) return;
+  const option = Array.from(select.options).find((item) => item.value === String(value));
+  if (option) select.value = option.value;
+}
+
+function setActiveScenario(scenario) {
+  const tabs = document.querySelectorAll(".tab");
+  tabs.forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.scenario === scenario);
+  });
+
+  if (![...tabs].some((tab) => tab.classList.contains("active")) && tabs[0]) {
+    tabs[0].classList.add("active");
+  }
 }
 
 function downloadBlob(blob, fileName) {
@@ -416,146 +751,6 @@ function downloadBlob(blob, fileName) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-}
-
-function createInitialPresentation() {
-  return {
-    id: "demo-local",
-    title: "Школьный доклад: Искусственный интеллект в образовании",
-    scenario: "Школьный доклад",
-    level: "8-11 класс",
-    slideCount: 4,
-    generationMode: "demo",
-    sources: [
-      {
-        id: "src-demo",
-        label: "пример-конспект.txt",
-        type: "TXT",
-        excerpt:
-          "Искусственный интеллект помогает адаптировать объяснения под уровень ученика, быстро находить пробелы в знаниях и готовить материалы для повторения.",
-      },
-    ],
-    outline: ["Введение", "Главные идеи", "Пример", "Выводы"],
-    slides: [
-      {
-        id: "slide-1",
-        order: 1,
-        title: "Искусственный интеллект помогает учиться персонально",
-        layout: "hero",
-        blocks: [
-          {
-            type: "bullets",
-            items: [
-              "AI может подстраивать объяснения под уровень ученика.",
-              "Он помогает быстрее находить пробелы в знаниях.",
-              "Ученику важно понимать источник каждого тезиса.",
-            ],
-          },
-          {
-            type: "callout",
-            content: "Проще: AI не заменяет учебу, а помогает разобраться и подготовиться к выступлению.",
-          },
-        ],
-        speakerNotes:
-          "Начните с примера: один ученик просит объяснить тему проще, другой хочет проверить доклад. Затем покажите, что AI полезен как помощник, если ученик понимает материал.",
-        timingSeconds: 50,
-        sourceRefs: [
-          {
-            sourceId: "src-demo",
-            label: "пример-конспект.txt",
-            excerpt:
-              "Искусственный интеллект помогает адаптировать объяснения под уровень ученика, быстро находить пробелы в знаниях и готовить материалы для повторения.",
-            page: null,
-          },
-        ],
-        defenseQuestions: [
-          "Почему AI не должен полностью заменять работу ученика?",
-          "Как проверить, что тезис взят из источника?",
-        ],
-      },
-      {
-        id: "slide-2",
-        order: 2,
-        title: "Главные учебные пользы",
-        layout: "bullets",
-        blocks: [
-          {
-            type: "bullets",
-            items: [
-              "Сложный текст можно превратить в короткий план.",
-              "Презентация получает заметки для выступления.",
-              "Вопросы для защиты помогают подготовиться заранее.",
-            ],
-          },
-        ],
-        speakerNotes: "Расскажите по одному примеру на каждый пункт и свяжите пользу с учебной ситуацией.",
-        timingSeconds: 55,
-        sourceRefs: [
-          {
-            sourceId: "src-demo",
-            label: "пример-конспект.txt",
-            excerpt: "Короткий план, заметки и вопросы помогают готовиться к выступлению.",
-            page: null,
-          },
-        ],
-        defenseQuestions: ["Какая польза самая важная для школьного доклада?"],
-      },
-      {
-        id: "slide-3",
-        order: 3,
-        title: "Как использовать источники",
-        layout: "two-column",
-        blocks: [
-          {
-            type: "bullets",
-            items: [
-              "Каждый важный тезис связан с файлом или конспектом.",
-              "Фрагмент источника помогает объяснить, откуда взята мысль.",
-              "Если источник слабый, тезис лучше перепроверить.",
-            ],
-          },
-        ],
-        speakerNotes: "Покажите источник внизу слайда и объясните, что это не просто украшение, а способ проверить доклад.",
-        timingSeconds: 50,
-        sourceRefs: [
-          {
-            sourceId: "src-demo",
-            label: "пример-конспект.txt",
-            excerpt: "Источник нужен, чтобы ученик мог объяснить происхождение мысли.",
-            page: null,
-          },
-        ],
-        defenseQuestions: ["Что делать, если преподаватель спрашивает источник тезиса?"],
-      },
-      {
-        id: "slide-4",
-        order: 4,
-        title: "Вывод",
-        layout: "summary",
-        blocks: [
-          {
-            type: "bullets",
-            items: [
-              "StudyDeck AI помогает структурировать материал.",
-              "Главная ценность - подготовка к понятному выступлению.",
-              "Ученик сохраняет контроль над смыслом и источниками.",
-            ],
-          },
-        ],
-        speakerNotes: "Завершите доклад мыслью: хороший AI-помощник не списывает за ученика, а помогает говорить понятнее.",
-        timingSeconds: 45,
-        sourceRefs: [
-          {
-            sourceId: "src-demo",
-            label: "пример-конспект.txt",
-            excerpt: "AI должен помогать разобраться, а не заменять учебную работу.",
-            page: null,
-          },
-        ],
-        defenseQuestions: ["Какой главный риск есть у AI-инструментов для учебы?"],
-      },
-    ],
-  };
 }
 
 function cleanText(value) {
@@ -572,10 +767,12 @@ function escapeHtml(value) {
 }
 
 function slugify(value) {
-  return String(value || "studydeck-presentation")
-    .normalize("NFKD")
-    .replace(/[^\w\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-")
-    .toLowerCase() || "studydeck-presentation";
+  return (
+    String(value || "studydeck-presentation")
+      .normalize("NFKD")
+      .replace(/[^\w\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "-")
+      .toLowerCase() || "studydeck-presentation"
+  );
 }
