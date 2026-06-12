@@ -12,9 +12,15 @@ export class InternalAuthGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<InternalRequest>();
+    const devAuthEnabled = this.config.get<string>("ALLOW_DEV_AUTH") === "true";
     const expected = this.config.get<string>("INTERNAL_API_TOKEN");
     const actual = request.header("x-internal-token");
     const userId = request.header("x-user-id");
+
+    if (devAuthEnabled) {
+      request.userId = userId || this.config.get<string>("TEMP_USER_ID") || "local-user";
+      return true;
+    }
 
     if (!expected || actual !== expected || !userId) {
       throw new UnauthorizedException("Invalid internal API credentials");

@@ -16,7 +16,29 @@ type ProjectInput = {
   slideCount: number;
 };
 
+type AiGenerationMode = "openai" | "yandex";
+type FallbackGenerationMode = "demo" | "demo-fallback";
+
+type YandexCompletionResponse = {
+  alternatives?: Array<{
+    message?: {
+      text?: string;
+    };
+  }>;
+};
+
 export async function generatePresentation(project: ProjectInput, sources: Source[]): Promise<PresentationDocument> {
+  const provider = process.env.AI_PROVIDER?.toLowerCase();
+
+  if (provider === "yandex" || (!provider && process.env.YANDEX_API_KEY)) {
+    try {
+      return await generateWithYandex(project, sources);
+    } catch (error) {
+      console.warn("Yandex generation failed, falling back to demo:", error);
+      return demoPresentation(project, sources, "demo-fallback");
+    }
+  }
+
   if (process.env.OPENAI_API_KEY) {
     try {
       return await generateWithOpenAI(project, sources);
@@ -31,7 +53,7 @@ export async function generatePresentation(project: ProjectInput, sources: Sourc
 
 async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const sourceText = sources.map((source) => `[${source.id}] ${source.label}\n${source.excerpt}`).join("\n\n").slice(0, 18000);
+  const sourceText = formatSourceText(sources);
 
   const response = await client.responses.create({
     model: process.env.OPENAI_MODEL || "gpt-5.5",
@@ -43,14 +65,7 @@ async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
       },
       {
         role: "user",
-        content: [
-          `Тема: ${project.prompt}`,
-          `Сценарий: ${project.scenario}`,
-          `Уровень: ${project.level}`,
-          `Количество слайдов: ${project.slideCount}`,
-          `Режим: ${project.mode}`,
-          `Источники:\n${sourceText || "Источники не загружены."}`,
-        ].join("\n\n"),
+        content: buildGenerationPrompt(project, sourceText),
       },
     ],
     text: {
@@ -65,10 +80,102 @@ async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
 
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   const parsed = typedResponse.output_parsed || JSON.parse(response.output_text || "{}");
-  return presentationSchema.parse({ ...parsed, sources, generationMode: "openai" });
+  return parsePresentationResult(parsed, sources, "openai");
 }
 
-function demoPresentation(project: ProjectInput, sources: Source[], generationMode: "demo" | "demo-fallback"): PresentationDocument {
+async function generateWithYandex(project: ProjectInput, sources: Source[]) {
+  const apiKey = process.env.YANDEX_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("YANDEX_API_KEY is required when AI_PROVIDER=yandex");
+  }
+
+  const response = await fetch("https://llm.api.cloud.yandex.net/foundationModels/v1/completion", {
+    method: "POST",
+    headers: {
+      Authorization: `Api-Key ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      modelUri: getYandexModelUri(),
+      completionOptions: {
+        stream: false,
+        temperature: 0.25,
+        maxTokens: "6000",
+      },
+      jsonObject: true,
+      messages: [
+        {
+          role: "system",
+          text:
+            "Ты создаешь учебные презентации на русском языке. Помоги студенту понять и представить материал. Верни только валидный JSON со слайдами, ссылками на источники, заметками спикера и сценарием речи.",
+        },
+        {
+          role: "user",
+          text: buildGenerationPrompt(project, formatSourceText(sources)),
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Yandex generation request failed: ${response.status} ${await response.text()}`);
+  }
+
+  const payload = (await response.json()) as YandexCompletionResponse;
+  const outputText = payload.alternatives?.[0]?.message?.text;
+
+  if (!outputText) {
+    throw new Error("Yandex generation response did not include text");
+  }
+
+  return parsePresentationResult(JSON.parse(outputText), sources, "yandex");
+}
+
+function buildGenerationPrompt(project: ProjectInput, sourceText: string) {
+  return [
+    "Верни JSON-объект в формате StudyDeck PresentationDocument.",
+    "Обязательные поля: id, title, scenario, level, slideCount, outline, speechScript, slides.",
+    "Для каждого slide нужны id, order, title, layout, blocks, speakerNotes, timingSeconds, sourceRefs.",
+    "layout должен быть одним из: hero, bullets, two-column, summary.",
+    "blocks должны быть bullets, callout или quote.",
+    "speechScript должен содержать объект для каждого слайда.",
+    `Тема: ${project.prompt}`,
+    `Название проекта: ${project.title}`,
+    `Сценарий: ${project.scenario}`,
+    `Уровень: ${project.level}`,
+    `Количество слайдов: ${project.slideCount}`,
+    `Режим: ${project.mode}`,
+    `Источники:\n${sourceText || "Источники не загружены."}`,
+  ].join("\n\n");
+}
+
+function formatSourceText(sources: Source[]) {
+  return sources.map((source) => `[${source.id}] ${source.label}\n${source.excerpt}`).join("\n\n").slice(0, 18000);
+}
+
+function getYandexModelUri() {
+  if (process.env.YANDEX_MODEL_URI) {
+    return process.env.YANDEX_MODEL_URI;
+  }
+
+  if (!process.env.YANDEX_FOLDER_ID) {
+    throw new Error("YANDEX_FOLDER_ID or YANDEX_MODEL_URI is required when AI_PROVIDER=yandex");
+  }
+
+  const modelName = process.env.YANDEX_MODEL_NAME || "yandexgpt";
+  return `gpt://${process.env.YANDEX_FOLDER_ID}/${modelName}/latest`;
+}
+
+function parsePresentationResult(parsed: unknown, sources: Source[], generationMode: AiGenerationMode) {
+  return presentationSchema.parse({ ...(parsed as object), sources, generationMode });
+}
+
+function demoPresentation(
+  project: ProjectInput,
+  sources: Source[],
+  generationMode: FallbackGenerationMode,
+): PresentationDocument {
   const normalizedSources = sources.length
     ? sources
     : [{ id: "src-prompt", label: "Запрос пользователя", type: "PROMPT", excerpt: project.prompt }];
