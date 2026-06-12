@@ -12,13 +12,6 @@
         <span class="brand-mark">S</span>
         <span>StudyDeck AI</span>
       </a>
-      <nav class="nav" aria-label="Основная навигация">
-        <a href="/">Лендинг</a>
-        <a href="/prompt">Промт</a>
-        <a href="/files">Файлы</a>
-        <a href="/plan">План</a>
-        <a href="/editor" aria-current="page">Редактор</a>
-      </nav>
       <div class="top-actions">
         <a class="ghost-button" href="/plan">План</a>
         <a class="primary-button small" href="/export">Экспорт</a>
@@ -56,14 +49,6 @@
           <a class="side-item" href="/export">Экспорт</a>
           <div class="mode-pill" id="generationMode">demo</div>
           <div class="slides-list" id="slidesList" aria-label="Слайды"></div>
-          <div class="progress-card">
-            <span>Study workflow</span>
-            <ol id="pipelineSteps">
-              <li class="done">Материалы разобраны</li>
-              <li class="done">План создан</li>
-              <li class="active">Слайды готовы к правке</li>
-            </ol>
-          </div>
         </aside>
 
         <section class="canvas-panel">
@@ -95,10 +80,6 @@
             <strong id="activeSlideLabel">Слайд 1</strong>
           </div>
           <div id="speechScript" class="speech-script" aria-label="Рассказ по презентации"></div>
-          <div class="export-ready">
-            <strong>Готовность к экспорту</strong><br />
-            Когда слайды, заметки и рассказ проверены, можно скачать PDF или PPTX.
-          </div>
         </aside>
       </section>
       <div class="state-alert editor-state" id="stateAlert" role="status" aria-live="polite"></div>

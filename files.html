@@ -12,13 +12,6 @@
         <span class="brand-mark">S</span>
         <span>StudyDeck AI</span>
       </a>
-      <nav class="nav" aria-label="Основная навигация">
-        <a href="/">Лендинг</a>
-        <a href="/prompt">Промт</a>
-        <a href="/files" aria-current="page">Файлы</a>
-        <a href="/plan">План</a>
-        <a href="/editor">Редактор</a>
-      </nav>
       <div class="top-actions">
         <a class="ghost-button" href="/prompt">Промт</a>
         <a class="primary-button small" href="#fileInput">Файлы</a>
@@ -38,11 +31,19 @@
         <div class="flow-copy">
           <p class="panel-kicker">Шаг 2</p>
           <h1 id="files-title">Прикрепи материалы</h1>
-          <p class="lead" id="draftSummary">Файлы не обязательны, но с ними источники будут точнее.</p>
+          <p class="lead" id="draftSummary">
+            Файлы не обязательны, но с ними источники будут точнее.
+          </p>
         </div>
 
         <div class="upload-zone large-upload" id="dropZone">
-          <input id="fileInput" type="file" multiple accept=".pdf,.docx,.txt,.pptx,.md,.csv" aria-label="Загрузить файлы" />
+          <input
+            id="fileInput"
+            type="file"
+            multiple
+            accept=".pdf,.docx,.txt,.pptx,.md,.csv"
+            aria-label="Загрузить файлы"
+          />
           <div>
             <strong>Перетащи материалы или выбери вручную</strong>
             <p>PDF, DOCX, PPTX, TXT, конспекты и таблицы до 50 МБ</p>
@@ -50,7 +51,9 @@
         </div>
 
         <div class="file-chips" id="fileChips" aria-live="polite">
-          <span class="chip warning">Можно продолжить без файлов, но источники будут слабее</span>
+          <span class="chip warning"
+            >Можно продолжить без файлов, но источники будут слабее</span
+          >
         </div>
 
         <div class="progress-card light-progress">
@@ -61,9 +64,19 @@
           </ol>
         </div>
 
-        <button class="primary-button create-button" id="generateBtn" type="button">Собрать презентацию</button>
-        <span id="jobStatus" class="sr-status">Ожидаем материалы</span>
-        <div class="state-alert" id="stateAlert" role="status" aria-live="polite"></div>
+        <button
+          class="primary-button create-button"
+          id="generateBtn"
+          type="button"
+        >
+          Собрать презентацию
+        </button>
+        <div
+          class="state-alert"
+          id="stateAlert"
+          role="status"
+          aria-live="polite"
+        ></div>
       </section>
     </main>
 

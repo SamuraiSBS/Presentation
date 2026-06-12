@@ -73,6 +73,7 @@ app.post("/api/export/pptx", async (req, res) => {
 const pageRoutes = {
   "/": "index.html",
   "/prompt": "prompt.html",
+  "/promt": "prompt.html",
   "/files": "files.html",
   "/plan": "plan.html",
   "/editor": "editor.html",
