@@ -1,10 +1,7 @@
-import { redirect } from "next/navigation";
-import { getAuthSession } from "./auth";
+const guestUserId = process.env.TEMP_USER_ID || "local-user";
 
 export async function requireUserId() {
-  const session = await getAuthSession();
-  if (!session?.user?.id) redirect("/sign-in");
-  return session.user.id;
+  return guestUserId;
 }
 
 export async function internalFetch(path: string, init: RequestInit = {}) {

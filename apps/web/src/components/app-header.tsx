@@ -1,10 +1,6 @@
 import Link from "next/link";
-import { getAuthSession } from "@/lib/auth";
-import { SignOutButton } from "./sign-out-button";
 
-export async function AppHeader() {
-  const session = await getAuthSession();
-
+export function AppHeader() {
   return (
     <header className="topbar">
       <Link className="brand" href="/">
@@ -17,17 +13,8 @@ export async function AppHeader() {
         <Link href="/pricing">Тарифы</Link>
       </nav>
       <div className="actions">
-        {session?.user ? (
-          <>
-            <Link className="ghost" href="/dashboard">Кабинет</Link>
-            <SignOutButton />
-          </>
-        ) : (
-          <>
-            <Link className="ghost" href="/sign-in">Войти</Link>
-            <Link className="button" href="/new">Начать</Link>
-          </>
-        )}
+        <Link className="ghost" href="/dashboard">Кабинет</Link>
+        <Link className="button" href="/new">Начать</Link>
       </div>
     </header>
   );

@@ -111,7 +111,7 @@ services:
     depends_on:
       - api
     ports:
-      - "3000:3000"
+      - "${WEB_PORT:-3000}:3000"
 
   caddy:
     image: caddy:2-alpine
