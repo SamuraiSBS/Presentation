@@ -1,0 +1,179 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PlanCode {
+  free
+  student
+  pro
+}
+
+enum ProjectStatus {
+  draft
+  uploading
+  queued
+  generating
+  ready
+  failed
+}
+
+enum JobStatus {
+  queued
+  active
+  completed
+  failed
+}
+
+enum ExportType {
+  pdf
+  pptx
+}
+
+enum ExportStatus {
+  queued
+  processing
+  ready
+  failed
+}
+
+model User {
+  id                 String              @id @default(cuid())
+  name               String?
+  email              String?             @unique
+  emailVerified      DateTime?
+  image              String?
+  planCode           PlanCode            @default(free)
+  stripeCustomerId   String?             @unique
+  stripeSubscriptionId String?           @unique
+  subscriptionStatus String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  accounts           Account[]
+  sessions           Session[]
+  projects           Project[]
+  usageCounters      UsageCounter[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Project {
+  id           String        @id @default(cuid())
+  userId       String
+  title        String
+  prompt       String        @db.Text
+  scenario     String
+  level        String
+  mode         String
+  slideCount   Int
+  status       ProjectStatus @default(draft)
+  error        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sources      Source[]
+  presentation Presentation?
+  jobs         GenerationJob[]
+  exports      Export[]
+
+  @@index([userId, updatedAt])
+}
+
+model Source {
+  id        String   @id @default(cuid())
+  projectId String
+  label     String
+  type      String
+  size      Int
+  objectKey String
+  excerpt   String   @default("") @db.Text
+  text      String   @default("") @db.Text
+  createdAt DateTime @default(now())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+model Presentation {
+  id         String   @id @default(cuid())
+  projectId  String   @unique
+  document   Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model GenerationJob {
+  id        String    @id @default(cuid())
+  projectId String
+  status    JobStatus @default(queued)
+  queueJobId String?
+  error     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+}
+
+model Export {
+  id        String       @id @default(cuid())
+  projectId String
+  type      ExportType
+  status    ExportStatus @default(queued)
+  objectKey String?
+  error     String?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+}
+
+model UsageCounter {
+  id        String   @id @default(cuid())
+  userId    String
+  period    String
+  generated Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, period])
+}

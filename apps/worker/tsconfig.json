@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "outDir": "dist",
+    "rootDir": "src",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "isolatedModules": false,
+    "noEmit": false,
+    "paths": {
+      "@studydeck/shared": ["../../packages/shared/dist/index.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

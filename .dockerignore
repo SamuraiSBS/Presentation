@@ -1,0 +1,10 @@
+node_modules
+.next
+dist
+coverage
+.git
+*.log
+.env
+.env.local
+uploads
+tmp
