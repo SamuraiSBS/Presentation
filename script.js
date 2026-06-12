@@ -16,10 +16,10 @@ const uiStates = {
 
 const defaultDraft = {
   prompt:
-    'Сделай презентацию на 10 слайдов по теме "Искусственный интеллект в образовании". Используй загруженные материалы, объясни простыми словами, добавь список источников, заметки и рассказ для выступления.',
+    'Сделай презентацию на 10 слайдов по теме "Искусственный интеллект в образовании". На слайдах оставь короткие фразы, а подробный текст вынеси в рассказ для выступления.',
   scenario: "Школьный доклад",
   level: "8-11 класс",
-  mode: "С источниками",
+  mode: "С фактологией",
   slideCount: "10",
 };
 
@@ -112,8 +112,8 @@ function initFilesPage() {
   const draftSummary = document.querySelector("#draftSummary");
 
   draftSummary.textContent = draftInput.prompt
-    ? `${draftInput.scenario}, ${draftInput.level}, ${draftInput.slideCount} слайдов. Файлы не обязательны, но с ними источники будут точнее.`
-    : "Файлы не обязательны, но с ними источники будут точнее.";
+    ? `${draftInput.scenario}, ${draftInput.level}, ${draftInput.slideCount} слайдов. Файлы не обязательны, но помогут точнее раскрыть тему.`
+    : "Файлы не обязательны, но помогут точнее раскрыть тему.";
 
   fileInput.addEventListener("change", () => {
     renderFileChips(fileInput, fileChips);
@@ -166,10 +166,10 @@ function initFilesPage() {
     setUiState(
       uiStates.generating,
       files.length
-        ? "Разбираем материалы и связываем тезисы с источниками."
-        : "Файлов нет. Соберем черновик по запросу, но источники лучше проверить вручную.",
+        ? "Разбираем материалы и собираем связную презентацию."
+        : "Файлов нет. Соберем черновик по запросу.",
     );
-    startProgress(["Загружаем материалы", "Извлекаем главное", "Собираем план", "Пишем слайды", "Проверяем источники"]);
+    startProgress(["Загружаем материалы", "Извлекаем главное", "Собираем план", "Пишем слайды", "Готовим рассказ"]);
 
     try {
       const response = await fetch("/api/generate", {
@@ -204,7 +204,6 @@ function initPlanPage() {
   const deckTitle = document.querySelector("#deckTitle");
   const planMeta = document.querySelector("#planMeta");
   const outlineList = document.querySelector("#outlineList");
-  const planSources = document.querySelector("#planSources");
 
   if (!hasPresentation()) {
     showEmptyState(planContent);
@@ -219,19 +218,6 @@ function initPlanPage() {
     .map((item, index) => `<li><span>${String(index + 1).padStart(2, "0")}</span>${escapeHtml(item)}</li>`)
     .join("");
 
-  const sources = presentation.sources || [];
-  planSources.innerHTML = sources.length
-    ? sources
-        .map(
-          (source) => `
-            <div class="mini-item">
-              <strong>${escapeHtml(source.label)}</strong>
-              <span>${escapeHtml(source.excerpt || "Фрагмент источника не указан.")}</span>
-            </div>
-          `,
-        )
-        .join("")
-    : '<div class="warning-state">Источников нет. Проверьте важные тезисы вручную или вернитесь к загрузке файлов.</div>';
 }
 
 function initEditorPage() {
@@ -253,7 +239,6 @@ function initEditorPage() {
 function initExportPage() {
   const exportContent = document.querySelector("#exportContent");
   const exportSummary = document.querySelector("#exportSummary");
-  const sourceAudit = document.querySelector("#sourceAudit");
   const printBtn = document.querySelector("#printBtn");
   const pptxBtn = document.querySelector("#pptxBtn");
 
@@ -263,36 +248,8 @@ function initExportPage() {
   }
 
   hideEmptyState(exportContent);
-  const sourceCount = (presentation.sources || []).length;
   const speechCount = getSpeechScript().length;
-  exportSummary.textContent = `${presentation.title}: ${presentation.slides.length} слайдов, ${sourceCount} источников, ${speechCount} частей рассказа.`;
-
-  sourceAudit.innerHTML = [
-    {
-      label: "Слайды",
-      value: `${presentation.slides.length} шт.`,
-      ok: presentation.slides.length > 0,
-    },
-    {
-      label: "Источники",
-      value: sourceCount ? `${sourceCount} шт.` : "нет источников",
-      ok: sourceCount > 0,
-    },
-    {
-      label: "Рассказ",
-      value: speechCount ? `${speechCount} частей` : "нужно добавить",
-      ok: speechCount > 0,
-    },
-  ]
-    .map(
-      (item) => `
-        <div class="mini-item ${item.ok ? "" : "needs-review"}">
-          <strong>${escapeHtml(item.label)}</strong>
-          <span>${escapeHtml(item.value)}</span>
-        </div>
-      `,
-    )
-    .join("");
+  exportSummary.textContent = `${presentation.title}: ${presentation.slides.length} слайдов, ${speechCount} частей рассказа.`;
 
   printBtn.addEventListener("click", () => {
     setUiState(uiStates.exporting, "Готовим PDF через печать браузера.");
@@ -366,10 +323,10 @@ function bindEditorEvents() {
 
     if (!block) return;
 
-    if (block.type === "bullets" && Number.isFinite(itemIndex)) {
+    if (target.dataset.blockContent === "true") {
+      slide.blocks = [{ type: "callout", content: cleanText(target.textContent) }];
+    } else if (block.type === "bullets" && Number.isFinite(itemIndex)) {
       block.items[itemIndex] = cleanText(target.textContent);
-    } else if (target.dataset.blockContent === "true") {
-      block.content = cleanText(target.textContent);
     }
 
     savePresentation();
@@ -402,9 +359,9 @@ function setUiState(state, message = "") {
 
   const defaults = {
     [uiStates.idle]: "",
-    [uiStates.uploading]: "Добавьте материалы, чтобы источники были точнее.",
+    [uiStates.uploading]: "Добавьте материалы, чтобы презентация была точнее.",
     [uiStates.generating]: "Собираем черновик. Сначала появится план, затем слайды.",
-    [uiStates.reviewingOutline]: "Проверьте план, источники и сложные места перед редактурой.",
+    [uiStates.reviewingOutline]: "Проверьте план и сложные места перед редактурой.",
     [uiStates.editing]: "",
     [uiStates.exporting]: "Подготовка экспорта.",
     [uiStates.error]: "Что-то пошло не так. Исправьте запрос или попробуйте еще раз.",
@@ -446,58 +403,17 @@ function renderSlideListOnly() {
 function renderCanvas() {
   const slideCanvas = document.querySelector("#slideCanvas");
   const slide = getActiveSlide();
-  const sourceCount = (slide.sourceRefs || []).length;
-  const sourceLine = (slide.sourceRefs || [])
-    .map((ref) => `${escapeHtml(ref.label)}${ref.page ? `, ${escapeHtml(ref.page)}` : ""}`)
-    .join("; ");
-  const bullets = slide.blocks
-    .map((block, blockIndex) => {
-      if (block.type === "bullets") {
-        return `
-          <ul class="editable-bullets">
-            ${(block.items || [])
-              .map(
-                (item, itemIndex) => `
-                  <li contenteditable="true" data-block-index="${blockIndex}" data-item-index="${itemIndex}">${escapeHtml(item)}</li>
-                `,
-              )
-              .join("")}
-          </ul>
-        `;
-      }
-
-      return `
-        <div class="slide-callout" contenteditable="true" data-block-index="${blockIndex}" data-block-content="true">
-          ${escapeHtml(block.content || "")}
-        </div>
-      `;
-    })
-    .join("");
+  ensureSlideScreenBlock(slide);
+  const body = slideBodyText(slide);
 
   slideCanvas.innerHTML = `
-    <div class="slide-header">
-      <span>${escapeHtml(presentation.scenario)}</span>
-      <span>${slide.timingSeconds || 45} сек</span>
-    </div>
     <div class="slide-body editable-slide">
       <div>
         <h2 contenteditable="true" data-edit="title">${escapeHtml(slide.title)}</h2>
-        ${bullets}
-      </div>
-      <div class="metric-stack">
-        <div>
-          <strong>${sourceCount}</strong>
-          <span>${sourceCount ? "источники" : "нет источников"}</span>
-        </div>
-        <div>
-          <strong>${getSpeechScript().length}</strong>
-          <span>части рассказа</span>
+        <div class="slide-callout" contenteditable="true" data-block-index="0" data-block-content="true">
+          ${escapeHtml(body)}
         </div>
       </div>
-    </div>
-    <div class="source-strip">
-      <span>${sourceLine ? `Источник: ${sourceLine}` : "Источник не указан - проверьте тезис вручную"}</span>
-      <span>${escapeHtml(presentation.level)}</span>
     </div>
   `;
 }
@@ -531,17 +447,6 @@ function buildPrintDeck() {
   if (!printDeck || !hasPresentation()) return;
   printDeck.innerHTML = (presentation.slides || [])
     .map((slide) => {
-      const bulletHtml = slide.blocks
-        .map((block) => {
-          if (block.type === "bullets") {
-            return `<ul>${(block.items || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
-          }
-
-          return `<p class="print-callout">${escapeHtml(block.content || "")}</p>`;
-        })
-        .join("");
-      const sources = (slide.sourceRefs || []).map((ref) => escapeHtml(ref.label)).join("; ");
-
       return `
         <article class="print-slide">
           <header>
@@ -549,8 +454,7 @@ function buildPrintDeck() {
             <span>${slide.order}/${presentation.slides.length}</span>
           </header>
           <h2>${escapeHtml(slide.title)}</h2>
-          ${bulletHtml}
-          <footer>Источник: ${sources || "добавьте источник"}</footer>
+          <p class="print-callout">${escapeHtml(slideBodyText(slide))}</p>
         </article>
       `;
     })
@@ -630,7 +534,7 @@ function renderFileChips(fileInput, fileChips) {
   fileChips.innerHTML = "";
 
   if (!files.length) {
-    fileChips.innerHTML = '<span class="chip warning">Можно продолжить без файлов, но источники будут слабее</span>';
+    fileChips.innerHTML = '<span class="chip warning">Можно продолжить без файлов</span>';
     return;
   }
 
@@ -679,7 +583,7 @@ function getSpeechScript() {
       .map((item, index) => ({
         slideOrder: Number(item.slideOrder || index + 1),
         slideTitle: cleanText(item.slideTitle || presentation.slides?.[index]?.title || `Слайд ${index + 1}`),
-        text: cleanText(item.text || ""),
+        text: sanitizeUserFacingText(item.text || ""),
       }))
       .filter((item) => item.text);
   }
@@ -701,11 +605,72 @@ function saveDraftInput(value) {
 }
 
 function loadPresentation() {
-  return readJson(storageKeys.presentation);
+  const stored = readJson(storageKeys.presentation);
+  const migrated = migratePresentationForScreen(stored);
+  if (migrated && stored) {
+    sessionStorage.setItem(storageKeys.presentation, JSON.stringify(migrated));
+  }
+  return migrated;
 }
 
 function savePresentation() {
+  presentation = migratePresentationForScreen(presentation);
   sessionStorage.setItem(storageKeys.presentation, JSON.stringify(presentation));
+}
+
+function migratePresentationForScreen(value) {
+  if (!value || !Array.isArray(value.slides)) {
+    return value;
+  }
+
+  const next = {
+    ...value,
+    sources: [],
+    slides: value.slides.map((slide) => {
+      const migratedSlide = { ...slide, blocks: Array.isArray(slide.blocks) ? [...slide.blocks] : [] };
+      ensureSlideScreenBlock(migratedSlide);
+      migratedSlide.speakerNotes = sanitizeUserFacingText(migratedSlide.speakerNotes || "");
+      migratedSlide.sourceRefs = [];
+      return migratedSlide;
+    }),
+  };
+
+  next.speechScript = Array.isArray(next.speechScript)
+    ? next.speechScript
+        .map((item, index) => ({
+          ...item,
+          slideOrder: Number(item.slideOrder || index + 1),
+          slideTitle: cleanText(item.slideTitle || next.slides[index]?.title || `Слайд ${index + 1}`),
+          text: sanitizeUserFacingText(item.text || ""),
+        }))
+        .filter((item) => item.text)
+    : [];
+
+  return next;
+}
+
+function ensureSlideScreenBlock(slide) {
+  const body = slideBodyText(slide);
+  slide.blocks = [
+    {
+      type: "callout",
+      content: body || "Коротко сформулируйте главную мысль этого слайда.",
+    },
+  ];
+}
+
+function slideBodyText(slide) {
+  const chunks = [];
+
+  for (const block of slide.blocks || []) {
+    if (block.type === "bullets") {
+      chunks.push(...(block.items || []));
+    } else if (block.content) {
+      chunks.push(block.content);
+    }
+  }
+
+  return shortenText(sanitizeUserFacingText(chunks.filter(Boolean).slice(0, 2).join(" ")), 230);
 }
 
 function loadActiveSlideIndex() {
@@ -755,6 +720,38 @@ function downloadBlob(blob, fileName) {
 
 function cleanText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function sanitizeUserFacingText(value) {
+  const banned = [
+    "источник",
+    "источники",
+    "source",
+    "проверьте",
+    "проверить",
+    "добавьте",
+    "добавить",
+    "свяжите мысль",
+    "ключевой вывод нужно связать",
+  ];
+  const parts = cleanText(value)
+    .replace(/^#+\s*/g, "")
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return parts
+    .filter((part) => {
+      const lower = part.toLowerCase();
+      return !banned.some((phrase) => lower.includes(phrase));
+    })
+    .join(" ")
+    .trim();
+}
+
+function shortenText(value, maxLength) {
+  const text = cleanText(value);
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3).trim()}...` : text;
 }
 
 function escapeHtml(value) {

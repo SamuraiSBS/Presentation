@@ -314,7 +314,7 @@ select {
 .slide-canvas {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: center;
   aspect-ratio: 16 / 9;
   width: min(100%, 1040px);
   margin: auto;
@@ -335,6 +335,14 @@ select {
   color: #3f463d;
   font-size: 17px;
   line-height: 1.45;
+}
+
+.slide-body {
+  max-width: 780px;
+  margin: 28px 0 0;
+  color: #3f463d;
+  font-size: clamp(20px, 2.4vw, 31px);
+  line-height: 1.35;
 }
 
 .notes {
@@ -374,8 +382,7 @@ select {
   }
 
   .slide-canvas {
-    aspect-ratio: auto;
-    min-height: 480px;
+    min-height: auto;
   }
 }
 

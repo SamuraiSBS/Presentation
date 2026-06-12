@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { PresentationDocument, SlideBlock } from "@studydeck/shared";
+import { sanitizeDisplayText, sanitizeProjectForDisplay, slideBodyTextForDisplay } from "@/lib/presentation-display";
 
 type ProjectPayload = {
   id: string;
@@ -13,7 +14,7 @@ type ProjectPayload = {
 };
 
 export function ProjectEditor({ initialProject }: { initialProject: ProjectPayload }) {
-  const [project, setProject] = useState(initialProject);
+  const [project, setProject] = useState(() => sanitizeProjectForDisplay(initialProject));
   const [active, setActive] = useState(0);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
@@ -27,7 +28,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
 
   async function refresh() {
     const response = await fetch(`/api/projects/${project.id}`);
-    setProject(await response.json());
+    setProject(sanitizeProjectForDisplay(await response.json()));
   }
 
   async function generate() {
@@ -116,13 +117,8 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
                 onBlur={(event) => saveSlide({ title: event.target.value })}
                 aria-label="Заголовок слайда"
               />
-              <ul>
-                {slide.blocks.flatMap((block) => (block.type === "bullets" ? block.items : "content" in block ? [block.content] : [])).map((item, index) => (
-                  <li key={`${slide.id}-${index}`}>{item}</li>
-                ))}
-              </ul>
+              <p className="slide-body">{slideBodyTextForDisplay(slide.blocks, slide.title)}</p>
             </div>
-            <footer className="muted">Источник: {slide.sourceRefs.map((ref) => ref.label).join("; ") || "не указан"}</footer>
           </article>
           <textarea
             className="textarea notes"
@@ -135,15 +131,8 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
           <strong>Рассказ</strong>
           <div className="speech-item">
             <strong>{speech?.slideTitle || slide.title}</strong>
-            <p>{speech?.text || slide.speakerNotes}</p>
+            <p>{sanitizeDisplayText(speech?.text || slide.speakerNotes)}</p>
           </div>
-          <strong>Источники</strong>
-          {presentation.sources.map((source) => (
-            <div className="speech-item" key={source.id}>
-              <strong>{source.label}</strong>
-              <p>{source.excerpt || "Фрагмент появится после извлечения текста."}</p>
-            </div>
-          ))}
         </aside>
       </section>
     </>

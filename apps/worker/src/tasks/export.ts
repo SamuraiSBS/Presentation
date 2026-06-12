@@ -41,7 +41,7 @@ export async function handleExportJob(job: Job<{ exportId: string; projectId: st
   }
 }
 
-async function createPptx(presentation: ReturnType<typeof presentationSchema.parse>) {
+export async function createPptx(presentation: ReturnType<typeof presentationSchema.parse>) {
   const pptx = new PptxGenConstructor();
   pptx.layout = "LAYOUT_WIDE";
   pptx.author = "StudyDeck AI";
@@ -69,47 +69,15 @@ async function createPptx(presentation: ReturnType<typeof presentationSchema.par
       fit: "shrink",
     });
 
-    slide.addText(slideBullets(item).map((text) => ({ text, options: { bullet: { indent: 18 }, hanging: 4 } })), {
-      x: 0.75,
-      y: 1.25,
-      w: 7.5,
-      h: 3.8,
-      fontFace: "Arial",
-      fontSize: 17,
-      color: "27362F",
-      fit: "shrink",
-    });
-
-    const callout = item.blocks.find((block) => block.type !== "bullets");
-    slide.addShape(pptx.ShapeType.roundRect, {
-      x: 8.65,
-      y: 1.3,
-      w: 3.9,
-      h: 2.2,
-      fill: { color: "17201B" },
-      line: { color: "17201B" },
-      radius: 0.12,
-    });
-    slide.addText(callout && "content" in callout ? callout.content : "Заметка для выступления", {
-      x: 8.9,
+    slide.addText(slideBodyText(item), {
+      x: 0.85,
       y: 1.55,
-      w: 3.4,
-      h: 1.6,
+      w: 11.5,
+      h: 2.2,
       fontFace: "Arial",
-      fontSize: 13,
-      color: "FFFFFF",
-      fit: "shrink",
-    });
-
-    const sourceLine = item.sourceRefs.map((ref) => ref.label).join("; ");
-    slide.addText(`Источник: ${sourceLine || "добавьте источник"}`, {
-      x: 0.55,
-      y: 6.75,
-      w: 12.1,
-      h: 0.25,
-      fontFace: "Arial",
-      fontSize: 9,
-      color: "66716B",
+      fontSize: 22,
+      color: "27362F",
+      breakLine: false,
       fit: "shrink",
     });
 
@@ -141,8 +109,12 @@ startxref
   return Buffer.from(text, "utf8");
 }
 
-function slideBullets(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
-  return slide.blocks.flatMap((block) => (block.type === "bullets" ? block.items : "content" in block ? [block.content] : [])).slice(0, 6);
+function slideBodyText(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  return slide.blocks
+    .flatMap((block) => (block.type === "bullets" ? block.items : "content" in block ? [block.content] : []))
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(" ");
 }
 
 function escapePdf(value: string) {

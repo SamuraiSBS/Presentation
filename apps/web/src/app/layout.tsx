@@ -4,7 +4,7 @@ import { AppHeader } from "@/components/app-header";
 
 export const metadata: Metadata = {
   title: "StudyDeck AI",
-  description: "AI-сервис для учебных презентаций с источниками, заметками и экспортом.",
+  description: "AI-сервис для учебных презентаций с заметками, рассказом и экспортом.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

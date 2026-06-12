@@ -51,6 +51,7 @@ describe("generatePresentation fallback behavior", () => {
                   text: JSON.stringify({
                     title: "Russian cinema",
                     slides: [{ title: "Intro", blocks: [{ type: "bullets", items: ["A real generated point"] }] }],
+                    speechScript: [{ slideOrder: 1, slideTitle: "Intro", text: "This is a longer narration for the slide." }],
                   }),
                 },
               },
@@ -83,7 +84,8 @@ describe("generatePresentation fallback behavior", () => {
       );
 
       expect(presentation.generationMode).toBe("yandex");
-      expect(presentation.slides[0].blocks[0]).toEqual({ type: "bullets", items: ["A real generated point"] });
+      expect(presentation.slides[0].blocks[0]).toEqual({ type: "callout", content: "A real generated point" });
+      expect(presentation.speechScript[0].text).toBe("This is a longer narration for the slide.");
     } finally {
       global.fetch = originalFetch;
     }
@@ -141,9 +143,27 @@ describe("generatePresentation fallback behavior", () => {
       ],
     );
 
-    const text = JSON.stringify(presentation);
-    expect(text).not.toContain("Тезис нужно объяснить");
-    expect(text).not.toContain("Проверьте этот тезис");
-    expect(text).not.toContain("Добавьте источник");
+    const visibleText = visiblePresentationText(presentation);
+    expect(visibleText).not.toContain("Тезис нужно объяснить");
+    expect(visibleText).not.toContain("Проверьте");
+    expect(visibleText).not.toContain("Добавьте источник");
+    expect(visibleText.toLowerCase()).not.toContain("источник");
+    expect(presentation.slides.every((slide) => slide.blocks.length === 1 && slide.blocks[0].type === "callout")).toBe(true);
+    expect(presentation.slides[0].blocks[0].type === "callout" ? presentation.slides[0].blocks[0].content.length : 999).toBeLessThan(240);
+    expect(presentation.speechScript[0].text.length).toBeGreaterThan(
+      presentation.slides[0].blocks[0].type === "callout" ? presentation.slides[0].blocks[0].content.length : 0,
+    );
   });
 });
+
+function visiblePresentationText(presentation: Awaited<ReturnType<typeof generatePresentation>>) {
+  return [
+    presentation.title,
+    ...presentation.slides.flatMap((slide) => [
+      slide.title,
+      slide.speakerNotes,
+      ...slide.blocks.flatMap((block) => (block.type === "bullets" ? block.items : [block.content])),
+    ]),
+    ...presentation.speechScript.flatMap((item) => [item.slideTitle, item.text]),
+  ].join("\n");
+}

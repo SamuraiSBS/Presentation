@@ -61,7 +61,7 @@ export function NewProjectForm() {
         <textarea
           className="textarea"
           name="prompt"
-          defaultValue={'Сделай презентацию на 10 слайдов по теме "Искусственный интеллект в образовании". Объясни простыми словами, добавь источники, заметки и рассказ для выступления.'}
+          defaultValue={'Сделай презентацию на 10 слайдов по теме "Искусственный интеллект в образовании". На слайдах оставь короткие фразы, а подробный текст вынеси в рассказ для выступления.'}
           required
         />
       </label>
@@ -100,7 +100,7 @@ export function NewProjectForm() {
         Режим
         <select className="select" name="mode" defaultValue="with_sources">
           <option value="fast_draft">Быстрый черновик</option>
-          <option value="with_sources">С источниками</option>
+          <option value="with_sources">С фактологией</option>
           <option value="explain_simpler">Объяснить проще</option>
         </select>
       </label>

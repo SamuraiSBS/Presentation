@@ -91,7 +91,7 @@ async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
       {
         role: "system",
         content:
-          "Ты создаешь учебные презентации на русском языке. На слайды нужно писать готовый содержательный текст: факты, объяснения, примеры и выводы. Не пиши инструкции пользователю, заглушки, фразы про проверку тезиса или просьбы добавить источник. Верни только валидный JSON.",
+          "Ты создаешь учебные презентации на русском языке. На каждом слайде нужен короткий текст для экрана: заголовок и 1-2 содержательные фразы без маркеров. Подробный связный текст для чтения пиши только в speakerNotes и speechScript. Не упоминай источники в тексте для пользователя, не пиши инструкции, заглушки или просьбы что-то проверить. Верни только валидный JSON.",
       },
       {
         role: "user",
@@ -138,7 +138,7 @@ async function generateWithYandex(project: ProjectInput, sources: Source[]) {
         {
           role: "system",
           text:
-            "Ты создаешь учебные презентации на русском языке. На слайды нужно писать готовый содержательный текст: факты, объяснения, примеры и выводы. Не пиши инструкции пользователю, заглушки, фразы про проверку тезиса или просьбы добавить источник. Верни только валидный JSON.",
+            "Ты создаешь учебные презентации на русском языке. На каждом слайде нужен короткий текст для экрана: заголовок и 1-2 содержательные фразы без маркеров. Подробный связный текст для чтения пиши только в speakerNotes и speechScript. Не упоминай источники в тексте для пользователя, не пиши инструкции, заглушки или просьбы что-то проверить. Верни только валидный JSON.",
         },
         {
           role: "user",
@@ -172,15 +172,15 @@ function buildGenerationPrompt(project: ProjectInput, sources: Source[]) {
     `Количество слайдов: ${project.slideCount}`,
     `Режим: ${project.mode}`,
     "Требования к слайдам:",
-    "- каждый слайд содержит 3-5 содержательных пунктов или короткий вывод;",
-    "- текст должен раскрывать тему, а не повторять промпт;",
-    "- используй факты из источников и ставь sourceRefs на релевантные источники;",
-    "- speakerNotes и speechScript должны быть связным текстом для выступления;",
-    "- не используй фразы: 'тезис нужно объяснить', 'проверьте тезис', 'добавьте источник', 'основная мысль слайда'.",
+    "- каждый слайд выглядит как 16:9 учебный кадр: короткий заголовок и один блок текста на 1-2 фразы;",
+    "- текст на слайде должен быть кратким, без маркированных списков, markdown-заголовков и длинных абзацев;",
+    "- источники используй только как внутренний материал для фактов; не упоминай слово 'источник' и названия источников в slides, speakerNotes и speechScript;",
+    "- speakerNotes и speechScript должны быть подробным связным текстом, который можно читать во время выступления;",
+    "- не используй фразы: 'тезис нужно объяснить', 'проверьте тезис', 'добавьте источник', 'ключевой вывод нужно связать', 'основная мысль слайда'.",
     "Обязательный JSON: id, title, scenario, level, slideCount, outline, speechScript, slides.",
     "Для каждого slide: id, order, title, layout, blocks, speakerNotes, timingSeconds, sourceRefs.",
-    "layout: hero, bullets, two-column или summary. blocks: bullets, callout или quote.",
-    `Источники:\n${formatSourceText(sources)}`,
+    "layout: hero, bullets, two-column или summary. blocks лучше возвращать как один callout; bullets допустимы только если это 1-2 короткие фразы.",
+    `Материалы для внутренней фактологии, не показывать пользователю:\n${formatSourceText(sources)}`,
   ].join("\n\n");
 }
 
@@ -230,7 +230,7 @@ function normalizePresentation(
     return {
       slideOrder: slide.order,
       slideTitle: cleanText(source?.slideTitle || slide.title),
-      text: cleanText(source?.text || buildSpeechText(slide, project, index)),
+      text: sanitizeSpeechText(source?.text) || buildSpeechText(slide, project, index),
     };
   });
 
@@ -253,19 +253,20 @@ function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], pro
   const sourceRefs = Array.isArray(slide.sourceRefs) && slide.sourceRefs.length
     ? slide.sourceRefs
     : [sourceRefFromSource(sources[(order - 1) % sources.length])];
-  const blocks = Array.isArray(slide.blocks) ? slide.blocks.map(normalizeBlock).filter((block): block is SlideBlock => Boolean(block)) : [];
+  const rawBlocks = Array.isArray(slide.blocks) ? slide.blocks.map(normalizeBlock).filter((block): block is SlideBlock => Boolean(block)) : [];
+  const blocks = normalizeSlideBlocks(rawBlocks, project, order);
 
   return {
     id: cleanText(slide.id) || `slide-${order}`,
     order,
     title: cleanText(slide.title) || fallbackTitle(project, order),
     layout: normalizeLayout(slide.layout, order, project.slideCount),
-    blocks: blocks.length ? blocks : buildFallbackBlocks(project, sources[(order - 1) % sources.length]),
-    speakerNotes: cleanText(slide.speakerNotes) || `Расскажите, как раздел "${fallbackTitle(project, order)}" связан с темой "${project.title}".`,
+    blocks,
+    speakerNotes: sanitizeSpeechText(slide.speakerNotes) || buildFallbackSpeakerNotes(project, order),
     timingSeconds: clampNumber(Number(slide.timingSeconds || 55), 20, 240),
     sourceRefs: sourceRefs.map((ref) => ({
       sourceId: cleanText(ref.sourceId) || sources[0]?.id || "src-prompt",
-      label: cleanText(ref.label) || sources.find((source) => source.id === ref.sourceId)?.label || "Источник",
+      label: cleanText(ref.label) || sources.find((source) => source.id === ref.sourceId)?.label || "Материал",
       excerpt: cleanText(ref.excerpt) || sources.find((source) => source.id === ref.sourceId)?.excerpt || "",
       page: ref.page || null,
     })),
@@ -279,12 +280,12 @@ function normalizeBlock(block: unknown): SlideBlock | null {
 
   const candidate = block as Partial<SlideBlock>;
   if (candidate.type === "bullets") {
-    const items = Array.isArray(candidate.items) ? candidate.items.map(cleanText).filter(Boolean).slice(0, 6) : [];
+    const items = Array.isArray(candidate.items) ? candidate.items.map(sanitizeScreenText).filter(Boolean).slice(0, 2) : [];
     return items.length ? { type: "bullets", items } : null;
   }
 
   if (candidate.type === "quote" || candidate.type === "callout") {
-    const content = cleanText(candidate.content);
+    const content = sanitizeScreenText(candidate.content);
     return content ? { type: candidate.type, content } : null;
   }
 
@@ -295,7 +296,7 @@ function normalizeSources(sources: Source[], project: ProjectInput): Source[] {
   const normalized = sources
     .map((source) => ({
       id: cleanText(source.id),
-      label: cleanText(source.label) || "Источник",
+      label: cleanText(source.label) || "Материал",
       type: cleanText(source.type) || "SOURCE",
       size: source.size || 0,
       excerpt: cleanText(source.excerpt),
@@ -325,53 +326,84 @@ function buildFallbackSlide(order: number, project: ProjectInput, sources: Sourc
     order,
     title: fallbackTitle(project, order),
     layout: normalizeLayout(undefined, order, project.slideCount),
-    blocks: buildFallbackBlocks(project, source),
-    speakerNotes: buildSpeechText({ title: fallbackTitle(project, order), blocks: buildFallbackBlocks(project, source), sourceRefs: [sourceRefFromSource(source)] } as Slide, project, order - 1),
+    blocks: buildFallbackBlocks(project, order),
+    speakerNotes: buildFallbackSpeakerNotes(project, order),
     timingSeconds: order === 1 || order === project.slideCount ? 45 : 55,
     sourceRefs: [sourceRefFromSource(source)],
   };
 }
 
-function buildFallbackBlocks(project: ProjectInput, source: Source | undefined): SlideBlock[] {
-  const excerpt = shortenSentence(source?.excerpt || project.prompt, 180);
+function buildFallbackBlocks(project: ProjectInput, order = 1): SlideBlock[] {
   return [
     {
-      type: "bullets",
-      items: [
-        excerpt,
-        `Этот факт помогает раскрыть тему "${project.title}" для аудитории уровня ${project.level}.`,
-        "Ключевой вывод нужно связать с предыдущими и следующими слайдами.",
-      ],
-    },
-    {
       type: "callout",
-      content: shortenSentence(excerpt, 140),
+      content: fallbackSlideText(project, order),
     },
   ];
 }
 
 function buildSpeechText(slide: Slide, project: ProjectInput, index: number) {
-  const bullets = slide.blocks.flatMap((block) => (block.type === "bullets" ? block.items : [block.content])).slice(0, 3);
+  const body = slideText(slide.blocks) || fallbackSlideText(project, index + 1);
   const intro = index === 0
     ? `Сегодня я расскажу о теме "${project.title}".`
     : `На этом слайде раскрывается раздел "${slide.title}".`;
-  return `${intro} ${bullets.join(" ")} Эти данные связаны с источником: ${slide.sourceRefs[0]?.label || "материалы"}.`;
+  return sanitizeSpeechText(`${intro} ${body} Добавлю несколько деталей простыми словами, чтобы было понятно, почему этот раздел важен для всей темы.`);
 }
 
 function fallbackTitle(project: ProjectInput, order: number) {
   const titles = [
-    `Тема: ${project.title}`,
+    project.title,
     "Контекст и актуальность",
     "Ключевые факты",
     "Главные изменения",
     "Примеры",
-    "Источники и подтверждения",
+    "Как это объяснить проще",
     "Объяснение простыми словами",
     "Что важно запомнить",
     "Выводы",
-    "Источники",
+    "Финальный вывод",
   ];
   return titles[order - 1] || `${order}. ${project.title}`;
+}
+
+function normalizeSlideBlocks(blocks: SlideBlock[], project: ProjectInput, order: number): SlideBlock[] {
+  const text = slideText(blocks) || fallbackSlideText(project, order);
+  return [{ type: "callout", content: shortenSentence(text, 230) }];
+}
+
+function slideText(blocks: SlideBlock[]) {
+  return sanitizeScreenText(
+    blocks
+      .flatMap((block) => (block.type === "bullets" ? block.items : [block.content]))
+      .filter(Boolean)
+      .slice(0, 2)
+      .join(" "),
+  );
+}
+
+function fallbackSlideText(project: ProjectInput, order: number) {
+  const topic = project.title || project.prompt;
+  const texts = [
+    `${topic} можно раскрыть через главные события, понятные примеры и короткие выводы.`,
+    `Этот раздел объясняет, почему тема важна и как она связана с жизнью аудитории.`,
+    `Здесь собраны основные факты, которые помогают быстро понять суть темы.`,
+    `На слайде показано, какие изменения сильнее всего повлияли на развитие темы.`,
+    `Примеры помогают увидеть тему не как набор дат, а как живой процесс.`,
+    `Сложные идеи здесь переводятся в простое объяснение без лишних деталей.`,
+    `Главное внимание стоит уделить смыслу событий и их последствиям.`,
+    `Этот слайд помогает запомнить самые важные мысли перед выводом.`,
+    `Вывод объединяет предыдущие слайды и показывает главный смысл темы.`,
+    `Финальный акцент помогает закончить выступление ясно и уверенно.`,
+  ];
+  return shortenSentence(texts[order - 1] || `${topic}: главное объяснить суть темы коротко и понятно.`, 230);
+}
+
+function buildFallbackSpeakerNotes(project: ProjectInput, order: number) {
+  const title = fallbackTitle(project, order);
+  const body = fallbackSlideText(project, order);
+  return sanitizeSpeechText(
+    `На этом слайде нужно раскрыть раздел "${title}". ${body} Расскажите это спокойным связным текстом: сначала назовите главную мысль, затем поясните ее на примере и завершите коротким переходом к следующему слайду.`,
+  );
 }
 
 function normalizeLayout(layout: unknown, order: number, slideCount: number): Slide["layout"] {
@@ -404,6 +436,40 @@ function parseJsonText(text: string) {
 
 function cleanText(value: unknown) {
   return String(value || "").replace(/\u0000/g, "").replace(/\s+/g, " ").trim();
+}
+
+function sanitizeScreenText(value: unknown) {
+  return removeBannedSentences(cleanText(value).replace(/^#+\s*/g, ""));
+}
+
+function sanitizeSpeechText(value: unknown) {
+  return removeBannedSentences(cleanText(value));
+}
+
+function removeBannedSentences(value: string) {
+  const banned = [
+    "источник",
+    "источники",
+    "source",
+    "sourceRefs",
+    "проверьте",
+    "проверить",
+    "добавьте",
+    "добавить источник",
+    "ключевой вывод нужно связать",
+    "тезис нужно объяснить",
+    "основная мысль слайда",
+  ];
+  const parts = value
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const filtered = parts.filter((part) => {
+    const lower = part.toLowerCase();
+    return !banned.some((phrase) => lower.includes(phrase.toLowerCase()));
+  });
+
+  return filtered.join(" ").trim();
 }
 
 function shortenSentence(value: string, maxLength: number) {

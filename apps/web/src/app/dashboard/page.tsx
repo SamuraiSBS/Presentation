@@ -9,7 +9,6 @@ type ProjectRow = {
   status: string;
   slideCount: number;
   updatedAt: string;
-  sources: unknown[];
   presentation?: { id: string } | null;
 };
 
@@ -33,7 +32,7 @@ export default async function DashboardPage() {
               <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
                 <div>
                   <strong>{project.title}</strong>
-                  <p className="muted">{project.slideCount} слайдов · {project.sources.length} источников</p>
+                  <p className="muted">{project.slideCount} слайдов</p>
                 </div>
                 <span className="status">{project.status}</span>
               </div>
