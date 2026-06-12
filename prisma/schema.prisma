@@ -120,8 +120,9 @@ model Source {
   projectId String
   label     String
   type      String
-  size      Int
-  objectKey String
+  size      Int      @default(0)
+  objectKey String?
+  url       String?
   excerpt   String   @default("") @db.Text
   text      String   @default("") @db.Text
   createdAt DateTime @default(now())

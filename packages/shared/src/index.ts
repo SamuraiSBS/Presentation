@@ -32,6 +32,7 @@ export const sourceSchema = z.object({
   size: z.number().int().nonnegative().optional(),
   excerpt: z.string().default(""),
   objectKey: z.string().optional(),
+  url: z.string().url().optional(),
 });
 export type Source = z.infer<typeof sourceSchema>;
 

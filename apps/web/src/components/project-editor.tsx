@@ -15,6 +15,8 @@ type ProjectPayload = {
 export function ProjectEditor({ initialProject }: { initialProject: ProjectPayload }) {
   const [project, setProject] = useState(initialProject);
   const [active, setActive] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
   const presentation = project.presentation?.document;
   const slide = presentation?.slides[active];
 
@@ -28,6 +30,21 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     setProject(await response.json());
   }
 
+  async function generate() {
+    setBusy(true);
+    setActionError("");
+
+    try {
+      const response = await fetch(`/api/projects/${project.id}/generate`, { method: "POST" });
+      if (!response.ok) throw new Error(await response.text());
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Generation failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveSlide(next: { title?: string; blocks?: SlideBlock[]; speakerNotes?: string }) {
     if (!slide) return;
     const response = await fetch(`/api/projects/${project.id}/slides/${slide.id}`, {
@@ -39,15 +56,27 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
   }
 
   if (!presentation || !slide) {
+    const canStartGeneration = project.status === "draft" || project.status === "failed";
+
     return (
       <section className="panel">
         <span className="status">{project.status}</span>
         <h1 className="page-title" style={{ fontSize: 44 }}>{project.title}</h1>
         <p className="lead">
-          Генерация еще идет. Обновите страницу через несколько секунд. Если worker запущен, статус сменится на ready.
+          {canStartGeneration
+            ? "Презентация еще не отправлена в генерацию. Запустите ее вручную."
+            : "Генерация еще идет. Обновите страницу через несколько секунд. Если worker запущен, статус сменится на ready."}
         </p>
         {project.error ? <p className="muted">{project.error}</p> : null}
-        <button className="button" type="button" onClick={refresh}>Обновить</button>
+        {actionError ? <p className="muted">{actionError}</p> : null}
+        <div className="actions">
+          {canStartGeneration ? (
+            <button className="button" type="button" onClick={generate} disabled={busy}>
+              {busy ? "Запускаем..." : "Запустить генерацию"}
+            </button>
+          ) : null}
+          <button className="ghost" type="button" onClick={refresh}>Обновить</button>
+        </div>
       </section>
     );
   }

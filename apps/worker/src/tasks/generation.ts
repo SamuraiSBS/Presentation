@@ -4,6 +4,7 @@ import { getPrisma } from "../prisma.js";
 import { readObjectBuffer } from "../storage.js";
 import { extractTextFromSource } from "./extract.js";
 import { generatePresentation } from "./presentation.js";
+import { searchWebSources } from "./web-search.js";
 
 export async function handleGenerationJob(job: Job<{ projectId: string; userId: string }>) {
   const prisma = getPrisma();
@@ -17,6 +18,24 @@ export async function handleGenerationJob(job: Job<{ projectId: string; userId: 
     const sources: Source[] = [];
 
     for (const source of project.sources) {
+      if (source.type === "WEB") {
+        continue;
+      }
+
+      if (!source.objectKey) {
+        if (source.excerpt || source.text) {
+          sources.push({
+            id: source.id,
+            label: source.label,
+            type: source.type,
+            size: source.size,
+            excerpt: source.excerpt || makeExcerpt(source.text, project.prompt),
+            url: source.url || undefined,
+          });
+        }
+        continue;
+      }
+
       const buffer = await readObjectBuffer(source.objectKey);
       const text = cleanText(await extractTextFromSource(source.label, buffer)).slice(0, 9000);
       const excerpt = makeExcerpt(text, project.prompt);
@@ -26,9 +45,42 @@ export async function handleGenerationJob(job: Job<{ projectId: string; userId: 
         label: updated.label,
         type: updated.type,
         size: updated.size,
-        objectKey: updated.objectKey,
+        objectKey: updated.objectKey || undefined,
         excerpt: updated.excerpt,
+        url: updated.url || undefined,
       });
+    }
+
+    if (!sources.length || project.mode === "with_sources") {
+      await prisma.source.deleteMany({ where: { projectId, type: "WEB" } });
+      const webSources = await searchWebSources(project.prompt);
+
+      for (const source of webSources) {
+        const created = await prisma.source.create({
+          data: {
+            projectId,
+            label: source.label,
+            type: source.type,
+            excerpt: source.excerpt,
+            text: source.excerpt,
+            url: source.url,
+          },
+        });
+
+        sources.push({
+          id: created.id,
+          label: created.label,
+          type: created.type,
+          size: created.size,
+          objectKey: created.objectKey || undefined,
+          excerpt: created.excerpt,
+          url: created.url || undefined,
+        });
+      }
+    }
+
+    if (!sources.length) {
+      throw new Error("No source material was found for generation");
     }
 
     const presentation = await generatePresentation(project, sources);
