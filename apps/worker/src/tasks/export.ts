@@ -119,7 +119,6 @@ function slideBodyText(slide: ReturnType<typeof presentationSchema.parse>["slide
     ...slide.bullets,
     definitionText(slide),
     visualText(slide),
-    highlightText(slide),
   ]
     .filter(Boolean)
     .join(" ");
@@ -143,10 +142,6 @@ function visualText(slide: ReturnType<typeof presentationSchema.parse>["slides"]
   const items = visual.items.map((item) => [item.label, item.text].filter(Boolean).join(": ")).filter(Boolean);
   const content = (rows.length ? rows : items).slice(0, 4).join("; ");
   return [visual.title || visual.type, content].filter(Boolean).join(": ");
-}
-
-function highlightText(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
-  return slide.highlights.length ? `Акценты: ${slide.highlights.map((item) => item.text).join(", ")}` : "";
 }
 
 function escapePdf(value: string) {

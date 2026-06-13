@@ -109,42 +109,12 @@ function normalizeDefinition(value: unknown) {
   return term && text ? { term, text } : null;
 }
 
-function normalizeKeyConcepts(value: unknown, title: string, bullets: string[], slideKind: SlideKind): KeyConcept[] {
-  const items = Array.isArray(value)
-    ? value
-        .map((item) => {
-          if (typeof item === "string") return { label: sanitizeDisplayText(item), icon: "dot" };
-          if (!item || typeof item !== "object") return null;
-          const candidate = item as { label?: unknown; icon?: unknown };
-          const label = sanitizeDisplayText(candidate.label);
-          return label ? { label, icon: sanitizeIcon(candidate.icon) } : null;
-        })
-        .filter((item): item is KeyConcept => Boolean(item))
-    : [];
-  if (items.length || slideKind === "title" || slideKind === "section") return dedupeConcepts(items).slice(0, 5);
-  return uniqueShortItems([title, ...bullets]).slice(0, 4).map((label, index) => ({
-    label,
-    icon: ["idea", "check", "map", "process"][index] || "dot",
-  }));
+function normalizeKeyConcepts(_value: unknown, _title: string, _bullets: string[], _slideKind: SlideKind): KeyConcept[] {
+  return [];
 }
 
-function normalizeHighlights(value: unknown, thesis: string, bullets: string[], slideKind: SlideKind): Highlight[] {
-  const items = Array.isArray(value)
-    ? value
-        .map((item) => {
-          if (typeof item === "string") return { text: sanitizeDisplayText(item), tone: "accent" as const };
-          if (!item || typeof item !== "object") return null;
-          const candidate = item as { text?: unknown; tone?: unknown };
-          const text = sanitizeDisplayText(candidate.text);
-          const tone = candidate.tone === "success" || candidate.tone === "warning" || candidate.tone === "neutral" ? candidate.tone : "accent";
-          return text ? { text, tone } : null;
-        })
-        .filter((item): item is Highlight => Boolean(item))
-    : [];
-  if (items.length || slideKind === "title" || slideKind === "section") return items.slice(0, 6);
-  return uniqueShortItems([thesis, ...bullets].join(" ").split(/\s+/).filter((word) => word.length >= 5))
-    .slice(0, 4)
-    .map((text, index) => ({ text, tone: index === 1 ? "success" : "accent" }));
+function normalizeHighlights(_value: unknown, _thesis: string, _bullets: string[], _slideKind: SlideKind): Highlight[] {
+  return [];
 }
 
 function normalizeVisual(value: unknown, title: string, bullets: string[], slideKind: SlideKind): SlideVisual {
@@ -243,7 +213,17 @@ function shouldReplaceSpeechText(text: string, slideNotes: string) {
 }
 
 function narrationFromSlide(slide: PresentationDocument["slides"][number]) {
-  return sanitizeDisplayText(`${slide.title}. ${slideBodyTextForDisplay(slide.blocks, slide.title)}`);
+  const body = slideStructuredTextForDisplay(slide);
+  const points = slide.bullets.length ? slide.bullets : splitSentences(body);
+  return sanitizeDisplayText(
+    [
+      `Слайд "${slide.title}" раскрывает главную мысль: ${lowercaseFirst(slide.thesis || body || slide.title)}`,
+      `Первый опорный пункт помогает понять тему конкретнее: ${lowercaseFirst(points[0] || slide.title)}`,
+      `Второй пункт показывает, как эта идея связана с остальным материалом: ${lowercaseFirst(points[1] || points[0] || slide.title)}`,
+      `Третий пункт закрепляет объяснение через важную деталь: ${lowercaseFirst(points[2] || points[1] || points[0] || slide.title)}`,
+      "Поэтому текст на слайде остается коротким, а основной рассказ раскрывает смысл связно и последовательно.",
+    ].join(" "),
+  );
 }
 
 function isGenericSpeechText(text: string) {
@@ -274,7 +254,15 @@ function normalizeTitleKey(title: unknown) {
 }
 
 function fallbackSpeech(title: string) {
-  return `На этом слайде нужно кратко раскрыть раздел "${title}" и объяснить его простыми словами.`;
+  return sanitizeDisplayText(
+    [
+      `Слайд "${title}" вводит важную часть темы и задает направление объяснения.`,
+      "Сначала стоит назвать главную мысль простыми словами.",
+      "Затем нужно показать, какие пункты на слайде помогают ее понять.",
+      "После этого полезно связать эти пункты с примером или выводом.",
+      "Так слушателю легче увидеть не набор слов, а цельный рассказ.",
+    ].join(" "),
+  );
 }
 
 function splitSentences(value: unknown) {
@@ -296,21 +284,6 @@ function uniqueShortItems(items: string[]) {
     }
   }
   return result;
-}
-
-function sanitizeIcon(value: unknown) {
-  const icon = cleanText(value).toLowerCase().replace(/[^a-z0-9_-]/g, "");
-  return icon || "dot";
-}
-
-function dedupeConcepts(items: KeyConcept[]) {
-  const seen = new Set<string>();
-  return items.filter((item) => {
-    const key = item.label.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 function normalizeVisualType(value: unknown, title: string, bullets: string[], slideKind: SlideKind): SlideVisual["type"] {
@@ -384,4 +357,9 @@ function sentencePreview(value: string) {
     .slice(0, 3);
 
   return shortenText(sentences.length ? sentences.join(" ") : text, 320);
+}
+
+function lowercaseFirst(value: string) {
+  const text = cleanText(value).replace(/[.!?]+$/g, "");
+  return text ? `${text.charAt(0).toLowerCase()}${text.slice(1)}.` : "";
 }

@@ -138,10 +138,9 @@ function SlideCanvas({ slide }: { slide: PresentationDocument["slides"][number] 
   if (isDivider) {
     return (
       <div className={`slide-content slide-content-${slide.slideKind}`}>
-        <span className="slide-kind">{slide.slideKind === "title" ? "Тема" : "Раздел"}</span>
+        {slide.slideKind === "section" ? <span className="slide-kind">Раздел</span> : null}
         <h2 className="slide-title">{slide.title}</h2>
         {slide.thesis ? <p className="slide-body">{slide.thesis}</p> : null}
-        {slide.highlights.length ? <HighlightBadges highlights={slide.highlights} /> : null}
       </div>
     );
   }
@@ -154,7 +153,6 @@ function SlideCanvas({ slide }: { slide: PresentationDocument["slides"][number] 
           <h2 className="slide-title">{slide.title}</h2>
           {slide.thesis ? <p className="slide-thesis">{slide.thesis}</p> : null}
         </div>
-        {slide.highlights.length ? <HighlightBadges highlights={slide.highlights} /> : null}
       </div>
 
       <div className="slide-grid">
@@ -172,31 +170,9 @@ function SlideCanvas({ slide }: { slide: PresentationDocument["slides"][number] 
               <span>{slide.definition.text}</span>
             </div>
           ) : null}
-          {slide.keyConcepts.length ? (
-            <div className="concept-row">
-              {slide.keyConcepts.map((concept) => (
-                <span className="concept-chip" key={`${concept.icon}-${concept.label}`}>
-                  <span aria-hidden="true">{conceptIcon(concept.icon)}</span>
-                  {concept.label}
-                </span>
-              ))}
-            </div>
-          ) : null}
         </section>
         <VisualBlock slide={slide} />
       </div>
-    </div>
-  );
-}
-
-function HighlightBadges({ highlights }: { highlights: PresentationDocument["slides"][number]["highlights"] }) {
-  return (
-    <div className="highlight-row">
-      {highlights.map((item) => (
-        <span className={`highlight-badge highlight-${item.tone}`} key={`${item.tone}-${item.text}`}>
-          {item.text}
-        </span>
-      ))}
     </div>
   );
 }
@@ -264,17 +240,4 @@ function VisualBlock({ slide }: { slide: PresentationDocument["slides"][number] 
       </div>
     </section>
   );
-}
-
-function conceptIcon(icon: string) {
-  const map: Record<string, string> = {
-    idea: "!",
-    process: ">",
-    compare: "=",
-    cause: "+",
-    time: "#",
-    map: "*",
-    check: "✓",
-  };
-  return map[icon] || "•";
 }

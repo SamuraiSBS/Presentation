@@ -199,9 +199,14 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     "- thesis: one sentence with the main idea of the slide;",
     "- bullets: 3-5 short key points, not paragraphs;",
     "- definition: { term, text } only when an important term needs a simple definition; otherwise null;",
-    "- keyConcepts: 2-5 items with { label, icon }; use simple icon names like idea, process, compare, cause, time, map, check;",
-    "- highlights: 2-6 important words or phrases as { text, tone };",
+    "- keyConcepts: return an empty array; do not create small keyword chips on slides;",
+    "- highlights: return an empty array; do not create small highlighted word badges on slides;",
     "- blocks: keep a backward-compatible fallback, preferably one bullets block mirroring bullets or one short callout.",
+    "Narration rules:",
+    "- speakerNotes must be a connected 4-5 sentence story for that exact slide, in Russian;",
+    "- speechScript must contain one matching 4-5 sentence narration item for every slide;",
+    "- slide thesis, bullets, definition, and visual content must be a short outline based on that slide narration;",
+    "- do not write generic phrases like 'this slide explains the section'; explain the actual topic of the slide.",
     "Visual field rules:",
     "- visual.type must be one of: process_diagram, comparison_diagram, cause_effect_diagram, before_after_table, pros_cons_table, timeline, mind_map, illustration, schema, image, none;",
     "- use process_diagram for ordered actions or steps;",
@@ -294,7 +299,7 @@ function normalizePresentation(
     return {
       slideOrder: slide.order,
       slideTitle: shouldReplaceTitle(sourceTitle, speechTitleCounts) ? slide.title : sourceTitle || slide.title,
-      text: sanitizeSpeechText(source?.text) || sanitizeSpeechText(slide.speakerNotes) || buildSpeechText(slide, project, index),
+      text: normalizeSpeechScriptText(source?.text, slide, project, index),
     };
   });
 
@@ -341,7 +346,7 @@ function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], pro
     visual,
     highlights,
     blocks,
-    speakerNotes: sanitizeSpeechText(slide.speakerNotes) || buildFallbackSpeakerNotes(project, order),
+    speakerNotes: normalizeSpeakerNotes(slide.speakerNotes, { title, thesis, bullets, definition, visual }, project, order),
     timingSeconds: clampNumber(Number(slide.timingSeconds || 55), 20, 240),
     sourceRefs: sourceRefs.map((ref) => ({
       sourceId: cleanText(ref.sourceId) || sources[0]?.id || "src-prompt",
@@ -409,47 +414,12 @@ function normalizeDefinition(value: unknown): SlideDefinition | null {
   return term && text ? { term: shortenSentence(term, 60), text: shortenSentence(text, 180) } : null;
 }
 
-function normalizeKeyConcepts(value: unknown, title: string, bullets: string[], slideKind: SlideKind): KeyConcept[] {
-  const fromValue = Array.isArray(value)
-    ? value
-        .map((item) => {
-          if (typeof item === "string") return { label: sanitizeScreenText(item), icon: "dot" };
-          if (!item || typeof item !== "object") return null;
-          const candidate = item as Partial<KeyConcept>;
-          const label = sanitizeScreenText(candidate.label);
-          return label ? { label: shortenSentence(label, 42), icon: sanitizeIcon(candidate.icon) } : null;
-        })
-        .filter((item): item is KeyConcept => Boolean(item))
-    : [];
-
-  if (fromValue.length) return dedupeByLabel(fromValue).slice(0, 5);
-  if (slideKind === "title" || slideKind === "section") return [];
-
-  return uniqueShortItems([title, ...bullets])
-    .slice(0, 4)
-    .map((label, index) => ({ label: shortenSentence(label, 42), icon: ["idea", "check", "map", "process"][index] || "dot" }));
+function normalizeKeyConcepts(_value: unknown, _title: string, _bullets: string[], _slideKind: SlideKind): KeyConcept[] {
+  return [];
 }
 
-function normalizeHighlights(value: unknown, thesis: string, bullets: string[], slideKind: SlideKind): Highlight[] {
-  const fromValue = Array.isArray(value)
-    ? value
-        .map((item) => {
-          if (typeof item === "string") return { text: sanitizeScreenText(item), tone: "accent" as const };
-          if (!item || typeof item !== "object") return null;
-          const candidate = item as Partial<Highlight>;
-          const text = sanitizeScreenText(candidate.text);
-          const tone = candidate.tone === "success" || candidate.tone === "warning" || candidate.tone === "neutral" ? candidate.tone : "accent";
-          return text ? { text: shortenSentence(text, 36), tone } : null;
-        })
-        .filter((item): item is Highlight => Boolean(item))
-    : [];
-
-  if (fromValue.length) return dedupeHighlights(fromValue).slice(0, 6);
-  if (slideKind === "title" || slideKind === "section") return [];
-
-  return uniqueShortItems(extractKeywordPhrases([thesis, ...bullets].join(" ")))
-    .slice(0, 4)
-    .map((text, index) => ({ text, tone: index === 1 ? "success" : "accent" }));
+function normalizeHighlights(_value: unknown, _thesis: string, _bullets: string[], _slideKind: SlideKind): Highlight[] {
+  return [];
 }
 
 function normalizeVisual(value: unknown, title: string, bullets: string[], slideKind: SlideKind): SlideVisual {
@@ -580,14 +550,6 @@ function buildFallbackBlocks(project: ProjectInput, order = 1, thesis = "", bull
   return [{ type: "callout", content: thesis || fallbackSlideText(project, order) }];
 }
 
-function buildSpeechText(slide: Slide, project: ProjectInput, index: number) {
-  const body = [slide.thesis, ...slide.bullets].filter(Boolean).join(" ") || slideText(slide.blocks) || fallbackSlideText(project, index + 1);
-  const intro = index === 0
-    ? `Сегодня я расскажу о теме "${project.title}".`
-    : `На этом слайде раскрывается раздел "${slide.title}".`;
-  return sanitizeSpeechText(`${intro} ${body}`);
-}
-
 function fallbackTitle(project: ProjectInput, order: number) {
   const titles = [
     project.title,
@@ -614,6 +576,86 @@ function normalizeSlideBlocks(
 ): SlideBlock[] {
   if (blocks.length) return blocks.slice(0, 3);
   return buildFallbackBlocks(project, order, thesis, bullets, slideKind);
+}
+
+function normalizeSpeakerNotes(
+  value: unknown,
+  slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual">,
+  project: ProjectInput,
+  order: number,
+) {
+  const text = sanitizeSpeechText(value);
+  if (isSpecificNarration(text)) {
+    return limitSentences(text, 5);
+  }
+
+  return buildSlideNarration(slide, project, order);
+}
+
+function normalizeSpeechScriptText(value: unknown, slide: Slide, project: ProjectInput, index: number) {
+  const text = sanitizeSpeechText(value);
+  if (isSpecificNarration(text)) {
+    return limitSentences(text, 5);
+  }
+
+  return normalizeSpeakerNotes(slide.speakerNotes, slide, project, index + 1);
+}
+
+function buildSlideNarration(slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual">, project: ProjectInput, order: number) {
+  const topic = cleanText(project.title || project.prompt);
+  const title = cleanText(slide.title) || fallbackTitle(project, order);
+  const thesis = cleanText(slide.thesis) || fallbackSlideText(project, order);
+  const bullets = slide.bullets.map(cleanText).filter(Boolean);
+  const firstPoint = bullets[0] || thesis;
+  const secondPoint = bullets[1] || slide.definition?.text || firstPoint;
+  const thirdPoint = bullets[2] || visualNarrationText(slide.visual) || secondPoint;
+  const ending = order === project.slideCount
+    ? `В итоге по теме "${topic}" важно запомнить не отдельные слова, а связь между главной мыслью, примерами и выводом.`
+    : `Поэтому текст на слайде оставляет только опорные пункты, а основной смысл раскрывается в рассказе про "${title}".`;
+
+  return sanitizeSpeechText(
+    [
+      `Слайд "${title}" объясняет часть темы "${topic}" через одну главную мысль: ${lowercaseFirst(thesis)}`,
+      `Сначала важно разобрать опорный пункт: ${lowercaseFirst(firstPoint)}`,
+      `Затем стоит показать связь с другим элементом темы: ${lowercaseFirst(secondPoint)}`,
+      `После этого можно закрепить объяснение через деталь: ${lowercaseFirst(thirdPoint)}`,
+      ending,
+    ].join(" "),
+  );
+}
+
+function visualNarrationText(visual: SlideVisual) {
+  if (!visual || visual.type === "none") return "";
+  const item = visual.items.find((entry) => entry.label || entry.text);
+  const row = visual.rows.find((entry) => entry.label || entry.left || entry.right);
+  return cleanText(item?.text || item?.label || row?.left || row?.right || visual.description || visual.title);
+}
+
+function isSpecificNarration(text: string) {
+  if (sentenceCount(text) < 4) return false;
+  if (text.length < 220) return false;
+  const lower = text.toLowerCase();
+  return ![
+    "на этом слайде раскрывается раздел",
+    "на этом слайде нужно раскрыть раздел",
+    "сегодня я расскажу о теме",
+    "почему этот раздел важен",
+    "добавлю несколько деталей",
+  ].some((phrase) => lower.includes(phrase));
+}
+
+function sentenceCount(text: string) {
+  return text.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean).length;
+}
+
+function limitSentences(text: string, max: number) {
+  const sentences = text.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean);
+  return sentences.slice(0, max).join(" ");
+}
+
+function lowercaseFirst(value: string) {
+  const text = cleanText(value).replace(/[.!?]+$/g, "");
+  return text ? `${text.charAt(0).toLowerCase()}${text.slice(1)}.` : "";
 }
 
 function buildFallbackBulletItems(project: ProjectInput, order: number) {
@@ -656,39 +698,6 @@ function splitIntoSentences(value: unknown) {
 
 function firstSentence(value: unknown) {
   return splitIntoSentences(value)[0] || "";
-}
-
-function sanitizeIcon(value: unknown) {
-  const icon = cleanText(value).toLowerCase().replace(/[^a-z0-9_-]/g, "");
-  return icon || "dot";
-}
-
-function dedupeByLabel(items: KeyConcept[]) {
-  const seen = new Set<string>();
-  return items.filter((item) => {
-    const key = item.label.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function dedupeHighlights(items: Highlight[]) {
-  const seen = new Set<string>();
-  return items.filter((item) => {
-    const key = item.text.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function extractKeywordPhrases(value: string) {
-  return cleanText(value)
-    .split(/[,.!?;:()\s]+/)
-    .map((word) => word.trim())
-    .filter((word) => word.length >= 5)
-    .slice(0, 12);
 }
 
 function visualTitle(type: SlideVisual["type"]) {
@@ -809,10 +818,16 @@ function fallbackSlideText(project: ProjectInput, order: number) {
 }
 
 function buildFallbackSpeakerNotes(project: ProjectInput, order: number) {
-  const title = fallbackTitle(project, order);
-  const body = fallbackSlideText(project, order);
-  return sanitizeSpeechText(
-    `На этом слайде нужно раскрыть раздел "${title}". ${body} Расскажите это спокойным связным текстом: сначала назовите главную мысль, затем поясните ее на примере и завершите коротким переходом к следующему слайду.`,
+  return buildSlideNarration(
+    {
+      title: fallbackTitle(project, order),
+      thesis: fallbackSlideText(project, order),
+      bullets: buildFallbackBulletItems(project, order).slice(0, 3),
+      definition: null,
+      visual: emptyVisual(),
+    },
+    project,
+    order,
   );
 }
 

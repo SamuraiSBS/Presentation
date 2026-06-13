@@ -49,6 +49,9 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("slideKind title");
     expect(prompt).toContain("slideKind summary");
     expect(prompt).toContain("3-5 short key points");
+    expect(prompt).toContain("keyConcepts: return an empty array");
+    expect(prompt).toContain("highlights: return an empty array");
+    expect(prompt).toContain("4-5 sentence story");
     expect(prompt).toContain("Do not write long text blocks");
     expect(prompt).toContain("process_diagram");
     expect(prompt).toContain("comparison_diagram");
@@ -137,6 +140,9 @@ describe("generatePresentation fallback behavior", () => {
     expect(presentation.slides[5].slideKind).toBe("summary");
     expect(presentation.slides[5].bullets.length).toBeGreaterThanOrEqual(3);
     expect(presentation.slides[5].bullets.length).toBeLessThanOrEqual(5);
+    expect(presentation.slides.every((slide) => slide.keyConcepts.length === 0)).toBe(true);
+    expect(presentation.slides.every((slide) => slide.highlights.length === 0)).toBe(true);
+    expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 4 && sentenceCount(item.text) <= 5)).toBe(true);
   });
 
   it("reads Yandex completion text from result alternatives", async () => {
@@ -193,7 +199,9 @@ describe("generatePresentation fallback behavior", () => {
       expect(presentation.generationMode).toBe("yandex");
       expect(presentation.slides[0].blocks[0]).toEqual({ type: "bullets", items: ["A real generated point"] });
       expect(presentation.slides[0].bullets).toEqual(["A real generated point"]);
-      expect(presentation.speechScript[0].text).toBe("This is a longer narration for the slide.");
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(4);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(5);
+      expect(presentation.speechScript[0].text.toLowerCase()).toContain("a real generated point");
     } finally {
       global.fetch = originalFetch;
     }
@@ -254,9 +262,9 @@ describe("generatePresentation fallback behavior", () => {
         [],
       );
 
-      expect(presentation.speechScript[0].text).toBe(
-        "Русское кино после 2010 года - это современное кино, которое отличается от старого кино новыми темами, технологиями и способом просмотра.",
-      );
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(4);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(5);
+      expect(presentation.speechScript[0].text).toContain("Новая волна российского кино");
       expect(presentation.speechScript[0].text).not.toContain("Добавлю несколько деталей");
     } finally {
       global.fetch = originalFetch;
@@ -416,4 +424,8 @@ function visiblePresentationText(presentation: Awaited<ReturnType<typeof generat
     ]),
     ...presentation.speechScript.flatMap((item) => [item.slideTitle, item.text]),
   ].join("\n");
+}
+
+function sentenceCount(text: string) {
+  return text.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean).length;
 }
