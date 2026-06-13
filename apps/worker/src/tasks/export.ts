@@ -58,25 +58,29 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
     const slide = pptx.addSlide();
     slide.background = { color: "FBFAF5" };
     slide.addText(item.title, {
-      x: 0.55,
-      y: 0.35,
-      w: 12.1,
-      h: 0.7,
+      x: 0.9,
+      y: 2.05,
+      w: 11.55,
+      h: 1.15,
       fontFace: "Arial",
-      fontSize: 25,
+      fontSize: 34,
       bold: true,
       color: "17201B",
+      align: "center",
+      valign: "mid",
       fit: "shrink",
     });
 
     slide.addText(slideBodyText(item), {
-      x: 0.85,
-      y: 1.55,
-      w: 11.5,
-      h: 2.2,
+      x: 1.5,
+      y: 3.55,
+      w: 10.33,
+      h: 1.45,
       fontFace: "Arial",
-      fontSize: 22,
+      fontSize: 19,
       color: "27362F",
+      align: "center",
+      valign: "mid",
       breakLine: false,
       fit: "shrink",
     });
@@ -110,13 +114,53 @@ startxref
 }
 
 function slideBodyText(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
-  return slide.blocks
+  const structured = [
+    slide.thesis,
+    ...slide.bullets,
+    definitionText(slide),
+    visualText(slide),
+    highlightText(slide),
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const text = structured || slide.blocks
     .flatMap((block) => (block.type === "bullets" ? block.items : "content" in block ? [block.content] : []))
     .filter(Boolean)
-    .slice(0, 2)
+    .slice(0, 3)
     .join(" ");
+
+  return sentencePreview(text);
+}
+
+function definitionText(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  return slide.definition ? `${slide.definition.term}: ${slide.definition.text}` : "";
+}
+
+function visualText(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  const visual = slide.visual;
+  if (!visual || visual.type === "none") return "";
+  const rows = visual.rows.map((row) => [row.label, row.left, row.right].filter(Boolean).join(": ")).filter(Boolean);
+  const items = visual.items.map((item) => [item.label, item.text].filter(Boolean).join(": ")).filter(Boolean);
+  const content = (rows.length ? rows : items).slice(0, 4).join("; ");
+  return [visual.title || visual.type, content].filter(Boolean).join(": ");
+}
+
+function highlightText(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  return slide.highlights.length ? `Акценты: ${slide.highlights.map((item) => item.text).join(", ")}` : "";
 }
 
 function escapePdf(value: string) {
   return value.replace(/[()\\]/g, "");
+}
+
+function sentencePreview(value: string) {
+  const text = value.replace(/\s+/g, " ").trim();
+  const sentences = text
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  const preview = sentences.length ? sentences.join(" ") : text;
+
+  return preview.length > 320 ? `${preview.slice(0, 317).trim()}...` : preview;
 }

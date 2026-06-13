@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { PresentationDocument, SlideBlock } from "@studydeck/shared";
-import { sanitizeDisplayText, sanitizeProjectForDisplay, slideBodyTextForDisplay } from "@/lib/presentation-display";
+import { sanitizeDisplayText, sanitizeProjectForDisplay } from "@/lib/presentation-display";
 
 type ProjectPayload = {
   id: string;
@@ -110,16 +110,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
             <span className="muted">{slide.timingSeconds} сек</span>
           </div>
           <article className="slide-canvas">
-            <div>
-              <input
-                key={`${slide.id}-${slide.title}`}
-                className="input"
-                defaultValue={slide.title}
-                onBlur={(event) => saveSlide({ title: event.target.value })}
-                aria-label="Заголовок слайда"
-              />
-              <p className="slide-body">{slideBodyTextForDisplay(slide.blocks, slide.title)}</p>
-            </div>
+            <SlideCanvas slide={slide} />
           </article>
           <textarea
             key={`${slide.id}-${slide.speakerNotes}`}
@@ -139,4 +130,151 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
       </section>
     </>
   );
+}
+
+function SlideCanvas({ slide }: { slide: PresentationDocument["slides"][number] }) {
+  const isDivider = slide.slideKind === "title" || slide.slideKind === "section";
+
+  if (isDivider) {
+    return (
+      <div className={`slide-content slide-content-${slide.slideKind}`}>
+        <span className="slide-kind">{slide.slideKind === "title" ? "Тема" : "Раздел"}</span>
+        <h2 className="slide-title">{slide.title}</h2>
+        {slide.thesis ? <p className="slide-body">{slide.thesis}</p> : null}
+        {slide.highlights.length ? <HighlightBadges highlights={slide.highlights} /> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="slide-content slide-content-structured">
+      <div className="slide-main">
+        <div>
+          <span className="slide-kind">{slide.slideKind === "summary" ? "Выводы" : "Учебный слайд"}</span>
+          <h2 className="slide-title">{slide.title}</h2>
+          {slide.thesis ? <p className="slide-thesis">{slide.thesis}</p> : null}
+        </div>
+        {slide.highlights.length ? <HighlightBadges highlights={slide.highlights} /> : null}
+      </div>
+
+      <div className="slide-grid">
+        <section className="slide-copy">
+          {slide.bullets.length ? (
+            <ul className="slide-bullets">
+              {slide.bullets.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          ) : null}
+          {slide.definition ? (
+            <div className="definition-block">
+              <strong>{slide.definition.term}</strong>
+              <span>{slide.definition.text}</span>
+            </div>
+          ) : null}
+          {slide.keyConcepts.length ? (
+            <div className="concept-row">
+              {slide.keyConcepts.map((concept) => (
+                <span className="concept-chip" key={`${concept.icon}-${concept.label}`}>
+                  <span aria-hidden="true">{conceptIcon(concept.icon)}</span>
+                  {concept.label}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </section>
+        <VisualBlock slide={slide} />
+      </div>
+    </div>
+  );
+}
+
+function HighlightBadges({ highlights }: { highlights: PresentationDocument["slides"][number]["highlights"] }) {
+  return (
+    <div className="highlight-row">
+      {highlights.map((item) => (
+        <span className={`highlight-badge highlight-${item.tone}`} key={`${item.tone}-${item.text}`}>
+          {item.text}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function VisualBlock({ slide }: { slide: PresentationDocument["slides"][number] }) {
+  const visual = slide.visual;
+  if (!visual || visual.type === "none") return <div className="visual-card visual-empty">Смысловая схема</div>;
+
+  if (visual.rows.length && ["comparison_diagram", "before_after_table", "pros_cons_table", "cause_effect_diagram"].includes(visual.type)) {
+    return (
+      <section className={`visual-card visual-${visual.type}`}>
+        <strong>{visual.title}</strong>
+        <div className="visual-table">
+          <span>{visual.leftLabel || "Первое"}</span>
+          <span>{visual.rightLabel || "Второе"}</span>
+          {visual.rows.map((row, index) => (
+            <div className="visual-row" key={`${row.label}-${index}`}>
+              <p>{row.left || row.label}</p>
+              <p>{row.right || row.label}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  if (visual.type === "timeline") {
+    return (
+      <section className="visual-card visual-timeline">
+        <strong>{visual.title}</strong>
+        {visual.items.map((item, index) => (
+          <div className="timeline-item" key={`${item.label}-${index}`}>
+            <span>{index + 1}</span>
+            <p>{item.label}</p>
+          </div>
+        ))}
+      </section>
+    );
+  }
+
+  if (visual.type === "mind_map") {
+    return (
+      <section className="visual-card visual-mindmap">
+        <strong>{visual.title || slide.title}</strong>
+        <div className="mindmap-center">{slide.title}</div>
+        <div className="mindmap-nodes">
+          {visual.items.slice(0, 6).map((item) => (
+            <span key={item.label}>{item.label}</span>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className={`visual-card visual-${visual.type}`}>
+      <strong>{visual.title || "Схема"}</strong>
+      <div className="visual-steps">
+        {(visual.items.length ? visual.items : slide.bullets.map((label) => ({ label, text: "" }))).slice(0, 5).map((item, index) => (
+          <div className="visual-step" key={`${item.label}-${index}`}>
+            <span>{index + 1}</span>
+            <p>{item.label}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function conceptIcon(icon: string) {
+  const map: Record<string, string> = {
+    idea: "!",
+    process: ">",
+    compare: "=",
+    cause: "+",
+    time: "#",
+    map: "*",
+    check: "✓",
+  };
+  return map[icon] || "•";
 }

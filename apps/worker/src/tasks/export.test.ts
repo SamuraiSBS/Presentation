@@ -33,7 +33,22 @@ describe("createPptx", () => {
           id: "slide-1",
           order: 1,
           title: "Русское кино после 2010 года",
+          slideKind: "content",
           layout: "hero",
+          thesis: "После 2010 года российское кино стало заметнее работать с жанрами.",
+          bullets: ["Появились онлайн-премьеры", "Фестивальные драмы остались важными", "Франшизы расширили аудиторию"],
+          definition: { term: "Франшиза", text: "Серия связанных фильмов с общей идеей или героями." },
+          keyConcepts: [{ label: "Жанры", icon: "idea" }],
+          visual: {
+            type: "timeline",
+            title: "Изменения",
+            description: "",
+            leftLabel: "",
+            rightLabel: "",
+            items: [{ label: "2010-е", text: "Рост разных форматов" }],
+            rows: [],
+          },
+          highlights: [{ text: "онлайн-премьеры", tone: "accent" }],
           blocks: [
             {
               type: "callout",
@@ -54,6 +69,10 @@ describe("createPptx", () => {
 
     expect(presentationXml).toContain('<p:sldSz cx="12192000" cy="6858000"/>');
     expect(slideXml).toContain("Русское кино после 2010 года");
+    expect(slideXml).toContain("После 2010 года российское кино");
+    expect(slideXml).toContain("онлайн-премьеры");
+    expect(slideXml).toContain("Франшиза");
+    expect(slideXml).toContain("Изменения");
     expect(slideXml).not.toContain("Источник");
   });
 });

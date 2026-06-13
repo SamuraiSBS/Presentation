@@ -60,11 +60,78 @@ export const slideBlockSchema = z.discriminatedUnion("type", [
 ]);
 export type SlideBlock = z.infer<typeof slideBlockSchema>;
 
+export const slideKindSchema = z.enum(["title", "section", "content", "summary"]);
+export type SlideKind = z.infer<typeof slideKindSchema>;
+
+export const visualTypeSchema = z.enum([
+  "process_diagram",
+  "comparison_diagram",
+  "cause_effect_diagram",
+  "before_after_table",
+  "pros_cons_table",
+  "timeline",
+  "mind_map",
+  "illustration",
+  "schema",
+  "image",
+  "none",
+]);
+export type VisualType = z.infer<typeof visualTypeSchema>;
+
+export const slideDefinitionSchema = z.object({
+  term: z.string().default(""),
+  text: z.string().default(""),
+});
+export type SlideDefinition = z.infer<typeof slideDefinitionSchema>;
+
+export const keyConceptSchema = z.object({
+  label: z.string(),
+  icon: z.string().default("dot"),
+});
+export type KeyConcept = z.infer<typeof keyConceptSchema>;
+
+export const highlightSchema = z.object({
+  text: z.string(),
+  tone: z.enum(["accent", "success", "warning", "neutral"]).default("accent"),
+});
+export type Highlight = z.infer<typeof highlightSchema>;
+
+export const slideVisualItemSchema = z.object({
+  label: z.string(),
+  text: z.string().default(""),
+});
+export type SlideVisualItem = z.infer<typeof slideVisualItemSchema>;
+
+export const slideVisualRowSchema = z.object({
+  label: z.string().default(""),
+  left: z.string().default(""),
+  right: z.string().default(""),
+});
+export type SlideVisualRow = z.infer<typeof slideVisualRowSchema>;
+
+export const slideVisualSchema = z.object({
+  type: visualTypeSchema.default("none"),
+  title: z.string().default(""),
+  description: z.string().default(""),
+  leftLabel: z.string().default(""),
+  rightLabel: z.string().default(""),
+  items: z.array(slideVisualItemSchema).max(8).default([]),
+  rows: z.array(slideVisualRowSchema).max(8).default([]),
+});
+export type SlideVisual = z.infer<typeof slideVisualSchema>;
+
 export const slideSchema = z.object({
   id: z.string(),
   order: z.number().int().positive(),
   title: z.string(),
+  slideKind: slideKindSchema.default("content"),
   layout: z.enum(["hero", "bullets", "two-column", "summary"]),
+  thesis: z.string().default(""),
+  bullets: z.array(z.string()).max(5).default([]),
+  definition: slideDefinitionSchema.nullable().default(null),
+  keyConcepts: z.array(keyConceptSchema).max(5).default([]),
+  visual: slideVisualSchema.default({ type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] }),
+  highlights: z.array(highlightSchema).max(6).default([]),
   blocks: z.array(slideBlockSchema),
   speakerNotes: z.string(),
   timingSeconds: z.number().int().min(20).max(240),

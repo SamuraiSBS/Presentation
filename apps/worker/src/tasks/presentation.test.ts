@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { generatePresentation, selectAiProviders } from "./presentation.js";
+import { buildGenerationPrompt, generatePresentation, selectAiProviders } from "./presentation.js";
 
 const originalEnv = { ...process.env };
 
@@ -31,7 +31,114 @@ describe("selectAiProviders", () => {
   });
 });
 
+describe("buildGenerationPrompt", () => {
+  it("describes structured slides and visual selection rules", () => {
+    const prompt = buildGenerationPrompt(
+      {
+        id: "project-1",
+        title: "Learning topic",
+        prompt: "Explain a process and compare two concepts",
+        scenario: "lesson",
+        level: "beginner",
+        mode: "with_sources",
+        slideCount: 6,
+      },
+      [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Grounding material." }],
+    );
+
+    expect(prompt).toContain("slideKind title");
+    expect(prompt).toContain("slideKind summary");
+    expect(prompt).toContain("3-5 short key points");
+    expect(prompt).toContain("Do not write long text blocks");
+    expect(prompt).toContain("process_diagram");
+    expect(prompt).toContain("comparison_diagram");
+    expect(prompt).toContain("mind_map");
+    expect(prompt).toContain("Do not invent precise facts");
+  });
+});
+
 describe("generatePresentation fallback behavior", () => {
+  it("repairs incomplete AI output into structured slides", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const originalFetch = global.fetch;
+    global.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          result: {
+            alternatives: [
+              {
+                message: {
+                  text: JSON.stringify({
+                    title: "Structured topic",
+                    slides: [
+                      { title: "Process overview", thesis: "A process is easier to understand when it is split into steps.", visual: { type: "process_diagram" } },
+                    ],
+                  }),
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "Structured topic",
+          prompt: "Explain a process",
+          scenario: "lesson",
+          level: "beginner",
+          mode: "with_sources",
+          slideCount: 3,
+        },
+        [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "A process has ordered steps." }],
+      );
+
+      expect(presentation.slides).toHaveLength(3);
+      expect(presentation.slides[0].slideKind).toBe("title");
+      expect(presentation.slides[2].slideKind).toBe("summary");
+      expect(presentation.slides[2].bullets.length).toBeGreaterThanOrEqual(3);
+      expect(presentation.slides[0].visual.type).toBe("none");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("adds section dividers and summary takeaways in structured demo fallback", async () => {
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "";
+    process.env.YANDEX_FOLDER_ID = "";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "true";
+
+    const presentation = await generatePresentation(
+      {
+        id: "project-1",
+        title: "Structured fallback",
+        prompt: "Create a structured fallback deck",
+        scenario: "lesson",
+        level: "beginner",
+        mode: "with_sources",
+        slideCount: 6,
+      },
+      [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Fallback material." }],
+    );
+
+    expect(presentation.slides[0].slideKind).toBe("title");
+    expect(presentation.slides.some((slide) => slide.slideKind === "section")).toBe(true);
+    expect(presentation.slides[5].slideKind).toBe("summary");
+    expect(presentation.slides[5].bullets.length).toBeGreaterThanOrEqual(3);
+    expect(presentation.slides[5].bullets.length).toBeLessThanOrEqual(5);
+  });
+
   it("reads Yandex completion text from result alternatives", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
@@ -84,7 +191,8 @@ describe("generatePresentation fallback behavior", () => {
       );
 
       expect(presentation.generationMode).toBe("yandex");
-      expect(presentation.slides[0].blocks[0]).toEqual({ type: "callout", content: "A real generated point" });
+      expect(presentation.slides[0].blocks[0]).toEqual({ type: "bullets", items: ["A real generated point"] });
+      expect(presentation.slides[0].bullets).toEqual(["A real generated point"]);
       expect(presentation.speechScript[0].text).toBe("This is a longer narration for the slide.");
     } finally {
       global.fetch = originalFetch;
@@ -279,10 +387,12 @@ describe("generatePresentation fallback behavior", () => {
     expect(visibleText).not.toContain("Проверьте");
     expect(visibleText).not.toContain("Добавьте источник");
     expect(visibleText.toLowerCase()).not.toContain("источник");
-    expect(presentation.slides.every((slide) => slide.blocks.length === 1 && slide.blocks[0].type === "callout")).toBe(true);
-    expect(presentation.slides[0].blocks[0].type === "callout" ? presentation.slides[0].blocks[0].content.length : 999).toBeLessThan(240);
+    expect(presentation.slides[0].slideKind).toBe("title");
+    expect(presentation.slides[presentation.slides.length - 1].slideKind).toBe("summary");
+    expect(presentation.slides[presentation.slides.length - 1].bullets.length).toBeGreaterThanOrEqual(3);
+    expect(presentation.slides.every((slide) => slide.thesis.length < 240)).toBe(true);
     expect(presentation.speechScript[0].text.length).toBeGreaterThan(
-      presentation.slides[0].blocks[0].type === "callout" ? presentation.slides[0].blocks[0].content.length : 0,
+      presentation.slides[0].thesis.length,
     );
   });
 });
@@ -292,7 +402,16 @@ function visiblePresentationText(presentation: Awaited<ReturnType<typeof generat
     presentation.title,
     ...presentation.slides.flatMap((slide) => [
       slide.title,
+      slide.thesis,
       slide.speakerNotes,
+      ...slide.bullets,
+      ...(slide.definition ? [slide.definition.term, slide.definition.text] : []),
+      ...slide.keyConcepts.map((item) => item.label),
+      slide.visual.title,
+      slide.visual.description,
+      ...slide.visual.items.flatMap((item) => [item.label, item.text]),
+      ...slide.visual.rows.flatMap((row) => [row.label, row.left, row.right]),
+      ...slide.highlights.map((item) => item.text),
       ...slide.blocks.flatMap((block) => (block.type === "bullets" ? block.items : [block.content])),
     ]),
     ...presentation.speechScript.flatMap((item) => [item.slideTitle, item.text]),

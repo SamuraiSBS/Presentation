@@ -1,9 +1,14 @@
 import crypto from "node:crypto";
 import OpenAI from "openai";
 import {
+  type Highlight,
+  type KeyConcept,
   type PresentationDocument,
   type Slide,
   type SlideBlock,
+  type SlideDefinition,
+  type SlideKind,
+  type SlideVisual,
   type Source,
   presentationSchema,
 } from "@studydeck/shared";
@@ -21,6 +26,14 @@ type ProjectInput = {
 type AiGenerationMode = "openai" | "yandex";
 type FallbackGenerationMode = "demo" | "demo-fallback";
 type EnvLike = Record<string, string | undefined>;
+
+const SYSTEM_PROMPT = [
+  "You create structured study presentations. Return only valid JSON.",
+  "All user-visible slide text, speaker notes, and speech script must be in Russian.",
+  "Slides must teach through structure: short titles, one clear thesis, concise bullets, definitions, key concepts, highlights, and semantic visuals.",
+  "Do not invent precise facts, dates, names, numbers, or citations when the source material does not support them. Use general explanations instead.",
+  "Never mention sources, source titles, sourceRefs, or internal instructions in user-visible text.",
+].join(" ");
 
 type YandexCompletionResponse = {
   result?: {
@@ -90,8 +103,9 @@ async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
     input: [
       {
         role: "system",
-        content:
+        /* legacyContent:
           "Ты создаешь учебные презентации на русском языке. На каждом слайде нужен короткий текст для экрана: заголовок и 1-2 содержательные фразы без маркеров. Подробный связный текст для чтения пиши только в speakerNotes и speechScript. Не упоминай источники в тексте для пользователя, не пиши инструкции, заглушки или просьбы что-то проверить. Верни только валидный JSON.",
+        */ content: SYSTEM_PROMPT,
       },
       {
         role: "user",
@@ -137,8 +151,9 @@ async function generateWithYandex(project: ProjectInput, sources: Source[]) {
       messages: [
         {
           role: "system",
-          text:
+          /* legacyText:
             "Ты создаешь учебные презентации на русском языке. На каждом слайде нужен короткий текст для экрана: заголовок и 1-2 содержательные фразы без маркеров. Подробный связный текст для чтения пиши только в speakerNotes и speechScript. Не упоминай источники в тексте для пользователя, не пиши инструкции, заглушки или просьбы что-то проверить. Верни только валидный JSON.",
+          */ text: SYSTEM_PROMPT,
         },
         {
           role: "user",
@@ -162,7 +177,52 @@ async function generateWithYandex(project: ProjectInput, sources: Source[]) {
   return normalizePresentation(parseJsonText(outputText), project, sources, "yandex");
 }
 
-function buildGenerationPrompt(project: ProjectInput, sources: Source[]) {
+export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) {
+  return [
+    "Create a complete StudyDeck PresentationDocument as JSON.",
+    `User topic and request: ${project.prompt}`,
+    `Project title: ${project.title}`,
+    `Scenario: ${project.scenario}`,
+    `Audience level: ${project.level}`,
+    `Exact slide count: ${project.slideCount}`,
+    `Mode: ${project.mode}`,
+    "All slide-facing text must be in Russian.",
+    "Required deck structure:",
+    "- slide 1 must have slideKind title;",
+    "- the final slide must have slideKind summary and contain 3-5 key takeaways in bullets;",
+    "- include slideKind section divider slides between major chapters when the deck has enough slides;",
+    "- all other study slides must have slideKind content.",
+    "Required JSON fields: id, title, scenario, level, slideCount, outline, speechScript, slides.",
+    "Each slide must include: id, order, title, slideKind, layout, thesis, bullets, definition, keyConcepts, visual, highlights, blocks, speakerNotes, timingSeconds, sourceRefs.",
+    "Content slide rules:",
+    "- title: short, ideally 6-8 words or fewer;",
+    "- thesis: one sentence with the main idea of the slide;",
+    "- bullets: 3-5 short key points, not paragraphs;",
+    "- definition: { term, text } only when an important term needs a simple definition; otherwise null;",
+    "- keyConcepts: 2-5 items with { label, icon }; use simple icon names like idea, process, compare, cause, time, map, check;",
+    "- highlights: 2-6 important words or phrases as { text, tone };",
+    "- blocks: keep a backward-compatible fallback, preferably one bullets block mirroring bullets or one short callout.",
+    "Visual field rules:",
+    "- visual.type must be one of: process_diagram, comparison_diagram, cause_effect_diagram, before_after_table, pros_cons_table, timeline, mind_map, illustration, schema, image, none;",
+    "- use process_diagram for ordered actions or steps;",
+    "- use comparison_diagram for comparing concepts;",
+    "- use cause_effect_diagram for causes and consequences;",
+    "- use before_after_table for changes over time or transformation;",
+    "- use pros_cons_table for evaluating options;",
+    "- use timeline for historical or chronological topics;",
+    "- use mind_map for relationships between concepts;",
+    "- use illustration, schema, or image when a visual explanation is useful but no structured diagram fits;",
+    "- visual.items contains steps/nodes; visual.rows with left/right columns is for tables and comparisons.",
+    "Hard limits:",
+    "- Do not write long text blocks on slides.",
+    "- Do not put markdown headings, source names, citations, sourceRefs, TODOs, or instructions into slide text.",
+    "- Do not invent precise facts when the material does not support them; give a general explanation instead.",
+    "- Keep detailed narration only in speakerNotes and speechScript.",
+    `Source material for internal factual grounding only; do not show source labels to the user:\n${formatSourceText(sources)}`,
+  ].join("\n\n");
+}
+
+function legacyBuildGenerationPrompt(project: ProjectInput, sources: Source[]) {
   return [
     "Собери готовую презентацию StudyDeck PresentationDocument.",
     `Тема и запрос пользователя: ${project.prompt}`,
@@ -258,13 +318,28 @@ function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], pro
     ? slide.sourceRefs
     : [sourceRefFromSource(sources[(order - 1) % sources.length])];
   const rawBlocks = Array.isArray(slide.blocks) ? slide.blocks.map(normalizeBlock).filter((block): block is SlideBlock => Boolean(block)) : [];
-  const blocks = normalizeSlideBlocks(rawBlocks, project, order);
+  const slideKind = normalizeSlideKind(slide.slideKind, order, project.slideCount);
+  const title = shortenWords(cleanText(slide.title) || fallbackTitle(project, order), slideKind === "title" ? 12 : 8);
+  const thesis = normalizeThesis(slide.thesis, rawBlocks, project, order, slideKind);
+  const bullets = normalizeBullets(slide.bullets, rawBlocks, project, order, slideKind);
+  const definition = normalizeDefinition(slide.definition);
+  const keyConcepts = normalizeKeyConcepts(slide.keyConcepts, title, bullets, slideKind);
+  const highlights = normalizeHighlights(slide.highlights, thesis, bullets, slideKind);
+  const visual = normalizeVisual(slide.visual, title, bullets, slideKind);
+  const blocks = normalizeSlideBlocks(rawBlocks, project, order, thesis, bullets, slideKind);
 
   return {
     id: cleanText(slide.id) || `slide-${order}`,
     order,
-    title: cleanText(slide.title) || fallbackTitle(project, order),
+    title,
+    slideKind,
     layout: normalizeLayout(slide.layout, order, project.slideCount),
+    thesis,
+    bullets,
+    definition,
+    keyConcepts,
+    visual,
+    highlights,
     blocks,
     speakerNotes: sanitizeSpeechText(slide.speakerNotes) || buildFallbackSpeakerNotes(project, order),
     timingSeconds: clampNumber(Number(slide.timingSeconds || 55), 20, 240),
@@ -284,7 +359,7 @@ function normalizeBlock(block: unknown): SlideBlock | null {
 
   const candidate = block as Partial<SlideBlock>;
   if (candidate.type === "bullets") {
-    const items = Array.isArray(candidate.items) ? candidate.items.map(sanitizeScreenText).filter(Boolean).slice(0, 2) : [];
+    const items = Array.isArray(candidate.items) ? candidate.items.map(sanitizeScreenText).filter(Boolean).slice(0, 5) : [];
     return items.length ? { type: "bullets", items } : null;
   }
 
@@ -294,6 +369,155 @@ function normalizeBlock(block: unknown): SlideBlock | null {
   }
 
   return null;
+}
+
+function normalizeSlideKind(value: unknown, order: number, slideCount: number): SlideKind {
+  if (order === 1) return "title";
+  if (order === slideCount) return "summary";
+  if (value === "section" || value === "content") return value;
+  if (slideCount >= 6 && (order === 2 || order === Math.ceil(slideCount / 2))) return "section";
+  return "content";
+}
+
+function normalizeThesis(value: unknown, blocks: SlideBlock[], project: ProjectInput, order: number, slideKind: SlideKind) {
+  if (slideKind === "section") return "";
+  const fromValue = firstSentence(sanitizeScreenText(value));
+  if (fromValue) return shortenSentence(fromValue, 180);
+  const fromBlocks = firstSentence(slideText(blocks));
+  return shortenSentence(fromBlocks || fallbackSlideText(project, order), slideKind === "title" ? 220 : 180);
+}
+
+function normalizeBullets(value: unknown, blocks: SlideBlock[], project: ProjectInput, order: number, slideKind: SlideKind) {
+  const fromValue = Array.isArray(value) ? value.map(sanitizeScreenText).filter(Boolean) : [];
+  const fromBlocks = blocks.flatMap((block) => (block.type === "bullets" ? block.items : splitIntoSentences("content" in block ? block.content : "")));
+  const items = uniqueShortItems([...fromValue, ...fromBlocks]).slice(0, 5);
+
+  if (slideKind === "title" || slideKind === "section") {
+    return items.slice(0, 3);
+  }
+
+  const minimum = slideKind === "summary" ? 3 : 3;
+  const fallback = buildFallbackBulletItems(project, order);
+  return ensureRange(items, fallback, minimum, 5);
+}
+
+function normalizeDefinition(value: unknown): SlideDefinition | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<SlideDefinition>;
+  const term = sanitizeScreenText(candidate.term);
+  const text = sanitizeScreenText(candidate.text);
+  return term && text ? { term: shortenSentence(term, 60), text: shortenSentence(text, 180) } : null;
+}
+
+function normalizeKeyConcepts(value: unknown, title: string, bullets: string[], slideKind: SlideKind): KeyConcept[] {
+  const fromValue = Array.isArray(value)
+    ? value
+        .map((item) => {
+          if (typeof item === "string") return { label: sanitizeScreenText(item), icon: "dot" };
+          if (!item || typeof item !== "object") return null;
+          const candidate = item as Partial<KeyConcept>;
+          const label = sanitizeScreenText(candidate.label);
+          return label ? { label: shortenSentence(label, 42), icon: sanitizeIcon(candidate.icon) } : null;
+        })
+        .filter((item): item is KeyConcept => Boolean(item))
+    : [];
+
+  if (fromValue.length) return dedupeByLabel(fromValue).slice(0, 5);
+  if (slideKind === "title" || slideKind === "section") return [];
+
+  return uniqueShortItems([title, ...bullets])
+    .slice(0, 4)
+    .map((label, index) => ({ label: shortenSentence(label, 42), icon: ["idea", "check", "map", "process"][index] || "dot" }));
+}
+
+function normalizeHighlights(value: unknown, thesis: string, bullets: string[], slideKind: SlideKind): Highlight[] {
+  const fromValue = Array.isArray(value)
+    ? value
+        .map((item) => {
+          if (typeof item === "string") return { text: sanitizeScreenText(item), tone: "accent" as const };
+          if (!item || typeof item !== "object") return null;
+          const candidate = item as Partial<Highlight>;
+          const text = sanitizeScreenText(candidate.text);
+          const tone = candidate.tone === "success" || candidate.tone === "warning" || candidate.tone === "neutral" ? candidate.tone : "accent";
+          return text ? { text: shortenSentence(text, 36), tone } : null;
+        })
+        .filter((item): item is Highlight => Boolean(item))
+    : [];
+
+  if (fromValue.length) return dedupeHighlights(fromValue).slice(0, 6);
+  if (slideKind === "title" || slideKind === "section") return [];
+
+  return uniqueShortItems(extractKeywordPhrases([thesis, ...bullets].join(" ")))
+    .slice(0, 4)
+    .map((text, index) => ({ text, tone: index === 1 ? "success" : "accent" }));
+}
+
+function normalizeVisual(value: unknown, title: string, bullets: string[], slideKind: SlideKind): SlideVisual {
+  if (slideKind === "title") return emptyVisual();
+
+  const candidate = value && typeof value === "object" ? (value as Partial<SlideVisual>) : {};
+  const type = normalizeVisualType(candidate.type, title, bullets, slideKind);
+  const rows = Array.isArray(candidate.rows)
+    ? candidate.rows
+        .map((row) => ({
+          label: sanitizeScreenText(row?.label),
+          left: sanitizeScreenText(row?.left),
+          right: sanitizeScreenText(row?.right),
+        }))
+        .filter((row) => row.label || row.left || row.right)
+        .slice(0, 8)
+    : [];
+  const items = Array.isArray(candidate.items)
+    ? candidate.items
+        .map((item) => ({
+          label: sanitizeScreenText(item?.label),
+          text: sanitizeScreenText(item?.text),
+        }))
+        .filter((item) => item.label || item.text)
+        .slice(0, 8)
+    : [];
+  const fallbackItems = bullets.slice(0, type === "timeline" ? 6 : 5).map((label) => ({ label, text: "" }));
+
+  return {
+    type,
+    title: sanitizeScreenText(candidate.title) || visualTitle(type),
+    description: sanitizeScreenText(candidate.description),
+    leftLabel: sanitizeScreenText(candidate.leftLabel) || defaultLeftLabel(type),
+    rightLabel: sanitizeScreenText(candidate.rightLabel) || defaultRightLabel(type),
+    items: items.length ? items : fallbackItems,
+    rows: rows.length ? rows : fallbackRows(type, bullets),
+  };
+}
+
+function normalizeVisualType(value: unknown, title: string, bullets: string[], slideKind: SlideKind): SlideVisual["type"] {
+  const allowed: SlideVisual["type"][] = [
+    "process_diagram",
+    "comparison_diagram",
+    "cause_effect_diagram",
+    "before_after_table",
+    "pros_cons_table",
+    "timeline",
+    "mind_map",
+    "illustration",
+    "schema",
+    "image",
+    "none",
+  ];
+  if (allowed.includes(value as SlideVisual["type"])) return value as SlideVisual["type"];
+  if (slideKind === "section") return "schema";
+  const text = [title, ...bullets].join(" ").toLowerCase();
+  if (/\b(step|stage|process|first|second|then|next|algorithm)\b/.test(text)) return "process_diagram";
+  if (/\b(compare|versus|vs|difference|similar|unlike)\b/.test(text)) return "comparison_diagram";
+  if (/\b(cause|effect|because|consequence|impact|leads to)\b/.test(text)) return "cause_effect_diagram";
+  if (/\b(before|after|change|became|transformation)\b/.test(text)) return "before_after_table";
+  if (/\b(pros|cons|benefit|risk|advantage|disadvantage)\b/.test(text)) return "pros_cons_table";
+  if (/\b(year|century|period|timeline|history|date)\b|\b\d{3,4}\b/.test(text)) return "timeline";
+  if (/\b(connection|relationship|concept|map|network)\b/.test(text)) return "mind_map";
+  return slideKind === "summary" ? "mind_map" : "schema";
+}
+
+function emptyVisual(): SlideVisual {
+  return { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] };
 }
 
 function normalizeSources(sources: Source[], project: ProjectInput): Source[] {
@@ -325,29 +549,39 @@ function sourceRefFromSource(source: Source | undefined) {
 
 function buildFallbackSlide(order: number, project: ProjectInput, sources: Source[]): Slide {
   const source = sources[(order - 1) % sources.length];
+  const slideKind = normalizeSlideKind(undefined, order, project.slideCount);
+  const title = fallbackTitle(project, order);
+  const thesis = normalizeThesis("", [], project, order, slideKind);
+  const bullets = normalizeBullets([], [], project, order, slideKind);
   return {
     id: `slide-${order}`,
     order,
-    title: fallbackTitle(project, order),
+    title,
+    slideKind,
     layout: normalizeLayout(undefined, order, project.slideCount),
-    blocks: buildFallbackBlocks(project, order),
+    thesis,
+    bullets,
+    definition: null,
+    keyConcepts: normalizeKeyConcepts([], title, bullets, slideKind),
+    visual: normalizeVisual(undefined, title, bullets, slideKind),
+    highlights: normalizeHighlights([], thesis, bullets, slideKind),
+    blocks: buildFallbackBlocks(project, order, thesis, bullets, slideKind),
     speakerNotes: buildFallbackSpeakerNotes(project, order),
     timingSeconds: order === 1 || order === project.slideCount ? 45 : 55,
     sourceRefs: [sourceRefFromSource(source)],
   };
 }
 
-function buildFallbackBlocks(project: ProjectInput, order = 1): SlideBlock[] {
-  return [
-    {
-      type: "callout",
-      content: fallbackSlideText(project, order),
-    },
-  ];
+function buildFallbackBlocks(project: ProjectInput, order = 1, thesis = "", bullets: string[] = [], slideKind: SlideKind = "content"): SlideBlock[] {
+  if (slideKind === "summary" || bullets.length >= 3) {
+    return [{ type: "bullets", items: bullets.length ? bullets : buildFallbackBulletItems(project, order) }];
+  }
+
+  return [{ type: "callout", content: thesis || fallbackSlideText(project, order) }];
 }
 
 function buildSpeechText(slide: Slide, project: ProjectInput, index: number) {
-  const body = slideText(slide.blocks) || fallbackSlideText(project, index + 1);
+  const body = [slide.thesis, ...slide.bullets].filter(Boolean).join(" ") || slideText(slide.blocks) || fallbackSlideText(project, index + 1);
   const intro = index === 0
     ? `Сегодня я расскажу о теме "${project.title}".`
     : `На этом слайде раскрывается раздел "${slide.title}".`;
@@ -370,9 +604,133 @@ function fallbackTitle(project: ProjectInput, order: number) {
   return titles[order - 1] || `${order}. ${project.title}`;
 }
 
-function normalizeSlideBlocks(blocks: SlideBlock[], project: ProjectInput, order: number): SlideBlock[] {
-  const text = slideText(blocks) || fallbackSlideText(project, order);
-  return [{ type: "callout", content: shortenSentence(text, 230) }];
+function normalizeSlideBlocks(
+  blocks: SlideBlock[],
+  project: ProjectInput,
+  order: number,
+  thesis: string,
+  bullets: string[],
+  slideKind: SlideKind,
+): SlideBlock[] {
+  if (blocks.length) return blocks.slice(0, 3);
+  return buildFallbackBlocks(project, order, thesis, bullets, slideKind);
+}
+
+function buildFallbackBulletItems(project: ProjectInput, order: number) {
+  const topic = cleanText(project.title || project.prompt);
+  const base = [
+    `Главная идея связана с темой: ${topic}`,
+    "Материал стоит разбирать по смысловым частям",
+    "Ключевые понятия помогают удержать структуру",
+    "Пример или визуальная схема делает объяснение понятнее",
+    "Итог должен связывать факты с главным выводом",
+  ];
+  return base.map((item, index) => shortenSentence(index === 0 && order > 1 ? item.replace(topic, fallbackTitle(project, order)) : item, 120));
+}
+
+function ensureRange(items: string[], fallback: string[], min: number, max: number) {
+  const next = uniqueShortItems([...items, ...fallback]).slice(0, max);
+  return next.length >= min ? next : fallback.slice(0, max);
+}
+
+function uniqueShortItems(items: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of items) {
+    const clean = shortenSentence(sanitizeScreenText(item).replace(/^[-*]\s*/, ""), 130);
+    const key = clean.toLowerCase();
+    if (clean && !seen.has(key)) {
+      seen.add(key);
+      result.push(clean);
+    }
+  }
+  return result;
+}
+
+function splitIntoSentences(value: unknown) {
+  return cleanText(value)
+    .split(/(?<=[.!?])\s+|[;\n]+/)
+    .map(sanitizeScreenText)
+    .filter(Boolean);
+}
+
+function firstSentence(value: unknown) {
+  return splitIntoSentences(value)[0] || "";
+}
+
+function sanitizeIcon(value: unknown) {
+  const icon = cleanText(value).toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  return icon || "dot";
+}
+
+function dedupeByLabel(items: KeyConcept[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = item.label.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeHighlights(items: Highlight[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = item.text.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function extractKeywordPhrases(value: string) {
+  return cleanText(value)
+    .split(/[,.!?;:()\s]+/)
+    .map((word) => word.trim())
+    .filter((word) => word.length >= 5)
+    .slice(0, 12);
+}
+
+function visualTitle(type: SlideVisual["type"]) {
+  const titles: Record<SlideVisual["type"], string> = {
+    process_diagram: "Процесс",
+    comparison_diagram: "Сравнение",
+    cause_effect_diagram: "Причина и следствие",
+    before_after_table: "До и после",
+    pros_cons_table: "Плюсы и минусы",
+    timeline: "Хронология",
+    mind_map: "Карта понятий",
+    illustration: "Иллюстрация",
+    schema: "Схема",
+    image: "Визуальный пример",
+    none: "",
+  };
+  return titles[type];
+}
+
+function defaultLeftLabel(type: SlideVisual["type"]) {
+  if (type === "before_after_table") return "До";
+  if (type === "pros_cons_table") return "Плюсы";
+  if (type === "comparison_diagram") return "Первое";
+  if (type === "cause_effect_diagram") return "Причина";
+  return "";
+}
+
+function defaultRightLabel(type: SlideVisual["type"]) {
+  if (type === "before_after_table") return "После";
+  if (type === "pros_cons_table") return "Минусы";
+  if (type === "comparison_diagram") return "Второе";
+  if (type === "cause_effect_diagram") return "Следствие";
+  return "";
+}
+
+function fallbackRows(type: SlideVisual["type"], bullets: string[]) {
+  if (!["comparison_diagram", "before_after_table", "pros_cons_table", "cause_effect_diagram"].includes(type)) return [];
+  return bullets.slice(0, 4).map((item, index) => ({
+    label: index === 0 ? "Главное" : `Пункт ${index + 1}`,
+    left: item,
+    right: "",
+  }));
 }
 
 function slideText(blocks: SlideBlock[]) {
@@ -380,7 +738,7 @@ function slideText(blocks: SlideBlock[]) {
     blocks
       .flatMap((block) => (block.type === "bullets" ? block.items : [block.content]))
       .filter(Boolean)
-      .slice(0, 2)
+      .slice(0, 5)
       .join(" "),
   );
 }
@@ -528,6 +886,11 @@ function removeBannedSentences(value: string) {
 function shortenSentence(value: string, maxLength: number) {
   const text = cleanText(value);
   return text.length > maxLength ? `${text.slice(0, maxLength - 3).trim()}...` : text;
+}
+
+function shortenWords(value: string, maxWords: number) {
+  const words = cleanText(value).split(/\s+/).filter(Boolean);
+  return words.length > maxWords ? `${words.slice(0, maxWords).join(" ")}...` : words.join(" ");
 }
 
 function clampNumber(value: number, min: number, max: number) {

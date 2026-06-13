@@ -8,7 +8,7 @@ const source = {
     "Демо-проект показывает, как выглядят план, редактор слайдов, заметки спикера и рассказ по слайдам без запуска production backend.",
 };
 
-const slides: PresentationDocument["slides"] = [
+const slides: any[] = [
   {
     id: "slide-1",
     order: 1,
@@ -104,10 +104,10 @@ export const demoPresentation: PresentationDocument = {
     slideOrder: slide.order,
     slideTitle: slide.title,
     text: `${slide.speakerNotes} Ключевые тезисы: ${slide.blocks
-      .flatMap((block) => (block.type === "bullets" ? block.items : [block.content]))
+      .flatMap((block: SlideBlock) => (block.type === "bullets" ? block.items : [block.content]))
       .join(" ")}`,
   })),
-  slides,
+  slides: slides as PresentationDocument["slides"],
 };
 
 export const demoProject = {
@@ -139,7 +139,7 @@ export function updateDemoSlide(slideId: string, input: { title?: string; blocks
   const nextPresentation: PresentationDocument = {
     ...demoPresentation,
     outline: nextSlides.map((slide) => slide.title),
-    slides: nextSlides,
+    slides: nextSlides as PresentationDocument["slides"],
   };
 
   return {
