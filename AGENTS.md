@@ -95,6 +95,51 @@ Useful URLs after compose startup:
 
 For HTTPS on localhost, Caddy uses a local certificate. Use `curl.exe -k` for command-line checks when needed.
 
+## Applying Changes To The Running App
+
+If the user is checking the app in Docker compose (`http://localhost:3010` or `https://localhost`), source edits are not visible until the affected images are rebuilt and containers are recreated. Do this before handing off UI, API, or worker changes so the user does not need to ask whether changes were applied.
+
+Use the narrowest service set that matches the files changed:
+- `apps/web`, `packages/shared` used by web, or UI display logic: `web`
+- `apps/api`, `packages/shared` used by API, or Prisma client/API contracts: `api`
+- `apps/worker`, generation/export/extraction logic, or `packages/shared` used by jobs: `worker`
+- `prisma/schema.prisma` or migrations: usually `api worker`, plus run migration/deploy as needed
+- `infra/Caddyfile`: `caddy`
+
+PowerShell deploy script for changed app services:
+
+```powershell
+# Pick only the services affected by the change.
+$services = @('web', 'worker')
+
+docker compose build @services
+docker compose up -d @services
+docker compose ps
+curl.exe -s http://localhost:4000/v1/health
+curl.exe -k -s https://localhost/api/internal-health
+```
+
+Examples:
+
+```powershell
+# Frontend-only change
+$services = @('web')
+docker compose build @services
+docker compose up -d @services
+
+# Generation/export worker change
+$services = @('worker')
+docker compose build @services
+docker compose up -d @services
+
+# Shared contract change used by all apps
+$services = @('web', 'api', 'worker')
+docker compose build @services
+docker compose up -d @services
+```
+
+After rebuilding, tell the user which URL to refresh and whether a hard refresh (`Ctrl+F5`) is useful. If the user is running `npm run dev:*` instead of Docker compose, do not rebuild Docker; rely on the dev server reload and restart only the affected dev process when needed.
+
 ## Verification
 
 Run before handing off substantial changes:

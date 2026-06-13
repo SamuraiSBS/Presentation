@@ -91,6 +91,137 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
+  it("uses slide speaker notes as the narration fallback for each concrete slide", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const originalFetch = global.fetch;
+    global.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          result: {
+            alternatives: [
+              {
+                message: {
+                  text: JSON.stringify({
+                    title: "Русское кино после 2010 года",
+                    slides: [
+                      {
+                        title: "Новая волна российского кино",
+                        blocks: [
+                          {
+                            type: "callout",
+                            content:
+                              "Русское кино после 2010 года стало более разнообразным: рядом с авторскими драмами появились кассовые франшизы и онлайн-премьеры.",
+                          },
+                        ],
+                        speakerNotes:
+                          "Русское кино после 2010 года - это современное кино, которое отличается от старого кино новыми темами, технологиями и способом просмотра.",
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "Русское кино после 2010 года",
+          prompt: "Сделай презентацию про русское кино после 2010 года",
+          scenario: "school_report",
+          level: "8-11 класс",
+          mode: "with_sources",
+          slideCount: 1,
+        },
+        [],
+      );
+
+      expect(presentation.speechScript[0].text).toBe(
+        "Русское кино после 2010 года - это современное кино, которое отличается от старого кино новыми темами, технологиями и способом просмотра.",
+      );
+      expect(presentation.speechScript[0].text).not.toContain("Добавлю несколько деталей");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("repairs repeated generic slide titles from the generated outline", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const originalFetch = global.fetch;
+    global.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          result: {
+            alternatives: [
+              {
+                message: {
+                  text: JSON.stringify({
+                    title: "Русское кино после 2010 года",
+                    outline: ["Русское кино после 2010 года", "Онлайн-платформы", "Новые жанры"],
+                    slides: [
+                      { title: "Введение", blocks: [{ type: "callout", content: "Короткое вступление." }] },
+                      { title: "Введение", blocks: [{ type: "callout", content: "Появились онлайн-премьеры." }] },
+                      { title: "Введение", blocks: [{ type: "callout", content: "Жанры стали разнообразнее." }] },
+                    ],
+                    speechScript: [
+                      { slideOrder: 1, slideTitle: "Введение", text: "Первый рассказ." },
+                      { slideOrder: 2, slideTitle: "Введение", text: "Второй рассказ." },
+                      { slideOrder: 3, slideTitle: "Введение", text: "Третий рассказ." },
+                    ],
+                  }),
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "Русское кино после 2010 года",
+          prompt: "Сделай презентацию про русское кино после 2010 года",
+          scenario: "school_report",
+          level: "8-11 класс",
+          mode: "with_sources",
+          slideCount: 3,
+        },
+        [],
+      );
+
+      expect(presentation.slides.map((slide) => slide.title)).toEqual([
+        "Русское кино после 2010 года",
+        "Онлайн-платформы",
+        "Новые жанры",
+      ]);
+      expect(presentation.speechScript.map((item) => item.slideTitle)).toEqual([
+        "Русское кино после 2010 года",
+        "Онлайн-платформы",
+        "Новые жанры",
+      ]);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it("throws instead of creating demo slides when no AI provider is configured", async () => {
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "";

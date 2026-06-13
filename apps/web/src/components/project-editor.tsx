@@ -112,6 +112,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
           <article className="slide-canvas">
             <div>
               <input
+                key={`${slide.id}-${slide.title}`}
                 className="input"
                 defaultValue={slide.title}
                 onBlur={(event) => saveSlide({ title: event.target.value })}
@@ -121,6 +122,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
             </div>
           </article>
           <textarea
+            key={`${slide.id}-${slide.speakerNotes}`}
             className="textarea notes"
             defaultValue={slide.speakerNotes}
             onBlur={(event) => saveSlide({ speakerNotes: event.target.value })}

@@ -215,6 +215,7 @@ function normalizePresentation(
 ): PresentationDocument {
   const input = raw && typeof raw === "object" ? (raw as Partial<PresentationDocument>) : {};
   const publicSources = normalizeSources(sources, project);
+  const outline = normalizeOutline(input.outline);
   const rawSlides = Array.isArray(input.slides) ? input.slides : [];
   const slides = rawSlides.slice(0, project.slideCount).map((slide, index) => normalizeSlide(slide, index + 1, publicSources, project));
 
@@ -222,15 +223,18 @@ function normalizePresentation(
     slides.push(buildFallbackSlide(slides.length + 1, project, publicSources));
   }
 
+  repairRepeatedSlideTitles(slides, outline, project);
+
+  const rawSpeechScript = Array.isArray(input.speechScript) ? input.speechScript : [];
+  const speechTitleCounts = countTitles(rawSpeechScript.map((item) => cleanText(item?.slideTitle)));
   const speechScript = slides.map((slide, index) => {
-    const source = Array.isArray(input.speechScript)
-      ? input.speechScript.find((item) => Number(item?.slideOrder) === slide.order) || input.speechScript[index]
-      : undefined;
+    const source = rawSpeechScript.find((item) => Number(item?.slideOrder) === slide.order) || rawSpeechScript[index];
+    const sourceTitle = cleanText(source?.slideTitle);
 
     return {
       slideOrder: slide.order,
-      slideTitle: cleanText(source?.slideTitle || slide.title),
-      text: sanitizeSpeechText(source?.text) || buildSpeechText(slide, project, index),
+      slideTitle: shouldReplaceTitle(sourceTitle, speechTitleCounts) ? slide.title : sourceTitle || slide.title,
+      text: sanitizeSpeechText(source?.text) || sanitizeSpeechText(slide.speakerNotes) || buildSpeechText(slide, project, index),
     };
   });
 
@@ -242,7 +246,7 @@ function normalizePresentation(
     slideCount: slides.length,
     generationMode,
     sources: publicSources,
-    outline: Array.isArray(input.outline) && input.outline.length ? input.outline.map(cleanText).filter(Boolean) : slides.map((slide) => slide.title),
+    outline: slides.map((slide) => slide.title),
     speechScript,
     slides,
   });
@@ -347,7 +351,7 @@ function buildSpeechText(slide: Slide, project: ProjectInput, index: number) {
   const intro = index === 0
     ? `Сегодня я расскажу о теме "${project.title}".`
     : `На этом слайде раскрывается раздел "${slide.title}".`;
-  return sanitizeSpeechText(`${intro} ${body} Добавлю несколько деталей простыми словами, чтобы было понятно, почему этот раздел важен для всей темы.`);
+  return sanitizeSpeechText(`${intro} ${body}`);
 }
 
 function fallbackTitle(project: ProjectInput, order: number) {
@@ -379,6 +383,54 @@ function slideText(blocks: SlideBlock[]) {
       .slice(0, 2)
       .join(" "),
   );
+}
+
+function normalizeOutline(value: unknown) {
+  return Array.isArray(value) ? value.map(cleanText).filter(Boolean) : [];
+}
+
+function repairRepeatedSlideTitles(slides: Slide[], outline: string[], project: ProjectInput) {
+  const titleCounts = countTitles(slides.map((slide) => slide.title));
+  const outlineCounts = countTitles(outline);
+
+  slides.forEach((slide, index) => {
+    if (!shouldReplaceTitle(slide.title, titleCounts)) {
+      return;
+    }
+
+    const outlineTitle = cleanText(outline[index]);
+    slide.title = shouldReplaceTitle(outlineTitle, outlineCounts) ? fallbackTitle(project, slide.order) : outlineTitle;
+  });
+}
+
+function countTitles(titles: string[]) {
+  return titles.reduce<Map<string, number>>((counts, title) => {
+    const key = normalizeTitleKey(title);
+    if (key) {
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return counts;
+  }, new Map());
+}
+
+function shouldReplaceTitle(title: string, titleCounts: Map<string, number>) {
+  const key = normalizeTitleKey(title);
+  return !key || isGenericSlideTitle(key) || (titleCounts.get(key) || 0) > 1;
+}
+
+function normalizeTitleKey(title: string) {
+  return cleanText(title).toLowerCase();
+}
+
+function isGenericSlideTitle(titleKey: string) {
+  return [
+    "введение",
+    "intro",
+    "introduction",
+    "слайд",
+    "slide",
+    "титульный слайд",
+  ].includes(titleKey);
 }
 
 function fallbackSlideText(project: ProjectInput, order: number) {
@@ -456,6 +508,7 @@ function removeBannedSentences(value: string) {
     "проверить",
     "добавьте",
     "добавить источник",
+    "добавлю несколько деталей",
     "ключевой вывод нужно связать",
     "тезис нужно объяснить",
     "основная мысль слайда",
