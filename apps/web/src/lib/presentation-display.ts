@@ -4,6 +4,26 @@ type ProjectWithPresentation = {
   presentation?: { document?: PresentationDocument | null } | null;
 };
 
+const GENERIC_NARRATION_PHRASES = [
+  "добавлю несколько деталей",
+  "почему этот раздел важен",
+  "на этом слайде раскрывается раздел",
+  "на этом слайде нужно раскрыть раздел",
+  "сегодня я расскажу о теме",
+  "слайд \"",
+  "слайд «",
+  "объясняет часть темы",
+  "раскрывает главную мысль",
+  "опорный пункт",
+  "опорные пункты",
+  "текст на слайде",
+  "основной смысл раскрывается",
+  "основной рассказ раскрывает",
+  "рассказе про",
+  "рассказ про",
+  "примеры. поэтому",
+];
+
 export function sanitizeProjectForDisplay<T extends ProjectWithPresentation>(project: T): T {
   const document = project.presentation?.document;
   if (!document) return project;
@@ -30,7 +50,9 @@ export function sanitizePresentationForDisplay(document: PresentationDocument): 
     const keyConcepts = normalizeKeyConcepts(slide.keyConcepts, title, bullets, slideKind);
     const highlights = normalizeHighlights(slide.highlights, thesis, bullets, slideKind);
     const visual = normalizeVisual(slide.visual, title, bullets, slideKind);
-    const speakerNotes = sanitizeDisplayText(slide.speakerNotes) || fallbackSpeech(title);
+    const cleanSpeakerNotes = sanitizeDisplayText(slide.speakerNotes);
+    const fallbackNotes = narrationFromParts(title, thesis, bullets, slideBodyTextForDisplay(blocks, title));
+    const speakerNotes = !cleanSpeakerNotes || isGenericSpeechText(cleanSpeakerNotes) ? fallbackNotes : cleanSpeakerNotes;
 
     return {
       ...slide,
@@ -234,26 +256,30 @@ function shouldReplaceSpeechText(text: string, slideNotes: string) {
 
 function narrationFromSlide(slide: PresentationDocument["slides"][number]) {
   const body = slideStructuredTextForDisplay(slide);
-  const points = slide.bullets.length ? slide.bullets : splitSentences(body);
+  return narrationFromParts(slide.title, slide.thesis, slide.bullets, body);
+}
+
+function narrationFromParts(title: string, thesis: string, bullets: string[], body: string) {
+  const points = bullets.length ? bullets : splitSentences(body);
+  const main = thesis || body || title;
+  const firstPoint = points[0] || main;
+  const secondPoint = points[1] || firstPoint;
+  const thirdPoint = points[2] || secondPoint;
+
   return sanitizeDisplayText(
     [
-      `Слайд "${slide.title}" раскрывает главную мысль: ${lowercaseFirst(slide.thesis || body || slide.title)}`,
-      `Первый опорный пункт помогает понять тему конкретнее: ${lowercaseFirst(points[0] || slide.title)}`,
-      `Второй пункт показывает, как эта идея связана с остальным материалом: ${lowercaseFirst(points[1] || points[0] || slide.title)}`,
-      `Третий пункт закрепляет объяснение через важную деталь: ${lowercaseFirst(points[2] || points[1] || points[0] || slide.title)}`,
-      "Поэтому текст на слайде остается коротким, а основной рассказ раскрывает смысл связно и последовательно.",
+      `Тема "${title}" становится понятнее через главный тезис: ${sentenceFragment(main)}.`,
+      `На первый план выходит ${sentenceFragment(firstPoint)}, потому что эта деталь помогает увидеть практический смысл вопроса.`,
+      `Другая сторона темы связана с тем, что ${sentenceFragment(secondPoint)}.`,
+      `Так объяснение становится конкретнее, а ${sentenceFragment(thirdPoint)} добавляет нужную деталь без перегрузки фактами.`,
+      "В результате материал воспринимается не как набор формулировок, а как последовательное объяснение с понятным выводом.",
     ].join(" "),
   );
 }
 
 function isGenericSpeechText(text: string) {
   const lower = cleanText(text).toLowerCase();
-  return [
-    "добавлю несколько деталей",
-    "почему этот раздел важен",
-    "на этом слайде раскрывается раздел",
-    "сегодня я расскажу о теме",
-  ].some((phrase) => lower.includes(phrase));
+  return GENERIC_NARRATION_PHRASES.some((phrase) => lower.includes(phrase));
 }
 
 function countTitles(titles: string[]) {
@@ -273,23 +299,16 @@ function normalizeTitleKey(title: unknown) {
   return cleanText(title).toLowerCase();
 }
 
-function fallbackSpeech(title: string) {
-  return sanitizeDisplayText(
-    [
-      `Слайд "${title}" вводит важную часть темы и задает направление объяснения.`,
-      "Сначала стоит назвать главную мысль простыми словами.",
-      "Затем нужно показать, какие пункты на слайде помогают ее понять.",
-      "После этого полезно связать эти пункты с примером или выводом.",
-      "Так слушателю легче увидеть не набор слов, а цельный рассказ.",
-    ].join(" "),
-  );
-}
-
 function splitSentences(value: unknown) {
   return sanitizeDisplayText(value)
     .split(/(?<=[.!?])\s+|[;\n]+/)
     .map((item) => shortenText(item.trim(), 130))
     .filter(Boolean);
+}
+
+function sentenceFragment(value: string) {
+  const text = cleanText(value).replace(/[.!?]+$/g, "");
+  return text ? `${text.charAt(0).toLowerCase()}${text.slice(1)}` : "";
 }
 
 function uniqueShortItems(items: string[]) {
@@ -386,9 +405,4 @@ function sentencePreview(value: string) {
     .slice(0, 3);
 
   return shortenText(sentences.length ? sentences.join(" ") : text, 320);
-}
-
-function lowercaseFirst(value: string) {
-  const text = cleanText(value).replace(/[.!?]+$/g, "");
-  return text ? `${text.charAt(0).toLowerCase()}${text.slice(1)}.` : "";
 }

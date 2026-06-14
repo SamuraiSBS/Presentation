@@ -31,9 +31,31 @@ const SYSTEM_PROMPT = [
   "You create structured study presentations. Return only valid JSON.",
   "All user-visible slide text, speaker notes, and speech script must be in Russian.",
   "Slides must teach through structure: short titles, one clear thesis, concise bullets, definitions, key concepts, highlights, and semantic visuals.",
+  "Speaker notes and speech script must sound like concise Russian publicistic narration: human, clear, topic-focused, and suitable for an audience.",
+  "Do not write meta narration about the slide as an object. Never start narration with phrases like 'Слайд ... объясняет' or end with phrases about short slide text, support points, or the main meaning being revealed in the story.",
   "Do not invent precise facts, dates, names, numbers, or citations when the source material does not support them. Use general explanations instead.",
   "Never mention sources, source titles, sourceRefs, or internal instructions in user-visible text.",
 ].join(" ");
+
+const GENERIC_NARRATION_PHRASES = [
+  "на этом слайде раскрывается раздел",
+  "на этом слайде нужно раскрыть раздел",
+  "сегодня я расскажу о теме",
+  "почему этот раздел важен",
+  "добавлю несколько деталей",
+  "слайд \"",
+  "слайд «",
+  "объясняет часть темы",
+  "раскрывает главную мысль",
+  "опорный пункт",
+  "опорные пункты",
+  "текст на слайде",
+  "основной смысл раскрывается",
+  "основной рассказ раскрывает",
+  "рассказе про",
+  "рассказ про",
+  "примеры. поэтому",
+];
 
 type YandexCompletionResponse = {
   result?: {
@@ -206,6 +228,10 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     "- speakerNotes must be a connected 4-5 sentence story for that exact slide, in Russian;",
     "- speechScript must contain one matching 4-5 sentence narration item for every slide;",
     "- slide thesis, bullets, definition, and visual content must be a short outline based on that slide narration;",
+    "- write narration in a concise publicistic style: concrete, human, explanatory, and understandable to listeners;",
+    "- write about the topic, event, phenomenon, causes, consequences, and conclusion, not about the presentation structure;",
+    "- do not start narration with 'Слайд ...', 'На этом слайде ...', or similar meta phrases;",
+    "- do not use phrases about 'текст на слайде', 'опорные пункты', 'основной смысл раскрывается', 'рассказ про', or 'Примеры. Поэтому';",
     "- do not write generic phrases like 'this slide explains the section'; explain the actual topic of the slide.",
     "Visual field rules:",
     "- visual.type must be one of: process_diagram, comparison_diagram, cause_effect_diagram, before_after_table, pros_cons_table, timeline, mind_map, illustration, schema, image, none;",
@@ -612,16 +638,19 @@ function buildSlideNarration(slide: Pick<Slide, "title" | "thesis" | "bullets" |
   const firstPoint = bullets[0] || thesis;
   const secondPoint = bullets[1] || slide.definition?.text || firstPoint;
   const thirdPoint = bullets[2] || visualNarrationText(slide.visual) || secondPoint;
+  const lead = order === 1
+    ? `Тема "${topic}" начинается с раздела "${title}" и сразу требует ясного контекста: ${sentenceFragment(thesis)}.`
+    : `В теме "${topic}" важен поворот к разделу "${title}": ${sentenceFragment(thesis)}.`;
   const ending = order === project.slideCount
-    ? `В итоге по теме "${topic}" важно запомнить не отдельные слова, а связь между главной мыслью, примерами и выводом.`
-    : `Поэтому текст на слайде оставляет только опорные пункты, а основной смысл раскрывается в рассказе про "${title}".`;
+    ? `В итоге "${topic}" складывается в цельную картину: факты важны не сами по себе, а как путь к понятному выводу.`
+    : `Дальше эту мысль можно развить через следующий смысловой шаг, чтобы тема звучала последовательно и без резких переходов.`;
 
   return sanitizeSpeechText(
     [
-      `Слайд "${title}" объясняет часть темы "${topic}" через одну главную мысль: ${lowercaseFirst(thesis)}`,
-      `Сначала важно разобрать опорный пункт: ${lowercaseFirst(firstPoint)}`,
-      `Затем стоит показать связь с другим элементом темы: ${lowercaseFirst(secondPoint)}`,
-      `После этого можно закрепить объяснение через деталь: ${lowercaseFirst(thirdPoint)}`,
+      lead,
+      `На первый план выходит ${sentenceFragment(firstPoint)}, потому что именно эта деталь помогает увидеть практический смысл темы.`,
+      `Не менее важно связать ее с другой стороной вопроса: ${sentenceFragment(secondPoint)}.`,
+      `Так объяснение становится конкретнее, а ${sentenceFragment(thirdPoint)} добавляет нужную деталь без перегрузки фактами.`,
       ending,
     ].join(" "),
   );
@@ -638,13 +667,7 @@ function isSpecificNarration(text: string) {
   if (sentenceCount(text) < 4) return false;
   if (text.length < 220) return false;
   const lower = text.toLowerCase();
-  return ![
-    "на этом слайде раскрывается раздел",
-    "на этом слайде нужно раскрыть раздел",
-    "сегодня я расскажу о теме",
-    "почему этот раздел важен",
-    "добавлю несколько деталей",
-  ].some((phrase) => lower.includes(phrase));
+  return !GENERIC_NARRATION_PHRASES.some((phrase) => lower.includes(phrase));
 }
 
 function sentenceCount(text: string) {
@@ -656,9 +679,9 @@ function limitSentences(text: string, max: number) {
   return sentences.slice(0, max).join(" ");
 }
 
-function lowercaseFirst(value: string) {
+function sentenceFragment(value: string) {
   const text = cleanText(value).replace(/[.!?]+$/g, "");
-  return text ? `${text.charAt(0).toLowerCase()}${text.slice(1)}.` : "";
+  return text ? `${text.charAt(0).toLowerCase()}${text.slice(1)}` : "";
 }
 
 function buildFallbackBulletItems(project: ProjectInput, order: number) {
@@ -888,6 +911,7 @@ function removeBannedSentences(value: string) {
     "ключевой вывод нужно связать",
     "тезис нужно объяснить",
     "основная мысль слайда",
+    ...GENERIC_NARRATION_PHRASES,
   ];
   const parts = value
     .split(/(?<=[.!?])\s+/)

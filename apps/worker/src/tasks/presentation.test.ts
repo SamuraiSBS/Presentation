@@ -2,6 +2,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildGenerationPrompt, generatePresentation, selectAiProviders } from "./presentation.js";
 
 const originalEnv = { ...process.env };
+const forbiddenNarrationFragments = [
+  'Слайд "',
+  "объясняет часть темы",
+  "опорные пункты",
+  "основной смысл раскрывается",
+  "рассказе про",
+  "Примеры. Поэтому",
+];
 
 afterEach(() => {
   process.env = { ...originalEnv };
@@ -145,6 +153,72 @@ describe("generatePresentation fallback behavior", () => {
     expect(presentation.slides.every((slide) => slide.keyConcepts.length === 0)).toBe(true);
     expect(presentation.slides.every((slide) => slide.highlights.length === 0)).toBe(true);
     expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 4 && sentenceCount(item.text) <= 5)).toBe(true);
+    expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 4 && sentenceCount(slide.speakerNotes) <= 5)).toBe(true);
+    expect(presentation.slides.every((slide) => slide.speakerNotes.length > slide.thesis.length)).toBe(true);
+    expectNoForbiddenNarration(visiblePresentationText(presentation));
+  });
+
+  it("replaces template-like AI narration with publicistic fallback text", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const originalFetch = global.fetch;
+    const templateNarration =
+      'Слайд "Новая волна" объясняет часть темы "Русское кино" через одну главную мысль: кино стало разнообразнее. Сначала важно разобрать опорный пункт: появились онлайн-платформы. Затем стоит показать связь с другим элементом темы: зрители стали смотреть фильмы иначе. После этого можно закрепить объяснение через деталь: фестивальное кино стало заметнее. Примеры. Поэтому текст на слайде оставляет только опорные пункты, а основной смысл раскрывается в рассказе про "Новая волна".';
+
+    global.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          result: {
+            alternatives: [
+              {
+                message: {
+                  text: JSON.stringify({
+                    title: "Русское кино",
+                    slides: [
+                      {
+                        title: "Новая волна",
+                        thesis: "Кино стало разнообразнее после появления онлайн-платформ.",
+                        bullets: ["Появились онлайн-платформы", "Зрительские привычки изменились", "Авторское кино стало заметнее"],
+                        speakerNotes: templateNarration,
+                      },
+                    ],
+                    speechScript: [{ slideOrder: 1, slideTitle: "Новая волна", text: templateNarration }],
+                  }),
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "Русское кино",
+          prompt: "Сделай презентацию про русское кино",
+          scenario: "school_report",
+          level: "8-11 класс",
+          mode: "with_sources",
+          slideCount: 1,
+        },
+        [],
+      );
+
+      expect(sentenceCount(presentation.slides[0].speakerNotes)).toBeGreaterThanOrEqual(4);
+      expect(sentenceCount(presentation.slides[0].speakerNotes)).toBeLessThanOrEqual(5);
+      expect(presentation.slides[0].speakerNotes.length).toBeGreaterThan(presentation.slides[0].thesis.length);
+      expect(presentation.speechScript[0].text).toBe(presentation.slides[0].speakerNotes);
+      expectNoForbiddenNarration(visiblePresentationText(presentation));
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 
   it("reads Yandex completion text from result alternatives", async () => {
@@ -426,6 +500,12 @@ function visiblePresentationText(presentation: Awaited<ReturnType<typeof generat
     ]),
     ...presentation.speechScript.flatMap((item) => [item.slideTitle, item.text]),
   ].join("\n");
+}
+
+function expectNoForbiddenNarration(text: string) {
+  for (const fragment of forbiddenNarrationFragments) {
+    expect(text).not.toContain(fragment);
+  }
 }
 
 function sentenceCount(text: string) {
