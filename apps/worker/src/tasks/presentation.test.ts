@@ -6,9 +6,26 @@ const forbiddenNarrationFragments = [
   'Слайд "',
   "объясняет часть темы",
   "опорные пункты",
+  "Затем стоит показать связь",
+  "После этого можно закрепить",
   "основной смысл раскрывается",
   "рассказе про",
   "Примеры. Поэтому",
+];
+const forbiddenSlideTextFragments = [
+  "Главная идея связана с темой",
+  "Материал стоит разбирать",
+  "смысловым частым",
+  "смысловым частям",
+  "Ключевые понятия помогают удержать структуру",
+  "Пример или визуальная схема",
+  "На слайде показано",
+  "Этот слайд помогает",
+  "Этот раздел объясняет",
+  "Здесь собраны основные факты",
+  "на картинке",
+  "на изображении",
+  "как показано на картинке",
 ];
 
 afterEach(() => {
@@ -56,11 +73,13 @@ describe("buildGenerationPrompt", () => {
 
     expect(prompt).toContain("slideKind title");
     expect(prompt).toContain("slideKind summary");
-    expect(prompt).toContain("3-5 short key points");
+    expect(prompt).toContain("3-5 short, meaningful publicistic points");
     expect(prompt).toContain("keyConcepts: return an empty array");
     expect(prompt).toContain("highlights: return an empty array");
     expect(prompt).toContain("4-5 sentence story");
     expect(prompt).toContain("Do not write long text blocks");
+    expect(prompt).toContain("set visual.type to none when the slide does not have a clearly useful structured visual");
+    expect(prompt).toContain("never fill visual.title, visual.items, or visual.rows with generic placeholder text");
     expect(prompt).toContain("process_diagram");
     expect(prompt).toContain("comparison_diagram");
     expect(prompt).toContain("mind_map");
@@ -125,6 +144,77 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
+  it("hides weak visual blocks and keeps useful structured visuals", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const originalFetch = global.fetch;
+    global.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          result: {
+            alternatives: [
+              {
+                message: {
+                  text: JSON.stringify({
+                    title: "Visual quality",
+                    slides: [
+                      { title: "Intro", thesis: "Intro thesis." },
+                      { title: "Empty schema", thesis: "This slide has no useful schema.", visual: { type: "schema", title: "Schema" } },
+                      {
+                        title: "Broken comparison",
+                        thesis: "This comparison has only one side.",
+                        visual: { type: "comparison_diagram", rows: [{ label: "Only one side", left: "First value", right: "" }] },
+                      },
+                      {
+                        title: "Useful process",
+                        thesis: "A process has clear ordered steps.",
+                        visual: {
+                          type: "process_diagram",
+                          items: [
+                            { label: "Collect material", text: "Gather the key facts." },
+                            { label: "Explain result", text: "Turn facts into a short explanation." },
+                          ],
+                        },
+                      },
+                      { title: "Summary", thesis: "Summary thesis." },
+                    ],
+                  }),
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "Visual quality",
+          prompt: "Explain when visual blocks are useful",
+          scenario: "lesson",
+          level: "beginner",
+          mode: "with_sources",
+          slideCount: 5,
+        },
+        [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Useful visuals need real structure." }],
+      );
+
+      expect(presentation.slides[1].visual.type).toBe("none");
+      expect(presentation.slides[2].visual.type).toBe("none");
+      expect(presentation.slides[3].visual.type).toBe("process_diagram");
+      expect(presentation.slides[3].visual.items).toHaveLength(2);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it("adds section dividers and summary takeaways in structured demo fallback", async () => {
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "";
@@ -156,6 +246,85 @@ describe("generatePresentation fallback behavior", () => {
     expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 4 && sentenceCount(slide.speakerNotes) <= 5)).toBe(true);
     expect(presentation.slides.every((slide) => slide.speakerNotes.length > slide.thesis.length)).toBe(true);
     expectNoForbiddenNarration(visiblePresentationText(presentation));
+    expectNoForbiddenSlideText(visiblePresentationText(presentation));
+  });
+
+  it("repairs generic filler and unsupported visual references in slide-facing text", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const originalFetch = global.fetch;
+    global.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          result: {
+            alternatives: [
+              {
+                message: {
+                  text: JSON.stringify({
+                    title: "Экология города",
+                    slides: [
+                      {
+                        title: "Экология города",
+                        thesis: "Городская среда зависит от транспорта, воздуха и поведения жителей.",
+                      },
+                      {
+                        title: "Воздух и транспорт",
+                        thesis: "Главная идея связана с темой: экология города.",
+                        bullets: [
+                          "Материал стоит разбирать по смысловым частям",
+                          "Ключевые понятия помогают удержать структуру",
+                          "Как показано на картинке, воздух становится чище",
+                        ],
+                        blocks: [
+                          {
+                            type: "callout",
+                            content: "На слайде показано, что несуществующая тема раскрывается через картинку.",
+                          },
+                        ],
+                        visual: {
+                          type: "image",
+                          description: "Как показано на изображении, на картинке есть транспорт.",
+                        },
+                      },
+                      {
+                        title: "Вывод",
+                        thesis: "Городская экология требует понятных решений и ответственного поведения.",
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "Экология города",
+          prompt: "Сделай презентацию про экологию города",
+          scenario: "lesson",
+          level: "beginner",
+          mode: "with_sources",
+          slideCount: 3,
+        },
+        [],
+      );
+
+      expect(presentation.slides[1].thesis).toBeTruthy();
+      expect(presentation.slides[1].bullets.length).toBeGreaterThanOrEqual(3);
+      expectNoForbiddenSlideText(visiblePresentationText(presentation));
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 
   it("replaces template-like AI narration with publicistic fallback text", async () => {
@@ -505,6 +674,13 @@ function visiblePresentationText(presentation: Awaited<ReturnType<typeof generat
 function expectNoForbiddenNarration(text: string) {
   for (const fragment of forbiddenNarrationFragments) {
     expect(text).not.toContain(fragment);
+  }
+}
+
+function expectNoForbiddenSlideText(text: string) {
+  const lower = text.toLowerCase();
+  for (const fragment of forbiddenSlideTextFragments) {
+    expect(lower).not.toContain(fragment.toLowerCase());
   }
 }
 

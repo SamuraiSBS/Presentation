@@ -49,12 +49,36 @@ const GENERIC_NARRATION_PHRASES = [
   "раскрывает главную мысль",
   "опорный пункт",
   "опорные пункты",
+  "затем стоит показать связь",
+  "после этого можно закрепить",
   "текст на слайде",
   "основной смысл раскрывается",
   "основной рассказ раскрывает",
   "рассказе про",
   "рассказ про",
   "примеры. поэтому",
+];
+
+const GENERIC_SCREEN_TEXT_PHRASES = [
+  "главная идея связана с темой",
+  "материал стоит разбирать",
+  "смысловым частым",
+  "смысловым частям",
+  "ключевые понятия помогают удержать структуру",
+  "пример или визуальная схема",
+  "визуальная схема делает объяснение",
+  "на слайде показано",
+  "этот слайд помогает",
+  "этот раздел объясняет",
+  "здесь собраны основные факты",
+  "несуществующая тема",
+  "несуществующие темы",
+  "на картинке",
+  "на изображении",
+  "на схеме видно",
+  "как видно на схеме",
+  "как показано на картинке",
+  "как показано на изображении",
 ];
 
 type YandexCompletionResponse = {
@@ -218,12 +242,18 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     "Each slide must include: id, order, title, slideKind, layout, thesis, bullets, definition, keyConcepts, visual, highlights, blocks, speakerNotes, timingSeconds, sourceRefs.",
     "Content slide rules:",
     "- title: short, ideally 6-8 words or fewer;",
-    "- thesis: one sentence with the main idea of the slide;",
-    "- bullets: 3-5 short key points, not paragraphs;",
+    "- thesis: one concise publicistic sentence about the real subject matter, not a meta sentence about the slide;",
+    "- bullets: 3-5 short, meaningful publicistic points, not paragraphs and not generic study instructions;",
     "- definition: { term, text } only when an important term needs a simple definition; otherwise null;",
     "- keyConcepts: return an empty array; do not create small keyword chips on slides;",
     "- highlights: return an empty array; do not create small highlighted word badges on slides;",
     "- blocks: keep a backward-compatible fallback, preferably one bullets block mirroring bullets or one short callout.",
+    "Slide-facing text style:",
+    "- use the same clear publicistic style as the narration, but much shorter;",
+    "- do not write 'Главная идея связана с темой', 'Материал стоит разбирать по смысловым частям', or similar filler;",
+    "- do not mention nonexistent topics, pictures, diagrams, images, examples, sources, or visual objects unless they are explicitly present in the provided material;",
+    "- do not refer to the slide itself with phrases like 'на слайде показано', 'этот слайд помогает', or 'текст на слайде';",
+    "- if the source material is thin, write a cautious general explanation instead of inventing facts or visuals.",
     "Narration rules:",
     "- speakerNotes must be a connected 4-5 sentence story for that exact slide, in Russian;",
     "- speechScript must contain one matching 4-5 sentence narration item for every slide;",
@@ -235,6 +265,8 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     "- do not write generic phrases like 'this slide explains the section'; explain the actual topic of the slide.",
     "Visual field rules:",
     "- visual.type must be one of: process_diagram, comparison_diagram, cause_effect_diagram, before_after_table, pros_cons_table, timeline, mind_map, illustration, schema, image, none;",
+    "- set visual.type to none when the slide does not have a clearly useful structured visual;",
+    "- never fill visual.title, visual.items, or visual.rows with generic placeholder text just to create a visual block;",
     "- use process_diagram for ordered actions or steps;",
     "- use comparison_diagram for comparing concepts;",
     "- use cause_effect_diagram for causes and consequences;",
@@ -242,8 +274,10 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     "- use pros_cons_table for evaluating options;",
     "- use timeline for historical or chronological topics;",
     "- use mind_map for relationships between concepts;",
-    "- use illustration, schema, or image when a visual explanation is useful but no structured diagram fits;",
-    "- visual.items contains steps/nodes; visual.rows with left/right columns is for tables and comparisons.",
+    "- use illustration, schema, or image only when a concrete image will explain this exact slide better than text; otherwise use none;",
+    "- visual.items contains concrete steps/nodes; visual.rows with left/right columns is for tables and comparisons.",
+    "- comparison/table visuals must include meaningful left and right values for each row;",
+    "- process, timeline, mind_map, and schema visuals must include at least two concrete items;",
     "- visual.description must describe a concrete, searchable image for this exact slide in Russian or English;",
     "- every slide must have a different visual.description concept so later image search can choose different pictures;",
     "- do not put URLs or image provider names into visual.description; describe the desired scene, object, person, place, chart, or illustration only.",
@@ -451,11 +485,12 @@ function normalizeHighlights(_value: unknown, _thesis: string, _bullets: string[
   return [];
 }
 
-function normalizeVisual(value: unknown, title: string, bullets: string[], slideKind: SlideKind): SlideVisual {
+function normalizeVisual(value: unknown, _title: string, _bullets: string[], slideKind: SlideKind): SlideVisual {
   if (slideKind === "title") return emptyVisual();
 
   const candidate = value && typeof value === "object" ? (value as Partial<SlideVisual>) : {};
-  const type = normalizeVisualType(candidate.type, title, bullets, slideKind);
+  const requestedType = normalizeVisualType(candidate.type);
+  const description = sanitizeScreenText(candidate.description);
   const rows = Array.isArray(candidate.rows)
     ? candidate.rows
         .map((row) => ({
@@ -475,20 +510,25 @@ function normalizeVisual(value: unknown, title: string, bullets: string[], slide
         .filter((item) => item.label || item.text)
         .slice(0, 8)
     : [];
-  const fallbackItems = bullets.slice(0, type === "timeline" ? 6 : 5).map((label) => ({ label, text: "" }));
+  const completeRows = rows.filter((row) => row.left && row.right);
+  const type = usefulVisualType(requestedType, items, completeRows);
+
+  if (type === "none") {
+    return { ...emptyVisual(), description };
+  }
 
   return {
     type,
     title: sanitizeScreenText(candidate.title) || visualTitle(type),
-    description: sanitizeScreenText(candidate.description),
+    description,
     leftLabel: sanitizeScreenText(candidate.leftLabel) || defaultLeftLabel(type),
     rightLabel: sanitizeScreenText(candidate.rightLabel) || defaultRightLabel(type),
-    items: items.length ? items : fallbackItems,
-    rows: rows.length ? rows : fallbackRows(type, bullets),
+    items,
+    rows: isRowVisual(type) ? completeRows : [],
   };
 }
 
-function normalizeVisualType(value: unknown, title: string, bullets: string[], slideKind: SlideKind): SlideVisual["type"] {
+function normalizeVisualType(value: unknown): SlideVisual["type"] {
   const allowed: SlideVisual["type"][] = [
     "process_diagram",
     "comparison_diagram",
@@ -503,20 +543,29 @@ function normalizeVisualType(value: unknown, title: string, bullets: string[], s
     "none",
   ];
   if (allowed.includes(value as SlideVisual["type"])) return value as SlideVisual["type"];
-  if (slideKind === "section") return "schema";
-  const text = [title, ...bullets].join(" ").toLowerCase();
-  if (/\b(step|stage|process|first|second|then|next|algorithm)\b/.test(text)) return "process_diagram";
-  if (/\b(compare|versus|vs|difference|similar|unlike)\b/.test(text)) return "comparison_diagram";
-  if (/\b(cause|effect|because|consequence|impact|leads to)\b/.test(text)) return "cause_effect_diagram";
-  if (/\b(before|after|change|became|transformation)\b/.test(text)) return "before_after_table";
-  if (/\b(pros|cons|benefit|risk|advantage|disadvantage)\b/.test(text)) return "pros_cons_table";
-  if (/\b(year|century|period|timeline|history|date)\b|\b\d{3,4}\b/.test(text)) return "timeline";
-  if (/\b(connection|relationship|concept|map|network)\b/.test(text)) return "mind_map";
-  return slideKind === "summary" ? "mind_map" : "schema";
+  return "none";
 }
 
 function emptyVisual(): SlideVisual {
   return { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] };
+}
+
+function usefulVisualType(type: SlideVisual["type"], items: SlideVisual["items"], rows: SlideVisual["rows"]): SlideVisual["type"] {
+  if (isRowVisual(type)) {
+    return rows.length >= 1 ? type : "none";
+  }
+
+  if (["process_diagram", "timeline", "mind_map", "schema"].includes(type)) {
+    return items.filter((item) => item.label || item.text).length >= 2 ? type : "none";
+  }
+
+  if (type === "illustration" || type === "image") return "none";
+
+  return type === "none" ? "none" : type;
+}
+
+function isRowVisual(type: SlideVisual["type"]) {
+  return ["comparison_diagram", "before_after_table", "pros_cons_table", "cause_effect_diagram"].includes(type);
 }
 
 function normalizeSources(sources: Source[], project: ProjectInput): Source[] {
@@ -686,14 +735,15 @@ function sentenceFragment(value: string) {
 
 function buildFallbackBulletItems(project: ProjectInput, order: number) {
   const topic = cleanText(project.title || project.prompt);
+  const focus = order > 1 ? fallbackTitle(project, order) : topic;
   const base = [
-    `Главная идея связана с темой: ${topic}`,
-    "Материал стоит разбирать по смысловым частям",
-    "Ключевые понятия помогают удержать структуру",
-    "Пример или визуальная схема делает объяснение понятнее",
-    "Итог должен связывать факты с главным выводом",
+    `${focus} раскрывается через контекст, причины и последствия`,
+    "Главные факты лучше воспринимаются, когда между ними видна связь",
+    "Точная формулировка помогает перейти от факта к смыслу",
+    "Короткий вывод связывает детали с общей логикой объяснения",
+    "Аудитории важно увидеть, почему эта часть влияет на общий результат",
   ];
-  return base.map((item, index) => shortenSentence(index === 0 && order > 1 ? item.replace(topic, fallbackTitle(project, order)) : item, 120));
+  return base.map((item) => shortenSentence(item, 120));
 }
 
 function ensureRange(items: string[], fallback: string[], min: number, max: number) {
@@ -829,16 +879,16 @@ function isGenericSlideTitle(titleKey: string) {
 function fallbackSlideText(project: ProjectInput, order: number) {
   const topic = project.title || project.prompt;
   const texts = [
-    `${topic} можно раскрыть через главные события, понятные примеры и короткие выводы.`,
-    `Этот раздел объясняет, почему тема важна и как она связана с жизнью аудитории.`,
-    `Здесь собраны основные факты, которые помогают быстро понять суть темы.`,
-    `На слайде показано, какие изменения сильнее всего повлияли на развитие темы.`,
-    `Примеры помогают увидеть тему не как набор дат, а как живой процесс.`,
-    `Сложные идеи здесь переводятся в простое объяснение без лишних деталей.`,
-    `Главное внимание стоит уделить смыслу событий и их последствиям.`,
-    `Этот слайд помогает запомнить самые важные мысли перед выводом.`,
-    `Вывод объединяет предыдущие слайды и показывает главный смысл темы.`,
-    `Финальный акцент помогает закончить выступление ясно и уверенно.`,
+    `${topic} раскрывается через контекст, причины, последствия и понятный вывод.`,
+    "Актуальность становится яснее, когда факты связаны с жизнью аудитории.",
+    "Ключевые факты помогают быстро увидеть смысл без лишних подробностей.",
+    "Главные изменения показывают, как развивается предмет разговора.",
+    "Точная формулировка превращает сухие сведения в живое объяснение.",
+    "Сложные идеи легче понять, когда они сформулированы простыми словами.",
+    "Главное внимание стоит уделить смыслу событий и их последствиям.",
+    "Перед выводом важно удержать несколько самых сильных мыслей.",
+    "Вывод объединяет предыдущие части и показывает общий смысл.",
+    "Финальный акцент помогает закончить выступление ясно и уверенно.",
   ];
   return shortenSentence(texts[order - 1] || `${topic}: главное объяснить суть темы коротко и понятно.`, 230);
 }
@@ -912,6 +962,7 @@ function removeBannedSentences(value: string) {
     "тезис нужно объяснить",
     "основная мысль слайда",
     ...GENERIC_NARRATION_PHRASES,
+    ...GENERIC_SCREEN_TEXT_PHRASES,
   ];
   const parts = value
     .split(/(?<=[.!?])\s+/)

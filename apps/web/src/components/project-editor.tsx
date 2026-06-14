@@ -148,12 +148,13 @@ function slideImageUrl(slide: PresentationDocument["slides"][number]) {
 function SlideCanvas({ slide }: { slide: PresentationDocument["slides"][number] }) {
   const isDivider = slide.slideKind === "title" || slide.slideKind === "section";
   const imageUrl = slideImageUrl(slide);
+  const hasVisualContent = hasSlideVisualContent(slide);
 
   if (isDivider) {
     return (
       <div
         className={`slide-content slide-content-${slide.slideKind} ${imageUrl ? "slide-content-image" : ""}`}
-        style={imageUrl ? { backgroundImage: `linear-gradient(rgba(255, 253, 248, 0.76), rgba(255, 253, 248, 0.86)), url("${imageUrl}")` } : undefined}
+        style={imageUrl ? { backgroundImage: `linear-gradient(rgba(255, 253, 248, 0.9), rgba(255, 253, 248, 0.94)), url("${imageUrl}")` } : undefined}
       >
         <h2 className="slide-title">{slide.title}</h2>
         {slide.thesis ? <p className="slide-body">{slide.thesis}</p> : null}
@@ -170,7 +171,7 @@ function SlideCanvas({ slide }: { slide: PresentationDocument["slides"][number] 
         </div>
       </div>
 
-      <div className="slide-grid">
+      <div className={`slide-grid ${hasVisualContent ? "" : "slide-grid-single"}`}>
         <section className="slide-copy">
           {slide.bullets.length ? (
             <ul className="slide-bullets">
@@ -186,10 +187,15 @@ function SlideCanvas({ slide }: { slide: PresentationDocument["slides"][number] 
             </div>
           ) : null}
         </section>
-        <VisualBlock slide={slide} />
+        {hasVisualContent ? <VisualBlock slide={slide} /> : null}
       </div>
     </div>
   );
+}
+
+function hasSlideVisualContent(slide: PresentationDocument["slides"][number]) {
+  const visual = slide.visual;
+  return Boolean(visual?.image?.url || (visual && visual.type !== "none"));
 }
 
 function VisualBlock({ slide }: { slide: PresentationDocument["slides"][number] }) {
@@ -197,7 +203,7 @@ function VisualBlock({ slide }: { slide: PresentationDocument["slides"][number] 
   const image = visual?.image;
   const imageFigure = image ? <VisualImage image={image} /> : null;
   if (!visual || visual.type === "none") {
-    return imageFigure ? <section className="visual-card visual-image-card">{imageFigure}</section> : <div className="visual-card visual-empty" aria-hidden="true" />;
+    return imageFigure ? <section className="visual-card visual-image-card">{imageFigure}</section> : null;
   }
 
   if (visual.rows.length && ["comparison_diagram", "before_after_table", "pros_cons_table", "cause_effect_diagram"].includes(visual.type)) {

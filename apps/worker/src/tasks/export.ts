@@ -13,9 +13,12 @@ const PptxGenConstructor = require("pptxgenjs") as new () => {
   lang: string;
   theme: Record<string, unknown>;
   ShapeType: { rect: string; roundRect: string };
+  defineLayout: (layout: { name: string; width: number; height: number }) => void;
   addSlide: () => any;
   write: (options: { outputType: "nodebuffer" }) => Promise<Buffer>;
 };
+
+const WIDE_LAYOUT = { name: "STUDYDECK_WIDE", width: 40 / 3, height: 7.5 };
 
 export async function handleExportJob(job: Job<{ exportId: string; projectId: string; type: "pdf" | "pptx" }>) {
   const prisma = getPrisma();
@@ -43,7 +46,8 @@ export async function handleExportJob(job: Job<{ exportId: string; projectId: st
 
 export async function createPptx(presentation: ReturnType<typeof presentationSchema.parse>) {
   const pptx = new PptxGenConstructor();
-  pptx.layout = "LAYOUT_WIDE";
+  pptx.defineLayout(WIDE_LAYOUT);
+  pptx.layout = WIDE_LAYOUT.name;
   pptx.author = "StudyDeck AI";
   pptx.subject = presentation.scenario;
   pptx.title = presentation.title;

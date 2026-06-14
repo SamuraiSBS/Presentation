@@ -16,12 +16,36 @@ const GENERIC_NARRATION_PHRASES = [
   "раскрывает главную мысль",
   "опорный пункт",
   "опорные пункты",
+  "затем стоит показать связь",
+  "после этого можно закрепить",
   "текст на слайде",
   "основной смысл раскрывается",
   "основной рассказ раскрывает",
   "рассказе про",
   "рассказ про",
   "примеры. поэтому",
+];
+
+const GENERIC_SCREEN_TEXT_PHRASES = [
+  "главная идея связана с темой",
+  "материал стоит разбирать",
+  "смысловым частым",
+  "смысловым частям",
+  "ключевые понятия помогают удержать структуру",
+  "пример или визуальная схема",
+  "визуальная схема делает объяснение",
+  "на слайде показано",
+  "этот слайд помогает",
+  "этот раздел объясняет",
+  "здесь собраны основные факты",
+  "несуществующая тема",
+  "несуществующие темы",
+  "на картинке",
+  "на изображении",
+  "на схеме видно",
+  "как видно на схеме",
+  "как показано на картинке",
+  "как показано на изображении",
 ];
 
 export function sanitizeProjectForDisplay<T extends ProjectWithPresentation>(project: T): T {
@@ -50,9 +74,10 @@ export function sanitizePresentationForDisplay(document: PresentationDocument): 
     const keyConcepts = normalizeKeyConcepts(slide.keyConcepts, title, bullets, slideKind);
     const highlights = normalizeHighlights(slide.highlights, thesis, bullets, slideKind);
     const visual = normalizeVisual(slide.visual, title, bullets, slideKind);
-    const cleanSpeakerNotes = sanitizeDisplayText(slide.speakerNotes);
+    const rawSpeakerNotes = cleanText(slide.speakerNotes);
+    const cleanSpeakerNotes = sanitizeDisplayText(rawSpeakerNotes);
     const fallbackNotes = narrationFromParts(title, thesis, bullets, slideBodyTextForDisplay(blocks, title));
-    const speakerNotes = !cleanSpeakerNotes || isGenericSpeechText(cleanSpeakerNotes) ? fallbackNotes : cleanSpeakerNotes;
+    const speakerNotes = !cleanSpeakerNotes || isGenericSpeechText(rawSpeakerNotes) || isGenericSpeechText(cleanSpeakerNotes) ? fallbackNotes : cleanSpeakerNotes;
 
     return {
       ...slide,
@@ -77,13 +102,14 @@ export function sanitizePresentationForDisplay(document: PresentationDocument): 
     slides,
     speechScript: slides.map((slide, index) => {
       const existing = document.speechScript.find((item) => item.slideOrder === slide.order) || document.speechScript[index];
-      const text = sanitizeDisplayText(existing?.text);
+      const rawText = cleanText(existing?.text);
+      const text = sanitizeDisplayText(rawText);
       const slideNotes = sanitizeDisplayText(slide.speakerNotes);
       const fallbackText = isGenericSpeechText(slideNotes) ? narrationFromSlide(slide) : slideNotes;
       return {
         slideOrder: slide.order,
         slideTitle: shouldReplaceTitle(existing?.slideTitle) ? slide.title : sanitizeDisplayText(existing?.slideTitle || slide.title) || slide.title,
-        text: shouldReplaceSpeechText(text, fallbackText) ? fallbackText : text || fallbackText,
+        text: isGenericSpeechText(rawText) || shouldReplaceSpeechText(text, fallbackText) ? fallbackText : text || fallbackText,
       };
     }),
   };
@@ -139,26 +165,34 @@ function normalizeHighlights(_value: unknown, _thesis: string, _bullets: string[
   return [];
 }
 
-function normalizeVisual(value: unknown, title: string, bullets: string[], slideKind: SlideKind): SlideVisual {
+function normalizeVisual(value: unknown, _title: string, _bullets: string[], slideKind: SlideKind): SlideVisual {
   const empty: SlideVisual = { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] };
   const candidate = value && typeof value === "object" ? (value as Partial<SlideVisual>) : {};
   const image = normalizeVisualImage(candidate.image);
   if (slideKind === "title") return image ? { ...empty, image } : empty;
-  const type = normalizeVisualType(candidate.type, title, bullets, slideKind);
+  const requestedType = normalizeVisualType(candidate.type);
+  const description = sanitizeDisplayText(candidate.description);
   const items = Array.isArray(candidate.items)
     ? candidate.items.map((item) => ({ label: sanitizeDisplayText(item?.label), text: sanitizeDisplayText(item?.text) })).filter((item) => item.label || item.text).slice(0, 8)
-    : bullets.slice(0, 5).map((label) => ({ label, text: "" }));
+    : [];
   const rows = Array.isArray(candidate.rows)
     ? candidate.rows.map((row) => ({ label: sanitizeDisplayText(row?.label), left: sanitizeDisplayText(row?.left), right: sanitizeDisplayText(row?.right) })).filter((row) => row.label || row.left || row.right).slice(0, 8)
     : [];
+  const completeRows = rows.filter((row) => row.left && row.right);
+  const type = usefulVisualType(requestedType, items, completeRows);
+
+  if (type === "none") {
+    return { ...empty, description, ...(image ? { image } : {}) };
+  }
+
   return {
     type,
     title: sanitizeDisplayText(candidate.title) || visualTitle(type),
-    description: sanitizeDisplayText(candidate.description),
+    description,
     leftLabel: sanitizeDisplayText(candidate.leftLabel),
     rightLabel: sanitizeDisplayText(candidate.rightLabel),
     items,
-    rows: rows.length ? rows : fallbackRows(type, bullets),
+    rows: isRowVisual(type) ? completeRows : [],
     ...(image ? { image } : {}),
   };
 }
@@ -195,6 +229,8 @@ export function sanitizeDisplayText(value: unknown) {
     "ключевой вывод нужно связать",
     "тезис нужно объяснить",
     "основная мысль слайда",
+    ...GENERIC_NARRATION_PHRASES,
+    ...GENERIC_SCREEN_TEXT_PHRASES,
   ];
   const parts = cleanText(value)
     .replace(/^#+\s*/g, "")
@@ -227,7 +263,7 @@ function normalizeBlocksForDisplay(blocks: SlideBlock[], fallback: string): Slid
 
   return normalized.length
     ? normalized
-    : [{ type: "callout", content: slideBodyTextForDisplay([], `Коротко раскрывается тема: ${fallback}.`) }];
+    : [{ type: "callout", content: slideBodyTextForDisplay([], `${fallback}: главное сказать коротко и понятно.`) }];
 }
 
 function repairSlideTitle(title: string, index: number, outline: string[], outlineTitleCounts: Map<string, number>, blocks: SlideBlock[]) {
@@ -325,7 +361,7 @@ function uniqueShortItems(items: string[]) {
   return result;
 }
 
-function normalizeVisualType(value: unknown, title: string, bullets: string[], slideKind: SlideKind): SlideVisual["type"] {
+function normalizeVisualType(value: unknown): SlideVisual["type"] {
   const allowed: SlideVisual["type"][] = [
     "process_diagram",
     "comparison_diagram",
@@ -340,16 +376,29 @@ function normalizeVisualType(value: unknown, title: string, bullets: string[], s
     "none",
   ];
   if (allowed.includes(value as SlideVisual["type"])) return value as SlideVisual["type"];
-  if (slideKind === "section") return "schema";
-  const text = [title, ...bullets].join(" ").toLowerCase();
-  if (/\b(step|stage|process|first|second|then|next|algorithm)\b/.test(text)) return "process_diagram";
-  if (/\b(compare|versus|vs|difference|similar|unlike)\b/.test(text)) return "comparison_diagram";
-  if (/\b(cause|effect|because|consequence|impact|leads to)\b/.test(text)) return "cause_effect_diagram";
-  if (/\b(before|after|change|became|transformation)\b/.test(text)) return "before_after_table";
-  if (/\b(pros|cons|benefit|risk|advantage|disadvantage)\b/.test(text)) return "pros_cons_table";
-  if (/\b(year|century|period|timeline|history|date)\b|\b\d{3,4}\b/.test(text)) return "timeline";
-  if (/\b(connection|relationship|concept|map|network)\b/.test(text)) return "mind_map";
-  return slideKind === "summary" ? "mind_map" : "schema";
+  return "none";
+}
+
+function usefulVisualType(
+  type: SlideVisual["type"],
+  items: SlideVisual["items"],
+  rows: SlideVisual["rows"],
+): SlideVisual["type"] {
+  if (isRowVisual(type)) {
+    return rows.length >= 1 ? type : "none";
+  }
+
+  if (["process_diagram", "timeline", "mind_map", "schema"].includes(type)) {
+    return items.filter((item) => item.label || item.text).length >= 2 ? type : "none";
+  }
+
+  if (type === "illustration" || type === "image") return "none";
+
+  return type === "none" ? "none" : type;
+}
+
+function isRowVisual(type: SlideVisual["type"]) {
+  return ["comparison_diagram", "before_after_table", "pros_cons_table", "cause_effect_diagram"].includes(type);
 }
 
 function visualTitle(type: SlideVisual["type"]) {
