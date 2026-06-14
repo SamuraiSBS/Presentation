@@ -2,7 +2,7 @@ import type { Job } from "bullmq";
 import { createRequire } from "node:module";
 import { presentationSchema } from "@studydeck/shared";
 import { getPrisma } from "../prisma.js";
-import { putObjectBuffer } from "../storage.js";
+import { putObjectBuffer, readObjectBuffer } from "../storage.js";
 
 const require = createRequire(import.meta.url);
 const PptxGenConstructor = require("pptxgenjs") as new () => {
@@ -12,7 +12,7 @@ const PptxGenConstructor = require("pptxgenjs") as new () => {
   title: string;
   lang: string;
   theme: Record<string, unknown>;
-  ShapeType: { roundRect: string };
+  ShapeType: { rect: string; roundRect: string };
   addSlide: () => any;
   write: (options: { outputType: "nodebuffer" }) => Promise<Buffer>;
 };
@@ -57,33 +57,92 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
   for (const item of presentation.slides) {
     const slide = pptx.addSlide();
     slide.background = { color: "FBFAF5" };
-    slide.addText(item.title, {
-      x: 0.9,
-      y: 2.05,
-      w: 11.55,
-      h: 1.15,
-      fontFace: "Arial",
-      fontSize: 34,
-      bold: true,
-      color: "17201B",
-      align: "center",
-      valign: "mid",
-      fit: "shrink",
-    });
+    const imageData = await readSlideImageData(item);
 
-    slide.addText(slideBodyText(item), {
-      x: 1.5,
-      y: 3.55,
-      w: 10.33,
-      h: 1.45,
-      fontFace: "Arial",
-      fontSize: 19,
-      color: "27362F",
-      align: "center",
-      valign: "mid",
-      breakLine: false,
-      fit: "shrink",
-    });
+    if (imageData && (item.slideKind === "title" || item.slideKind === "section")) {
+      slide.addImage({ data: imageData, x: 0, y: 0, w: 13.333, h: 7.5 });
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0,
+        y: 0,
+        w: 13.333,
+        h: 7.5,
+        fill: { color: "FBFAF5", transparency: 18 },
+        line: { transparency: 100 },
+      });
+      slide.addText(item.title, {
+        x: 0.9,
+        y: 2.15,
+        w: 11.55,
+        h: 1.25,
+        fontFace: "Arial",
+        fontSize: 36,
+        bold: true,
+        color: "17201B",
+        align: "center",
+        valign: "mid",
+        fit: "shrink",
+      });
+
+      slide.addText(slideBodyText(item), {
+        x: 1.65,
+        y: 3.65,
+        w: 10,
+        h: 1.25,
+        fontFace: "Arial",
+        fontSize: 19,
+        color: "27362F",
+        align: "center",
+        valign: "mid",
+        fit: "shrink",
+      });
+    } else {
+      const hasSideImage = Boolean(imageData);
+      slide.addText(item.title, {
+        x: 0.72,
+        y: 0.68,
+        w: hasSideImage ? 5.5 : 11.9,
+        h: 1.05,
+        fontFace: "Arial",
+        fontSize: hasSideImage ? 28 : 34,
+        bold: true,
+        color: "17201B",
+        align: hasSideImage ? "left" : "center",
+        valign: "mid",
+        fit: "shrink",
+      });
+
+      slide.addText(slideBodyText(item), {
+        x: hasSideImage ? 0.82 : 1.5,
+        y: hasSideImage ? 2.05 : 3.55,
+        w: hasSideImage ? 5.35 : 10.33,
+        h: hasSideImage ? 3.5 : 1.45,
+        fontFace: "Arial",
+        fontSize: hasSideImage ? 18 : 19,
+        color: "27362F",
+        align: hasSideImage ? "left" : "center",
+        valign: "mid",
+        breakLine: false,
+        fit: "shrink",
+      });
+
+      if (imageData) {
+        slide.addImage({ data: imageData, x: 6.72, y: 0.68, w: 5.9, h: 5.85 });
+        const attribution = imageAttribution(item);
+        if (attribution) {
+          slide.addText(attribution, {
+            x: 6.72,
+            y: 6.62,
+            w: 5.9,
+            h: 0.24,
+            fontFace: "Arial",
+            fontSize: 7,
+            color: "6F766F",
+            align: "right",
+            fit: "shrink",
+          });
+        }
+      }
+    }
 
     slide.addNotes([item.speakerNotes, "", "Рассказ:", presentation.speechScript.find((entry) => entry.slideOrder === item.order)?.text || ""].join("\n"));
   }
@@ -142,6 +201,33 @@ function visualText(slide: ReturnType<typeof presentationSchema.parse>["slides"]
   const items = visual.items.map((item) => [item.label, item.text].filter(Boolean).join(": ")).filter(Boolean);
   const content = (rows.length ? rows : items).slice(0, 4).join("; ");
   return [visual.title || visual.type, content].filter(Boolean).join(": ");
+}
+
+async function readSlideImageData(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  const image = slide.visual.image;
+  if (!image?.objectKey) return null;
+
+  try {
+    const buffer = await readObjectBuffer(image.objectKey);
+    const contentType = image.contentType || contentTypeFromObjectKey(image.objectKey);
+    return `data:${contentType};base64,${buffer.toString("base64")}`;
+  } catch (error) {
+    console.warn(`Could not read slide image ${image.objectKey}:`, error);
+    return null;
+  }
+}
+
+function contentTypeFromObjectKey(objectKey: string) {
+  const lower = objectKey.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".webp")) return "image/webp";
+  return "image/jpeg";
+}
+
+function imageAttribution(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  const image = slide.visual.image;
+  if (!image) return "";
+  return [image.sourceTitle, image.sourceUrl].filter(Boolean).join(" - ");
 }
 
 function escapePdf(value: string) {

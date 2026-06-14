@@ -75,4 +75,59 @@ describe("createPptx", () => {
     expect(slideXml).toContain("Изменения");
     expect(slideXml).not.toContain("Источник");
   });
+
+  it("creates a pptx when slide image metadata has no cached object", async () => {
+    const buffer = await createPptx({
+      id: "presentation-1",
+      title: "Image metadata deck",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Image metadata"],
+      speechScript: [{ slideOrder: 1, slideTitle: "Image metadata", text: "Narration." }],
+      slides: [
+        {
+          id: "slide-1",
+          order: 1,
+          title: "Image metadata",
+          slideKind: "content",
+          layout: "bullets",
+          thesis: "The slide remains exportable even before an image is cached.",
+          bullets: ["Metadata is optional", "Export falls back to text", "The deck stays valid"],
+          definition: null,
+          keyConcepts: [],
+          visual: {
+            type: "image",
+            title: "Visual example",
+            description: "A classroom",
+            leftLabel: "",
+            rightLabel: "",
+            items: [],
+            rows: [],
+            image: {
+              url: "https://cdn.example.com/classroom.jpg",
+              alt: "A classroom",
+              query: "classroom",
+              sourceTitle: "Example",
+              provider: "tavily",
+              contentType: "image/jpeg",
+            },
+          },
+          highlights: [],
+          blocks: [{ type: "bullets", items: ["Metadata is optional", "Export falls back to text", "The deck stays valid"] }],
+          speakerNotes: "Narration.",
+          timingSeconds: 45,
+          sourceRefs: [],
+        },
+      ],
+    });
+
+    const zip = await JSZip.loadAsync(buffer);
+    const slideXml = await zip.file("ppt/slides/slide1.xml")?.async("string");
+
+    expect(slideXml).toContain("Image metadata");
+    expect(slideXml).toContain("The slide remains exportable");
+  });
 });

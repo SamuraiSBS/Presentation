@@ -119,8 +119,9 @@ function normalizeHighlights(_value: unknown, _thesis: string, _bullets: string[
 
 function normalizeVisual(value: unknown, title: string, bullets: string[], slideKind: SlideKind): SlideVisual {
   const empty: SlideVisual = { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] };
-  if (slideKind === "title") return empty;
   const candidate = value && typeof value === "object" ? (value as Partial<SlideVisual>) : {};
+  const image = normalizeVisualImage(candidate.image);
+  if (slideKind === "title") return image ? { ...empty, image } : empty;
   const type = normalizeVisualType(candidate.type, title, bullets, slideKind);
   const items = Array.isArray(candidate.items)
     ? candidate.items.map((item) => ({ label: sanitizeDisplayText(item?.label), text: sanitizeDisplayText(item?.text) })).filter((item) => item.label || item.text).slice(0, 8)
@@ -136,6 +137,25 @@ function normalizeVisual(value: unknown, title: string, bullets: string[], slide
     rightLabel: sanitizeDisplayText(candidate.rightLabel),
     items,
     rows: rows.length ? rows : fallbackRows(type, bullets),
+    ...(image ? { image } : {}),
+  };
+}
+
+function normalizeVisualImage(value: unknown): SlideVisual["image"] | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as NonNullable<SlideVisual["image"]>;
+  const url = validUrl(candidate.url) ? candidate.url : "";
+  if (!url) return undefined;
+
+  return {
+    url,
+    objectKey: sanitizeDisplayText(candidate.objectKey),
+    alt: sanitizeDisplayText(candidate.alt),
+    query: sanitizeDisplayText(candidate.query),
+    sourceUrl: validUrl(candidate.sourceUrl) ? candidate.sourceUrl : undefined,
+    sourceTitle: sanitizeDisplayText(candidate.sourceTitle),
+    provider: "tavily",
+    contentType: sanitizeDisplayText(candidate.contentType),
   };
 }
 
@@ -341,6 +361,15 @@ function fallbackRows(type: SlideVisual["type"], bullets: string[]) {
 
 function cleanText(value: unknown) {
   return String(value || "").replace(/\u0000/g, "").replace(/\s+/g, " ").trim();
+}
+
+function validUrl(value: unknown): value is string {
+  try {
+    const parsed = new URL(String(value || ""));
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
 }
 
 function shortenText(value: string, maxLength: number) {

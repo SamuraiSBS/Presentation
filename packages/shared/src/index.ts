@@ -109,6 +109,18 @@ export const slideVisualRowSchema = z.object({
 });
 export type SlideVisualRow = z.infer<typeof slideVisualRowSchema>;
 
+export const slideVisualImageSchema = z.object({
+  url: z.string().url(),
+  objectKey: z.string().optional(),
+  alt: z.string().default(""),
+  query: z.string().default(""),
+  sourceUrl: z.string().url().optional(),
+  sourceTitle: z.string().default(""),
+  provider: z.literal("tavily").default("tavily"),
+  contentType: z.string().default(""),
+});
+export type SlideVisualImage = z.infer<typeof slideVisualImageSchema>;
+
 export const slideVisualSchema = z.object({
   type: visualTypeSchema.default("none"),
   title: z.string().default(""),
@@ -117,6 +129,7 @@ export const slideVisualSchema = z.object({
   rightLabel: z.string().default(""),
   items: z.array(slideVisualItemSchema).max(8).default([]),
   rows: z.array(slideVisualRowSchema).max(8).default([]),
+  image: slideVisualImageSchema.optional(),
 });
 export type SlideVisual = z.infer<typeof slideVisualSchema>;
 

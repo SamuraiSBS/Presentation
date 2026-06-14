@@ -132,13 +132,29 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
   );
 }
 
+function VisualImage({ image }: { image: NonNullable<PresentationDocument["slides"][number]["visual"]["image"]> }) {
+  return (
+    <figure className="visual-image">
+      <img src={image.url} alt={image.alt || ""} loading="lazy" />
+      {image.sourceTitle || image.sourceUrl ? <figcaption>{image.sourceTitle || image.sourceUrl}</figcaption> : null}
+    </figure>
+  );
+}
+
+function slideImageUrl(slide: PresentationDocument["slides"][number]) {
+  return slide.visual.image?.url || "";
+}
+
 function SlideCanvas({ slide }: { slide: PresentationDocument["slides"][number] }) {
   const isDivider = slide.slideKind === "title" || slide.slideKind === "section";
+  const imageUrl = slideImageUrl(slide);
 
   if (isDivider) {
     return (
-      <div className={`slide-content slide-content-${slide.slideKind}`}>
-        {slide.slideKind === "section" ? <span className="slide-kind">Раздел</span> : null}
+      <div
+        className={`slide-content slide-content-${slide.slideKind} ${imageUrl ? "slide-content-image" : ""}`}
+        style={imageUrl ? { backgroundImage: `linear-gradient(rgba(255, 253, 248, 0.76), rgba(255, 253, 248, 0.86)), url("${imageUrl}")` } : undefined}
+      >
         <h2 className="slide-title">{slide.title}</h2>
         {slide.thesis ? <p className="slide-body">{slide.thesis}</p> : null}
       </div>
@@ -149,7 +165,6 @@ function SlideCanvas({ slide }: { slide: PresentationDocument["slides"][number] 
     <div className="slide-content slide-content-structured">
       <div className="slide-main">
         <div>
-          <span className="slide-kind">{slide.slideKind === "summary" ? "Выводы" : "Учебный слайд"}</span>
           <h2 className="slide-title">{slide.title}</h2>
           {slide.thesis ? <p className="slide-thesis">{slide.thesis}</p> : null}
         </div>
@@ -179,11 +194,16 @@ function SlideCanvas({ slide }: { slide: PresentationDocument["slides"][number] 
 
 function VisualBlock({ slide }: { slide: PresentationDocument["slides"][number] }) {
   const visual = slide.visual;
-  if (!visual || visual.type === "none") return <div className="visual-card visual-empty">Смысловая схема</div>;
+  const image = visual?.image;
+  const imageFigure = image ? <VisualImage image={image} /> : null;
+  if (!visual || visual.type === "none") {
+    return imageFigure ? <section className="visual-card visual-image-card">{imageFigure}</section> : <div className="visual-card visual-empty" aria-hidden="true" />;
+  }
 
   if (visual.rows.length && ["comparison_diagram", "before_after_table", "pros_cons_table", "cause_effect_diagram"].includes(visual.type)) {
     return (
       <section className={`visual-card visual-${visual.type}`}>
+        {imageFigure}
         <strong>{visual.title}</strong>
         <div className="visual-table">
           <span>{visual.leftLabel || "Первое"}</span>
@@ -202,6 +222,7 @@ function VisualBlock({ slide }: { slide: PresentationDocument["slides"][number] 
   if (visual.type === "timeline") {
     return (
       <section className="visual-card visual-timeline">
+        {imageFigure}
         <strong>{visual.title}</strong>
         {visual.items.map((item, index) => (
           <div className="timeline-item" key={`${item.label}-${index}`}>
@@ -216,6 +237,7 @@ function VisualBlock({ slide }: { slide: PresentationDocument["slides"][number] 
   if (visual.type === "mind_map") {
     return (
       <section className="visual-card visual-mindmap">
+        {imageFigure}
         <strong>{visual.title || slide.title}</strong>
         <div className="mindmap-center">{slide.title}</div>
         <div className="mindmap-nodes">
@@ -229,6 +251,7 @@ function VisualBlock({ slide }: { slide: PresentationDocument["slides"][number] 
 
   return (
     <section className={`visual-card visual-${visual.type}`}>
+      {imageFigure}
       <strong>{visual.title || "Схема"}</strong>
       <div className="visual-steps">
         {(visual.items.length ? visual.items : slide.bullets.map((label) => ({ label, text: "" }))).slice(0, 5).map((item, index) => (

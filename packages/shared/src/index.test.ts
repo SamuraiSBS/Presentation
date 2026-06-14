@@ -67,6 +67,47 @@ describe("shared contracts", () => {
     expect(parsed.slides[0].highlights[0].tone).toBe("accent");
   });
 
+  it("accepts cached slide image metadata", () => {
+    const parsed = presentationSchema.parse({
+      id: "presentation-1",
+      title: "Image deck",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Core idea"],
+      speechScript: [{ slideOrder: 1, slideTitle: "Core idea", text: "Narration." }],
+      slides: [
+        {
+          id: "slide-1",
+          order: 1,
+          title: "Core idea",
+          layout: "hero",
+          visual: {
+            type: "none",
+            image: {
+              url: "https://cdn.example.com/image.jpg",
+              objectKey: "projects/project-1/images/slide-1.jpg",
+              alt: "Classroom image",
+              query: "classroom",
+              sourceUrl: "https://example.com/article",
+              sourceTitle: "Article",
+              provider: "tavily",
+              contentType: "image/jpeg",
+            },
+          },
+          blocks: [{ type: "callout", content: "Body." }],
+          speakerNotes: "Notes.",
+          timingSeconds: 45,
+          sourceRefs: [],
+        },
+      ],
+    });
+
+    expect(parsed.slides[0].visual.image?.objectKey).toBe("projects/project-1/images/slide-1.jpg");
+  });
+
   it("keeps old slide documents valid with structured defaults", () => {
     const parsed = presentationSchema.parse({
       id: "presentation-1",

@@ -3,6 +3,7 @@ import { type Source } from "@studydeck/shared";
 import { getPrisma } from "../prisma.js";
 import { readObjectBuffer } from "../storage.js";
 import { extractTextFromSource } from "./extract.js";
+import { enrichPresentationImages } from "./image-search.js";
 import { generatePresentation } from "./presentation.js";
 import { searchWebSources } from "./web-search.js";
 
@@ -83,7 +84,8 @@ export async function handleGenerationJob(job: Job<{ projectId: string; userId: 
       throw new Error("No source material was found for generation");
     }
 
-    const presentation = await generatePresentation(project, sources);
+    const generatedPresentation = await generatePresentation(project, sources);
+    const presentation = await enrichPresentationImages(project, generatedPresentation);
     await prisma.presentation.upsert({
       where: { projectId },
       create: { projectId, document: presentation },

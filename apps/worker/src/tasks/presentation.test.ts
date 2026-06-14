@@ -56,6 +56,8 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("process_diagram");
     expect(prompt).toContain("comparison_diagram");
     expect(prompt).toContain("mind_map");
+    expect(prompt).toContain("visual.description must describe a concrete, searchable image");
+    expect(prompt).toContain("do not put URLs");
     expect(prompt).toContain("Do not invent precise facts");
   });
 });
