@@ -162,6 +162,50 @@ function SlideCanvas({ slide }: { slide: PresentationDocument["slides"][number] 
     );
   }
 
+  if (slide.slideKind === "summary") {
+    return <SummarySlide slide={slide} />;
+  }
+
+  if (slide.layout === "statement") {
+    return <StatementSlide slide={slide} />;
+  }
+
+  if (slide.layout === "quote") {
+    return <QuoteSlide slide={slide} />;
+  }
+
+  if (slide.layout === "definition") {
+    return <DefinitionSlide slide={slide} />;
+  }
+
+  if (slide.layout === "timeline" || slide.layout === "process") {
+    return <SequenceSlide slide={slide} mode={slide.layout} />;
+  }
+
+  if (slide.layout === "comparison" || slide.layout === "two-column") {
+    return <ComparisonSlide slide={slide} />;
+  }
+
+  if (slide.layout === "image-focus") {
+    return <ImageFocusSlide slide={slide} />;
+  }
+
+  if (slide.layout === "case-study") {
+    return <CaseStudySlide slide={slide} />;
+  }
+
+  if (slide.layout === "question-answer") {
+    return <QuestionAnswerSlide slide={slide} />;
+  }
+
+  if (slide.layout === "myth-fact") {
+    return <MythFactSlide slide={slide} />;
+  }
+
+  if (slide.layout === "metrics") {
+    return <MetricsSlide slide={slide} />;
+  }
+
   return (
     <div className="slide-content slide-content-structured">
       <div className="slide-main">
@@ -189,6 +233,215 @@ function SlideCanvas({ slide }: { slide: PresentationDocument["slides"][number] 
         </section>
         {hasVisualContent ? <VisualBlock slide={slide} /> : null}
       </div>
+    </div>
+  );
+}
+
+function slideBlockText(slide: PresentationDocument["slides"][number], type?: SlideBlock["type"]) {
+  const blocks = type ? slide.blocks.filter((block) => block.type === type) : slide.blocks;
+  return blocks
+    .flatMap((block) => (block.type === "bullets" ? block.items : [block.content]))
+    .filter(Boolean)
+    .join(" ");
+}
+
+function compactItems(slide: PresentationDocument["slides"][number]) {
+  const visualItems = slide.visual.items.map((item) => item.label || item.text).filter(Boolean);
+  return (visualItems.length ? visualItems : slide.bullets.length ? slide.bullets : splitDisplaySentences(slideBlockText(slide) || slide.thesis)).slice(0, 5);
+}
+
+function splitDisplaySentences(value: string) {
+  return value
+    .split(/(?<=[.!?])\s+|[;\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function SummarySlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
+  const items = compactItems(slide);
+  return (
+    <div className="slide-content slide-layout-summary">
+      <h2 className="slide-title">{slide.title}</h2>
+      <div className="summary-grid">
+        {items.map((item, index) => (
+          <div className="summary-takeaway" key={`${item}-${index}`}>
+            <span>{index + 1}</span>
+            <p>{item}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StatementSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
+  return (
+    <div className="slide-content slide-layout-statement">
+      <h2 className="slide-title">{slide.title}</h2>
+      <p>{slide.thesis || slideBlockText(slide)}</p>
+    </div>
+  );
+}
+
+function QuoteSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
+  const quote = slideBlockText(slide, "quote") || slide.thesis || slideBlockText(slide);
+  return (
+    <div className="slide-content slide-layout-quote">
+      <h2 className="slide-title">{slide.title}</h2>
+      <blockquote>{quote}</blockquote>
+      {slide.bullets[0] ? <p>{slide.bullets[0]}</p> : null}
+    </div>
+  );
+}
+
+function DefinitionSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
+  const definition = slide.definition || { term: slide.title, text: slide.thesis || slideBlockText(slide) };
+  return (
+    <div className="slide-content slide-layout-definition">
+      <h2 className="slide-title">{slide.title}</h2>
+      <div className="definition-hero">
+        <strong>{definition.term}</strong>
+        <p>{definition.text}</p>
+      </div>
+      {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
+    </div>
+  );
+}
+
+function SequenceSlide({ slide, mode }: { slide: PresentationDocument["slides"][number]; mode: "timeline" | "process" }) {
+  const items = compactItems(slide);
+  return (
+    <div className={`slide-content slide-layout-sequence slide-layout-${mode}`}>
+      <h2 className="slide-title">{slide.title}</h2>
+      {slide.thesis ? <p className="slide-kicker">{slide.thesis}</p> : null}
+      <div className="sequence-track">
+        {items.map((item, index) => (
+          <div className="sequence-node" key={`${item}-${index}`}>
+            <span>{index + 1}</span>
+            <p>{item}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ComparisonSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
+  const rows = slide.visual.rows.length
+    ? slide.visual.rows
+    : [
+        {
+          label: slide.title,
+          left: slide.bullets[0] || slide.thesis,
+          right: slide.bullets[1] || slideBlockText(slide),
+        },
+      ];
+  return (
+    <div className="slide-content slide-layout-comparison">
+      <h2 className="slide-title">{slide.title}</h2>
+      <div className="comparison-board">
+        <strong>{slide.visual.leftLabel || "Первое"}</strong>
+        <strong>{slide.visual.rightLabel || "Второе"}</strong>
+        {rows.slice(0, 4).map((row, index) => (
+          <div className="comparison-row" key={`${row.label}-${index}`}>
+            <p>{row.left || row.label}</p>
+            <p>{row.right || row.label}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ImageFocusSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
+  return (
+    <div className="slide-content slide-layout-image-focus">
+      <div>
+        <h2 className="slide-title">{slide.title}</h2>
+        {slide.thesis ? <p>{slide.thesis}</p> : null}
+      </div>
+      {slide.visual.image ? <VisualImage image={slide.visual.image} /> : <VisualBlock slide={slide} />}
+    </div>
+  );
+}
+
+function CaseStudySlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
+  const items = compactItems(slide);
+  const labels = ["Ситуация", "Действие", "Результат"];
+  return (
+    <div className="slide-content slide-layout-case">
+      <h2 className="slide-title">{slide.title}</h2>
+      <div className="case-grid">
+        {labels.map((label, index) => (
+          <div className="case-step" key={label}>
+            <strong>{label}</strong>
+            <p>{items[index] || slide.thesis}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QuestionAnswerSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
+  return (
+    <div className="slide-content slide-layout-qa">
+      <h2 className="slide-title">{slide.title}</h2>
+      <div className="answer-panel">
+        <strong>Ответ</strong>
+        <p>{slide.thesis || slideBlockText(slide)}</p>
+      </div>
+      {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
+    </div>
+  );
+}
+
+function MythFactSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
+  const items = compactItems(slide);
+  return (
+    <div className="slide-content slide-layout-myth">
+      <h2 className="slide-title">{slide.title}</h2>
+      <div className="myth-fact-grid">
+        <div>
+          <strong>Миф</strong>
+          <p>{items[0] || slide.title}</p>
+        </div>
+        <div>
+          <strong>Факт</strong>
+          <p>{items[1] || slide.thesis}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetricsSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
+  const items = compactItems(slide);
+  return (
+    <div className="slide-content slide-layout-metrics">
+      <h2 className="slide-title">{slide.title}</h2>
+      <div className="metric-grid">
+        {items.slice(0, 4).map((item, index) => (
+          <div className="metric-tile" key={`${item}-${index}`}>
+            <strong>{metricLead(item, index)}</strong>
+            <p>{item}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function metricLead(item: string, index: number) {
+  return item.match(/\d+[.,]?\d*\s*[%\wА-Яа-я-]*/u)?.[0] || String(index + 1).padStart(2, "0");
+}
+
+function MiniPointRow({ items }: { items: string[] }) {
+  return (
+    <div className="mini-point-row">
+      {items.map((item) => (
+        <span key={item}>{item}</span>
+      ))}
     </div>
   );
 }

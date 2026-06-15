@@ -73,7 +73,11 @@ describe("buildGenerationPrompt", () => {
 
     expect(prompt).toContain("slideKind title");
     expect(prompt).toContain("slideKind summary");
-    expect(prompt).toContain("3-5 short, meaningful publicistic points");
+    expect(prompt).toContain("layout must be one of");
+    expect(prompt).toContain("question-answer");
+    expect(prompt).toContain("myth-fact");
+    expect(prompt).toContain("do not use the same content layout more than twice in a row");
+    expect(prompt).toContain("0-5 short, meaningful publicistic points");
     expect(prompt).toContain("keyConcepts: return an empty array");
     expect(prompt).toContain("highlights: return an empty array");
     expect(prompt).toContain("4-5 sentence story");
@@ -242,6 +246,7 @@ describe("generatePresentation fallback behavior", () => {
     expect(presentation.slides[5].bullets.length).toBeLessThanOrEqual(5);
     expect(presentation.slides.every((slide) => slide.keyConcepts.length === 0)).toBe(true);
     expect(presentation.slides.every((slide) => slide.highlights.length === 0)).toBe(true);
+    expect(new Set(presentation.slides.map((slide) => slide.layout)).size).toBeGreaterThan(2);
     expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 4 && sentenceCount(item.text) <= 5)).toBe(true);
     expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 4 && sentenceCount(slide.speakerNotes) <= 5)).toBe(true);
     expect(presentation.slides.every((slide) => slide.speakerNotes.length > slide.thesis.length)).toBe(true);

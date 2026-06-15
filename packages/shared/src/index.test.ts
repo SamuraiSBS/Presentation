@@ -108,6 +108,35 @@ describe("shared contracts", () => {
     expect(parsed.slides[0].visual.image?.objectKey).toBe("projects/project-1/images/slide-1.jpg");
   });
 
+  it("accepts varied slide layouts", () => {
+    const parsed = presentationSchema.parse({
+      id: "presentation-1",
+      title: "Varied deck",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Question"],
+      speechScript: [{ slideOrder: 1, slideTitle: "Question", text: "Narration." }],
+      slides: [
+        {
+          id: "slide-1",
+          order: 1,
+          title: "What changed?",
+          layout: "question-answer",
+          thesis: "The answer is short and concrete.",
+          blocks: [{ type: "callout", content: "The answer is short and concrete." }],
+          speakerNotes: "Notes.",
+          timingSeconds: 45,
+          sourceRefs: [],
+        },
+      ],
+    });
+
+    expect(parsed.slides[0].layout).toBe("question-answer");
+  });
+
   it("keeps old slide documents valid with structured defaults", () => {
     const parsed = presentationSchema.parse({
       id: "presentation-1",

@@ -63,6 +63,25 @@ export type SlideBlock = z.infer<typeof slideBlockSchema>;
 export const slideKindSchema = z.enum(["title", "section", "content", "summary"]);
 export type SlideKind = z.infer<typeof slideKindSchema>;
 
+export const slideLayoutSchema = z.enum([
+  "hero",
+  "bullets",
+  "two-column",
+  "summary",
+  "statement",
+  "quote",
+  "definition",
+  "timeline",
+  "comparison",
+  "process",
+  "image-focus",
+  "case-study",
+  "question-answer",
+  "myth-fact",
+  "metrics",
+]);
+export type SlideLayout = z.infer<typeof slideLayoutSchema>;
+
 export const visualTypeSchema = z.enum([
   "process_diagram",
   "comparison_diagram",
@@ -138,7 +157,7 @@ export const slideSchema = z.object({
   order: z.number().int().positive(),
   title: z.string(),
   slideKind: slideKindSchema.default("content"),
-  layout: z.enum(["hero", "bullets", "two-column", "summary"]),
+  layout: slideLayoutSchema,
   thesis: z.string().default(""),
   bullets: z.array(z.string()).max(5).default([]),
   definition: slideDefinitionSchema.nullable().default(null),
