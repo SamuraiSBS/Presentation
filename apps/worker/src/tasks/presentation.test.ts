@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { buildGenerationPrompt, generatePresentation, selectAiProviders } from "./presentation.js";
+import { buildDeckPromptFromNarrative, buildGenerationPrompt, buildNarrativePrompt, generatePresentation, selectAiProviders } from "./presentation.js";
 
 const originalEnv = { ...process.env };
 const forbiddenNarrationFragments = [
@@ -80,7 +80,7 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("0-5 short, meaningful publicistic points");
     expect(prompt).toContain("keyConcepts: return an empty array");
     expect(prompt).toContain("highlights: return an empty array");
-    expect(prompt).toContain("4-5 sentence story");
+    expect(prompt).toContain("5-6 sentence story");
     expect(prompt).toContain("Do not write long text blocks");
     expect(prompt).toContain("set visual.type to none when the slide does not have a clearly useful structured visual");
     expect(prompt).toContain("never fill visual.title, visual.items, or visual.rows with generic placeholder text");
@@ -93,7 +93,134 @@ describe("buildGenerationPrompt", () => {
   });
 });
 
+describe("two-step presentation prompts", () => {
+  it("builds a narrative prompt with strict slide markers", () => {
+    const prompt = buildNarrativePrompt(
+      {
+        id: "project-1",
+        title: "История денег",
+        prompt: "Сделай презентацию по истории денег",
+        scenario: "school_report",
+        level: "8 класс",
+        mode: "with_sources",
+        slideCount: 5,
+      },
+      [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Money changed from barter to digital payments." }],
+    );
+
+    expect(prompt).toContain("Слайд N: Заголовок");
+    expect(prompt).toContain("5-6 полноценных предложений");
+    expect(prompt).toContain("Слайд 1:");
+    expect(prompt).toContain("последний слайд должен быть заключением");
+    expect(prompt).toContain("В теме");
+    expect(prompt).toContain("Дальше эту мысль");
+  });
+
+  it("builds a deck prompt from narrative text and isolates slide content", () => {
+    const narrativeText = "Слайд 1: Вступление\nИстория денег начинается с обмена.\n\nСлайд 2: Заключение\nГлавный вывод связан с доверием.";
+    const prompt = buildDeckPromptFromNarrative(
+      {
+        id: "project-1",
+        title: "История денег",
+        prompt: "Сделай презентацию по истории денег",
+        scenario: "school_report",
+        level: "8 класс",
+        mode: "with_sources",
+        slideCount: 2,
+      },
+      narrativeText,
+    );
+
+    expect(prompt).toContain(narrativeText);
+    expect(prompt).toContain("only the corresponding `Слайд N:` block");
+    expect(prompt).toContain("do not borrow text, facts, or conclusions from neighboring slide blocks");
+  });
+});
+
 describe("generatePresentation fallback behavior", () => {
+  it("runs Yandex generation as narrative text first and JSON deck second", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const narrativeText = [
+      "Слайд 1: За фасадом успеха",
+      "Я расскажу о том, как внешний успех может скрывать потерю контроля. В начале важно увидеть не только деньги и статус, но и цену, которую человек платит за быстрый рост. Такой заход задает тему всей презентации. Он помогает перейти к причинам и последствиям без резкого скачка. Поэтому первый фрагмент сразу показывает личную цену быстрого роста.",
+      "",
+      "Слайд 2: Главный вывод",
+      "В финале эта история становится предупреждением. Успех без честности быстро превращается в проблему. Харизма и амбиции полезны только тогда, когда у человека есть принципы. Поэтому главный вывод связан с ответственностью за собственные решения. Такой итог помогает не повторять чужие ошибки.",
+    ].join("\n");
+    const bodies: any[] = [];
+    const originalFetch = global.fetch;
+    global.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body || "{}")));
+      const text =
+        bodies.length === 1
+          ? narrativeText
+          : JSON.stringify({
+              title: "За фасадом успеха",
+              outline: ["За фасадом успеха", "Главный вывод"],
+              slides: [
+                {
+                  title: "За фасадом успеха",
+                  thesis: "Внешний успех может скрывать потерю контроля.",
+                  blocks: [{ type: "callout", content: "За деньгами и статусом может стоять высокая личная цена." }],
+                  speakerNotes: "Я расскажу о том, как внешний успех может скрывать потерю контроля. В начале важно увидеть не только деньги и статус, но и цену, которую человек платит за быстрый рост. Такой заход задает тему всей презентации. Он помогает перейти к причинам и последствиям без резкого скачка. Поэтому первый фрагмент сразу показывает личную цену быстрого роста.",
+                },
+                {
+                  title: "Главный вывод",
+                  thesis: "Успех без честности быстро превращается в проблему.",
+                  bullets: ["Нужны принципы", "Важна ответственность", "Амбиции требуют контроля"],
+                  speakerNotes: "В финале эта история становится предупреждением. Успех без честности быстро превращается в проблему. Харизма и амбиции полезны только тогда, когда у человека есть принципы. Поэтому главный вывод связан с ответственностью за собственные решения. Такой итог помогает не повторять чужие ошибки.",
+                },
+              ],
+              speechScript: [
+                { slideOrder: 1, slideTitle: "За фасадом успеха", text: "Я расскажу о том, как внешний успех может скрывать потерю контроля. В начале важно увидеть не только деньги и статус, но и цену, которую человек платит за быстрый рост. Такой заход задает тему всей презентации. Он помогает перейти к причинам и последствиям без резкого скачка. Поэтому первый фрагмент сразу показывает личную цену быстрого роста." },
+                { slideOrder: 2, slideTitle: "Главный вывод", text: "В финале эта история становится предупреждением. Успех без честности быстро превращается в проблему. Харизма и амбиции полезны только тогда, когда у человека есть принципы. Поэтому главный вывод связан с ответственностью за собственные решения. Такой итог помогает не повторять чужие ошибки." },
+              ],
+            });
+
+      return new Response(
+        JSON.stringify({
+          result: {
+            alternatives: [{ message: { text } }],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "За фасадом успеха",
+          prompt: "Сделай презентацию о цене быстрого успеха",
+          scenario: "school_report",
+          level: "8 класс",
+          mode: "with_sources",
+          slideCount: 2,
+        },
+        [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "A story about success and responsibility." }],
+      );
+
+      expect(bodies).toHaveLength(2);
+      expect(bodies[0].jsonObject).toBe(false);
+      expect(bodies[0].messages[1].text).toContain("Слайд N: Заголовок");
+      expect(bodies[1].jsonObject).toBe(true);
+      expect(bodies[1].messages[1].text).toContain(narrativeText);
+      expect(presentation.generatedText).toBe(narrativeText);
+      expect(presentation.slides[0].thesis).toContain("Внешний успех");
+      expect(presentation.slides[1].bullets).toContain("Нужны принципы");
+      expectNoForbiddenNarration(visiblePresentationText(presentation));
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it("repairs incomplete AI output into structured slides", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
@@ -247,8 +374,8 @@ describe("generatePresentation fallback behavior", () => {
     expect(presentation.slides.every((slide) => slide.keyConcepts.length === 0)).toBe(true);
     expect(presentation.slides.every((slide) => slide.highlights.length === 0)).toBe(true);
     expect(new Set(presentation.slides.map((slide) => slide.layout)).size).toBeGreaterThan(2);
-    expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 4 && sentenceCount(item.text) <= 5)).toBe(true);
-    expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 4 && sentenceCount(slide.speakerNotes) <= 5)).toBe(true);
+    expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 5 && sentenceCount(item.text) <= 6)).toBe(true);
+    expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 5 && sentenceCount(slide.speakerNotes) <= 6)).toBe(true);
     expect(presentation.slides.every((slide) => slide.speakerNotes.length > slide.thesis.length)).toBe(true);
     expectNoForbiddenNarration(visiblePresentationText(presentation));
     expectNoForbiddenSlideText(visiblePresentationText(presentation));
@@ -385,8 +512,8 @@ describe("generatePresentation fallback behavior", () => {
         [],
       );
 
-      expect(sentenceCount(presentation.slides[0].speakerNotes)).toBeGreaterThanOrEqual(4);
-      expect(sentenceCount(presentation.slides[0].speakerNotes)).toBeLessThanOrEqual(5);
+      expect(sentenceCount(presentation.slides[0].speakerNotes)).toBeGreaterThanOrEqual(5);
+      expect(sentenceCount(presentation.slides[0].speakerNotes)).toBeLessThanOrEqual(6);
       expect(presentation.slides[0].speakerNotes.length).toBeGreaterThan(presentation.slides[0].thesis.length);
       expect(presentation.speechScript[0].text).toBe(presentation.slides[0].speakerNotes);
       expectNoForbiddenNarration(visiblePresentationText(presentation));
@@ -449,8 +576,8 @@ describe("generatePresentation fallback behavior", () => {
       expect(presentation.generationMode).toBe("yandex");
       expect(presentation.slides[0].blocks[0]).toEqual({ type: "bullets", items: ["A real generated point"] });
       expect(presentation.slides[0].bullets).toEqual(["A real generated point"]);
-      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(4);
-      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(5);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(5);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(6);
       expect(presentation.speechScript[0].text.toLowerCase()).toContain("a real generated point");
     } finally {
       global.fetch = originalFetch;
@@ -512,8 +639,8 @@ describe("generatePresentation fallback behavior", () => {
         [],
       );
 
-      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(4);
-      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(5);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(5);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(6);
       expect(presentation.speechScript[0].text).toContain("Новая волна российского кино");
       expect(presentation.speechScript[0].text).not.toContain("Добавлю несколько деталей");
     } finally {

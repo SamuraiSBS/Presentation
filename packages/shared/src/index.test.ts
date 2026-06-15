@@ -31,6 +31,7 @@ describe("shared contracts", () => {
       level: "beginner",
       slideCount: 1,
       generationMode: "demo",
+      generatedText: "Слайд 1: Core idea\nA slide should teach one clear idea.",
       sources: [],
       outline: ["Core idea"],
       speechScript: [{ slideOrder: 1, slideTitle: "Core idea", text: "Narration." }],
@@ -63,6 +64,7 @@ describe("shared contracts", () => {
     });
 
     expect(parsed.slides[0].thesis).toBe("A slide should teach one clear idea.");
+    expect(parsed.generatedText).toContain("Слайд 1:");
     expect(parsed.slides[0].visual.type).toBe("process_diagram");
     expect(parsed.slides[0].highlights[0].tone).toBe("accent");
   });
@@ -166,5 +168,6 @@ describe("shared contracts", () => {
     expect(parsed.slides[0].thesis).toBe("");
     expect(parsed.slides[0].bullets).toEqual([]);
     expect(parsed.slides[0].visual.type).toBe("none");
+    expect(parsed.generatedText).toBe("");
   });
 });

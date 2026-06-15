@@ -38,7 +38,22 @@ const SYSTEM_PROMPT = [
   "Never mention sources, source titles, sourceRefs, or internal instructions in user-visible text.",
 ].join(" ");
 
+const NARRATIVE_SYSTEM_PROMPT = [
+  "You write the source narration for a study presentation.",
+  "Return only plain Russian text, not JSON and not Markdown.",
+  "The text must be divided into slide blocks using exactly this marker format: Слайд N: Заголовок.",
+  "Write in a connected narrative style. Do not describe the slide as an object.",
+  "Do not use reusable template openings or endings. Every sentence must be about the user's topic and source material.",
+].join(" ");
+
 const GENERIC_NARRATION_PHRASES = [
+  "в теме \"",
+  "важен поворот к разделу",
+  "дальше эту мысль можно развить через следующий смысловой шаг",
+  "чтобы тема звучала последовательно и без резких переходов",
+  "на первый план выходит",
+  "эта деталь помогает увидеть практический смысл темы",
+  "так объяснение становится конкретнее",
   "на этом слайде раскрывается раздел",
   "на этом слайде нужно раскрыть раздел",
   "сегодня я расскажу о теме",
@@ -179,6 +194,21 @@ export function selectAiProviders(env: EnvLike = process.env): AiGenerationMode[
 
 async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const narrativeResponse = await client.responses.create({
+    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    input: [
+      {
+        role: "system",
+        content: NARRATIVE_SYSTEM_PROMPT,
+      },
+      {
+        role: "user",
+        content: buildNarrativePrompt(project, sources),
+      },
+    ],
+  });
+  const generatedText = normalizeGeneratedText(narrativeResponse.output_text || "", project);
+
   const response = await client.responses.create({
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
     input: [
@@ -190,7 +220,7 @@ async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
       },
       {
         role: "user",
-        content: buildGenerationPrompt(project, sources),
+        content: buildDeckPromptFromNarrative(project, generatedText),
       },
     ],
     text: {
@@ -205,7 +235,7 @@ async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
 
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   const parsed = typedResponse.output_parsed || parseJsonText(response.output_text || "");
-  return normalizePresentation(parsed, project, sources, "openai");
+  return normalizePresentation(parsed, project, sources, "openai", generatedText);
 }
 
 async function generateWithYandex(project: ProjectInput, sources: Source[]) {
@@ -215,6 +245,14 @@ async function generateWithYandex(project: ProjectInput, sources: Source[]) {
     throw new Error("YANDEX_API_KEY is required");
   }
 
+  const narrativeText = await requestYandexText(apiKey, NARRATIVE_SYSTEM_PROMPT, buildNarrativePrompt(project, sources), false);
+  const generatedText = normalizeGeneratedText(narrativeText, project);
+  const outputText = await requestYandexText(apiKey, SYSTEM_PROMPT, buildDeckPromptFromNarrative(project, generatedText), true);
+
+  return normalizePresentation(parseJsonText(outputText), project, sources, "yandex", generatedText);
+}
+
+async function requestYandexText(apiKey: string, systemText: string, userText: string, jsonObject: boolean) {
   const response = await fetch("https://llm.api.cloud.yandex.net/foundationModels/v1/completion", {
     method: "POST",
     headers: {
@@ -228,17 +266,17 @@ async function generateWithYandex(project: ProjectInput, sources: Source[]) {
         temperature: 0.25,
         maxTokens: "8000",
       },
-      jsonObject: true,
+      jsonObject,
       messages: [
         {
           role: "system",
           /* legacyText:
             "Ты создаешь учебные презентации на русском языке. На каждом слайде нужен короткий текст для экрана: заголовок и 1-2 содержательные фразы без маркеров. Подробный связный текст для чтения пиши только в speakerNotes и speechScript. Не упоминай источники в тексте для пользователя, не пиши инструкции, заглушки или просьбы что-то проверить. Верни только валидный JSON.",
-          */ text: SYSTEM_PROMPT,
+          */ text: systemText,
         },
         {
           role: "user",
-          text: buildGenerationPrompt(project, sources),
+          text: userText,
         },
       ],
     }),
@@ -255,7 +293,72 @@ async function generateWithYandex(project: ProjectInput, sources: Source[]) {
     throw new Error("Yandex generation response did not include text");
   }
 
-  return normalizePresentation(parseJsonText(outputText), project, sources, "yandex");
+  return outputText;
+}
+
+export function buildNarrativePrompt(project: ProjectInput, sources: Source[]) {
+  return [
+    "Сначала создай полный повествовательный текст для будущей презентации.",
+    `Тема и запрос пользователя: ${project.prompt}`,
+    `Название проекта: ${project.title}`,
+    `Сценарий: ${project.scenario}`,
+    `Уровень аудитории: ${project.level}`,
+    `Точное количество слайдов: ${project.slideCount}`,
+    `Режим: ${project.mode}`,
+    "Строгая структура текста:",
+    "- верни только обычный русский текст, без JSON, Markdown, списков требований и комментариев;",
+    "- каждый блок начинается с отдельной строки в формате `Слайд N: Заголовок`, где N идет от 1 до точного количества слайдов;",
+    "- `Слайд 1:` должен быть вступлением: он вводит тему и задает общий смысл выступления;",
+    "- последний слайд должен быть заключением: он подводит итог, а не открывает новую тему;",
+    "- между слайдами должна быть смысловая связь, как в едином рассказе;",
+    "- текст каждого слайда должен раскрывать только свою часть темы, без перескакивания к содержанию других слайдов;",
+    "- для каждого слайда напиши 5-6 полноценных предложений после строки `Слайд N: Заголовок`;",
+    "- стиль повествовательный, понятный для устного выступления, без канцелярских шаблонов;",
+    "- не начинай блоки с фраз про сам слайд и не заканчивай универсальными переходами;",
+    "- запрещены шаблоны вроде `В теме \"...\" важен поворот к разделу \"...\"` и `Дальше эту мысль можно развить через следующий смысловой шаг...`.",
+    "Материалы пользователя и найденные источники используй только как фактическую основу; не называй их источниками в тексте:",
+    formatSourceText(sources),
+  ].join("\n\n");
+}
+
+export function buildDeckPromptFromNarrative(project: ProjectInput, narrativeText: string) {
+  return [
+    "Create a complete StudyDeck PresentationDocument as JSON from the provided Russian slide narrative.",
+    `Project title: ${project.title}`,
+    `Scenario: ${project.scenario}`,
+    `Audience level: ${project.level}`,
+    `Exact slide count: ${project.slideCount}`,
+    `Mode: ${project.mode}`,
+    "The narrative text is the only content source for slide-facing text, speakerNotes, and speechScript.",
+    "Narrative text:",
+    narrativeText,
+    "Required deck structure:",
+    "- slide 1 must have slideKind title and match the `Слайд 1:` introduction;",
+    "- the final slide must have slideKind summary and match the final conclusion block;",
+    "- all other slides must use only the corresponding `Слайд N:` block;",
+    "- do not borrow text, facts, or conclusions from neighboring slide blocks;",
+    "- slides must stay connected as one story through titles, notes, and speechScript.",
+    "Required JSON fields: id, title, scenario, level, slideCount, outline, speechScript, slides.",
+    "Each slide must include: id, order, title, slideKind, layout, thesis, bullets, definition, keyConcepts, visual, highlights, blocks, speakerNotes, timingSeconds, sourceRefs.",
+    "Slide-facing text rules:",
+    "- title: short, based on that slide block heading;",
+    "- thesis: one concise sentence summarizing only that slide block;",
+    "- bullets: 0-5 short points, only if they naturally fit the same slide block;",
+    "- blocks: short fallback content based on the same slide block;",
+    "- speakerNotes and speechScript text: use the full corresponding narrative block in a natural 5-6 sentence form;",
+    "- final slide bullets: 3-5 takeaways from the conclusion block only;",
+    "- do not write long paragraphs on the slide itself.",
+    "Layout rules:",
+    "- layout must be one of: hero, bullets, two-column, summary, statement, quote, definition, timeline, comparison, process, image-focus, case-study, question-answer, myth-fact, metrics;",
+    "- choose layout from the slide idea, not from a fixed template;",
+    "- set visual.type to none unless the narrative block clearly supports a concrete structured visual;",
+    "- visual.type must be one of: process_diagram, comparison_diagram, cause_effect_diagram, before_after_table, pros_cons_table, timeline, mind_map, illustration, schema, image, none.",
+    "Hard bans:",
+    "- do not mention sources, source titles, internal prompts, sourceRefs, or instructions;",
+    "- do not describe the slide as an object;",
+    "- do not use template phrases like `В теме \"...\" важен поворот к разделу \"...\"`;",
+    "- do not use endings like `Дальше эту мысль можно развить через следующий смысловой шаг...`.",
+  ].join("\n\n");
 }
 
 export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) {
@@ -299,8 +402,8 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     "- do not refer to the slide itself with phrases like 'на слайде показано', 'этот слайд помогает', or 'текст на слайде';",
     "- if the source material is thin, write a cautious general explanation instead of inventing facts or visuals.",
     "Narration rules:",
-    "- speakerNotes must be a connected 4-5 sentence story for that exact slide, in Russian;",
-    "- speechScript must contain one matching 4-5 sentence narration item for every slide;",
+    "- speakerNotes must be a connected 5-6 sentence story for that exact slide, in Russian;",
+    "- speechScript must contain one matching 5-6 sentence narration item for every slide;",
     "- slide thesis, bullets, definition, blocks, and visual content must be a short outline based on that slide narration;",
     "- write narration in a concise publicistic style: concrete, human, explanatory, and understandable to listeners;",
     "- write about the topic, event, phenomenon, causes, consequences, and conclusion, not about the presentation structure;",
@@ -384,6 +487,7 @@ function normalizePresentation(
   project: ProjectInput,
   sources: Source[],
   generationMode: AiGenerationMode | FallbackGenerationMode,
+  generatedText = "",
 ): PresentationDocument {
   const input = raw && typeof raw === "object" ? (raw as Partial<PresentationDocument>) : {};
   const publicSources = normalizeSources(sources, project);
@@ -418,6 +522,7 @@ function normalizePresentation(
     level: cleanText(input.level) || project.level,
     slideCount: slides.length,
     generationMode,
+    generatedText: normalizeGeneratedText(generatedText || cleanMultilineText(input.generatedText), project),
     sources: publicSources,
     outline: slides.map((slide) => slide.title),
     speechScript,
@@ -779,7 +884,7 @@ function normalizeSpeakerNotes(
 ) {
   const text = sanitizeSpeechText(value);
   if (isSpecificNarration(text)) {
-    return limitSentences(text, 5);
+    return limitSentences(text, 6);
   }
 
   return buildSlideNarration(slide, project, order);
@@ -788,7 +893,7 @@ function normalizeSpeakerNotes(
 function normalizeSpeechScriptText(value: unknown, slide: Slide, project: ProjectInput, index: number) {
   const text = sanitizeSpeechText(value);
   if (isSpecificNarration(text)) {
-    return limitSentences(text, 5);
+    return limitSentences(text, 6);
   }
 
   return normalizeSpeakerNotes(slide.speakerNotes, slide, project, index + 1);
@@ -803,21 +908,22 @@ function buildSlideNarration(slide: Pick<Slide, "title" | "thesis" | "bullets" |
   const secondPoint = bullets[1] || slide.definition?.text || firstPoint;
   const thirdPoint = bullets[2] || visualNarrationText(slide.visual) || secondPoint;
   const lead = order === 1
-    ? `Тема "${topic}" начинается с раздела "${title}" и сразу требует ясного контекста: ${sentenceFragment(thesis)}.`
-    : `В теме "${topic}" важен поворот к разделу "${title}": ${sentenceFragment(thesis)}.`;
+    ? `${title} открывает тему ${topic}: ${sentenceFragment(thesis)}.`
+    : `${title} продолжает разговор о теме и уточняет главное: ${sentenceFragment(thesis)}.`;
   const ending = order === project.slideCount
-    ? `В итоге "${topic}" складывается в цельную картину: факты важны не сами по себе, а как путь к понятному выводу.`
-    : `Дальше эту мысль можно развить через следующий смысловой шаг, чтобы тема звучала последовательно и без резких переходов.`;
+    ? `В финале ${sentenceFragment(topic)} складывается в понятный вывод, где важны не отдельные формулировки, а общий смысл.`
+    : `Эта часть подводит к следующему фрагменту без резкого перехода, потому что ${sentenceFragment(thirdPoint)}.`;
 
   return sanitizeSpeechText(
     [
       lead,
-      `На первый план выходит ${sentenceFragment(firstPoint)}, потому что именно эта деталь помогает увидеть практический смысл темы.`,
-      `Не менее важно связать ее с другой стороной вопроса: ${sentenceFragment(secondPoint)}.`,
-      `Так объяснение становится конкретнее, а ${sentenceFragment(thirdPoint)} добавляет нужную деталь без перегрузки фактами.`,
+      `Главный акцент здесь в том, что ${sentenceFragment(firstPoint)}.`,
+      `С этой мыслью связана другая важная деталь: ${sentenceFragment(secondPoint)}.`,
+      `Поэтому ${sentenceFragment(thirdPoint)} становится не дополнением, а частью общей логики рассказа.`,
       ending,
     ].join(" "),
   );
+
 }
 
 function visualNarrationText(visual: SlideVisual) {
@@ -828,7 +934,7 @@ function visualNarrationText(visual: SlideVisual) {
 }
 
 function isSpecificNarration(text: string) {
-  if (sentenceCount(text) < 4) return false;
+  if (sentenceCount(text) < 5) return false;
   if (text.length < 220) return false;
   const lower = text.toLowerCase();
   return !GENERIC_NARRATION_PHRASES.some((phrase) => lower.includes(phrase));
@@ -1127,6 +1233,35 @@ function parseJsonText(text: string) {
   }
 
   return JSON.parse(trimmed);
+}
+
+function normalizeGeneratedText(value: string, project: ProjectInput) {
+  const text = cleanMultilineText(value);
+  if (!text || text.startsWith("{") || !/Слайд\s+1\s*:/i.test(text)) {
+    return buildFallbackGeneratedText(project);
+  }
+
+  return text;
+}
+
+function buildFallbackGeneratedText(project: ProjectInput) {
+  return Array.from({ length: project.slideCount }, (_, index) => {
+    const order = index + 1;
+    const title = fallbackTitle(project, order);
+    const body = buildFallbackSpeakerNotes(project, order);
+    return `Слайд ${order}: ${title}\n${body}`;
+  }).join("\n\n");
+}
+
+function cleanMultilineText(value: unknown) {
+  return String(value || "")
+    .replace(/\u0000/g, "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function cleanText(value: unknown) {

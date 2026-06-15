@@ -1,10 +1,21 @@
 import type { Highlight, KeyConcept, PresentationDocument, SlideBlock, SlideKind, SlideVisual } from "@studydeck/shared";
 
 type ProjectWithPresentation = {
-  presentation?: { document?: PresentationDocument | null } | null;
+  presentation?: { document?: DisplayPresentationInput | null } | null;
+};
+
+type DisplayPresentationInput = Omit<PresentationDocument, "generatedText"> & {
+  generatedText?: string;
 };
 
 const GENERIC_NARRATION_PHRASES = [
+  "в теме \"",
+  "важен поворот к разделу",
+  "дальше эту мысль можно развить через следующий смысловой шаг",
+  "чтобы тема звучала последовательно и без резких переходов",
+  "на первый план выходит",
+  "эта деталь помогает увидеть практический смысл темы",
+  "так объяснение становится конкретнее",
   "добавлю несколько деталей",
   "почему этот раздел важен",
   "на этом слайде раскрывается раздел",
@@ -61,7 +72,7 @@ export function sanitizeProjectForDisplay<T extends ProjectWithPresentation>(pro
   };
 }
 
-export function sanitizePresentationForDisplay(document: PresentationDocument): PresentationDocument {
+export function sanitizePresentationForDisplay(document: DisplayPresentationInput): PresentationDocument {
   const outline = Array.isArray(document.outline) ? document.outline.map(cleanText).filter(Boolean) : [];
   const outlineTitleCounts = countTitles(outline);
   const slides = document.slides.map((slide, index) => {
@@ -98,6 +109,7 @@ export function sanitizePresentationForDisplay(document: PresentationDocument): 
 
   return {
     ...document,
+    generatedText: cleanMultilineText(document.generatedText),
     sources: [],
     slides,
     speechScript: slides.map((slide, index) => {
@@ -429,6 +441,17 @@ function fallbackRows(type: SlideVisual["type"], bullets: string[]) {
 
 function cleanText(value: unknown) {
   return String(value || "").replace(/\u0000/g, "").replace(/\s+/g, " ").trim();
+}
+
+function cleanMultilineText(value: unknown) {
+  return String(value || "")
+    .replace(/\u0000/g, "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function validUrl(value: unknown): value is string {

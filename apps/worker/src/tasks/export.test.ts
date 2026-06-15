@@ -11,6 +11,7 @@ describe("createPptx", () => {
       level: "8-11 класс",
       slideCount: 1,
       generationMode: "demo",
+      generatedText: "Слайд 1: Русское кино после 2010 года\nПосле 2010 года российское кино стало заметнее работать с жанрами.",
       sources: [
         {
           id: "src-1",
@@ -84,6 +85,7 @@ describe("createPptx", () => {
       level: "beginner",
       slideCount: 1,
       generationMode: "demo",
+      generatedText: "Слайд 1: Image metadata\nThe slide remains exportable even before an image is cached.",
       sources: [],
       outline: ["Image metadata"],
       speechScript: [{ slideOrder: 1, slideTitle: "Image metadata", text: "Narration." }],

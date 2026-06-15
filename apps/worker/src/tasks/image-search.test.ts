@@ -104,6 +104,7 @@ function fixturePresentation(): PresentationDocument {
     level: "beginner",
     slideCount: 2,
     generationMode: "demo",
+    generatedText: "Слайд 1: Classroom context\nAI changes classroom routines.\n\nСлайд 2: Teacher workflow\nTeachers use AI to prepare and review tasks.",
     sources: [],
     outline: ["Classroom context", "Teacher workflow"],
     speechScript: [

@@ -128,6 +128,18 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
           </div>
         </aside>
       </section>
+      {presentation.generatedText ? (
+        <section className="panel" style={{ marginTop: 16 }}>
+          <strong>Текст презентации</strong>
+          <textarea
+            className="textarea notes"
+            value={presentation.generatedText}
+            readOnly
+            aria-label="Текст презентации"
+            style={{ marginTop: 12, minHeight: 260 }}
+          />
+        </section>
+      ) : null}
     </>
   );
 }

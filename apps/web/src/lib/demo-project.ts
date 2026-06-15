@@ -98,6 +98,9 @@ export const demoPresentation: PresentationDocument = {
   level: "8-11 класс",
   slideCount: slides.length,
   generationMode: "demo",
+  generatedText: slides
+    .map((slide) => `Слайд ${slide.order}: ${slide.title}\n${slide.speakerNotes}`)
+    .join("\n\n"),
   sources: [source],
   outline: slides.map((slide) => slide.title),
   speechScript: slides.map((slide) => ({

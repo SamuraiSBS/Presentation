@@ -36,6 +36,7 @@ describe("sanitizePresentationForDisplay", () => {
       level: "beginner",
       slideCount: 2,
       generationMode: "demo",
+      generatedText: "Слайд 1: Legacy title\nLegacy thesis.\n\nСлайд 2: Legacy summary\nFinal takeaway.",
       sources: [],
       outline: ["Legacy title", "Legacy summary"],
       speechScript: [{ slideOrder: 1, slideTitle: "Legacy title", text: "Narration." }],
@@ -64,6 +65,7 @@ describe("sanitizePresentationForDisplay", () => {
     } as any);
 
     expect(document.slides[0].slideKind).toBe("title");
+    expect(document.generatedText).toContain("Слайд 1: Legacy title\nLegacy thesis.");
     expect(document.slides[0].thesis).toContain("Legacy thesis");
     expect(document.slides[1].slideKind).toBe("summary");
     expect(document.slides[1].bullets).toEqual(["First takeaway", "Second takeaway", "Third takeaway"]);
