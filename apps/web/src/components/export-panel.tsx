@@ -8,7 +8,7 @@ type ProjectPayload = {
   title: string;
   status: string;
   exports?: ExportItem[];
-  presentation?: { document?: { slides?: unknown[]; speechScript?: unknown[] } } | null;
+  presentation?: { document?: { slides?: unknown[] } } | null;
 };
 
 export function ExportPanel({ project }: { project: ProjectPayload }) {
@@ -35,7 +35,7 @@ export function ExportPanel({ project }: { project: ProjectPayload }) {
       <span className="status">{project.status}</span>
       <h1 className="page-title" style={{ fontSize: 48 }}>Экспорт</h1>
       <p className="lead">
-        {project.title}: {document?.slides?.length || 0} слайдов, {document?.speechScript?.length || 0} частей рассказа.
+        {project.title}: {document?.slides?.length || 0} слайдов.
       </p>
       <div className="actions">
         <button className="button" type="button" onClick={() => requestExport("pdf")}>Подготовить PDF</button>

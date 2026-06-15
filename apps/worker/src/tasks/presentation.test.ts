@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { buildDeckPromptFromNarrative, buildGenerationPrompt, buildNarrativePrompt, generatePresentation, selectAiProviders } from "./presentation.js";
+import { buildGenerationPrompt, generatePresentation, selectAiProviders } from "./presentation.js";
 
 const originalEnv = { ...process.env };
 const forbiddenNarrationFragments = [
@@ -80,7 +80,9 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("0-5 short, meaningful publicistic points");
     expect(prompt).toContain("keyConcepts: return an empty array");
     expect(prompt).toContain("highlights: return an empty array");
-    expect(prompt).toContain("5-6 sentence story");
+    expect(prompt).toContain("5-6 sentence explanation");
+    expect(prompt).toContain("generatedText");
+    expect(prompt).toContain("Do not generate any separate story, narrative");
     expect(prompt).toContain("Do not write long text blocks");
     expect(prompt).toContain("set visual.type to none when the slide does not have a clearly useful structured visual");
     expect(prompt).toContain("never fill visual.title, visual.items, or visual.rows with generic placeholder text");
@@ -93,52 +95,8 @@ describe("buildGenerationPrompt", () => {
   });
 });
 
-describe("two-step presentation prompts", () => {
-  it("builds a narrative prompt with strict slide markers", () => {
-    const prompt = buildNarrativePrompt(
-      {
-        id: "project-1",
-        title: "История денег",
-        prompt: "Сделай презентацию по истории денег",
-        scenario: "school_report",
-        level: "8 класс",
-        mode: "with_sources",
-        slideCount: 5,
-      },
-      [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Money changed from barter to digital payments." }],
-    );
-
-    expect(prompt).toContain("Слайд N: Заголовок");
-    expect(prompt).toContain("5-6 полноценных предложений");
-    expect(prompt).toContain("Слайд 1:");
-    expect(prompt).toContain("последний слайд должен быть заключением");
-    expect(prompt).toContain("В теме");
-    expect(prompt).toContain("Дальше эту мысль");
-  });
-
-  it("builds a deck prompt from narrative text and isolates slide content", () => {
-    const narrativeText = "Слайд 1: Вступление\nИстория денег начинается с обмена.\n\nСлайд 2: Заключение\nГлавный вывод связан с доверием.";
-    const prompt = buildDeckPromptFromNarrative(
-      {
-        id: "project-1",
-        title: "История денег",
-        prompt: "Сделай презентацию по истории денег",
-        scenario: "school_report",
-        level: "8 класс",
-        mode: "with_sources",
-        slideCount: 2,
-      },
-      narrativeText,
-    );
-
-    expect(prompt).toContain(narrativeText);
-    expect(prompt).toContain("only the corresponding `Слайд N:` block");
-    expect(prompt).toContain("do not borrow text, facts, or conclusions from neighboring slide blocks");
-  });
-});
-
 describe("generatePresentation fallback behavior", () => {
-  it("runs Yandex generation as narrative text first and JSON deck second", async () => {
+  it("runs Yandex generation once and builds slides from generatedText", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -146,7 +104,7 @@ describe("generatePresentation fallback behavior", () => {
     process.env.YANDEX_MODEL_URI = "";
     process.env.ALLOW_DEMO_GENERATION = "false";
 
-    const narrativeText = [
+    const presentationText = [
       "Слайд 1: За фасадом успеха",
       "Я расскажу о том, как внешний успех может скрывать потерю контроля. В начале важно увидеть не только деньги и статус, но и цену, которую человек платит за быстрый рост. Такой заход задает тему всей презентации. Он помогает перейти к причинам и последствиям без резкого скачка. Поэтому первый фрагмент сразу показывает личную цену быстрого роста.",
       "",
@@ -157,11 +115,9 @@ describe("generatePresentation fallback behavior", () => {
     const originalFetch = global.fetch;
     global.fetch = async (_input, init) => {
       bodies.push(JSON.parse(String(init?.body || "{}")));
-      const text =
-        bodies.length === 1
-          ? narrativeText
-          : JSON.stringify({
+      const text = JSON.stringify({
               title: "За фасадом успеха",
+              generatedText: presentationText,
               outline: ["За фасадом успеха", "Главный вывод"],
               slides: [
                 {
@@ -207,12 +163,11 @@ describe("generatePresentation fallback behavior", () => {
         [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "A story about success and responsibility." }],
       );
 
-      expect(bodies).toHaveLength(2);
-      expect(bodies[0].jsonObject).toBe(false);
-      expect(bodies[0].messages[1].text).toContain("Слайд N: Заголовок");
-      expect(bodies[1].jsonObject).toBe(true);
-      expect(bodies[1].messages[1].text).toContain(narrativeText);
-      expect(presentation.generatedText).toBe(narrativeText);
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0].jsonObject).toBe(true);
+      expect(bodies[0].messages[1].text).toContain("generatedText");
+      expect(bodies[0].messages[1].text).not.toContain("Сначала создай полный повествовательный текст");
+      expect(presentation.generatedText).toBe(presentationText);
       expect(presentation.slides[0].thesis).toContain("Внешний успех");
       expect(presentation.slides[1].bullets).toContain("Нужны принципы");
       expectNoForbiddenNarration(visiblePresentationText(presentation));

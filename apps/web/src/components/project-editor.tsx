@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import type { PresentationDocument, SlideBlock } from "@studydeck/shared";
-import { sanitizeDisplayText, sanitizeProjectForDisplay } from "@/lib/presentation-display";
+import { sanitizeProjectForDisplay } from "@/lib/presentation-display";
 
 type ProjectPayload = {
   id: string;
@@ -20,11 +20,6 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
   const [actionError, setActionError] = useState("");
   const presentation = project.presentation?.document;
   const slide = presentation?.slides[active];
-
-  const speech = useMemo(
-    () => presentation?.speechScript.find((item) => item.slideOrder === slide?.order),
-    [presentation, slide],
-  );
 
   async function refresh() {
     const response = await fetch(`/api/projects/${project.id}`);
@@ -120,13 +115,6 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
             aria-label="Заметки спикера"
           />
         </section>
-        <aside className="speech">
-          <strong>Рассказ</strong>
-          <div className="speech-item">
-            <strong>{speech?.slideTitle || slide.title}</strong>
-            <p>{sanitizeDisplayText(speech?.text || slide.speakerNotes)}</p>
-          </div>
-        </aside>
       </section>
       {presentation.generatedText ? (
         <section className="panel" style={{ marginTop: 16 }}>

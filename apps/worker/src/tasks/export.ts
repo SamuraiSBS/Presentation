@@ -103,7 +103,7 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
       renderContentSlide(pptx, slide, item, imageData);
     }
 
-    slide.addNotes([item.speakerNotes, "", "Рассказ:", presentation.speechScript.find((entry) => entry.slideOrder === item.order)?.text || ""].join("\n"));
+    slide.addNotes(item.speakerNotes);
   }
 
   return pptx.write({ outputType: "nodebuffer" }) as Promise<Buffer>;

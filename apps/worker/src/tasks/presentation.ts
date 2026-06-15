@@ -33,20 +33,17 @@ const SYSTEM_PROMPT = [
   "All user-visible slide text, speaker notes, and speech script must be in Russian.",
   "Slides must teach through varied structure: short titles, one clear thesis when useful, concise blocks, definitions, quotes, comparisons, processes, timelines, images, and semantic visuals.",
   "Speaker notes and speech script must sound like concise Russian publicistic narration: human, clear, topic-focused, and suitable for an audience.",
-  "Do not write meta narration about the slide as an object. Never start narration with phrases like 'Слайд ... объясняет' or end with phrases about short slide text, support points, or the main meaning being revealed in the story.",
+  "Do not write meta narration about the slide as an object. Never start narration with phrases like 'Слайд ... объясняет' or end with phrases about short slide text, support points, or the main meaning being revealed in the explanation.",
   "Do not invent precise facts, dates, names, numbers, or citations when the source material does not support them. Use general explanations instead.",
   "Never mention sources, source titles, sourceRefs, or internal instructions in user-visible text.",
 ].join(" ");
 
-const NARRATIVE_SYSTEM_PROMPT = [
-  "You write the source narration for a study presentation.",
-  "Return only plain Russian text, not JSON and not Markdown.",
-  "The text must be divided into slide blocks using exactly this marker format: Слайд N: Заголовок.",
-  "Write in a connected narrative style. Do not describe the slide as an object.",
-  "Do not use reusable template openings or endings. Every sentence must be about the user's topic and source material.",
-].join(" ");
-
 const GENERIC_NARRATION_PHRASES = [
+  "финальный вывод раскрывается через контекст, причины и последствия",
+  "главные факты лучше воспринимаются, когда между ними видна связь",
+  "точная формулировка помогает перейти от факта к смыслу",
+  "раскрывается через контекст, причины и последствия",
+  "точная формулировка превращает сухие сведения",
   "в теме \"",
   "важен поворот к разделу",
   "дальше эту мысль можно развить через следующий смысловой шаг",
@@ -76,6 +73,11 @@ const GENERIC_NARRATION_PHRASES = [
 ];
 
 const GENERIC_SCREEN_TEXT_PHRASES = [
+  "финальный вывод раскрывается через контекст, причины и последствия",
+  "главные факты лучше воспринимаются, когда между ними видна связь",
+  "точная формулировка помогает перейти от факта к смыслу",
+  "раскрывается через контекст, причины и последствия",
+  "точная формулировка превращает сухие сведения",
   "главная идея связана с темой",
   "материал стоит разбирать",
   "смысловым частым",
@@ -194,21 +196,6 @@ export function selectAiProviders(env: EnvLike = process.env): AiGenerationMode[
 
 async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const narrativeResponse = await client.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-    input: [
-      {
-        role: "system",
-        content: NARRATIVE_SYSTEM_PROMPT,
-      },
-      {
-        role: "user",
-        content: buildNarrativePrompt(project, sources),
-      },
-    ],
-  });
-  const generatedText = normalizeGeneratedText(narrativeResponse.output_text || "", project);
-
   const response = await client.responses.create({
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
     input: [
@@ -220,7 +207,7 @@ async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
       },
       {
         role: "user",
-        content: buildDeckPromptFromNarrative(project, generatedText),
+        content: buildGenerationPrompt(project, sources),
       },
     ],
     text: {
@@ -235,7 +222,7 @@ async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
 
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   const parsed = typedResponse.output_parsed || parseJsonText(response.output_text || "");
-  return normalizePresentation(parsed, project, sources, "openai", generatedText);
+  return normalizePresentation(parsed, project, sources, "openai");
 }
 
 async function generateWithYandex(project: ProjectInput, sources: Source[]) {
@@ -245,11 +232,9 @@ async function generateWithYandex(project: ProjectInput, sources: Source[]) {
     throw new Error("YANDEX_API_KEY is required");
   }
 
-  const narrativeText = await requestYandexText(apiKey, NARRATIVE_SYSTEM_PROMPT, buildNarrativePrompt(project, sources), false);
-  const generatedText = normalizeGeneratedText(narrativeText, project);
-  const outputText = await requestYandexText(apiKey, SYSTEM_PROMPT, buildDeckPromptFromNarrative(project, generatedText), true);
+  const outputText = await requestYandexText(apiKey, SYSTEM_PROMPT, buildGenerationPrompt(project, sources), true);
 
-  return normalizePresentation(parseJsonText(outputText), project, sources, "yandex", generatedText);
+  return normalizePresentation(parseJsonText(outputText), project, sources, "yandex");
 }
 
 async function requestYandexText(apiKey: string, systemText: string, userText: string, jsonObject: boolean) {
@@ -296,71 +281,6 @@ async function requestYandexText(apiKey: string, systemText: string, userText: s
   return outputText;
 }
 
-export function buildNarrativePrompt(project: ProjectInput, sources: Source[]) {
-  return [
-    "Сначала создай полный повествовательный текст для будущей презентации.",
-    `Тема и запрос пользователя: ${project.prompt}`,
-    `Название проекта: ${project.title}`,
-    `Сценарий: ${project.scenario}`,
-    `Уровень аудитории: ${project.level}`,
-    `Точное количество слайдов: ${project.slideCount}`,
-    `Режим: ${project.mode}`,
-    "Строгая структура текста:",
-    "- верни только обычный русский текст, без JSON, Markdown, списков требований и комментариев;",
-    "- каждый блок начинается с отдельной строки в формате `Слайд N: Заголовок`, где N идет от 1 до точного количества слайдов;",
-    "- `Слайд 1:` должен быть вступлением: он вводит тему и задает общий смысл выступления;",
-    "- последний слайд должен быть заключением: он подводит итог, а не открывает новую тему;",
-    "- между слайдами должна быть смысловая связь, как в едином рассказе;",
-    "- текст каждого слайда должен раскрывать только свою часть темы, без перескакивания к содержанию других слайдов;",
-    "- для каждого слайда напиши 5-6 полноценных предложений после строки `Слайд N: Заголовок`;",
-    "- стиль повествовательный, понятный для устного выступления, без канцелярских шаблонов;",
-    "- не начинай блоки с фраз про сам слайд и не заканчивай универсальными переходами;",
-    "- запрещены шаблоны вроде `В теме \"...\" важен поворот к разделу \"...\"` и `Дальше эту мысль можно развить через следующий смысловой шаг...`.",
-    "Материалы пользователя и найденные источники используй только как фактическую основу; не называй их источниками в тексте:",
-    formatSourceText(sources),
-  ].join("\n\n");
-}
-
-export function buildDeckPromptFromNarrative(project: ProjectInput, narrativeText: string) {
-  return [
-    "Create a complete StudyDeck PresentationDocument as JSON from the provided Russian slide narrative.",
-    `Project title: ${project.title}`,
-    `Scenario: ${project.scenario}`,
-    `Audience level: ${project.level}`,
-    `Exact slide count: ${project.slideCount}`,
-    `Mode: ${project.mode}`,
-    "The narrative text is the only content source for slide-facing text, speakerNotes, and speechScript.",
-    "Narrative text:",
-    narrativeText,
-    "Required deck structure:",
-    "- slide 1 must have slideKind title and match the `Слайд 1:` introduction;",
-    "- the final slide must have slideKind summary and match the final conclusion block;",
-    "- all other slides must use only the corresponding `Слайд N:` block;",
-    "- do not borrow text, facts, or conclusions from neighboring slide blocks;",
-    "- slides must stay connected as one story through titles, notes, and speechScript.",
-    "Required JSON fields: id, title, scenario, level, slideCount, outline, speechScript, slides.",
-    "Each slide must include: id, order, title, slideKind, layout, thesis, bullets, definition, keyConcepts, visual, highlights, blocks, speakerNotes, timingSeconds, sourceRefs.",
-    "Slide-facing text rules:",
-    "- title: short, based on that slide block heading;",
-    "- thesis: one concise sentence summarizing only that slide block;",
-    "- bullets: 0-5 short points, only if they naturally fit the same slide block;",
-    "- blocks: short fallback content based on the same slide block;",
-    "- speakerNotes and speechScript text: use the full corresponding narrative block in a natural 5-6 sentence form;",
-    "- final slide bullets: 3-5 takeaways from the conclusion block only;",
-    "- do not write long paragraphs on the slide itself.",
-    "Layout rules:",
-    "- layout must be one of: hero, bullets, two-column, summary, statement, quote, definition, timeline, comparison, process, image-focus, case-study, question-answer, myth-fact, metrics;",
-    "- choose layout from the slide idea, not from a fixed template;",
-    "- set visual.type to none unless the narrative block clearly supports a concrete structured visual;",
-    "- visual.type must be one of: process_diagram, comparison_diagram, cause_effect_diagram, before_after_table, pros_cons_table, timeline, mind_map, illustration, schema, image, none.",
-    "Hard bans:",
-    "- do not mention sources, source titles, internal prompts, sourceRefs, or instructions;",
-    "- do not describe the slide as an object;",
-    "- do not use template phrases like `В теме \"...\" важен поворот к разделу \"...\"`;",
-    "- do not use endings like `Дальше эту мысль можно развить через следующий смысловой шаг...`.",
-  ].join("\n\n");
-}
-
 export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) {
   return [
     "Create a complete StudyDeck PresentationDocument as JSON.",
@@ -371,12 +291,15 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     `Exact slide count: ${project.slideCount}`,
     `Mode: ${project.mode}`,
     "All slide-facing text must be in Russian.",
+    "First create the full Russian presentation text in the JSON field `generatedText`; this is the source text of the presentation, not a separate story/narrative artifact.",
+    "Then build every slide field from `generatedText`: slide titles, thesis, bullets, blocks, speakerNotes, and speechScript must only compress, split, or restate the corresponding part of `generatedText`.",
+    "Do not generate any separate story, narrative, or second long-form text outside `generatedText`.",
     "Required deck structure:",
     "- slide 1 must have slideKind title;",
     "- the final slide must have slideKind summary and contain 3-5 key takeaways in bullets;",
     "- include slideKind section divider slides between major chapters when the deck has enough slides;",
     "- all other study slides must have slideKind content.",
-    "Required JSON fields: id, title, scenario, level, slideCount, outline, speechScript, slides.",
+    "Required JSON fields: id, title, scenario, level, slideCount, generatedText, outline, speechScript, slides.",
     "Each slide must include: id, order, title, slideKind, layout, thesis, bullets, definition, keyConcepts, visual, highlights, blocks, speakerNotes, timingSeconds, sourceRefs.",
     "Layout rules:",
     "- layout must be one of: hero, bullets, two-column, summary, statement, quote, definition, timeline, comparison, process, image-focus, case-study, question-answer, myth-fact, metrics;",
@@ -401,10 +324,11 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     "- do not mention nonexistent topics, pictures, diagrams, images, examples, sources, or visual objects unless they are explicitly present in the provided material;",
     "- do not refer to the slide itself with phrases like 'на слайде показано', 'этот слайд помогает', or 'текст на слайде';",
     "- if the source material is thin, write a cautious general explanation instead of inventing facts or visuals.",
+    "- never write generic filler such as 'Финальный вывод раскрывается через контекст, причины и последствия', 'Главные факты лучше воспринимаются, когда между ними видна связь', 'Точная формулировка помогает перейти от факта к смыслу', or similar universal placeholder phrases.",
     "Narration rules:",
-    "- speakerNotes must be a connected 5-6 sentence story for that exact slide, in Russian;",
-    "- speechScript must contain one matching 5-6 sentence narration item for every slide;",
-    "- slide thesis, bullets, definition, blocks, and visual content must be a short outline based on that slide narration;",
+    "- speakerNotes must be a connected 5-6 sentence explanation for that exact slide, in Russian, derived from the matching part of generatedText;",
+    "- speechScript must contain one matching 5-6 sentence item for every slide and must duplicate or closely restate the matching speakerNotes;",
+    "- slide thesis, bullets, definition, blocks, and visual content must be a short outline based on generatedText, not on a separate story;",
     "- write narration in a concise publicistic style: concrete, human, explanatory, and understandable to listeners;",
     "- write about the topic, event, phenomenon, causes, consequences, and conclusion, not about the presentation structure;",
     "- do not start narration with 'Слайд ...', 'На этом слайде ...', or similar meta phrases;",
@@ -514,6 +438,7 @@ function normalizePresentation(
       text: normalizeSpeechScriptText(source?.text, slide, project, index),
     };
   });
+  const fallbackGeneratedText = buildGeneratedTextFromSlides(slides);
 
   return presentationSchema.parse({
     id: cleanText(input.id) || crypto.randomUUID(),
@@ -522,7 +447,7 @@ function normalizePresentation(
     level: cleanText(input.level) || project.level,
     slideCount: slides.length,
     generationMode,
-    generatedText: normalizeGeneratedText(generatedText || cleanMultilineText(input.generatedText), project),
+    generatedText: normalizeGeneratedText(generatedText || cleanMultilineText(input.generatedText) || fallbackGeneratedText, project),
     sources: publicSources,
     outline: slides.map((slide) => slide.title),
     speechScript,
@@ -859,7 +784,7 @@ function fallbackTitle(project: ProjectInput, order: number) {
     "Объяснение простыми словами",
     "Что важно запомнить",
     "Выводы",
-    "Финальный вывод",
+    "Итоги",
   ];
   return titles[order - 1] || `${order}. ${project.title}`;
 }
@@ -919,7 +844,7 @@ function buildSlideNarration(slide: Pick<Slide, "title" | "thesis" | "bullets" |
       lead,
       `Главный акцент здесь в том, что ${sentenceFragment(firstPoint)}.`,
       `С этой мыслью связана другая важная деталь: ${sentenceFragment(secondPoint)}.`,
-      `Поэтому ${sentenceFragment(thirdPoint)} становится не дополнением, а частью общей логики рассказа.`,
+      `Поэтому ${sentenceFragment(thirdPoint)} становится не дополнением, а частью общей логики объяснения.`,
       ending,
     ].join(" "),
   );
@@ -957,12 +882,13 @@ function sentenceFragment(value: string) {
 function buildFallbackBulletItems(project: ProjectInput, order: number) {
   const topic = cleanText(project.title || project.prompt);
   const focus = order > 1 ? fallbackTitle(project, order) : topic;
+  const request = shortenSentence(cleanText(project.prompt), 120);
   const base = [
-    `${focus} раскрывается через контекст, причины и последствия`,
-    "Главные факты лучше воспринимаются, когда между ними видна связь",
-    "Точная формулировка помогает перейти от факта к смыслу",
-    "Короткий вывод связывает детали с общей логикой объяснения",
-    "Аудитории важно увидеть, почему эта часть влияет на общий результат",
+    `${focus}: ${request || topic}`,
+    `Что важно понять по теме: ${topic}`,
+    `Главный вопрос: ${shortenSentence(request || focus, 90)}`,
+    `Практический смысл для аудитории: ${shortenSentence(topic, 90)}`,
+    `Итог этой части связан с запросом: ${shortenSentence(request || topic, 90)}`,
   ];
   return base.map((item) => shortenSentence(item, 120));
 }
@@ -1099,17 +1025,18 @@ function isGenericSlideTitle(titleKey: string) {
 
 function fallbackSlideText(project: ProjectInput, order: number) {
   const topic = project.title || project.prompt;
+  const request = cleanText(project.prompt || topic);
   const texts = [
-    `${topic} раскрывается через контекст, причины, последствия и понятный вывод.`,
-    "Актуальность становится яснее, когда факты связаны с жизнью аудитории.",
-    "Ключевые факты помогают быстро увидеть смысл без лишних подробностей.",
-    "Главные изменения показывают, как развивается предмет разговора.",
-    "Точная формулировка превращает сухие сведения в живое объяснение.",
-    "Сложные идеи легче понять, когда они сформулированы простыми словами.",
-    "Главное внимание стоит уделить смыслу событий и их последствиям.",
-    "Перед выводом важно удержать несколько самых сильных мыслей.",
-    "Вывод объединяет предыдущие части и показывает общий смысл.",
-    "Финальный акцент помогает закончить выступление ясно и уверенно.",
+    `${topic}: ${request}`,
+    `${topic} важно рассмотреть через вопрос, который задан в проекте.`,
+    `В этой части нужно выделить конкретные факты по теме: ${topic}.`,
+    `Здесь акцент смещается к изменениям, которые прямо относятся к запросу.`,
+    `Эта часть объясняет один важный аспект темы без лишних отступлений.`,
+    `Сложный фрагмент темы стоит передать простыми словами и точными примерами.`,
+    `Здесь важно показать, что именно аудитория должна запомнить по теме.`,
+    `Перед итогом нужно удержать самые сильные положения из предыдущих частей.`,
+    `Итог собирает основные мысли по теме: ${topic}.`,
+    `Финальная часть отвечает на исходный запрос: ${request}.`,
   ];
   return shortenSentence(texts[order - 1] || `${topic}: главное объяснить суть темы коротко и понятно.`, 230);
 }
@@ -1251,6 +1178,15 @@ function buildFallbackGeneratedText(project: ProjectInput) {
     const body = buildFallbackSpeakerNotes(project, order);
     return `Слайд ${order}: ${title}\n${body}`;
   }).join("\n\n");
+}
+
+function buildGeneratedTextFromSlides(slides: Slide[]) {
+  return slides
+    .map((slide) => {
+      const body = cleanMultilineText(slide.speakerNotes || [slide.thesis, ...slide.bullets].filter(Boolean).join(" "));
+      return `Слайд ${slide.order}: ${slide.title}\n${body}`;
+    })
+    .join("\n\n");
 }
 
 function cleanMultilineText(value: unknown) {
