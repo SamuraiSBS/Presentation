@@ -311,6 +311,34 @@ select {
   background: #f0f1ec;
 }
 
+.slide-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  gap: 12px;
+  min-height: 0;
+}
+
+.slide-stage,
+.slide-text-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.slide-text-panel {
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.slide-text-panel .textarea {
+  min-height: 0;
+  resize: none;
+}
+
 .slide-canvas {
   display: flex;
   flex-direction: column;
@@ -944,6 +972,10 @@ select {
 
   .slide-canvas {
     min-height: auto;
+  }
+
+  .slide-workspace {
+    grid-template-columns: 1fr;
   }
 
   .slide-title {

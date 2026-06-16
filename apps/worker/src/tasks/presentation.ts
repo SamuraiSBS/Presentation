@@ -29,11 +29,12 @@ type FallbackGenerationMode = "demo" | "demo-fallback";
 type EnvLike = Record<string, string | undefined>;
 
 const SYSTEM_PROMPT = [
-  "You create structured study presentations. Return only valid JSON.",
+  "You create structured study presentations as clear Russian classroom narration. Return only valid JSON.",
   "All user-visible slide text, speaker notes, and speech script must be in Russian.",
-  "Slides must teach through varied structure: short titles, one clear thesis when useful, concise blocks, definitions, quotes, comparisons, processes, timelines, images, and semantic visuals.",
-  "Speaker notes and speech script must sound like concise Russian publicistic narration: human, clear, topic-focused, and suitable for an audience.",
-  "Do not write meta narration about the slide as an object. Never start narration with phrases like 'Слайд ... объясняет' or end with phrases about short slide text, support points, or the main meaning being revealed in the explanation.",
+  "Build the deck as one coherent study story split into slides: opening context, concrete facts, turning points, consequences, and a human final conclusion.",
+  "Slide titles must be semantic, not template labels. Prefer titles like 'За фасадом успеха' or 'От амбиций к жадности' over 'Контекст', 'Ключевые факты', 'Примеры', or 'Выводы'.",
+  "Speaker notes and speech script must sound like a student can read them aloud: simple, specific, human, and topic-focused.",
+  "Do not write meta narration about the slide as an object. Never write phrases like 'этот слайд помогает', 'продолжает разговор о теме', 'подводит к следующему фрагменту', 'общая логика объяснения', or 'главный акцент здесь'.",
   "Do not invent precise facts, dates, names, numbers, or citations when the source material does not support them. Use general explanations instead.",
   "Never mention sources, source titles, sourceRefs, or internal instructions in user-visible text.",
 ].join(" ");
@@ -70,6 +71,19 @@ const GENERIC_NARRATION_PHRASES = [
   "рассказе про",
   "рассказ про",
   "примеры. поэтому",
+  "открывает тему",
+  "продолжает разговор о теме",
+  "уточняет главное",
+  "главный акцент здесь",
+  "с этой мыслью связана",
+  "другая важная деталь",
+  "становится не дополнением",
+  "частью общей логики объяснения",
+  "эта часть подводит",
+  "без резкого перехода",
+  "складывается в понятный вывод",
+  "важны не отдельные формулировки",
+  "общий смысл",
 ];
 
 const GENERIC_SCREEN_TEXT_PHRASES = [
@@ -97,7 +111,97 @@ const GENERIC_SCREEN_TEXT_PHRASES = [
   "как видно на схеме",
   "как показано на картинке",
   "как показано на изображении",
+  "что важно понять по теме",
+  "главный вопрос",
+  "практический смысл для аудитории",
+  "итог этой части связан с запросом",
 ];
+
+const GENERIC_TITLES = [
+  "контекст",
+  "контекст и актуальность",
+  "актуальность",
+  "ключевые факты",
+  "главные изменения",
+  "примеры",
+  "как это объяснить проще",
+  "объяснение простыми словами",
+  "что важно запомнить",
+  "вывод",
+  "выводы",
+  "итоги",
+  "заключение",
+  "главный вывод",
+  "основные мысли",
+];
+
+const STOP_WORDS = new Set([
+  "а",
+  "без",
+  "более",
+  "бы",
+  "был",
+  "была",
+  "были",
+  "было",
+  "в",
+  "во",
+  "все",
+  "всё",
+  "где",
+  "для",
+  "до",
+  "его",
+  "ее",
+  "её",
+  "если",
+  "есть",
+  "еще",
+  "ещё",
+  "же",
+  "за",
+  "здесь",
+  "и",
+  "из",
+  "или",
+  "как",
+  "когда",
+  "который",
+  "которые",
+  "между",
+  "на",
+  "над",
+  "не",
+  "но",
+  "о",
+  "об",
+  "он",
+  "она",
+  "они",
+  "от",
+  "по",
+  "под",
+  "после",
+  "при",
+  "про",
+  "с",
+  "со",
+  "так",
+  "такой",
+  "там",
+  "то",
+  "только",
+  "у",
+  "уже",
+  "это",
+  "эта",
+  "этот",
+  "эти",
+  "that",
+  "the",
+  "and",
+  "with",
+]);
 
 const SLIDE_LAYOUTS = [
   "hero",
@@ -291,12 +395,19 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     `Exact slide count: ${project.slideCount}`,
     `Mode: ${project.mode}`,
     "All slide-facing text must be in Russian.",
-    "First create the full Russian presentation text in the JSON field `generatedText`; this is the source text of the presentation, not a separate story/narrative artifact.",
-    "Then build every slide field from `generatedText`: slide titles, thesis, bullets, blocks, speakerNotes, and speechScript must only compress, split, or restate the corresponding part of `generatedText`.",
-    "Do not generate any separate story, narrative, or second long-form text outside `generatedText`.",
+    "First create the complete Russian study narration in `generatedText`, divided exactly as `Слайд 1: ...` through the requested slide count.",
+    "`generatedText` is the single source of truth for the deck. It must read like a coherent short oral presentation, not like an outline or a template.",
+    "Then build every slide field from `generatedText`: slide titles, thesis, bullets, blocks, speakerNotes, and speechScript must only compress, split, or closely restate the matching slide part of `generatedText`.",
+    "Do not generate a separate second story outside `generatedText`.",
+    "Voice model:",
+    "- use the style of a school or college study report: clear, concrete, calm, and human;",
+    "- give the audience a path through the subject: what it is, why it matters, what changes, where the conflict or key tension is, and what conclusion follows;",
+    "- use concrete details from the material: names, products, organizations, events, causes, consequences, comparisons, or examples;",
+    "- when a personal or evaluative conclusion fits the scenario, write it plainly, for example 'Для меня эта история - предупреждение', but only if it suits the topic;",
+    "- vary sentence length. Do not make every paragraph the same rhythm.",
     "Required deck structure:",
     "- slide 1 must have slideKind title;",
-    "- the final slide must have slideKind summary and contain 3-5 key takeaways in bullets;",
+    "- the final slide must have slideKind summary and contain a human conclusion plus 3-5 key takeaways in bullets;",
     "- include slideKind section divider slides between major chapters when the deck has enough slides;",
     "- all other study slides must have slideKind content.",
     "Required JSON fields: id, title, scenario, level, slideCount, generatedText, outline, speechScript, slides.",
@@ -312,28 +423,30 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     "- use bullets only when the slide is genuinely a list of takeaways.",
     "Content slide rules:",
     "- title: short, ideally 6-8 words or fewer;",
-    "- thesis: one concise publicistic sentence about the real subject matter, not a meta sentence about the slide;",
-    "- every slide must contain 2-3 useful slide-facing sentences total across thesis, bullets, and blocks; never leave a slide with only a title or one vague line;",
-    "- bullets: 1-3 short, meaningful publicistic points for most slides; use an empty array only when the same useful sentences are already present in blocks;",
+    "- title: semantic and memorable. Avoid generic titles such as 'Контекст', 'Ключевые факты', 'Примеры', 'Выводы', and 'Итоги' unless there is only one such title in the whole deck;",
+    "- thesis: one concise sentence about the real subject matter, not a meta sentence about the slide;",
+    "- every slide must contain 1-3 useful slide-facing sentences total across thesis, bullets, and blocks; never leave a slide with only a title or one vague line;",
+    "- bullets: 0-3 short meaningful points; use bullets only when the slide is genuinely a list or a summary;",
     "- definition: { term, text } only when an important term needs a simple definition; otherwise null;",
     "- keyConcepts: return an empty array; do not create small keyword chips on slides;",
     "- highlights: return an empty array; do not create small highlighted word badges on slides;",
     "- blocks: keep a backward-compatible fallback using callout, quote, or bullets; mirror the chosen layout instead of always returning bullets.",
     "Slide-facing text style:",
-    "- use the same clear publicistic style as the narration, but much shorter;",
+    "- use the same clear study-report style as the narration, but much shorter;",
     "- do not write 'Главная идея связана с темой', 'Материал стоит разбирать по смысловым частям', or similar filler;",
+    "- do not repeat the user's request as content. Answer the request instead.",
     "- do not mention nonexistent topics, pictures, diagrams, images, examples, sources, or visual objects unless they are explicitly present in the provided material;",
     "- do not refer to the slide itself with phrases like 'на слайде показано', 'этот слайд помогает', or 'текст на слайде';",
     "- if the source material is thin, write a cautious general explanation instead of inventing facts or visuals.",
     "- never write generic filler such as 'Финальный вывод раскрывается через контекст, причины и последствия', 'Главные факты лучше воспринимаются, когда между ними видна связь', 'Точная формулировка помогает перейти от факта к смыслу', or similar universal placeholder phrases.",
     "Narration rules:",
-    "- speakerNotes must be a connected 5-6 sentence explanation for that exact slide, in Russian, derived from the matching part of generatedText;",
-    "- speechScript must contain one matching 5-6 sentence item for every slide and must duplicate or closely restate the matching speakerNotes;",
+    "- speakerNotes must be a connected 2-5 sentence explanation for that exact slide, in Russian, derived from the matching part of generatedText;",
+    "- speechScript must contain one matching 2-5 sentence item for every slide and must duplicate or closely restate the matching speakerNotes;",
     "- slide thesis, bullets, definition, blocks, and visual content must be a short outline based on generatedText, not on a separate story;",
-    "- write narration in a concise publicistic style: concrete, human, explanatory, and understandable to listeners;",
+    "- write narration in a concise study-report style: concrete, human, explanatory, and understandable to listeners;",
     "- write about the topic, event, phenomenon, causes, consequences, and conclusion, not about the presentation structure;",
     "- do not start narration with 'Слайд ...', 'На этом слайде ...', or similar meta phrases;",
-    "- do not use phrases about 'текст на слайде', 'опорные пункты', 'основной смысл раскрывается', 'рассказ про', or 'Примеры. Поэтому';",
+    "- do not use phrases about 'текст на слайде', 'опорные пункты', 'основной смысл раскрывается', 'рассказ про', 'главный акцент здесь', 'часть подводит', or 'Примеры. Поэтому';",
     "- do not write generic phrases like 'this slide explains the section'; explain the actual topic of the slide.",
     "Visual field rules:",
     "- visual.type must be one of: process_diagram, comparison_diagram, cause_effect_diagram, before_after_table, pros_cons_table, timeline, mind_map, illustration, schema, image, none;",
@@ -416,6 +529,7 @@ function normalizePresentation(
   generatedText = "",
 ): PresentationDocument {
   const input = raw && typeof raw === "object" ? (raw as Partial<PresentationDocument>) : {};
+  assertRawGenerationQuality(input, project, generationMode);
   const publicSources = normalizeSources(sources, project);
   const outline = normalizeOutline(input.outline);
   const rawSlides = Array.isArray(input.slides) ? input.slides : [];
@@ -442,7 +556,7 @@ function normalizePresentation(
   });
   const fallbackGeneratedText = buildGeneratedTextFromSlides(slides);
 
-  return presentationSchema.parse({
+  const presentation = presentationSchema.parse({
     id: cleanText(input.id) || crypto.randomUUID(),
     title: cleanText(input.title) || project.title,
     scenario: cleanText(input.scenario) || project.scenario,
@@ -455,6 +569,9 @@ function normalizePresentation(
     speechScript,
     slides,
   });
+
+  assertPresentationQuality(presentation, project, generationMode);
+  return presentation;
 }
 
 function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], project: ProjectInput): Slide {
@@ -804,15 +921,15 @@ function imageConcept(project: ProjectInput, order: number, title: string, thesi
 function fallbackTitle(project: ProjectInput, order: number) {
   const titles = [
     project.title,
-    "Контекст и актуальность",
-    "Ключевые факты",
-    "Главные изменения",
-    "Примеры",
-    "Как это объяснить проще",
-    "Объяснение простыми словами",
-    "Что важно запомнить",
-    "Выводы",
-    "Итоги",
+    "Что стоит понять сначала",
+    "Факты за общей темой",
+    "Как меняется ситуация",
+    "Пример для понимания",
+    "Смысл простыми словами",
+    "Что остается в памяти",
+    "К чему это приводит",
+    "Главная мысль",
+    "Что можно вынести",
   ];
   return titles[order - 1] || `${order}. ${project.title}`;
 }
@@ -845,7 +962,7 @@ function normalizeSpeakerNotes(
 ) {
   const text = sanitizeSpeechText(value);
   if (isSpecificNarration(text)) {
-    return limitSentences(text, 6);
+    return limitSentences(text, 5);
   }
 
   return buildSlideNarration(slide, project, order);
@@ -854,33 +971,33 @@ function normalizeSpeakerNotes(
 function normalizeSpeechScriptText(value: unknown, slide: Slide, project: ProjectInput, index: number) {
   const text = sanitizeSpeechText(value);
   if (isSpecificNarration(text)) {
-    return limitSentences(text, 6);
+    return limitSentences(text, 5);
   }
 
   return normalizeSpeakerNotes(slide.speakerNotes, slide, project, index + 1);
 }
 
 function buildSlideNarration(slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual">, project: ProjectInput, order: number) {
-  const topic = cleanText(project.title || project.prompt);
   const title = cleanText(slide.title) || fallbackTitle(project, order);
   const thesis = cleanText(slide.thesis) || fallbackSlideText(project, order);
   const bullets = slide.bullets.map(cleanText).filter(Boolean);
-  const firstPoint = bullets[0] || thesis;
-  const secondPoint = bullets[1] || slide.definition?.text || firstPoint;
-  const thirdPoint = bullets[2] || visualNarrationText(slide.visual) || secondPoint;
+  const firstPoint = bullets[0] || slide.definition?.text || thesis;
+  const secondPoint = bullets.find((item) => item.toLowerCase() !== firstPoint.toLowerCase()) || visualNarrationText(slide.visual);
   const lead = order === 1
-    ? `${title} открывает тему ${topic}: ${sentenceFragment(thesis)}.`
-    : `${title} продолжает разговор о теме и уточняет главное: ${sentenceFragment(thesis)}.`;
+    ? `${title}: ${sentenceFragment(thesis)}.`
+    : `${title}: ${sentenceFragment(thesis)}.`;
+  const detail = secondPoint
+    ? `Важная деталь здесь в том, что ${sentenceFragment(secondPoint)}.`
+    : `Так тема становится понятнее без лишних общих слов.`;
   const ending = order === project.slideCount
-    ? `В финале ${sentenceFragment(topic)} складывается в понятный вывод, где важны не отдельные формулировки, а общий смысл.`
-    : `Эта часть подводит к следующему фрагменту без резкого перехода, потому что ${sentenceFragment(thirdPoint)}.`;
+    ? `Главный вывод: ${sentenceFragment(firstPoint)}.`
+    : `Эта мысль нужна, чтобы слушатель увидел не только факт, но и его значение.`;
 
   return sanitizeSpeechText(
     [
       lead,
-      `Главный акцент здесь в том, что ${sentenceFragment(firstPoint)}.`,
-      `С этой мыслью связана другая важная деталь: ${sentenceFragment(secondPoint)}.`,
-      `Поэтому ${sentenceFragment(thirdPoint)} становится не дополнением, а частью общей логики объяснения.`,
+      `${sentenceFragment(firstPoint)}.`,
+      detail,
       ending,
     ].join(" "),
   );
@@ -895,8 +1012,8 @@ function visualNarrationText(visual: SlideVisual) {
 }
 
 function isSpecificNarration(text: string) {
-  if (sentenceCount(text) < 5) return false;
-  if (text.length < 220) return false;
+  if (sentenceCount(text) < 2) return false;
+  if (text.length < 80) return false;
   const lower = text.toLowerCase();
   return !GENERIC_NARRATION_PHRASES.some((phrase) => lower.includes(phrase));
 }
@@ -921,10 +1038,10 @@ function buildFallbackBulletItems(project: ProjectInput, order: number) {
   const request = shortenSentence(cleanText(project.prompt), 120);
   const base = [
     `${focus}: ${request || topic}`,
-    `Что важно понять по теме: ${topic}`,
-    `Главный вопрос: ${shortenSentence(request || focus, 90)}`,
-    `Практический смысл для аудитории: ${shortenSentence(topic, 90)}`,
-    `Итог этой части связан с запросом: ${shortenSentence(request || topic, 90)}`,
+    `${topic} нужно раскрыть через конкретные факты.`,
+    `Смысл темы понятнее, когда видны причины и последствия.`,
+    `Для аудитории важен простой вывод без лишних общих слов.`,
+    `Финальная мысль должна быть связана с запросом: ${shortenSentence(request || topic, 90)}`,
   ];
   return base.map((item) => shortenSentence(item, 120));
 }
@@ -1064,15 +1181,15 @@ function fallbackSlideText(project: ProjectInput, order: number) {
   const request = cleanText(project.prompt || topic);
   const texts = [
     `${topic}: ${request}`,
-    `${topic} важно рассмотреть через вопрос, который задан в проекте.`,
-    `В этой части нужно выделить конкретные факты по теме: ${topic}.`,
-    `Здесь акцент смещается к изменениям, которые прямо относятся к запросу.`,
-    `Эта часть объясняет один важный аспект темы без лишних отступлений.`,
-    `Сложный фрагмент темы стоит передать простыми словами и точными примерами.`,
-    `Здесь важно показать, что именно аудитория должна запомнить по теме.`,
-    `Перед итогом нужно удержать самые сильные положения из предыдущих частей.`,
-    `Итог собирает основные мысли по теме: ${topic}.`,
-    `Финальная часть отвечает на исходный запрос: ${request}.`,
+    `${topic} стоит объяснять через понятную проблему и конкретный контекст.`,
+    `Факты по теме должны показывать, что меняется и почему это важно.`,
+    `Главная перемена заметна там, где появляются новые причины и последствия.`,
+    `Пример нужен для того, чтобы общая мысль стала ближе к реальной жизни.`,
+    `Сложную часть темы лучше передать простыми словами и одним точным примером.`,
+    `Слушателю важно запомнить не набор фраз, а связь между фактами.`,
+    `Перед финалом нужно оставить только самые сильные выводы из рассказа.`,
+    `Главная мысль показывает, к чему приводит вся история темы.`,
+    `Финальный вывод должен отвечать на вопрос: ${request}.`,
   ];
   return shortenSentence(texts[order - 1] || `${topic}: главное объяснить суть темы коротко и понятно.`, 230);
 }
@@ -1187,6 +1304,213 @@ function normalizeProvider(value: string | undefined): AiGenerationMode | undefi
 
 function isDemoGenerationAllowed() {
   return process.env.ALLOW_DEMO_GENERATION === "true";
+}
+
+function isDemoMode(mode: AiGenerationMode | FallbackGenerationMode) {
+  return mode === "demo" || mode === "demo-fallback";
+}
+
+function assertRawGenerationQuality(input: Partial<PresentationDocument>, project: ProjectInput, mode: AiGenerationMode | FallbackGenerationMode) {
+  if (isDemoMode(mode)) return;
+
+  const text = collectRawPresentationText(input);
+  if (!text) {
+    throw new Error("AI generation quality check failed: response has no usable presentation text");
+  }
+
+  const rawSlideCount = Array.isArray(input.slides) ? input.slides.length : 0;
+  const generatedTextSlideCount = countGeneratedTextSlides(input.generatedText);
+  if (Math.max(rawSlideCount, generatedTextSlideCount) < project.slideCount) {
+    throw new Error("AI generation quality check failed: response does not contain all requested slides");
+  }
+
+  const issues = qualityIssuesForText(text, project);
+  if (issues.length) {
+    throw new Error(`AI generation quality check failed: ${issues.join("; ")}`);
+  }
+}
+
+function assertPresentationQuality(presentation: PresentationDocument, project: ProjectInput, mode: AiGenerationMode | FallbackGenerationMode) {
+  if (isDemoMode(mode)) return;
+
+  const issues = qualityIssuesForText(visiblePresentationText(presentation), project, false);
+
+  if (!/Слайд\s+1\s*:/i.test(presentation.generatedText)) {
+    issues.push("generatedText is not divided into slide narration");
+  }
+
+  const genericTitleCount = presentation.slides.filter((slide) => isGenericDeckTitle(slide.title)).length;
+  if (genericTitleCount >= 3) {
+    issues.push("too many generic slide titles");
+  }
+
+  if (countHighlySimilarAdjacentSlides(presentation.slides) >= 2) {
+    issues.push("neighboring slides are too similar");
+  }
+
+  const thinSlides = presentation.slides.filter((slide) => slide.slideKind !== "section" && lacksConcreteDetail(slide, project)).length;
+  if (presentation.slides.length >= 4 && thinSlides > Math.max(1, Math.floor(presentation.slides.length * 0.35))) {
+    issues.push("too many slides lack concrete subject details");
+  }
+
+  if (issues.length) {
+    throw new Error(`AI generation quality check failed: ${uniqueIssues(issues).join("; ")}`);
+  }
+}
+
+function collectRawPresentationText(input: Partial<PresentationDocument>) {
+  const slides = Array.isArray(input.slides) ? input.slides : [];
+  const speechScript = Array.isArray(input.speechScript) ? input.speechScript : [];
+  return cleanMultilineText(
+    [
+      input.title,
+      input.generatedText,
+      ...slides.flatMap((slide) => {
+        const candidate = slide as Partial<Slide>;
+        return [
+          candidate.title,
+          candidate.thesis,
+          candidate.speakerNotes,
+          ...(Array.isArray(candidate.bullets) ? candidate.bullets : []),
+          ...(Array.isArray(candidate.blocks)
+            ? candidate.blocks.flatMap((block) => (block?.type === "bullets" ? block.items : "content" in block ? [block.content] : []))
+            : []),
+        ];
+      }),
+      ...speechScript.flatMap((item) => [item?.slideTitle, item?.text]),
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
+}
+
+function countGeneratedTextSlides(value: unknown) {
+  const matches = cleanMultilineText(value).match(/(?:^|\n)Слайд\s+\d+\s*:/gi);
+  return matches?.length || 0;
+}
+
+function visiblePresentationText(presentation: PresentationDocument) {
+  return cleanMultilineText(
+    [
+      presentation.title,
+      presentation.generatedText,
+      ...presentation.slides.flatMap((slide) => [
+        slide.title,
+        slide.thesis,
+        slide.speakerNotes,
+        ...slide.bullets,
+        ...(slide.definition ? [slide.definition.term, slide.definition.text] : []),
+        slide.visual.title,
+        slide.visual.description,
+        ...slide.visual.items.flatMap((item) => [item.label, item.text]),
+        ...slide.visual.rows.flatMap((row) => [row.label, row.left, row.right]),
+        ...slide.blocks.flatMap((block) => (block.type === "bullets" ? block.items : [block.content])),
+      ]),
+      ...presentation.speechScript.flatMap((item) => [item.slideTitle, item.text]),
+    ].join("\n"),
+  );
+}
+
+function qualityIssuesForText(value: string, project: ProjectInput, checkPromptRepeat = true) {
+  const issues: string[] = [];
+  const text = normalizeForQuality(value);
+  const lowerText = cleanText(value).toLowerCase().replace(/ё/g, "е");
+
+  if (!text) return ["empty presentation text"];
+  if (text.startsWith("{")) issues.push("model returned JSON text instead of presentation prose");
+
+  const bannedPhrase = [...GENERIC_NARRATION_PHRASES, ...GENERIC_SCREEN_TEXT_PHRASES].find((phrase) => {
+    const candidate = cleanText(phrase).toLowerCase().replace(/ё/g, "е");
+    return candidate.length >= 8 && lowerText.includes(candidate);
+  });
+  if (bannedPhrase) {
+    issues.push(`template phrase detected: ${bannedPhrase}`);
+  }
+
+  const prompt = normalizeExactForQuality(project.prompt);
+  if (checkPromptRepeat && prompt.length >= 18 && countOccurrences(lowerText, prompt) > 1) {
+    issues.push("user request is repeated instead of answered");
+  }
+
+  return issues;
+}
+
+function isGenericDeckTitle(title: string) {
+  return GENERIC_TITLES.includes(normalizeTitleKey(title));
+}
+
+function countHighlySimilarAdjacentSlides(slides: Slide[]) {
+  let count = 0;
+  for (let index = 1; index < slides.length; index += 1) {
+    const previous = slideSemanticText(slides[index - 1]);
+    const current = slideSemanticText(slides[index]);
+    if (textSimilarity(previous, current) >= 0.72) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function lacksConcreteDetail(slide: Slide, project: ProjectInput) {
+  const promptTokens = significantTokens(project.prompt);
+  const slideTokens = significantTokens(slideSemanticText(slide)).filter((token) => !promptTokens.includes(token));
+  const hasNumber = /\d/.test(slideSemanticText(slide));
+  const hasCapitalizedDetail = /[A-ZА-ЯЁ][a-zа-яё]+(?:\s+[A-ZА-ЯЁ][a-zа-яё]+)?/.test(slideSemanticText(slide).replace(/^Слайд\s+\d+/i, ""));
+  return !hasNumber && !hasCapitalizedDetail && new Set(slideTokens).size < 4;
+}
+
+function slideSemanticText(slide: Slide) {
+  return [
+    slide.title,
+    slide.thesis,
+    slide.speakerNotes,
+    ...slide.bullets,
+    ...slide.blocks.flatMap((block) => (block.type === "bullets" ? block.items : [block.content])),
+  ].join(" ");
+}
+
+function textSimilarity(left: string, right: string) {
+  const leftTokens = new Set(significantTokens(left));
+  const rightTokens = new Set(significantTokens(right));
+  if (!leftTokens.size || !rightTokens.size) return 0;
+  const intersection = [...leftTokens].filter((token) => rightTokens.has(token)).length;
+  return intersection / Math.min(leftTokens.size, rightTokens.size);
+}
+
+function significantTokens(value: string) {
+  return normalizeForQuality(value)
+    .split(/\s+/)
+    .map((word) => word.replace(/^[^a-zа-яё0-9]+|[^a-zа-яё0-9]+$/gi, ""))
+    .filter((word) => word.length >= 5 && !STOP_WORDS.has(word));
+}
+
+function normalizeForQuality(value: string) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[«»"“”'`]/g, "")
+    .replace(/[.,!?;:()[\]{}<>]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeExactForQuality(value: string) {
+  return cleanText(value).toLowerCase().replace(/ё/g, "е");
+}
+
+function countOccurrences(text: string, needle: string) {
+  if (!text || !needle) return 0;
+  let count = 0;
+  let index = text.indexOf(needle);
+  while (index !== -1) {
+    count += 1;
+    index = text.indexOf(needle, index + needle.length);
+  }
+  return count;
+}
+
+function uniqueIssues(issues: string[]) {
+  return [...new Set(issues)];
 }
 
 function parseJsonText(text: string) {

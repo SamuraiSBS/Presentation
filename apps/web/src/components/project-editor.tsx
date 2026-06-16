@@ -20,6 +20,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
   const [actionError, setActionError] = useState("");
   const presentation = project.presentation?.document;
   const slide = presentation?.slides[active];
+  const activeSlideText = presentation && slide ? presentationTextForSlide(presentation, slide, active) : "";
 
   async function refresh() {
     const response = await fetch(`/api/projects/${project.id}`);
@@ -104,32 +105,62 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
             <strong>Слайд {active + 1}</strong>
             <span className="muted">{slide.timingSeconds} сек</span>
           </div>
-          <article className="slide-canvas">
-            <SlideCanvas slide={slide} />
-          </article>
-          <textarea
-            key={`${slide.id}-${slide.speakerNotes}`}
-            className="textarea notes"
-            defaultValue={slide.speakerNotes}
-            onBlur={(event) => saveSlide({ speakerNotes: event.target.value })}
-            aria-label="Заметки спикера"
-          />
+          <div className="slide-workspace">
+            <div className="slide-stage">
+              <article className="slide-canvas">
+                <SlideCanvas slide={slide} />
+              </article>
+              <textarea
+                key={`${slide.id}-${slide.speakerNotes}`}
+                className="textarea notes"
+                defaultValue={slide.speakerNotes}
+                onBlur={(event) => saveSlide({ speakerNotes: event.target.value })}
+                aria-label="Заметки спикера"
+              />
+            </div>
+            {activeSlideText ? (
+              <aside className="slide-text-panel">
+                <strong>Текст презентации</strong>
+                <textarea
+                  className="textarea notes"
+                  value={activeSlideText}
+                  readOnly
+                  aria-label="Текст презентации"
+                />
+              </aside>
+            ) : null}
+          </div>
         </section>
       </section>
-      {presentation.generatedText ? (
-        <section className="panel" style={{ marginTop: 16 }}>
-          <strong>Текст презентации</strong>
-          <textarea
-            className="textarea notes"
-            value={presentation.generatedText}
-            readOnly
-            aria-label="Текст презентации"
-            style={{ marginTop: 12, minHeight: 260 }}
-          />
-        </section>
-      ) : null}
     </>
   );
+}
+
+function presentationTextForSlide(
+  presentation: PresentationDocument,
+  slide: PresentationDocument["slides"][number],
+  activeIndex: number,
+) {
+  return (
+    extractGeneratedTextForSlide(presentation.generatedText, slide.order) ||
+    presentation.speechScript.find((item) => item.slideOrder === slide.order)?.text ||
+    presentation.speechScript[activeIndex]?.text ||
+    slide.speakerNotes
+  );
+}
+
+function extractGeneratedTextForSlide(generatedText: string, slideOrder: number) {
+  const text = generatedText.trim();
+  if (!text) return "";
+
+  const slideHeader = new RegExp(`(?:^|\\n)\\s*Слайд\\s+${slideOrder}\\s*:`, "i");
+  const current = slideHeader.exec(text);
+  if (!current) return "";
+
+  const start = current.index + current[0].length;
+  const rest = text.slice(start);
+  const next = /\n\s*Слайд\s+\d+\s*:/i.exec(rest);
+  return rest.slice(0, next?.index ?? undefined).trim();
 }
 
 function VisualImage({ image }: { image: NonNullable<PresentationDocument["slides"][number]["visual"]["image"]> }) {

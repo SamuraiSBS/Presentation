@@ -77,13 +77,13 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("question-answer");
     expect(prompt).toContain("myth-fact");
     expect(prompt).toContain("do not use the same content layout more than twice in a row");
-    expect(prompt).toContain("every slide must contain 2-3 useful slide-facing sentences");
-    expect(prompt).toContain("1-3 short, meaningful publicistic points");
+    expect(prompt).toContain("every slide must contain 1-3 useful slide-facing sentences");
+    expect(prompt).toContain("semantic and memorable");
     expect(prompt).toContain("keyConcepts: return an empty array");
     expect(prompt).toContain("highlights: return an empty array");
-    expect(prompt).toContain("5-6 sentence explanation");
+    expect(prompt).toContain("2-5 sentence explanation");
     expect(prompt).toContain("generatedText");
-    expect(prompt).toContain("Do not generate any separate story, narrative");
+    expect(prompt).toContain("Do not generate a separate second story");
     expect(prompt).toContain("Do not write long text blocks");
     expect(prompt).toContain("every slide, including title, section, and summary slides, must include visual.description");
     expect(prompt).toContain("set visual.type to image or illustration");
@@ -98,6 +98,202 @@ describe("buildGenerationPrompt", () => {
 });
 
 describe("generatePresentation fallback behavior", () => {
+  it("accepts a human study-story deck with semantic titles and concrete details", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const presentationText = [
+      "Слайд 1: За фасадом успеха",
+      "Я расскажу о книге «Волк с Уолл-стрит» Джордана Белфорта. На первый взгляд это история большого успеха, но за деньгами и роскошью скрывались обман, зависимость и потеря контроля.",
+      "",
+      "Слайд 2: Stratton Oakmont и падение",
+      "Stratton Oakmont становится символом агрессивных продаж и давления на клиентов. Компания быстро растет, а Белфорт зарабатывает огромные деньги. Но чем выше он поднимается, тем чаще нарушает закон.",
+      "",
+      "Слайд 3: Главные уроки книги",
+      "Для меня эта книга - не пример для повторения, а предупреждение. Она показывает, что успех без честности и ответственности быстро превращается в проблему. Главный вывод: харизма и амбиции полезны только тогда, когда у человека есть принципы.",
+    ].join("\n");
+    const originalFetch = global.fetch;
+    global.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          result: {
+            alternatives: [
+              {
+                message: {
+                  text: JSON.stringify({
+                    title: "За фасадом успеха",
+                    generatedText: presentationText,
+                    outline: ["За фасадом успеха", "Stratton Oakmont и падение", "Главные уроки книги"],
+                    slides: [
+                      {
+                        title: "За фасадом успеха",
+                        thesis: "История Белфорта показывает цену успеха без контроля.",
+                        blocks: [{ type: "callout", content: "За деньгами и роскошью скрывались обман, зависимость и потеря контроля." }],
+                        speakerNotes:
+                          "Я расскажу о книге «Волк с Уолл-стрит» Джордана Белфорта. На первый взгляд это история большого успеха, но за деньгами и роскошью скрывались обман, зависимость и потеря контроля.",
+                      },
+                      {
+                        title: "Stratton Oakmont и падение",
+                        thesis: "Stratton Oakmont стала символом агрессивных продаж и давления на клиентов.",
+                        bullets: ["Компания быстро росла", "Белфорт нарушал закон", "Расследование привело к ответственности"],
+                        speakerNotes:
+                          "Stratton Oakmont становится символом агрессивных продаж и давления на клиентов. Компания быстро растет, а Белфорт зарабатывает огромные деньги. Но чем выше он поднимается, тем чаще нарушает закон.",
+                      },
+                      {
+                        title: "Главные уроки книги",
+                        thesis: "Успех без честности быстро превращается в проблему.",
+                        bullets: ["Нужны принципы", "Важна ответственность", "Харизма требует самоконтроля"],
+                        speakerNotes:
+                          "Для меня эта книга - не пример для повторения, а предупреждение. Она показывает, что успех без честности и ответственности быстро превращается в проблему. Харизма и амбиции полезны только тогда, когда у человека есть принципы.",
+                      },
+                    ],
+                    speechScript: [
+                      { slideOrder: 1, slideTitle: "За фасадом успеха", text: "Я расскажу о книге «Волк с Уолл-стрит» Джордана Белфорта. На первый взгляд это история большого успеха, но за деньгами и роскошью скрывались обман, зависимость и потеря контроля." },
+                      { slideOrder: 2, slideTitle: "Stratton Oakmont и падение", text: "Stratton Oakmont становится символом агрессивных продаж и давления на клиентов. Компания быстро растет, а Белфорт зарабатывает огромные деньги. Но чем выше он поднимается, тем чаще нарушает закон." },
+                      { slideOrder: 3, slideTitle: "Главные уроки книги", text: "Для меня эта книга - не пример для повторения, а предупреждение. Она показывает, что успех без честности и ответственности быстро превращается в проблему. Харизма и амбиции полезны только тогда, когда у человека есть принципы." },
+                    ],
+                  }),
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "За фасадом успеха",
+          prompt: "Сделай презентацию о книге Волк с Уолл-стрит",
+          scenario: "school_report",
+          level: "8 класс",
+          mode: "with_sources",
+          slideCount: 3,
+        },
+        [{ id: "src-1", label: "Книга", type: "WEB", size: 0, excerpt: "Белфорт, Stratton Oakmont, агрессивные продажи, расследование и ответственность." }],
+      );
+
+      expect(presentation.generatedText).toBe(presentationText);
+      expect(presentation.slides.map((slide) => slide.title)).toEqual([
+        "За фасадом успеха",
+        "Stratton Oakmont и падение",
+        "Главные уроки книги",
+      ]);
+      expect(presentation.speechScript[2].text).toContain("не пример для повторения");
+      expectNoForbiddenNarration(visiblePresentationText(presentation));
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("rejects the repeated template text from the bad neural output", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const badText = [
+      "Слайд 1: Телефоны Samsung",
+      "Телефоны Samsung открывает тему Телефоны Samsung: телефоны Samsung: Сделай презентацию про телефоны Samsung. Главный акцент здесь в том, что телефоны Samsung: Сделай презентацию про телефоны Samsung. Эта часть подводит к следующему фрагменту без резкого перехода.",
+      "",
+      "Слайд 2: Контекст и актуальность",
+      "Контекст и актуальность продолжает разговор о теме и уточняет главное: телефоны Samsung важно рассмотреть через вопрос, который задан в проекте. Поэтому главный вопрос: Сделай презентацию про телефоны Samsung становится не дополнением, а частью общей логики объяснения.",
+      "",
+      "Слайд 3: Ключевые факты",
+      "Ключевые факты продолжает разговор о теме и уточняет главное: в этой части нужно выделить конкретные факты по теме: Телефоны Samsung. Главный акцент здесь в том, что ключевые факты: Сделай презентацию про телефоны Samsung.",
+    ].join("\n");
+    const originalFetch = global.fetch;
+    global.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          result: {
+            alternatives: [
+              {
+                message: {
+                  text: JSON.stringify({
+                    title: "Телефоны Samsung",
+                    generatedText: badText,
+                    slides: [
+                      { title: "Телефоны Samsung", thesis: "Телефоны Samsung: Сделай презентацию про телефоны Samsung.", speakerNotes: badText },
+                      { title: "Контекст и актуальность", thesis: "Контекст и актуальность продолжает разговор о теме.", speakerNotes: badText },
+                      { title: "Ключевые факты", thesis: "Ключевые факты продолжает разговор о теме.", speakerNotes: badText },
+                    ],
+                  }),
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    try {
+      await expect(
+        generatePresentation(
+          {
+            id: "project-1",
+            title: "Телефоны Samsung",
+            prompt: "Сделай презентацию про телефоны Samsung",
+            scenario: "school_report",
+            level: "8 класс",
+            mode: "with_sources",
+            slideCount: 3,
+          },
+          [{ id: "src-1", label: "Samsung", type: "WEB", size: 0, excerpt: "Материал о линейке Samsung Galaxy." }],
+        ),
+      ).rejects.toThrow("template phrase detected");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("rejects empty AI output instead of creating production fallback slides", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const originalFetch = global.fetch;
+    global.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          result: {
+            alternatives: [{ message: { text: JSON.stringify({ title: "", slides: [] }) } }],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    try {
+      await expect(
+        generatePresentation(
+          {
+            id: "project-1",
+            title: "Пустой ответ",
+            prompt: "Сделай презентацию про пустой ответ модели",
+            scenario: "lesson",
+            level: "beginner",
+            mode: "with_sources",
+            slideCount: 4,
+          },
+          [{ id: "src-1", label: "Материал", type: "WEB", size: 0, excerpt: "Нужен полноценный текст." }],
+        ),
+      ).rejects.toThrow("no usable presentation text");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it("runs Yandex generation once and builds slides from generatedText", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
@@ -178,7 +374,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("repairs incomplete AI output into structured slides", async () => {
+  it("rejects incomplete AI output instead of filling production slides with fallback", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -209,24 +405,20 @@ describe("generatePresentation fallback behavior", () => {
       );
 
     try {
-      const presentation = await generatePresentation(
-        {
-          id: "project-1",
-          title: "Structured topic",
-          prompt: "Explain a process",
-          scenario: "lesson",
-          level: "beginner",
-          mode: "with_sources",
-          slideCount: 3,
-        },
-        [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "A process has ordered steps." }],
-      );
-
-      expect(presentation.slides).toHaveLength(3);
-      expect(presentation.slides[0].slideKind).toBe("title");
-      expect(presentation.slides[2].slideKind).toBe("summary");
-      expect(presentation.slides[2].bullets.length).toBeGreaterThanOrEqual(3);
-      expect(presentation.slides[0].visual.type).toBe("none");
+      await expect(
+        generatePresentation(
+          {
+            id: "project-1",
+            title: "Structured topic",
+            prompt: "Explain a process",
+            scenario: "lesson",
+            level: "beginner",
+            mode: "with_sources",
+            slideCount: 3,
+          },
+          [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "A process has ordered steps." }],
+        ),
+      ).rejects.toThrow("does not contain all requested slides");
     } finally {
       global.fetch = originalFetch;
     }
@@ -250,17 +442,48 @@ describe("generatePresentation fallback behavior", () => {
                 message: {
                   text: JSON.stringify({
                     title: "Visual quality",
+                    generatedText: [
+                      "Слайд 1: Визуальная логика",
+                      "Хорошая презентация использует визуальный блок только там, где он помогает понять мысль. Если у блока нет данных, он превращается в украшение.",
+                      "",
+                      "Слайд 2: Пустая схема",
+                      "Схема без узлов не объясняет тему. В таком случае лучше оставить обычный текст, чем показывать пустую конструкцию.",
+                      "",
+                      "Слайд 3: Неполное сравнение",
+                      "Сравнение работает только тогда, когда у него есть две стороны. Если заполнена одна колонка, аудитория не видит разницу.",
+                      "",
+                      "Слайд 4: Полезный процесс",
+                      "Процесс помогает, когда у него есть понятные шаги. Сначала собирают материал, затем превращают факты в короткое объяснение.",
+                      "",
+                      "Слайд 5: Что считать качеством",
+                      "Качественный визуальный блок должен быть связан с мыслью слайда. Он не заменяет содержание, а делает его яснее.",
+                    ].join("\n"),
                     slides: [
-                      { title: "Intro", thesis: "Intro thesis." },
-                      { title: "Empty schema", thesis: "This slide has no useful schema.", visual: { type: "schema", title: "Schema" } },
                       {
-                        title: "Broken comparison",
-                        thesis: "This comparison has only one side.",
+                        title: "Визуальная логика",
+                        thesis: "Визуальный блок нужен только там, где он помогает понять мысль.",
+                        speakerNotes:
+                          "Хорошая презентация использует визуальный блок только там, где он помогает понять мысль. Если у блока нет данных, он превращается в украшение.",
+                      },
+                      {
+                        title: "Пустая схема",
+                        thesis: "Схема без узлов не объясняет тему.",
+                        speakerNotes:
+                          "Схема без узлов не объясняет тему. В таком случае лучше оставить обычный текст, чем показывать пустую конструкцию.",
+                        visual: { type: "schema", title: "Schema" },
+                      },
+                      {
+                        title: "Неполное сравнение",
+                        thesis: "Сравнение работает только тогда, когда у него есть две стороны.",
+                        speakerNotes:
+                          "Сравнение работает только тогда, когда у него есть две стороны. Если заполнена одна колонка, аудитория не видит разницу.",
                         visual: { type: "comparison_diagram", rows: [{ label: "Only one side", left: "First value", right: "" }] },
                       },
                       {
-                        title: "Useful process",
-                        thesis: "A process has clear ordered steps.",
+                        title: "Полезный процесс",
+                        thesis: "Процесс помогает, когда у него есть понятные шаги.",
+                        speakerNotes:
+                          "Процесс помогает, когда у него есть понятные шаги. Сначала собирают материал, затем превращают факты в короткое объяснение.",
                         visual: {
                           type: "process_diagram",
                           items: [
@@ -269,7 +492,13 @@ describe("generatePresentation fallback behavior", () => {
                           ],
                         },
                       },
-                      { title: "Summary", thesis: "Summary thesis." },
+                      {
+                        title: "Что считать качеством",
+                        thesis: "Визуальный блок должен быть связан с мыслью слайда.",
+                        bullets: ["Блок не должен быть пустым", "Сравнение требует двух сторон", "Процесс требует шагов"],
+                        speakerNotes:
+                          "Качественный визуальный блок должен быть связан с мыслью слайда. Он не заменяет содержание, а делает его яснее.",
+                      },
                     ],
                   }),
                 },
@@ -331,14 +560,14 @@ describe("generatePresentation fallback behavior", () => {
     expect(presentation.slides.every((slide) => slide.keyConcepts.length === 0)).toBe(true);
     expect(presentation.slides.every((slide) => slide.highlights.length === 0)).toBe(true);
     expect(new Set(presentation.slides.map((slide) => slide.layout)).size).toBeGreaterThan(2);
-    expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 5 && sentenceCount(item.text) <= 6)).toBe(true);
-    expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 5 && sentenceCount(slide.speakerNotes) <= 6)).toBe(true);
+    expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 2 && sentenceCount(item.text) <= 5)).toBe(true);
+    expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 2 && sentenceCount(slide.speakerNotes) <= 5)).toBe(true);
     expect(presentation.slides.every((slide) => slide.speakerNotes.length > slide.thesis.length)).toBe(true);
     expectNoForbiddenNarration(visiblePresentationText(presentation));
     expectNoForbiddenSlideText(visiblePresentationText(presentation));
   });
 
-  it("repairs generic filler and unsupported visual references in slide-facing text", async () => {
+  it("rejects generic filler and unsupported visual references in production output", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -395,28 +624,26 @@ describe("generatePresentation fallback behavior", () => {
       );
 
     try {
-      const presentation = await generatePresentation(
-        {
-          id: "project-1",
-          title: "Экология города",
-          prompt: "Сделай презентацию про экологию города",
-          scenario: "lesson",
-          level: "beginner",
-          mode: "with_sources",
-          slideCount: 3,
-        },
-        [],
-      );
-
-      expect(presentation.slides[1].thesis).toBeTruthy();
-      expect(presentation.slides[1].bullets.length).toBeGreaterThanOrEqual(3);
-      expectNoForbiddenSlideText(visiblePresentationText(presentation));
+      await expect(
+        generatePresentation(
+          {
+            id: "project-1",
+            title: "Экология города",
+            prompt: "Сделай презентацию про экологию города",
+            scenario: "lesson",
+            level: "beginner",
+            mode: "with_sources",
+            slideCount: 3,
+          },
+          [],
+        ),
+      ).rejects.toThrow("template phrase detected");
     } finally {
       global.fetch = originalFetch;
     }
   });
 
-  it("replaces template-like AI narration with publicistic fallback text", async () => {
+  it("rejects template-like AI narration instead of replacing it with fallback text", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -456,24 +683,20 @@ describe("generatePresentation fallback behavior", () => {
       );
 
     try {
-      const presentation = await generatePresentation(
-        {
-          id: "project-1",
-          title: "Русское кино",
-          prompt: "Сделай презентацию про русское кино",
-          scenario: "school_report",
-          level: "8-11 класс",
-          mode: "with_sources",
-          slideCount: 1,
-        },
-        [],
-      );
-
-      expect(sentenceCount(presentation.slides[0].speakerNotes)).toBeGreaterThanOrEqual(5);
-      expect(sentenceCount(presentation.slides[0].speakerNotes)).toBeLessThanOrEqual(6);
-      expect(presentation.slides[0].speakerNotes.length).toBeGreaterThan(presentation.slides[0].thesis.length);
-      expect(presentation.speechScript[0].text).toBe(presentation.slides[0].speakerNotes);
-      expectNoForbiddenNarration(visiblePresentationText(presentation));
+      await expect(
+        generatePresentation(
+          {
+            id: "project-1",
+            title: "Русское кино",
+            prompt: "Сделай презентацию про русское кино",
+            scenario: "school_report",
+            level: "8-11 класс",
+            mode: "with_sources",
+            slideCount: 1,
+          },
+          [],
+        ),
+      ).rejects.toThrow("template phrase detected");
     } finally {
       global.fetch = originalFetch;
     }
@@ -535,8 +758,8 @@ describe("generatePresentation fallback behavior", () => {
       expect(presentation.slides[0].bullets.length).toBeGreaterThanOrEqual(2);
       expect(presentation.slides[0].bullets[0]).toBe("A real generated point");
       expect(presentation.slides[0].visual.description).toBeTruthy();
-      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(5);
-      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(6);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(2);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(5);
       expect(presentation.speechScript[0].text.toLowerCase()).toContain("a real generated point");
     } finally {
       global.fetch = originalFetch;
@@ -598,8 +821,8 @@ describe("generatePresentation fallback behavior", () => {
         [],
       );
 
-      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(5);
-      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(6);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(2);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(5);
       expect(presentation.speechScript[0].text).toContain("Новая волна российского кино");
       expect(presentation.speechScript[0].text).not.toContain("Добавлю несколько деталей");
     } finally {
