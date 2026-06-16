@@ -538,6 +538,21 @@ select {
   object-fit: cover;
 }
 
+.slide-with-image.slide-layout-statement {
+  text-align: left;
+}
+
+.slide-with-image.slide-layout-statement p {
+  font-size: clamp(20px, 2.6vw, 34px);
+  line-height: 1.16;
+}
+
+.slide-layout-image-focus > div:first-child,
+.slide-with-image .slide-text-stack {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .slide-layout-statement p,
 .slide-layout-quote blockquote {
   margin: 0;

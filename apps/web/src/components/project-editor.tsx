@@ -352,11 +352,12 @@ function QuoteSlide({ slide }: { slide: PresentationDocument["slides"][number] }
 
 function DefinitionSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
   const definition = slide.definition || { term: slide.title, text: slide.thesis || slideBlockText(slide) };
+  const showTerm = definition.term && !isDuplicateDisplayText(definition.term, slide.title);
   return (
     <SlideImageLayout slide={slide} className="slide-content slide-layout-definition">
       <h2 className="slide-title">{slide.title}</h2>
       <div className="definition-hero">
-        <strong>{definition.term}</strong>
+        {showTerm ? <strong>{definition.term}</strong> : null}
         <p>{definition.text}</p>
       </div>
       {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
@@ -417,7 +418,7 @@ function ImageFocusSlide({ slide }: { slide: PresentationDocument["slides"][numb
         {slide.thesis ? <p>{slide.thesis}</p> : null}
         {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
       </div>
-      {slide.visual.image ? <VisualImage image={slide.visual.image} /> : <VisualBlock slide={slide} />}
+      {slide.visual.image ? <VisualImage image={slide.visual.image} /> : null}
     </div>
   );
 }
@@ -505,14 +506,19 @@ function MiniPointRow({ items }: { items: string[] }) {
 
 function hasSlideVisualContent(slide: PresentationDocument["slides"][number]) {
   const visual = slide.visual;
-  return Boolean(visual?.image?.url || (visual && visual.type !== "none"));
+  return Boolean(visual?.image?.url || (visual && visual.type !== "none" && !isImageOnlyVisual(visual.type)));
 }
 
 function VisualBlock({ slide }: { slide: PresentationDocument["slides"][number] }) {
   const visual = slide.visual;
   const image = visual?.image;
   const imageFigure = image ? <VisualImage image={image} /> : null;
+  const visualTitle = visual?.title && !isDuplicateDisplayText(visual.title, slide.title) ? visual.title : "";
   if (!visual || visual.type === "none") {
+    return imageFigure ? <section className="visual-card visual-image-card">{imageFigure}</section> : null;
+  }
+
+  if (isImageOnlyVisual(visual.type)) {
     return imageFigure ? <section className="visual-card visual-image-card">{imageFigure}</section> : null;
   }
 
@@ -520,7 +526,7 @@ function VisualBlock({ slide }: { slide: PresentationDocument["slides"][number] 
     return (
       <section className={`visual-card visual-${visual.type}`}>
         {imageFigure}
-        <strong>{visual.title}</strong>
+        {visualTitle ? <strong>{visualTitle}</strong> : null}
         <div className="visual-table">
           <span>{visual.leftLabel || "Первое"}</span>
           <span>{visual.rightLabel || "Второе"}</span>
@@ -539,7 +545,7 @@ function VisualBlock({ slide }: { slide: PresentationDocument["slides"][number] 
     return (
       <section className="visual-card visual-timeline">
         {imageFigure}
-        <strong>{visual.title}</strong>
+        {visualTitle ? <strong>{visualTitle}</strong> : null}
         {visual.items.map((item, index) => (
           <div className="timeline-item" key={`${item.label}-${index}`}>
             <span>{index + 1}</span>
@@ -554,7 +560,7 @@ function VisualBlock({ slide }: { slide: PresentationDocument["slides"][number] 
     return (
       <section className="visual-card visual-mindmap">
         {imageFigure}
-        <strong>{visual.title || slide.title}</strong>
+        {visualTitle ? <strong>{visualTitle}</strong> : null}
         <div className="mindmap-center">{slide.title}</div>
         <div className="mindmap-nodes">
           {visual.items.slice(0, 6).map((item) => (
@@ -568,7 +574,7 @@ function VisualBlock({ slide }: { slide: PresentationDocument["slides"][number] 
   return (
     <section className={`visual-card visual-${visual.type}`}>
       {imageFigure}
-      <strong>{visual.title || "Схема"}</strong>
+      {visualTitle ? <strong>{visualTitle}</strong> : null}
       <div className="visual-steps">
         {(visual.items.length ? visual.items : slide.bullets.map((label) => ({ label, text: "" }))).slice(0, 5).map((item, index) => (
           <div className="visual-step" key={`${item.label}-${index}`}>
@@ -579,4 +585,29 @@ function VisualBlock({ slide }: { slide: PresentationDocument["slides"][number] 
       </div>
     </section>
   );
+}
+
+function isImageOnlyVisual(type: PresentationDocument["slides"][number]["visual"]["type"]) {
+  return type === "image" || type === "illustration";
+}
+
+function isDuplicateDisplayText(value: string, reference: string) {
+  const left = normalizeComparableText(value);
+  const right = normalizeComparableText(reference);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const shorter = left.length < right.length ? left : right;
+  const longer = left.length < right.length ? right : left;
+  return shorter.length >= 18 && longer.includes(shorter);
+}
+
+function normalizeComparableText(value: string) {
+  return value
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^\p{L}\p{N}\s]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }

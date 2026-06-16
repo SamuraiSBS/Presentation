@@ -57,6 +57,8 @@ const GENERIC_SCREEN_TEXT_PHRASES = [
   "как видно на схеме",
   "как показано на картинке",
   "как показано на изображении",
+  "нужно раскрыть через конкретные факты",
+  "раскрыть через конкретные факты",
 ];
 
 export function sanitizeProjectForDisplay<T extends ProjectWithPresentation>(project: T): T {
@@ -109,7 +111,7 @@ export function sanitizePresentationForDisplay(document: DisplayPresentationInpu
 
   return {
     ...document,
-    generatedText: cleanMultilineText(document.generatedText),
+    generatedText: sanitizeGeneratedTextForDisplay(document.generatedText),
     sources: [],
     slides,
     speechScript: slides.map((slide, index) => {
@@ -150,13 +152,17 @@ function normalizeSlideKind(value: unknown, index: number, total: number): Slide
 }
 
 function normalizeThesis(value: unknown, blocks: SlideBlock[], fallback: string) {
-  return sentencePreview(sanitizeDisplayText(value) || slideBodyTextForDisplay(blocks, fallback));
+  const candidate = sentencePreview(sanitizeDisplayText(value));
+  if (candidate && !isDuplicateDisplayText(candidate, fallback)) return candidate;
+  const fromBlocks = slideBodyTextForDisplay(blocks, fallback);
+  if (fromBlocks && !isDuplicateDisplayText(fromBlocks, fallback)) return fromBlocks;
+  return fallback ? sentencePreview(`Главное здесь - ${fallback.replace(/[.!?]+$/g, "")}.`) : "";
 }
 
 function normalizeBullets(value: unknown, blocks: SlideBlock[], fallback: string, slideKind: SlideKind) {
   const items = Array.isArray(value) ? value.map(sanitizeDisplayText).filter(Boolean) : [];
   const blockItems = blocks.flatMap((block) => (block.type === "bullets" ? block.items : splitSentences("content" in block ? block.content : "")));
-  const merged = uniqueShortItems([...items, ...blockItems]);
+  const merged = uniqueShortItems([...items, ...blockItems]).filter((item) => !isDuplicateDisplayText(item, fallback));
   if (slideKind === "title" || slideKind === "section") return merged.slice(0, 3);
   return (merged.length ? merged : splitSentences(fallback)).slice(0, 5);
 }
@@ -177,7 +183,7 @@ function normalizeHighlights(_value: unknown, _thesis: string, _bullets: string[
   return [];
 }
 
-function normalizeVisual(value: unknown, _title: string, _bullets: string[], _slideKind: SlideKind): SlideVisual {
+function normalizeVisual(value: unknown, title: string, _bullets: string[], _slideKind: SlideKind): SlideVisual {
   const empty: SlideVisual = { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] };
   const candidate = value && typeof value === "object" ? (value as Partial<SlideVisual>) : {};
   const image = normalizeVisualImage(candidate.image);
@@ -198,11 +204,11 @@ function normalizeVisual(value: unknown, _title: string, _bullets: string[], _sl
 
   return {
     type,
-    title: sanitizeDisplayText(candidate.title) || visualTitle(type),
+    title: normalizeVisualTitle(candidate.title, title),
     description,
     leftLabel: sanitizeDisplayText(candidate.leftLabel),
     rightLabel: sanitizeDisplayText(candidate.rightLabel),
-    items,
+    items: type === "image" || type === "illustration" ? [] : items,
     rows: isRowVisual(type) ? completeRows : [],
     ...(image ? { image } : {}),
   };
@@ -226,6 +232,17 @@ function normalizeVisualImage(value: unknown): SlideVisual["image"] | undefined 
   };
 }
 
+function normalizeVisualTitle(value: unknown, slideTitle: string) {
+  const title = sanitizeDisplayText(value);
+  if (!title || isGenericVisualTitle(title) || isDuplicateDisplayText(title, slideTitle)) return "";
+  return title;
+}
+
+function isGenericVisualTitle(title: string) {
+  const key = normalizeTitleKey(title);
+  return ["visual example", "визуальный пример", "иллюстрация", "image"].includes(key);
+}
+
 export function sanitizeDisplayText(value: unknown) {
   const banned = [
     "источник",
@@ -240,6 +257,12 @@ export function sanitizeDisplayText(value: unknown) {
     "ключевой вывод нужно связать",
     "тезис нужно объяснить",
     "основная мысль слайда",
+    "сделай презентацию",
+    "сделайте презентацию",
+    "создай презентацию",
+    "создайте презентацию",
+    "нужно раскрыть через конкретные факты",
+    "раскрыть через конкретные факты",
     ...GENERIC_NARRATION_PHRASES,
     ...GENERIC_SCREEN_TEXT_PHRASES,
   ];
@@ -255,6 +278,19 @@ export function sanitizeDisplayText(value: unknown) {
       return !banned.some((phrase) => lower.includes(phrase));
     })
     .join(" ")
+    .trim();
+}
+
+function sanitizeGeneratedTextForDisplay(value: unknown) {
+  return cleanMultilineText(value)
+    .split("\n")
+    .map((line) => {
+      const text = line.trim();
+      if (!text) return "";
+      return /^Слайд\s+\d+\s*:/i.test(text) ? text : sanitizeDisplayText(text);
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
@@ -346,6 +382,25 @@ function normalizeTitleKey(title: unknown) {
   return cleanText(title).toLowerCase();
 }
 
+function isDuplicateDisplayText(value: string, reference: string) {
+  const left = normalizeComparableText(value);
+  const right = normalizeComparableText(reference);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const shorter = left.length < right.length ? left : right;
+  const longer = left.length < right.length ? right : left;
+  return shorter.length >= 18 && longer.includes(shorter);
+}
+
+function normalizeComparableText(value: string) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^\p{L}\p{N}\s]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function splitSentences(value: unknown) {
   return sanitizeDisplayText(value)
     .split(/(?<=[.!?])\s+|[;\n]+/)
@@ -410,23 +465,6 @@ function usefulVisualType(
 
 function isRowVisual(type: SlideVisual["type"]) {
   return ["comparison_diagram", "before_after_table", "pros_cons_table", "cause_effect_diagram"].includes(type);
-}
-
-function visualTitle(type: SlideVisual["type"]) {
-  const titles: Record<SlideVisual["type"], string> = {
-    process_diagram: "Процесс",
-    comparison_diagram: "Сравнение",
-    cause_effect_diagram: "Причина и следствие",
-    before_after_table: "До и после",
-    pros_cons_table: "Плюсы и минусы",
-    timeline: "Хронология",
-    mind_map: "Карта понятий",
-    illustration: "Иллюстрация",
-    schema: "Схема",
-    image: "Визуальный пример",
-    none: "",
-  };
-  return titles[type];
 }
 
 function fallbackRows(type: SlideVisual["type"], bullets: string[]) {

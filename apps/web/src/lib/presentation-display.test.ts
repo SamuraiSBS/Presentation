@@ -251,6 +251,7 @@ describe("sanitizePresentationForDisplay", () => {
       scenario: "lesson",
       level: "beginner",
       slideCount: 2,
+      generatedText: "Слайд 1: Экология города\nIntro.\n\nСлайд 2: Воздух и транспорт\nТелефоны Samsung нужно раскрыть через конкретные факты.",
       generationMode: "yandex",
       sources: [],
       outline: ["Экология города", "Воздух и транспорт"],
@@ -293,7 +294,7 @@ describe("sanitizePresentationForDisplay", () => {
             description: "Как показано на изображении, на картинке есть транспорт.",
             leftLabel: "",
             rightLabel: "",
-            items: [],
+            items: [{ label: "Материал стоит разбирать по смысловым частям", text: "" }],
             rows: [],
           },
           highlights: [],
@@ -316,6 +317,8 @@ describe("sanitizePresentationForDisplay", () => {
 
     expect(document.slides[1].thesis).toContain("Воздух и транспорт");
     expect(document.slides[1].bullets.length).toBeGreaterThanOrEqual(1);
+    expect(document.slides[1].visual.items).toEqual([]);
+    expect(document.generatedText).not.toContain("нужно раскрыть через конкретные факты");
     expectNoForbiddenSlideText(visibleText);
   });
 

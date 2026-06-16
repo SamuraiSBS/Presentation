@@ -115,6 +115,8 @@ const GENERIC_SCREEN_TEXT_PHRASES = [
   "главный вопрос",
   "практический смысл для аудитории",
   "итог этой части связан с запросом",
+  "нужно раскрыть через конкретные факты",
+  "раскрыть через конкретные факты",
 ];
 
 const GENERIC_TITLES = [
@@ -582,8 +584,8 @@ function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], pro
   const rawBlocks = Array.isArray(slide.blocks) ? slide.blocks.map(normalizeBlock).filter((block): block is SlideBlock => Boolean(block)) : [];
   const slideKind = normalizeSlideKind(slide.slideKind, order, project.slideCount);
   const title = shortenWords(cleanText(slide.title) || fallbackTitle(project, order), slideKind === "title" ? 12 : 8);
-  const thesis = normalizeThesis(slide.thesis, rawBlocks, project, order, slideKind);
-  const bullets = ensureSlideSentenceDensity(normalizeBullets(slide.bullets, rawBlocks, project, order, slideKind), thesis, project, order, slideKind);
+  const thesis = normalizeThesis(slide.thesis, rawBlocks, project, order, slideKind, title);
+  const bullets = ensureSlideSentenceDensity(normalizeBullets(slide.bullets, rawBlocks, project, order, slideKind, title), thesis, project, order, slideKind);
   const definition = normalizeDefinition(slide.definition);
   const keyConcepts = normalizeKeyConcepts(slide.keyConcepts, title, bullets, slideKind);
   const highlights = normalizeHighlights(slide.highlights, thesis, bullets, slideKind);
@@ -648,18 +650,19 @@ function normalizeSlideKind(value: unknown, order: number, slideCount: number): 
   return "content";
 }
 
-function normalizeThesis(value: unknown, blocks: SlideBlock[], project: ProjectInput, order: number, slideKind: SlideKind) {
+function normalizeThesis(value: unknown, blocks: SlideBlock[], project: ProjectInput, order: number, slideKind: SlideKind, title = "") {
   if (slideKind === "section") return "";
   const fromValue = firstSentence(sanitizeScreenText(value));
-  if (fromValue) return shortenSentence(fromValue, 180);
+  if (fromValue && !isDuplicateDisplayText(fromValue, title)) return shortenSentence(fromValue, slideKind === "title" ? 150 : 180);
   const fromBlocks = firstSentence(slideText(blocks));
-  return shortenSentence(fromBlocks || fallbackSlideText(project, order), slideKind === "title" ? 220 : 180);
+  const fallback = isDuplicateDisplayText(fromBlocks, title) ? "" : fromBlocks;
+  return shortenSentence(fallback || fallbackSlideText(project, order), slideKind === "title" ? 150 : 180);
 }
 
-function normalizeBullets(value: unknown, blocks: SlideBlock[], project: ProjectInput, order: number, slideKind: SlideKind) {
+function normalizeBullets(value: unknown, blocks: SlideBlock[], project: ProjectInput, order: number, slideKind: SlideKind, title = "") {
   const fromValue = Array.isArray(value) ? value.map(sanitizeScreenText).filter(Boolean) : [];
   const fromBlocks = blocks.flatMap((block) => (block.type === "bullets" ? block.items : splitIntoSentences("content" in block ? block.content : "")));
-  const items = uniqueShortItems([...fromValue, ...fromBlocks]).slice(0, 5);
+  const items = uniqueShortItems([...fromValue, ...fromBlocks]).filter((item) => !isDuplicateDisplayText(item, title)).slice(0, 5);
 
   if (slideKind === "title" || slideKind === "section") {
     return items.slice(0, 3);
@@ -743,11 +746,11 @@ function normalizeVisual(
 
   return {
     type,
-    title: sanitizeScreenText(candidate.title) || visualTitle(type),
+    title: normalizeVisualTitle(candidate.title, title),
     description,
     leftLabel: sanitizeScreenText(candidate.leftLabel) || defaultLeftLabel(type),
     rightLabel: sanitizeScreenText(candidate.rightLabel) || defaultRightLabel(type),
-    items,
+    items: type === "image" || type === "illustration" ? [] : items,
     rows: isRowVisual(type) ? completeRows : [],
   };
 }
@@ -772,6 +775,17 @@ function normalizeVisualType(value: unknown): SlideVisual["type"] {
 
 function emptyVisual(): SlideVisual {
   return { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] };
+}
+
+function normalizeVisualTitle(value: unknown, slideTitle: string) {
+  const title = sanitizeScreenText(value);
+  if (!title || isGenericVisualTitle(title) || isDuplicateDisplayText(title, slideTitle)) return "";
+  return title;
+}
+
+function isGenericVisualTitle(title: string) {
+  const key = normalizeTitleKey(title);
+  return ["visual example", "визуальный пример", "иллюстрация", "image"].includes(key);
 }
 
 function usefulVisualType(type: SlideVisual["type"], items: SlideVisual["items"], rows: SlideVisual["rows"]): SlideVisual["type"] {
@@ -884,22 +898,22 @@ function fallbackVisual(order: number, title: string, thesis: string, bullets: s
   const description = imageConcept(project, order, title, thesis, bullets, slideKind);
 
   if (slideKind === "title" || slideKind === "section") {
-    return { ...emptyVisual(), type: "image", title: "Visual example", description };
+    return { ...emptyVisual(), type: "image", title: "", description };
   }
 
   if (layout === "process" && items.length >= 2) {
-    return { ...emptyVisual(), type: "process_diagram", title: visualTitle("process_diagram"), description, items };
+    return { ...emptyVisual(), type: "process_diagram", title: "", description, items };
   }
 
   if (layout === "timeline" && items.length >= 2) {
-    return { ...emptyVisual(), type: "timeline", title: visualTitle("timeline"), description, items };
+    return { ...emptyVisual(), type: "timeline", title: "", description, items };
   }
 
   if (layout === "comparison" && bullets.length >= 2) {
     return {
       ...emptyVisual(),
       type: "comparison_diagram",
-      title: visualTitle("comparison_diagram"),
+      title: "",
       description,
       leftLabel: defaultLeftLabel("comparison_diagram"),
       rightLabel: defaultRightLabel("comparison_diagram"),
@@ -907,7 +921,7 @@ function fallbackVisual(order: number, title: string, thesis: string, bullets: s
     };
   }
 
-  return { ...emptyVisual(), type: "image", title: "Visual example", description };
+  return { ...emptyVisual(), type: "image", title: "", description };
 }
 
 function imageConcept(project: ProjectInput, order: number, title: string, thesis: string, bullets: string[], slideKind: SlideKind) {
@@ -1035,13 +1049,12 @@ function sentenceFragment(value: string) {
 function buildFallbackBulletItems(project: ProjectInput, order: number) {
   const topic = cleanText(project.title || project.prompt);
   const focus = order > 1 ? fallbackTitle(project, order) : topic;
-  const request = shortenSentence(cleanText(project.prompt), 120);
   const base = [
-    `${focus}: ${request || topic}`,
-    `${topic} нужно раскрыть через конкретные факты.`,
+    `${focus}: главный смысл темы без лишних общих слов.`,
+    `${topic} понятнее через факты, примеры и последствия.`,
     `Смысл темы понятнее, когда видны причины и последствия.`,
     `Для аудитории важен простой вывод без лишних общих слов.`,
-    `Финальная мысль должна быть связана с запросом: ${shortenSentence(request || topic, 90)}`,
+    `Финальная мысль должна связывать факты с понятным выводом.`,
   ];
   return base.map((item) => shortenSentence(item, 120));
 }
@@ -1074,23 +1087,6 @@ function splitIntoSentences(value: unknown) {
 
 function firstSentence(value: unknown) {
   return splitIntoSentences(value)[0] || "";
-}
-
-function visualTitle(type: SlideVisual["type"]) {
-  const titles: Record<SlideVisual["type"], string> = {
-    process_diagram: "Процесс",
-    comparison_diagram: "Сравнение",
-    cause_effect_diagram: "Причина и следствие",
-    before_after_table: "До и после",
-    pros_cons_table: "Плюсы и минусы",
-    timeline: "Хронология",
-    mind_map: "Карта понятий",
-    illustration: "Иллюстрация",
-    schema: "Схема",
-    image: "Визуальный пример",
-    none: "",
-  };
-  return titles[type];
 }
 
 function defaultLeftLabel(type: SlideVisual["type"]) {
@@ -1165,6 +1161,25 @@ function normalizeTitleKey(title: string) {
   return cleanText(title).toLowerCase();
 }
 
+function isDuplicateDisplayText(value: string, reference: string) {
+  const left = normalizeComparableText(value);
+  const right = normalizeComparableText(reference);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const shorter = left.length < right.length ? left : right;
+  const longer = left.length < right.length ? right : left;
+  return shorter.length >= 18 && longer.includes(shorter);
+}
+
+function normalizeComparableText(value: string) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^\p{L}\p{N}\s]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function isGenericSlideTitle(titleKey: string) {
   return [
     "введение",
@@ -1178,9 +1193,8 @@ function isGenericSlideTitle(titleKey: string) {
 
 function fallbackSlideText(project: ProjectInput, order: number) {
   const topic = project.title || project.prompt;
-  const request = cleanText(project.prompt || topic);
   const texts = [
-    `${topic}: ${request}`,
+    `${topic}: главное, что нужно понять перед деталями.`,
     `${topic} стоит объяснять через понятную проблему и конкретный контекст.`,
     `Факты по теме должны показывать, что меняется и почему это важно.`,
     `Главная перемена заметна там, где появляются новые причины и последствия.`,
@@ -1189,7 +1203,7 @@ function fallbackSlideText(project: ProjectInput, order: number) {
     `Слушателю важно запомнить не набор фраз, а связь между фактами.`,
     `Перед финалом нужно оставить только самые сильные выводы из рассказа.`,
     `Главная мысль показывает, к чему приводит вся история темы.`,
-    `Финальный вывод должен отвечать на вопрос: ${request}.`,
+    `Финальный вывод должен кратко собрать главные факты и их значение.`,
   ];
   return shortenSentence(texts[order - 1] || `${topic}: главное объяснить суть темы коротко и понятно.`, 230);
 }
@@ -1528,7 +1542,20 @@ function normalizeGeneratedText(value: string, project: ProjectInput) {
     return buildFallbackGeneratedText(project);
   }
 
-  return text;
+  return sanitizeGeneratedText(text);
+}
+
+function sanitizeGeneratedText(value: string) {
+  return cleanMultilineText(value)
+    .split("\n")
+    .map((line) => {
+      const text = line.trim();
+      if (!text) return "";
+      return /^Слайд\s+\d+\s*:/i.test(text) ? text : sanitizeSpeechText(text);
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function buildFallbackGeneratedText(project: ProjectInput) {
@@ -1586,6 +1613,12 @@ function removeBannedSentences(value: string) {
     "ключевой вывод нужно связать",
     "тезис нужно объяснить",
     "основная мысль слайда",
+    "сделай презентацию",
+    "сделайте презентацию",
+    "создай презентацию",
+    "создайте презентацию",
+    "нужно раскрыть через конкретные факты",
+    "раскрыть через конкретные факты",
     ...GENERIC_NARRATION_PHRASES,
     ...GENERIC_SCREEN_TEXT_PHRASES,
   ];
