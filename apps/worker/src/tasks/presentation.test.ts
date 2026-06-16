@@ -77,14 +77,16 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("question-answer");
     expect(prompt).toContain("myth-fact");
     expect(prompt).toContain("do not use the same content layout more than twice in a row");
-    expect(prompt).toContain("0-5 short, meaningful publicistic points");
+    expect(prompt).toContain("every slide must contain 2-3 useful slide-facing sentences");
+    expect(prompt).toContain("1-3 short, meaningful publicistic points");
     expect(prompt).toContain("keyConcepts: return an empty array");
     expect(prompt).toContain("highlights: return an empty array");
     expect(prompt).toContain("5-6 sentence explanation");
     expect(prompt).toContain("generatedText");
     expect(prompt).toContain("Do not generate any separate story, narrative");
     expect(prompt).toContain("Do not write long text blocks");
-    expect(prompt).toContain("set visual.type to none when the slide does not have a clearly useful structured visual");
+    expect(prompt).toContain("every slide, including title, section, and summary slides, must include visual.description");
+    expect(prompt).toContain("set visual.type to image or illustration");
     expect(prompt).toContain("never fill visual.title, visual.items, or visual.rows with generic placeholder text");
     expect(prompt).toContain("process_diagram");
     expect(prompt).toContain("comparison_diagram");
@@ -530,7 +532,9 @@ describe("generatePresentation fallback behavior", () => {
 
       expect(presentation.generationMode).toBe("yandex");
       expect(presentation.slides[0].blocks[0]).toEqual({ type: "bullets", items: ["A real generated point"] });
-      expect(presentation.slides[0].bullets).toEqual(["A real generated point"]);
+      expect(presentation.slides[0].bullets.length).toBeGreaterThanOrEqual(2);
+      expect(presentation.slides[0].bullets[0]).toBe("A real generated point");
+      expect(presentation.slides[0].visual.description).toBeTruthy();
       expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(5);
       expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(6);
       expect(presentation.speechScript[0].text.toLowerCase()).toContain("a real generated point");

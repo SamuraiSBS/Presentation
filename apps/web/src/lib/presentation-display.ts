@@ -177,11 +177,10 @@ function normalizeHighlights(_value: unknown, _thesis: string, _bullets: string[
   return [];
 }
 
-function normalizeVisual(value: unknown, _title: string, _bullets: string[], slideKind: SlideKind): SlideVisual {
+function normalizeVisual(value: unknown, _title: string, _bullets: string[], _slideKind: SlideKind): SlideVisual {
   const empty: SlideVisual = { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] };
   const candidate = value && typeof value === "object" ? (value as Partial<SlideVisual>) : {};
   const image = normalizeVisualImage(candidate.image);
-  if (slideKind === "title") return image ? { ...empty, image } : empty;
   const requestedType = normalizeVisualType(candidate.type);
   const description = sanitizeDisplayText(candidate.description);
   const items = Array.isArray(candidate.items)
@@ -404,7 +403,7 @@ function usefulVisualType(
     return items.filter((item) => item.label || item.text).length >= 2 ? type : "none";
   }
 
-  if (type === "illustration" || type === "image") return "none";
+  if (type === "illustration" || type === "image") return type;
 
   return type === "none" ? "none" : type;
 }

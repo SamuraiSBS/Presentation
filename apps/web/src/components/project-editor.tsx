@@ -158,6 +158,7 @@ function SlideCanvas({ slide }: { slide: PresentationDocument["slides"][number] 
       >
         <h2 className="slide-title">{slide.title}</h2>
         {slide.thesis ? <p className="slide-body">{slide.thesis}</p> : null}
+        {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
       </div>
     );
   }
@@ -257,10 +258,33 @@ function splitDisplaySentences(value: string) {
     .filter(Boolean);
 }
 
+function SlideImageLayout({
+  slide,
+  className,
+  children,
+}: {
+  slide: PresentationDocument["slides"][number];
+  className: string;
+  children: React.ReactNode;
+}) {
+  const image = slide.visual.image;
+  if (!image) {
+    return <div className={className}>{children}</div>;
+  }
+
+  const reverse = slide.order % 2 === 0;
+  return (
+    <div className={`${className} slide-with-image ${reverse ? "slide-with-image-reverse" : ""}`}>
+      <div className="slide-text-stack">{children}</div>
+      <VisualImage image={image} />
+    </div>
+  );
+}
+
 function SummarySlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
   const items = compactItems(slide);
   return (
-    <div className="slide-content slide-layout-summary">
+    <SlideImageLayout slide={slide} className="slide-content slide-layout-summary">
       <h2 className="slide-title">{slide.title}</h2>
       <div className="summary-grid">
         {items.map((item, index) => (
@@ -270,48 +294,49 @@ function SummarySlide({ slide }: { slide: PresentationDocument["slides"][number]
           </div>
         ))}
       </div>
-    </div>
+    </SlideImageLayout>
   );
 }
 
 function StatementSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
   return (
-    <div className="slide-content slide-layout-statement">
+    <SlideImageLayout slide={slide} className="slide-content slide-layout-statement">
       <h2 className="slide-title">{slide.title}</h2>
       <p>{slide.thesis || slideBlockText(slide)}</p>
-    </div>
+      {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
+    </SlideImageLayout>
   );
 }
 
 function QuoteSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
   const quote = slideBlockText(slide, "quote") || slide.thesis || slideBlockText(slide);
   return (
-    <div className="slide-content slide-layout-quote">
+    <SlideImageLayout slide={slide} className="slide-content slide-layout-quote">
       <h2 className="slide-title">{slide.title}</h2>
       <blockquote>{quote}</blockquote>
       {slide.bullets[0] ? <p>{slide.bullets[0]}</p> : null}
-    </div>
+    </SlideImageLayout>
   );
 }
 
 function DefinitionSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
   const definition = slide.definition || { term: slide.title, text: slide.thesis || slideBlockText(slide) };
   return (
-    <div className="slide-content slide-layout-definition">
+    <SlideImageLayout slide={slide} className="slide-content slide-layout-definition">
       <h2 className="slide-title">{slide.title}</h2>
       <div className="definition-hero">
         <strong>{definition.term}</strong>
         <p>{definition.text}</p>
       </div>
       {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
-    </div>
+    </SlideImageLayout>
   );
 }
 
 function SequenceSlide({ slide, mode }: { slide: PresentationDocument["slides"][number]; mode: "timeline" | "process" }) {
   const items = compactItems(slide);
   return (
-    <div className={`slide-content slide-layout-sequence slide-layout-${mode}`}>
+    <SlideImageLayout slide={slide} className={`slide-content slide-layout-sequence slide-layout-${mode}`}>
       <h2 className="slide-title">{slide.title}</h2>
       {slide.thesis ? <p className="slide-kicker">{slide.thesis}</p> : null}
       <div className="sequence-track">
@@ -322,7 +347,7 @@ function SequenceSlide({ slide, mode }: { slide: PresentationDocument["slides"][
           </div>
         ))}
       </div>
-    </div>
+    </SlideImageLayout>
   );
 }
 
@@ -337,7 +362,7 @@ function ComparisonSlide({ slide }: { slide: PresentationDocument["slides"][numb
         },
       ];
   return (
-    <div className="slide-content slide-layout-comparison">
+    <SlideImageLayout slide={slide} className="slide-content slide-layout-comparison">
       <h2 className="slide-title">{slide.title}</h2>
       <div className="comparison-board">
         <strong>{slide.visual.leftLabel || "Первое"}</strong>
@@ -349,7 +374,7 @@ function ComparisonSlide({ slide }: { slide: PresentationDocument["slides"][numb
           </div>
         ))}
       </div>
-    </div>
+    </SlideImageLayout>
   );
 }
 
@@ -359,6 +384,7 @@ function ImageFocusSlide({ slide }: { slide: PresentationDocument["slides"][numb
       <div>
         <h2 className="slide-title">{slide.title}</h2>
         {slide.thesis ? <p>{slide.thesis}</p> : null}
+        {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
       </div>
       {slide.visual.image ? <VisualImage image={slide.visual.image} /> : <VisualBlock slide={slide} />}
     </div>
@@ -369,7 +395,7 @@ function CaseStudySlide({ slide }: { slide: PresentationDocument["slides"][numbe
   const items = compactItems(slide);
   const labels = ["Ситуация", "Действие", "Результат"];
   return (
-    <div className="slide-content slide-layout-case">
+    <SlideImageLayout slide={slide} className="slide-content slide-layout-case">
       <h2 className="slide-title">{slide.title}</h2>
       <div className="case-grid">
         {labels.map((label, index) => (
@@ -379,27 +405,27 @@ function CaseStudySlide({ slide }: { slide: PresentationDocument["slides"][numbe
           </div>
         ))}
       </div>
-    </div>
+    </SlideImageLayout>
   );
 }
 
 function QuestionAnswerSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
   return (
-    <div className="slide-content slide-layout-qa">
+    <SlideImageLayout slide={slide} className="slide-content slide-layout-qa">
       <h2 className="slide-title">{slide.title}</h2>
       <div className="answer-panel">
         <strong>Ответ</strong>
         <p>{slide.thesis || slideBlockText(slide)}</p>
       </div>
       {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
-    </div>
+    </SlideImageLayout>
   );
 }
 
 function MythFactSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
   const items = compactItems(slide);
   return (
-    <div className="slide-content slide-layout-myth">
+    <SlideImageLayout slide={slide} className="slide-content slide-layout-myth">
       <h2 className="slide-title">{slide.title}</h2>
       <div className="myth-fact-grid">
         <div>
@@ -411,14 +437,14 @@ function MythFactSlide({ slide }: { slide: PresentationDocument["slides"][number
           <p>{items[1] || slide.thesis}</p>
         </div>
       </div>
-    </div>
+    </SlideImageLayout>
   );
 }
 
 function MetricsSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
   const items = compactItems(slide);
   return (
-    <div className="slide-content slide-layout-metrics">
+    <SlideImageLayout slide={slide} className="slide-content slide-layout-metrics">
       <h2 className="slide-title">{slide.title}</h2>
       <div className="metric-grid">
         {items.slice(0, 4).map((item, index) => (
@@ -428,7 +454,7 @@ function MetricsSlide({ slide }: { slide: PresentationDocument["slides"][number]
           </div>
         ))}
       </div>
-    </div>
+    </SlideImageLayout>
   );
 }
 

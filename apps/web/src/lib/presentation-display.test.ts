@@ -187,7 +187,7 @@ describe("sanitizePresentationForDisplay", () => {
     expect(document.slides[1].visual.description).toBe("searchable scene");
     expect(document.slides[2].visual.type).toBe("process_diagram");
     expect(document.slides[2].visual.items).toHaveLength(2);
-    expect(document.slides[3].visual.type).toBe("none");
+    expect(document.slides[3].visual.type).toBe("image");
     expect(document.slides[3].visual.image?.url).toBe("https://example.com/image.jpg");
   });
 

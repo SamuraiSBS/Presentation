@@ -117,6 +117,10 @@ function renderContentSlide(
 ) {
   const layout = item.layout;
 
+  if (imageData && layout !== "image-focus") {
+    return renderDefaultContentSlide(slide, item, imageData);
+  }
+
   if (layout === "statement") return renderStatementSlide(slide, item);
   if (layout === "quote") return renderQuoteSlide(slide, item);
   if (layout === "definition") return renderDefinitionSlide(pptx, slide, item);

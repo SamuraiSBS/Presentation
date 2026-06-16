@@ -313,7 +313,8 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     "Content slide rules:",
     "- title: short, ideally 6-8 words or fewer;",
     "- thesis: one concise publicistic sentence about the real subject matter, not a meta sentence about the slide;",
-    "- bullets: 0-5 short, meaningful publicistic points; use an empty array for statement, quote, image-focus, question-answer, or definition slides when bullets would be artificial;",
+    "- every slide must contain 2-3 useful slide-facing sentences total across thesis, bullets, and blocks; never leave a slide with only a title or one vague line;",
+    "- bullets: 1-3 short, meaningful publicistic points for most slides; use an empty array only when the same useful sentences are already present in blocks;",
     "- definition: { term, text } only when an important term needs a simple definition; otherwise null;",
     "- keyConcepts: return an empty array; do not create small keyword chips on slides;",
     "- highlights: return an empty array; do not create small highlighted word badges on slides;",
@@ -336,7 +337,8 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     "- do not write generic phrases like 'this slide explains the section'; explain the actual topic of the slide.",
     "Visual field rules:",
     "- visual.type must be one of: process_diagram, comparison_diagram, cause_effect_diagram, before_after_table, pros_cons_table, timeline, mind_map, illustration, schema, image, none;",
-    "- set visual.type to none when the slide does not have a clearly useful structured visual;",
+    "- every slide, including title, section, and summary slides, must include visual.description as a concrete image search concept;",
+    "- set visual.type to image or illustration when a photo or illustration is the main visual anchor; use none only for structured visual type, not as a reason to omit visual.description;",
     "- never fill visual.title, visual.items, or visual.rows with generic placeholder text just to create a visual block;",
     "- use process_diagram for ordered actions or steps;",
     "- use comparison_diagram for comparing concepts;",
@@ -345,7 +347,7 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     "- use pros_cons_table for evaluating options;",
     "- use timeline for historical or chronological topics;",
     "- use mind_map for relationships between concepts;",
-    "- use illustration, schema, or image only when a concrete image will explain this exact slide better than text; otherwise use none;",
+    "- use illustration, schema, or image when a concrete image will explain this exact slide better than text;",
     "- visual.items contains concrete steps/nodes; visual.rows with left/right columns is for tables and comparisons.",
     "- comparison/table visuals must include meaningful left and right values for each row;",
     "- process, timeline, mind_map, and schema visuals must include at least two concrete items;",
@@ -464,11 +466,11 @@ function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], pro
   const slideKind = normalizeSlideKind(slide.slideKind, order, project.slideCount);
   const title = shortenWords(cleanText(slide.title) || fallbackTitle(project, order), slideKind === "title" ? 12 : 8);
   const thesis = normalizeThesis(slide.thesis, rawBlocks, project, order, slideKind);
-  const bullets = normalizeBullets(slide.bullets, rawBlocks, project, order, slideKind);
+  const bullets = ensureSlideSentenceDensity(normalizeBullets(slide.bullets, rawBlocks, project, order, slideKind), thesis, project, order, slideKind);
   const definition = normalizeDefinition(slide.definition);
   const keyConcepts = normalizeKeyConcepts(slide.keyConcepts, title, bullets, slideKind);
   const highlights = normalizeHighlights(slide.highlights, thesis, bullets, slideKind);
-  const visual = normalizeVisual(slide.visual, title, bullets, slideKind);
+  const visual = normalizeVisual(slide.visual, title, thesis, bullets, slideKind, project, order);
   const blocks = normalizeSlideBlocks(rawBlocks, project, order, thesis, bullets, slideKind);
 
   return {
@@ -555,6 +557,19 @@ function normalizeBullets(value: unknown, blocks: SlideBlock[], project: Project
   return ensureRange(items, fallback, minimum, 5);
 }
 
+function ensureSlideSentenceDensity(items: string[], thesis: string, project: ProjectInput, order: number, slideKind: SlideKind) {
+  const existing = uniqueShortItems(items).slice(0, slideKind === "summary" ? 5 : 3);
+  const visibleSentenceCount = splitIntoSentences([thesis, ...existing].join(" ")).length;
+  const minimum = slideKind === "summary" ? 3 : 2;
+
+  if (visibleSentenceCount >= minimum) {
+    return existing;
+  }
+
+  const fallback = buildFallbackBulletItems(project, order).filter((item) => item.toLowerCase() !== thesis.toLowerCase());
+  return uniqueShortItems([...existing, ...fallback]).slice(0, slideKind === "summary" ? 5 : 3);
+}
+
 function normalizeDefinition(value: unknown): SlideDefinition | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Partial<SlideDefinition>;
@@ -571,12 +586,18 @@ function normalizeHighlights(_value: unknown, _thesis: string, _bullets: string[
   return [];
 }
 
-function normalizeVisual(value: unknown, _title: string, _bullets: string[], slideKind: SlideKind): SlideVisual {
-  if (slideKind === "title") return emptyVisual();
-
+function normalizeVisual(
+  value: unknown,
+  title: string,
+  thesis: string,
+  bullets: string[],
+  slideKind: SlideKind,
+  project: ProjectInput,
+  order: number,
+): SlideVisual {
   const candidate = value && typeof value === "object" ? (value as Partial<SlideVisual>) : {};
   const requestedType = normalizeVisualType(candidate.type);
-  const description = sanitizeScreenText(candidate.description);
+  const description = sanitizeScreenText(candidate.description) || imageConcept(project, order, title, thesis, bullets, slideKind);
   const rows = Array.isArray(candidate.rows)
     ? candidate.rows
         .map((row) => ({
@@ -645,7 +666,7 @@ function usefulVisualType(type: SlideVisual["type"], items: SlideVisual["items"]
     return items.filter((item) => item.label || item.text).length >= 2 ? type : "none";
   }
 
-  if (type === "illustration" || type === "image") return "none";
+  if (type === "illustration" || type === "image") return type;
 
   return type === "none" ? "none" : type;
 }
@@ -686,9 +707,9 @@ function buildFallbackSlide(order: number, project: ProjectInput, sources: Sourc
   const slideKind = normalizeSlideKind(undefined, order, project.slideCount);
   const title = fallbackTitle(project, order);
   const thesis = normalizeThesis("", [], project, order, slideKind);
-  const bullets = normalizeBullets([], [], project, order, slideKind);
+  const bullets = ensureSlideSentenceDensity(normalizeBullets([], [], project, order, slideKind), thesis, project, order, slideKind);
   const definition = fallbackDefinition(order, title, thesis, slideKind);
-  const visual = fallbackVisual(order, title, bullets, slideKind);
+  const visual = fallbackVisual(order, title, thesis, bullets, slideKind, project);
   const blocks = buildFallbackBlocks(project, order, thesis, bullets, slideKind);
   return {
     id: `slide-${order}`,
@@ -740,37 +761,44 @@ function fallbackDefinition(order: number, title: string, thesis: string, slideK
   };
 }
 
-function fallbackVisual(order: number, title: string, bullets: string[], slideKind: SlideKind): SlideVisual {
-  if (slideKind === "title") return emptyVisual();
+function fallbackVisual(order: number, title: string, thesis: string, bullets: string[], slideKind: SlideKind, project: ProjectInput): SlideVisual {
   const layout = CONTENT_LAYOUT_CYCLE[(order - 2 + CONTENT_LAYOUT_CYCLE.length) % CONTENT_LAYOUT_CYCLE.length];
   const items = bullets.slice(0, 4).map((label) => ({ label, text: "" }));
+  const description = imageConcept(project, order, title, thesis, bullets, slideKind);
+
+  if (slideKind === "title" || slideKind === "section") {
+    return { ...emptyVisual(), type: "image", title: "Visual example", description };
+  }
 
   if (layout === "process" && items.length >= 2) {
-    return { ...emptyVisual(), type: "process_diagram", title: "РџСЂРѕС†РµСЃСЃ", items };
+    return { ...emptyVisual(), type: "process_diagram", title: visualTitle("process_diagram"), description, items };
   }
 
   if (layout === "timeline" && items.length >= 2) {
-    return { ...emptyVisual(), type: "timeline", title: "РҐСЂРѕРЅРѕР»РѕРіРёСЏ", items };
+    return { ...emptyVisual(), type: "timeline", title: visualTitle("timeline"), description, items };
   }
 
   if (layout === "comparison" && bullets.length >= 2) {
     return {
       ...emptyVisual(),
       type: "comparison_diagram",
-      title: "РЎСЂР°РІРЅРµРЅРёРµ",
-      leftLabel: "РџРµСЂРІРѕРµ",
-      rightLabel: "Р’С‚РѕСЂРѕРµ",
-      rows: [
-        {
-          label: title,
-          left: bullets[0],
-          right: bullets[1],
-        },
-      ],
+      title: visualTitle("comparison_diagram"),
+      description,
+      leftLabel: defaultLeftLabel("comparison_diagram"),
+      rightLabel: defaultRightLabel("comparison_diagram"),
+      rows: [{ label: title, left: bullets[0], right: bullets[1] }],
     };
   }
 
-  return emptyVisual();
+  return { ...emptyVisual(), type: "image", title: "Visual example", description };
+}
+
+function imageConcept(project: ProjectInput, order: number, title: string, thesis: string, bullets: string[], slideKind: SlideKind) {
+  const topic = cleanText(project.title || project.prompt);
+  const focus = cleanText(title || fallbackTitle(project, order));
+  const detail = cleanText(thesis || bullets[0] || project.prompt);
+  const role = slideKind === "summary" ? "summary educational image" : slideKind === "title" ? "opening educational image" : "educational image";
+  return shortenSentence(`${role}: ${topic}; ${focus}; ${detail}`, 220);
 }
 
 function fallbackTitle(project: ProjectInput, order: number) {
@@ -797,7 +825,15 @@ function normalizeSlideBlocks(
   bullets: string[],
   slideKind: SlideKind,
 ): SlideBlock[] {
-  if (blocks.length) return blocks.slice(0, 3);
+  if (blocks.length) {
+    const normalized = blocks.slice(0, 3);
+    const text = slideText(normalized);
+    if (splitIntoSentences([thesis, text].filter(Boolean).join(" ")).length >= 2) {
+      return normalized;
+    }
+    const fallbackItems = ensureSlideSentenceDensity([], thesis, project, order, slideKind).slice(0, 2);
+    return [...normalized, { type: "bullets" as const, items: fallbackItems }].slice(0, 3);
+  }
   return buildFallbackBlocks(project, order, thesis, bullets, slideKind);
 }
 

@@ -480,6 +480,36 @@ select {
   text-align: center;
 }
 
+.slide-with-image {
+  grid-template-columns: minmax(0, 0.92fr) minmax(260px, 1.08fr);
+  align-items: center;
+  max-width: 100%;
+  text-align: left;
+}
+
+.slide-with-image-reverse {
+  grid-template-columns: minmax(260px, 1.08fr) minmax(0, 0.92fr);
+}
+
+.slide-with-image-reverse .slide-text-stack {
+  order: 2;
+}
+
+.slide-with-image-reverse .visual-image {
+  order: 1;
+}
+
+.slide-text-stack {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.slide-with-image .visual-image img {
+  max-height: 420px;
+  object-fit: cover;
+}
+
 .slide-layout-statement p,
 .slide-layout-quote blockquote {
   margin: 0;
@@ -930,11 +960,18 @@ select {
   }
 
   .slide-layout-image-focus,
+  .slide-with-image,
+  .slide-with-image-reverse,
   .case-grid,
   .metric-grid,
   .comparison-board,
   .myth-fact-grid {
     grid-template-columns: 1fr;
+  }
+
+  .slide-with-image-reverse .slide-text-stack,
+  .slide-with-image-reverse .visual-image {
+    order: initial;
   }
 
   .highlight-row {
