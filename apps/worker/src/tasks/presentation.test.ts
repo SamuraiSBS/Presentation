@@ -32,6 +32,46 @@ afterEach(() => {
   process.env = { ...originalEnv };
 });
 
+function yandexTextResponse(text: string) {
+  return new Response(
+    JSON.stringify({
+      result: {
+        alternatives: [{ message: { text } }],
+      },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+}
+
+function mockYandexTwoStep(narrationText: string, json: unknown, bodies?: unknown[]) {
+  let callCount = 0;
+  global.fetch = async (_input, init) => {
+    bodies?.push(JSON.parse(String(init?.body || "{}")));
+    callCount += 1;
+    return yandexTextResponse(callCount === 1 ? narrationText : JSON.stringify(json));
+  };
+}
+
+function narrationForSlides(titles: string[]) {
+  const details = [
+    ["контекст", "пример", "вывод"],
+    ["причина", "изменение", "последствие"],
+    ["сравнение", "граница", "результат"],
+    ["этап", "действие", "проверка"],
+    ["качество", "связь", "решение"],
+    ["история", "поворот", "оценка"],
+  ];
+  return titles
+    .map((title, index) => {
+      const [first, second, third] = details[index % details.length];
+      return [
+        `Слайд ${index + 1}: ${title}`,
+        `${title} раскрывает ${first}, который задает направление всему объяснению. Затем появляется ${second}, потому что без него слушателю трудно увидеть развитие мысли. Конкретный ${third} показывает, чем эта часть отличается от соседних фрагментов. Дополнительная деталь связывает название "${title}" с реальной задачей выступления. Финальная фраза кратко собирает этот смысл и готовит переход дальше.`,
+      ].join("\n");
+    })
+    .join("\n\n");
+}
+
 describe("selectAiProviders", () => {
   it("falls back to configured Yandex when OpenAI is selected but missing a key", () => {
     expect(
@@ -77,11 +117,11 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("question-answer");
     expect(prompt).toContain("myth-fact");
     expect(prompt).toContain("do not use the same content layout more than twice in a row");
-    expect(prompt).toContain("every slide must contain 1-3 useful slide-facing sentences");
+    expect(prompt).toContain("one clear thesis plus 2-3 short meaningful points");
     expect(prompt).toContain("semantic and memorable");
     expect(prompt).toContain("keyConcepts: return an empty array");
     expect(prompt).toContain("highlights: return an empty array");
-    expect(prompt).toContain("2-5 sentence explanation");
+    expect(prompt).toContain("5-6 sentence");
     expect(prompt).toContain("generatedText");
     expect(prompt).toContain("Do not generate a separate second story");
     expect(prompt).toContain("Do not write long text blocks");
@@ -108,62 +148,38 @@ describe("generatePresentation fallback behavior", () => {
 
     const presentationText = [
       "Слайд 1: За фасадом успеха",
-      "Я расскажу о книге «Волк с Уолл-стрит» Джордана Белфорта. На первый взгляд это история большого успеха, но за деньгами и роскошью скрывались обман, зависимость и потеря контроля.",
+      "Я расскажу о книге «Волк с Уолл-стрит» Джордана Белфорта. На первый взгляд это история большого успеха, где есть деньги, карьера и громкое имя. Но за роскошью постепенно раскрываются обман, зависимость и потеря контроля. Поэтому книга воспринимается не как простая история богатства, а как рассказ о цене быстрых амбиций. Такой заход помогает сразу увидеть конфликт между внешним успехом и внутренним разрушением.",
       "",
       "Слайд 2: Stratton Oakmont и падение",
-      "Stratton Oakmont становится символом агрессивных продаж и давления на клиентов. Компания быстро растет, а Белфорт зарабатывает огромные деньги. Но чем выше он поднимается, тем чаще нарушает закон.",
+      "Stratton Oakmont становится символом агрессивных продаж и давления на клиентов. Компания быстро растет, а Белфорт зарабатывает огромные деньги. Но вместе с ростом усиливается ощущение безнаказанности и желание идти дальше. Чем выше он поднимается, тем чаще нарушает закон и рискует чужими деньгами. В итоге успех компании превращается в причину расследования и личного падения.",
       "",
       "Слайд 3: Главные уроки книги",
-      "Для меня эта книга - не пример для повторения, а предупреждение. Она показывает, что успех без честности и ответственности быстро превращается в проблему. Главный вывод: харизма и амбиции полезны только тогда, когда у человека есть принципы.",
+      "Для меня эта книга - не пример для повторения, а предупреждение. Она показывает, что успех без честности и ответственности быстро превращается в проблему. Белфорт умел говорить, убеждать и вести за собой людей, но использовал эти качества неправильно. Харизма и амбиции полезны только тогда, когда у человека есть принципы. Главный вывод в том, что контролировать нужно не других, а прежде всего самого себя.",
     ].join("\n");
     const originalFetch = global.fetch;
-    global.fetch = async () =>
-      new Response(
-        JSON.stringify({
-          result: {
-            alternatives: [
-              {
-                message: {
-                  text: JSON.stringify({
-                    title: "За фасадом успеха",
-                    generatedText: presentationText,
-                    outline: ["За фасадом успеха", "Stratton Oakmont и падение", "Главные уроки книги"],
-                    slides: [
-                      {
-                        title: "За фасадом успеха",
-                        thesis: "История Белфорта показывает цену успеха без контроля.",
-                        blocks: [{ type: "callout", content: "За деньгами и роскошью скрывались обман, зависимость и потеря контроля." }],
-                        speakerNotes:
-                          "Я расскажу о книге «Волк с Уолл-стрит» Джордана Белфорта. На первый взгляд это история большого успеха, но за деньгами и роскошью скрывались обман, зависимость и потеря контроля.",
-                      },
-                      {
-                        title: "Stratton Oakmont и падение",
-                        thesis: "Stratton Oakmont стала символом агрессивных продаж и давления на клиентов.",
-                        bullets: ["Компания быстро росла", "Белфорт нарушал закон", "Расследование привело к ответственности"],
-                        speakerNotes:
-                          "Stratton Oakmont становится символом агрессивных продаж и давления на клиентов. Компания быстро растет, а Белфорт зарабатывает огромные деньги. Но чем выше он поднимается, тем чаще нарушает закон.",
-                      },
-                      {
-                        title: "Главные уроки книги",
-                        thesis: "Успех без честности быстро превращается в проблему.",
-                        bullets: ["Нужны принципы", "Важна ответственность", "Харизма требует самоконтроля"],
-                        speakerNotes:
-                          "Для меня эта книга - не пример для повторения, а предупреждение. Она показывает, что успех без честности и ответственности быстро превращается в проблему. Харизма и амбиции полезны только тогда, когда у человека есть принципы.",
-                      },
-                    ],
-                    speechScript: [
-                      { slideOrder: 1, slideTitle: "За фасадом успеха", text: "Я расскажу о книге «Волк с Уолл-стрит» Джордана Белфорта. На первый взгляд это история большого успеха, но за деньгами и роскошью скрывались обман, зависимость и потеря контроля." },
-                      { slideOrder: 2, slideTitle: "Stratton Oakmont и падение", text: "Stratton Oakmont становится символом агрессивных продаж и давления на клиентов. Компания быстро растет, а Белфорт зарабатывает огромные деньги. Но чем выше он поднимается, тем чаще нарушает закон." },
-                      { slideOrder: 3, slideTitle: "Главные уроки книги", text: "Для меня эта книга - не пример для повторения, а предупреждение. Она показывает, что успех без честности и ответственности быстро превращается в проблему. Харизма и амбиции полезны только тогда, когда у человека есть принципы." },
-                    ],
-                  }),
-                },
-              },
-            ],
-          },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
+    mockYandexTwoStep(presentationText, {
+      title: "За фасадом успеха",
+      generatedText: presentationText,
+      outline: ["За фасадом успеха", "Stratton Oakmont и падение", "Главные уроки книги"],
+      slides: [
+        {
+          title: "За фасадом успеха",
+          thesis: "История Белфорта показывает цену успеха без контроля.",
+          blocks: [{ type: "callout", content: "За деньгами и роскошью скрывались обман, зависимость и потеря контроля." }],
+        },
+        {
+          title: "Stratton Oakmont и падение",
+          thesis: "Stratton Oakmont стала символом агрессивных продаж и давления на клиентов.",
+          bullets: ["Компания быстро росла", "Белфорт нарушал закон", "Расследование привело к ответственности"],
+        },
+        {
+          title: "Главные уроки книги",
+          thesis: "Успех без честности быстро превращается в проблему.",
+          bullets: ["Нужны принципы", "Важна ответственность", "Харизма требует самоконтроля"],
+        },
+      ],
+      speechScript: [],
+    });
 
     try {
       const presentation = await generatePresentation(
@@ -202,38 +218,16 @@ describe("generatePresentation fallback behavior", () => {
 
     const badText = [
       "Слайд 1: Телефоны Samsung",
-      "Телефоны Samsung открывает тему Телефоны Samsung: телефоны Samsung: Сделай презентацию про телефоны Samsung. Главный акцент здесь в том, что телефоны Samsung: Сделай презентацию про телефоны Samsung. Эта часть подводит к следующему фрагменту без резкого перехода.",
+      "Телефоны Samsung открывает тему Телефоны Samsung через общий разговор без настоящего содержания. Главный акцент здесь в том, что телефоны Samsung нужно раскрыть через конкретные факты. Эта часть подводит к следующему фрагменту без резкого перехода. Пользовательский запрос повторяется вместо нормального объяснения. Поэтому рассказ не отвечает на тему, а только имитирует структуру.",
       "",
       "Слайд 2: Контекст и актуальность",
-      "Контекст и актуальность продолжает разговор о теме и уточняет главное: телефоны Samsung важно рассмотреть через вопрос, который задан в проекте. Поэтому главный вопрос: Сделай презентацию про телефоны Samsung становится не дополнением, а частью общей логики объяснения.",
+      "Контекст и актуальность продолжает разговор о теме и уточняет главное без фактов. В этой части нужно выделить конкретные факты по теме, но они не названы. Главный акцент здесь снова связан только с формулировкой запроса. Такая речь не дает слушателю новой информации о телефонах. В итоге текст остается шаблоном вместо выступления.",
       "",
       "Слайд 3: Ключевые факты",
-      "Ключевые факты продолжает разговор о теме и уточняет главное: в этой части нужно выделить конкретные факты по теме: Телефоны Samsung. Главный акцент здесь в том, что ключевые факты: Сделай презентацию про телефоны Samsung.",
+      "Ключевые факты продолжает разговор о теме и снова не называет факты. Основной смысл раскрывается через обещание рассказать о Samsung позже. Текст на слайде оставляет только опорные пункты без реального объяснения. Главный акцент здесь повторяет название темы и не развивает мысль. Поэтому такой ответ должен быть отклонен как шаблонный.",
     ].join("\n");
     const originalFetch = global.fetch;
-    global.fetch = async () =>
-      new Response(
-        JSON.stringify({
-          result: {
-            alternatives: [
-              {
-                message: {
-                  text: JSON.stringify({
-                    title: "Телефоны Samsung",
-                    generatedText: badText,
-                    slides: [
-                      { title: "Телефоны Samsung", thesis: "Телефоны Samsung: Сделай презентацию про телефоны Samsung.", speakerNotes: badText },
-                      { title: "Контекст и актуальность", thesis: "Контекст и актуальность продолжает разговор о теме.", speakerNotes: badText },
-                      { title: "Ключевые факты", thesis: "Ключевые факты продолжает разговор о теме.", speakerNotes: badText },
-                    ],
-                  }),
-                },
-              },
-            ],
-          },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
+    global.fetch = async () => yandexTextResponse(badText);
 
     try {
       await expect(
@@ -264,15 +258,7 @@ describe("generatePresentation fallback behavior", () => {
     process.env.ALLOW_DEMO_GENERATION = "false";
 
     const originalFetch = global.fetch;
-    global.fetch = async () =>
-      new Response(
-        JSON.stringify({
-          result: {
-            alternatives: [{ message: { text: JSON.stringify({ title: "", slides: [] }) } }],
-          },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
+    global.fetch = async () => yandexTextResponse("");
 
     try {
       await expect(
@@ -288,13 +274,13 @@ describe("generatePresentation fallback behavior", () => {
           },
           [{ id: "src-1", label: "Материал", type: "WEB", size: 0, excerpt: "Нужен полноценный текст." }],
         ),
-      ).rejects.toThrow("no usable presentation text");
+      ).rejects.toThrow("did not include text");
     } finally {
       global.fetch = originalFetch;
     }
   });
 
-  it("runs Yandex generation once and builds slides from generatedText", async () => {
+  it("runs Yandex speech-first generation and builds slides from generatedText", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -311,39 +297,106 @@ describe("generatePresentation fallback behavior", () => {
     ].join("\n");
     const bodies: any[] = [];
     const originalFetch = global.fetch;
+    mockYandexTwoStep(
+      presentationText,
+      {
+        title: "За фасадом успеха",
+        generatedText: presentationText,
+        outline: ["За фасадом успеха", "Главный вывод"],
+        slides: [
+          {
+            title: "За фасадом успеха",
+            thesis: "Внешний успех может скрывать потерю контроля.",
+            blocks: [{ type: "callout", content: "За деньгами и статусом может стоять высокая личная цена." }],
+          },
+          {
+            title: "Главный вывод",
+            thesis: "Успех без честности быстро превращается в проблему.",
+            bullets: ["Нужны принципы", "Важна ответственность", "Амбиции требуют контроля"],
+          },
+        ],
+        speechScript: [],
+      },
+      bodies,
+    );
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "За фасадом успеха",
+          prompt: "Сделай презентацию о цене быстрого успеха",
+          scenario: "school_report",
+          level: "8 класс",
+          mode: "with_sources",
+          slideCount: 2,
+        },
+        [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "A story about success and responsibility." }],
+      );
+
+      expect(bodies).toHaveLength(2);
+      expect(bodies[0].jsonObject).toBe(false);
+      expect(bodies[0].messages[1].text).toContain("exactly 5-6 complete sentences");
+      expect(bodies[1].jsonObject).toBe(true);
+      expect(bodies[1].messages[1].text).toContain(presentationText);
+      expect(bodies[1].messages[1].text).toContain("only source of truth");
+      expect(presentation.generatedText).toBe(presentationText);
+      expect(presentation.slides[0].thesis).toContain("Внешний успех");
+      expect(presentation.slides[1].bullets).toContain("Нужны принципы");
+      expectNoForbiddenNarration(visiblePresentationText(presentation));
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("pads short Yandex narration sections before building JSON", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const shortText = [
+      "Слайд 1: За фасадом успеха",
+      "История начинается с внешнего успеха. Но за ним быстро появляется потеря контроля. Поэтому тема звучит как предупреждение.",
+      "",
+      "Слайд 2: Главный вывод",
+      "Финал показывает цену безответственности. Успех без принципов становится проблемой.",
+    ].join("\n");
+    const normalizedText = [
+      "Слайд 1: За фасадом успеха",
+      "История начинается с внешнего успеха. Но за ним быстро появляется потеря контроля. Поэтому тема звучит как предупреждение. Так становится понятнее, почему тема «За фасадом успеха» важна именно в этой части рассказа. Связь с разделом «За фасадом успеха» помогает слушателю увидеть не только событие, но и его значение.",
+      "",
+      "Слайд 2: Главный вывод",
+      "Финал показывает цену безответственности. Успех без принципов становится проблемой. Так становится понятнее, почему тема «За фасадом успеха» важна именно в этой части рассказа. Связь с разделом «Главный вывод» помогает слушателю увидеть не только событие, но и его значение. Без этого уточнения дальнейший вывод звучал бы слишком резко и неполно.",
+    ].join("\n");
+    const bodies: any[] = [];
+    const originalFetch = global.fetch;
+    let callCount = 0;
     global.fetch = async (_input, init) => {
       bodies.push(JSON.parse(String(init?.body || "{}")));
-      const text = JSON.stringify({
-              title: "За фасадом успеха",
-              generatedText: presentationText,
-              outline: ["За фасадом успеха", "Главный вывод"],
-              slides: [
-                {
-                  title: "За фасадом успеха",
-                  thesis: "Внешний успех может скрывать потерю контроля.",
-                  blocks: [{ type: "callout", content: "За деньгами и статусом может стоять высокая личная цена." }],
-                  speakerNotes: "Я расскажу о том, как внешний успех может скрывать потерю контроля. В начале важно увидеть не только деньги и статус, но и цену, которую человек платит за быстрый рост. Такой заход задает тему всей презентации. Он помогает перейти к причинам и последствиям без резкого скачка. Поэтому первый фрагмент сразу показывает личную цену быстрого роста.",
-                },
-                {
-                  title: "Главный вывод",
-                  thesis: "Успех без честности быстро превращается в проблему.",
-                  bullets: ["Нужны принципы", "Важна ответственность", "Амбиции требуют контроля"],
-                  speakerNotes: "В финале эта история становится предупреждением. Успех без честности быстро превращается в проблему. Харизма и амбиции полезны только тогда, когда у человека есть принципы. Поэтому главный вывод связан с ответственностью за собственные решения. Такой итог помогает не повторять чужие ошибки.",
-                },
-              ],
-              speechScript: [
-                { slideOrder: 1, slideTitle: "За фасадом успеха", text: "Я расскажу о том, как внешний успех может скрывать потерю контроля. В начале важно увидеть не только деньги и статус, но и цену, которую человек платит за быстрый рост. Такой заход задает тему всей презентации. Он помогает перейти к причинам и последствиям без резкого скачка. Поэтому первый фрагмент сразу показывает личную цену быстрого роста." },
-                { slideOrder: 2, slideTitle: "Главный вывод", text: "В финале эта история становится предупреждением. Успех без честности быстро превращается в проблему. Харизма и амбиции полезны только тогда, когда у человека есть принципы. Поэтому главный вывод связан с ответственностью за собственные решения. Такой итог помогает не повторять чужие ошибки." },
-              ],
-            });
-
-      return new Response(
+      callCount += 1;
+      if (callCount === 1) return yandexTextResponse(shortText);
+      return yandexTextResponse(
         JSON.stringify({
-          result: {
-            alternatives: [{ message: { text } }],
-          },
+          title: "За фасадом успеха",
+          generatedText: normalizedText,
+          outline: ["За фасадом успеха", "Главный вывод"],
+          slides: [
+            {
+              title: "За фасадом успеха",
+              thesis: "Внешний успех может скрывать потерю контроля.",
+              blocks: [{ type: "callout", content: "За быстрым ростом появляется личная цена." }],
+            },
+            {
+              title: "Главный вывод",
+              thesis: "Быстрый успех без принципов легко превращается в проблему.",
+              bullets: ["Нужны принципы", "Важен самоконтроль", "Ответственность важнее статуса"],
+            },
+          ],
+          speechScript: [],
         }),
-        { status: 200, headers: { "content-type": "application/json" } },
       );
     };
 
@@ -361,14 +414,13 @@ describe("generatePresentation fallback behavior", () => {
         [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "A story about success and responsibility." }],
       );
 
-      expect(bodies).toHaveLength(1);
-      expect(bodies[0].jsonObject).toBe(true);
-      expect(bodies[0].messages[1].text).toContain("generatedText");
-      expect(bodies[0].messages[1].text).not.toContain("Сначала создай полный повествовательный текст");
-      expect(presentation.generatedText).toBe(presentationText);
-      expect(presentation.slides[0].thesis).toContain("Внешний успех");
-      expect(presentation.slides[1].bullets).toContain("Нужны принципы");
-      expectNoForbiddenNarration(visiblePresentationText(presentation));
+      expect(bodies).toHaveLength(2);
+      expect(bodies[0].jsonObject).toBe(false);
+      expect(bodies[1].jsonObject).toBe(true);
+      expect(bodies[1].messages[1].text).toContain(normalizedText);
+      expect(presentation.generatedText).toBe(normalizedText);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBe(5);
+      expect(sentenceCount(presentation.speechScript[1].text)).toBe(5);
     } finally {
       global.fetch = originalFetch;
     }
@@ -384,24 +436,11 @@ describe("generatePresentation fallback behavior", () => {
 
     const originalFetch = global.fetch;
     global.fetch = async () =>
-      new Response(
-        JSON.stringify({
-          result: {
-            alternatives: [
-              {
-                message: {
-                  text: JSON.stringify({
-                    title: "Structured topic",
-                    slides: [
-                      { title: "Process overview", thesis: "A process is easier to understand when it is split into steps.", visual: { type: "process_diagram" } },
-                    ],
-                  }),
-                },
-              },
-            ],
-          },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
+      yandexTextResponse(
+        [
+          "Слайд 1: Process overview",
+          "A process is easier to understand when it is split into steps. The first point gives the listener a simple starting place. The second point shows why order matters. The third point connects the steps with the final result. This narration intentionally omits the other requested slides.",
+        ].join("\n"),
       );
 
     try {
@@ -418,7 +457,7 @@ describe("generatePresentation fallback behavior", () => {
           },
           [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "A process has ordered steps." }],
         ),
-      ).rejects.toThrow("does not contain all requested slides");
+      ).rejects.toThrow("expected 3 narration sections");
     } finally {
       global.fetch = originalFetch;
     }
@@ -432,82 +471,50 @@ describe("generatePresentation fallback behavior", () => {
     process.env.YANDEX_MODEL_URI = "";
     process.env.ALLOW_DEMO_GENERATION = "false";
 
+    const presentationText = narrationForSlides([
+      "Визуальная логика",
+      "Пустая схема",
+      "Неполное сравнение",
+      "Полезный процесс",
+      "Что считать качеством",
+    ]);
     const originalFetch = global.fetch;
-    global.fetch = async () =>
-      new Response(
-        JSON.stringify({
-          result: {
-            alternatives: [
-              {
-                message: {
-                  text: JSON.stringify({
-                    title: "Visual quality",
-                    generatedText: [
-                      "Слайд 1: Визуальная логика",
-                      "Хорошая презентация использует визуальный блок только там, где он помогает понять мысль. Если у блока нет данных, он превращается в украшение.",
-                      "",
-                      "Слайд 2: Пустая схема",
-                      "Схема без узлов не объясняет тему. В таком случае лучше оставить обычный текст, чем показывать пустую конструкцию.",
-                      "",
-                      "Слайд 3: Неполное сравнение",
-                      "Сравнение работает только тогда, когда у него есть две стороны. Если заполнена одна колонка, аудитория не видит разницу.",
-                      "",
-                      "Слайд 4: Полезный процесс",
-                      "Процесс помогает, когда у него есть понятные шаги. Сначала собирают материал, затем превращают факты в короткое объяснение.",
-                      "",
-                      "Слайд 5: Что считать качеством",
-                      "Качественный визуальный блок должен быть связан с мыслью слайда. Он не заменяет содержание, а делает его яснее.",
-                    ].join("\n"),
-                    slides: [
-                      {
-                        title: "Визуальная логика",
-                        thesis: "Визуальный блок нужен только там, где он помогает понять мысль.",
-                        speakerNotes:
-                          "Хорошая презентация использует визуальный блок только там, где он помогает понять мысль. Если у блока нет данных, он превращается в украшение.",
-                      },
-                      {
-                        title: "Пустая схема",
-                        thesis: "Схема без узлов не объясняет тему.",
-                        speakerNotes:
-                          "Схема без узлов не объясняет тему. В таком случае лучше оставить обычный текст, чем показывать пустую конструкцию.",
-                        visual: { type: "schema", title: "Schema" },
-                      },
-                      {
-                        title: "Неполное сравнение",
-                        thesis: "Сравнение работает только тогда, когда у него есть две стороны.",
-                        speakerNotes:
-                          "Сравнение работает только тогда, когда у него есть две стороны. Если заполнена одна колонка, аудитория не видит разницу.",
-                        visual: { type: "comparison_diagram", rows: [{ label: "Only one side", left: "First value", right: "" }] },
-                      },
-                      {
-                        title: "Полезный процесс",
-                        thesis: "Процесс помогает, когда у него есть понятные шаги.",
-                        speakerNotes:
-                          "Процесс помогает, когда у него есть понятные шаги. Сначала собирают материал, затем превращают факты в короткое объяснение.",
-                        visual: {
-                          type: "process_diagram",
-                          items: [
-                            { label: "Collect material", text: "Gather the key facts." },
-                            { label: "Explain result", text: "Turn facts into a short explanation." },
-                          ],
-                        },
-                      },
-                      {
-                        title: "Что считать качеством",
-                        thesis: "Визуальный блок должен быть связан с мыслью слайда.",
-                        bullets: ["Блок не должен быть пустым", "Сравнение требует двух сторон", "Процесс требует шагов"],
-                        speakerNotes:
-                          "Качественный визуальный блок должен быть связан с мыслью слайда. Он не заменяет содержание, а делает его яснее.",
-                      },
-                    ],
-                  }),
-                },
-              },
+    mockYandexTwoStep(presentationText, {
+      title: "Visual quality",
+      generatedText: presentationText,
+      slides: [
+        {
+          title: "Визуальная логика",
+          thesis: "Визуальный блок нужен только там, где он помогает понять мысль.",
+        },
+        {
+          title: "Пустая схема",
+          thesis: "Схема без узлов не объясняет тему.",
+          visual: { type: "schema", title: "Schema" },
+        },
+        {
+          title: "Неполное сравнение",
+          thesis: "Сравнение работает только тогда, когда у него есть две стороны.",
+          visual: { type: "comparison_diagram", rows: [{ label: "Only one side", left: "First value", right: "" }] },
+        },
+        {
+          title: "Полезный процесс",
+          thesis: "Процесс помогает, когда у него есть понятные шаги.",
+          visual: {
+            type: "process_diagram",
+            items: [
+              { label: "Collect material", text: "Gather the key facts." },
+              { label: "Explain result", text: "Turn facts into a short explanation." },
             ],
           },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
+        },
+        {
+          title: "Что считать качеством",
+          thesis: "Визуальный блок должен быть связан с мыслью слайда.",
+          bullets: ["Блок не должен быть пустым", "Сравнение требует двух сторон", "Процесс требует шагов"],
+        },
+      ],
+    });
 
     try {
       const presentation = await generatePresentation(
@@ -560,8 +567,8 @@ describe("generatePresentation fallback behavior", () => {
     expect(presentation.slides.every((slide) => slide.keyConcepts.length === 0)).toBe(true);
     expect(presentation.slides.every((slide) => slide.highlights.length === 0)).toBe(true);
     expect(new Set(presentation.slides.map((slide) => slide.layout)).size).toBeGreaterThan(2);
-    expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 2 && sentenceCount(item.text) <= 5)).toBe(true);
-    expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 2 && sentenceCount(slide.speakerNotes) <= 5)).toBe(true);
+    expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 5 && sentenceCount(item.text) <= 6)).toBe(true);
+    expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 5 && sentenceCount(slide.speakerNotes) <= 6)).toBe(true);
     expect(presentation.slides.every((slide) => slide.speakerNotes.length > slide.thesis.length)).toBe(true);
     expectNoForbiddenNarration(visiblePresentationText(presentation));
     expectNoForbiddenSlideText(visiblePresentationText(presentation));
@@ -575,53 +582,41 @@ describe("generatePresentation fallback behavior", () => {
     process.env.YANDEX_MODEL_URI = "";
     process.env.ALLOW_DEMO_GENERATION = "false";
 
+    const presentationText = narrationForSlides(["Экология города", "Воздух и транспорт", "Вывод"]);
     const originalFetch = global.fetch;
-    global.fetch = async () =>
-      new Response(
-        JSON.stringify({
-          result: {
-            alternatives: [
-              {
-                message: {
-                  text: JSON.stringify({
-                    title: "Экология города",
-                    slides: [
-                      {
-                        title: "Экология города",
-                        thesis: "Городская среда зависит от транспорта, воздуха и поведения жителей.",
-                      },
-                      {
-                        title: "Воздух и транспорт",
-                        thesis: "Главная идея связана с темой: экология города.",
-                        bullets: [
-                          "Материал стоит разбирать по смысловым частям",
-                          "Ключевые понятия помогают удержать структуру",
-                          "Как показано на картинке, воздух становится чище",
-                        ],
-                        blocks: [
-                          {
-                            type: "callout",
-                            content: "На слайде показано, что несуществующая тема раскрывается через картинку.",
-                          },
-                        ],
-                        visual: {
-                          type: "image",
-                          description: "Как показано на изображении, на картинке есть транспорт.",
-                        },
-                      },
-                      {
-                        title: "Вывод",
-                        thesis: "Городская экология требует понятных решений и ответственного поведения.",
-                      },
-                    ],
-                  }),
-                },
-              },
-            ],
+    mockYandexTwoStep(presentationText, {
+      title: "Экология города",
+      generatedText: presentationText,
+      slides: [
+        {
+          title: "Экология города",
+          thesis: "Городская среда зависит от транспорта, воздуха и поведения жителей.",
+        },
+        {
+          title: "Воздух и транспорт",
+          thesis: "Главная идея связана с темой: экология города.",
+          bullets: [
+            "Материал стоит разбирать по смысловым частям",
+            "Ключевые понятия помогают удержать структуру",
+            "Как показано на картинке, воздух становится чище",
+          ],
+          blocks: [
+            {
+              type: "callout",
+              content: "На слайде показано, что несуществующая тема раскрывается через картинку.",
+            },
+          ],
+          visual: {
+            type: "image",
+            description: "Как показано на изображении, на картинке есть транспорт.",
           },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
+        },
+        {
+          title: "Вывод",
+          thesis: "Городская экология требует понятных решений и ответственного поведения.",
+        },
+      ],
+    });
 
     try {
       await expect(
@@ -653,34 +648,9 @@ describe("generatePresentation fallback behavior", () => {
 
     const originalFetch = global.fetch;
     const templateNarration =
-      'Слайд "Новая волна" объясняет часть темы "Русское кино" через одну главную мысль: кино стало разнообразнее. Сначала важно разобрать опорный пункт: появились онлайн-платформы. Затем стоит показать связь с другим элементом темы: зрители стали смотреть фильмы иначе. После этого можно закрепить объяснение через деталь: фестивальное кино стало заметнее. Примеры. Поэтому текст на слайде оставляет только опорные пункты, а основной смысл раскрывается в рассказе про "Новая волна".';
+      'Слайд 1: Новая волна\nСлайд "Новая волна" объясняет часть темы "Русское кино" через одну главную мысль: кино стало разнообразнее. Сначала важно разобрать опорный пункт: появились онлайн-платформы. Затем стоит показать связь с другим элементом темы: зрители стали смотреть фильмы иначе. После этого можно закрепить объяснение через деталь: фестивальное кино стало заметнее. Поэтому текст на слайде оставляет только опорные пункты. Основной смысл раскрывается в рассказе про "Новая волна".';
 
-    global.fetch = async () =>
-      new Response(
-        JSON.stringify({
-          result: {
-            alternatives: [
-              {
-                message: {
-                  text: JSON.stringify({
-                    title: "Русское кино",
-                    slides: [
-                      {
-                        title: "Новая волна",
-                        thesis: "Кино стало разнообразнее после появления онлайн-платформ.",
-                        bullets: ["Появились онлайн-платформы", "Зрительские привычки изменились", "Авторское кино стало заметнее"],
-                        speakerNotes: templateNarration,
-                      },
-                    ],
-                    speechScript: [{ slideOrder: 1, slideTitle: "Новая волна", text: templateNarration }],
-                  }),
-                },
-              },
-            ],
-          },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
+    global.fetch = async () => yandexTextResponse(templateNarration);
 
     try {
       await expect(
@@ -710,26 +680,17 @@ describe("generatePresentation fallback behavior", () => {
     process.env.YANDEX_MODEL_URI = "";
     process.env.ALLOW_DEMO_GENERATION = "false";
 
+    const presentationText = [
+      "Слайд 1: Intro",
+      "A real generated point starts the narration for this slide. It gives the listener a concrete idea before the short slide text appears. The next sentence explains why this idea matters for Russian cinema. Another sentence connects the point with the rest of the presentation. The final sentence keeps the speech readable and complete.",
+    ].join("\n");
     const originalFetch = global.fetch;
-    global.fetch = async () =>
-      new Response(
-        JSON.stringify({
-          result: {
-            alternatives: [
-              {
-                message: {
-                  text: JSON.stringify({
-                    title: "Russian cinema",
-                    slides: [{ title: "Intro", blocks: [{ type: "bullets", items: ["A real generated point"] }] }],
-                    speechScript: [{ slideOrder: 1, slideTitle: "Intro", text: "This is a longer narration for the slide." }],
-                  }),
-                },
-              },
-            ],
-          },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
+    mockYandexTwoStep(presentationText, {
+      title: "Russian cinema",
+      generatedText: presentationText,
+      slides: [{ title: "Intro", blocks: [{ type: "bullets", items: ["A real generated point"] }] }],
+      speechScript: [],
+    });
 
     try {
       const presentation = await generatePresentation(
@@ -758,8 +719,8 @@ describe("generatePresentation fallback behavior", () => {
       expect(presentation.slides[0].bullets.length).toBeGreaterThanOrEqual(2);
       expect(presentation.slides[0].bullets[0]).toBe("A real generated point");
       expect(presentation.slides[0].visual.description).toBeTruthy();
-      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(2);
-      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(5);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(5);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(6);
       expect(presentation.speechScript[0].text.toLowerCase()).toContain("a real generated point");
     } finally {
       global.fetch = originalFetch;
@@ -774,38 +735,27 @@ describe("generatePresentation fallback behavior", () => {
     process.env.YANDEX_MODEL_URI = "";
     process.env.ALLOW_DEMO_GENERATION = "false";
 
+    const presentationText = [
+      "Слайд 1: Новая волна российского кино",
+      "Новая волна российского кино после 2010 года связана с тем, что фильмы стали разнообразнее по жанрам и способам показа. Рядом с авторскими драмами появились кассовые франшизы и онлайн-премьеры. Зрители начали чаще смотреть кино не только в зале, но и на платформах. Это изменило путь фильма к аудитории и сделало рынок более подвижным. Поэтому современное русское кино стоит рассматривать через связь жанров, технологий и зрительских привычек.",
+    ].join("\n");
     const originalFetch = global.fetch;
-    global.fetch = async () =>
-      new Response(
-        JSON.stringify({
-          result: {
-            alternatives: [
-              {
-                message: {
-                  text: JSON.stringify({
-                    title: "Русское кино после 2010 года",
-                    slides: [
-                      {
-                        title: "Новая волна российского кино",
-                        blocks: [
-                          {
-                            type: "callout",
-                            content:
-                              "Русское кино после 2010 года стало более разнообразным: рядом с авторскими драмами появились кассовые франшизы и онлайн-премьеры.",
-                          },
-                        ],
-                        speakerNotes:
-                          "Русское кино после 2010 года - это современное кино, которое отличается от старого кино новыми темами, технологиями и способом просмотра.",
-                      },
-                    ],
-                  }),
-                },
-              },
-            ],
-          },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
+    mockYandexTwoStep(presentationText, {
+      title: "Русское кино после 2010 года",
+      generatedText: presentationText,
+      slides: [
+        {
+          title: "Новая волна российского кино",
+          blocks: [
+            {
+              type: "callout",
+              content:
+                "Русское кино после 2010 года стало более разнообразным: рядом с авторскими драмами появились кассовые франшизы и онлайн-премьеры.",
+            },
+          ],
+        },
+      ],
+    });
 
     try {
       const presentation = await generatePresentation(
@@ -821,8 +771,8 @@ describe("generatePresentation fallback behavior", () => {
         [],
       );
 
-      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(2);
-      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(5);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(5);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(6);
       expect(presentation.speechScript[0].text).toContain("Новая волна российского кино");
       expect(presentation.speechScript[0].text).not.toContain("Добавлю несколько деталей");
     } finally {
@@ -838,35 +788,22 @@ describe("generatePresentation fallback behavior", () => {
     process.env.YANDEX_MODEL_URI = "";
     process.env.ALLOW_DEMO_GENERATION = "false";
 
+    const presentationText = narrationForSlides(["Русское кино после 2010 года", "Онлайн-платформы", "Новые жанры"]);
     const originalFetch = global.fetch;
-    global.fetch = async () =>
-      new Response(
-        JSON.stringify({
-          result: {
-            alternatives: [
-              {
-                message: {
-                  text: JSON.stringify({
-                    title: "Русское кино после 2010 года",
-                    outline: ["Русское кино после 2010 года", "Онлайн-платформы", "Новые жанры"],
-                    slides: [
-                      { title: "Введение", blocks: [{ type: "callout", content: "Короткое вступление." }] },
-                      { title: "Введение", blocks: [{ type: "callout", content: "Появились онлайн-премьеры." }] },
-                      { title: "Введение", blocks: [{ type: "callout", content: "Жанры стали разнообразнее." }] },
-                    ],
-                    speechScript: [
-                      { slideOrder: 1, slideTitle: "Введение", text: "Первый рассказ." },
-                      { slideOrder: 2, slideTitle: "Введение", text: "Второй рассказ." },
-                      { slideOrder: 3, slideTitle: "Введение", text: "Третий рассказ." },
-                    ],
-                  }),
-                },
-              },
-            ],
-          },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
+    mockYandexTwoStep(presentationText, {
+      title: "Русское кино после 2010 года",
+      outline: ["Русское кино после 2010 года", "Онлайн-платформы", "Новые жанры"],
+      slides: [
+        { title: "Введение", blocks: [{ type: "callout", content: "Короткое вступление." }] },
+        { title: "Введение", blocks: [{ type: "callout", content: "Появились онлайн-премьеры." }] },
+        { title: "Введение", blocks: [{ type: "callout", content: "Жанры стали разнообразнее." }] },
+      ],
+      speechScript: [
+        { slideOrder: 1, slideTitle: "Введение", text: "Первый рассказ." },
+        { slideOrder: 2, slideTitle: "Введение", text: "Второй рассказ." },
+        { slideOrder: 3, slideTitle: "Введение", text: "Третий рассказ." },
+      ],
+    });
 
     try {
       const presentation = await generatePresentation(

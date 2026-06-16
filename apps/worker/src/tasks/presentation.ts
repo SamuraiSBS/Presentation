@@ -28,6 +28,21 @@ type AiGenerationMode = "openai" | "yandex";
 type FallbackGenerationMode = "demo" | "demo-fallback";
 type EnvLike = Record<string, string | undefined>;
 
+type NarrationSection = {
+  order: number;
+  title: string;
+  text: string;
+};
+
+const NARRATION_SYSTEM_PROMPT = [
+  "You write the full Russian oral narration for a study presentation.",
+  "Return only plain text, not JSON and not markdown.",
+  "The output must be divided into slide sections exactly as `Слайд 1: Заголовок`.",
+  "Every slide section must contain exactly 5 or 6 complete Russian sentences after the title line.",
+  "Write like a student report: simple, concrete, human, calm, and close to the topic.",
+  "Do not write meta phrases about slides, screen text, source material, or internal instructions.",
+].join(" ");
+
 const SYSTEM_PROMPT = [
   "You create structured study presentations as clear Russian classroom narration. Return only valid JSON.",
   "All user-visible slide text, speaker notes, and speech script must be in Russian.",
@@ -302,6 +317,20 @@ export function selectAiProviders(env: EnvLike = process.env): AiGenerationMode[
 
 async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const narrationResponse = await client.responses.create({
+    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    input: [
+      {
+        role: "system",
+        content: NARRATION_SYSTEM_PROMPT,
+      },
+      {
+        role: "user",
+        content: buildNarrationPrompt(project, sources),
+      },
+    ],
+  });
+  const narrationText = normalizeNarrationText(narrationResponse.output_text || "", project);
   const response = await client.responses.create({
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
     input: [
@@ -313,7 +342,7 @@ async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
       },
       {
         role: "user",
-        content: buildGenerationPrompt(project, sources),
+        content: buildGenerationPrompt(project, sources, narrationText),
       },
     ],
     text: {
@@ -328,7 +357,7 @@ async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
 
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   const parsed = typedResponse.output_parsed || parseJsonText(response.output_text || "");
-  return normalizePresentation(parsed, project, sources, "openai");
+  return normalizePresentation(parsed, project, sources, "openai", narrationText);
 }
 
 async function generateWithYandex(project: ProjectInput, sources: Source[]) {
@@ -338,9 +367,43 @@ async function generateWithYandex(project: ProjectInput, sources: Source[]) {
     throw new Error("YANDEX_API_KEY is required");
   }
 
-  const outputText = await requestYandexText(apiKey, SYSTEM_PROMPT, buildGenerationPrompt(project, sources), true);
+  const narrationText = await generateYandexNarration(apiKey, project, sources);
+  const outputText = await requestYandexText(apiKey, SYSTEM_PROMPT, buildGenerationPrompt(project, sources, narrationText), true);
 
-  return normalizePresentation(parseJsonText(outputText), project, sources, "yandex");
+  return normalizePresentation(parseJsonText(outputText), project, sources, "yandex", narrationText);
+}
+
+async function generateYandexNarration(apiKey: string, project: ProjectInput, sources: Source[]) {
+  let prompt = buildNarrationPrompt(project, sources);
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let outputText = "";
+    try {
+      outputText = await requestYandexText(apiKey, NARRATION_SYSTEM_PROMPT, prompt, false);
+      return normalizeNarrationText(outputText, project);
+    } catch (error) {
+      lastError = error;
+      if (attempt === 2 || !shouldRetryYandexNarration(error)) {
+        break;
+      }
+
+      prompt = buildNarrationRepairPrompt(project, sources, outputText, error);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+function shouldRetryYandexNarration(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("must have 5-6 narration sentences") ||
+    message.includes("expected") && message.includes("narration sections") ||
+    message.includes("missing narration section") ||
+    message.includes("response is not plain slide narration") ||
+    message.includes("Yandex generation response did not include text")
+  );
 }
 
 async function requestYandexText(apiKey: string, systemText: string, userText: string, jsonObject: boolean) {
@@ -387,7 +450,167 @@ async function requestYandexText(apiKey: string, systemText: string, userText: s
   return outputText;
 }
 
-export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) {
+function normalizeNarrationText(value: unknown, project: ProjectInput) {
+  const text = cleanMultilineText(value);
+  if (!text || text.startsWith("{")) {
+    throw new Error("AI narration quality check failed: response is not plain slide narration");
+  }
+
+  const sections = repairNarrationSections(parseNarrationSections(text), project);
+  const issues = validateNarrationSections(sections, project);
+  if (issues.length) {
+    throw new Error(`AI narration quality check failed: ${issues.join("; ")}`);
+  }
+
+  const normalizedText = sections.map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n");
+  const textIssues = qualityIssuesForText(normalizedText, project);
+  if (textIssues.length) {
+    throw new Error(`AI narration quality check failed: ${textIssues.join("; ")}`);
+  }
+
+  return normalizedText;
+}
+
+function parseNarrationSections(value: unknown): NarrationSection[] {
+  const lines = cleanMultilineText(value).split("\n");
+  const sections: NarrationSection[] = [];
+  let current: NarrationSection | null = null;
+
+  for (const line of lines) {
+    const header = line.match(/^Слайд\s+(\d+)\s*:\s*(.+)$/i);
+    if (header) {
+      if (current) {
+        current.text = cleanText(current.text);
+        sections.push(current);
+      }
+      current = {
+        order: Number(header[1]),
+        title: cleanText(header[2]),
+        text: "",
+      };
+      continue;
+    }
+
+    if (current && line.trim()) {
+      current.text = cleanText([current.text, line].filter(Boolean).join(" "));
+    }
+  }
+
+  if (current) {
+    current.text = cleanText(current.text);
+    sections.push(current);
+  }
+
+  return sections;
+}
+
+function validateNarrationSections(sections: NarrationSection[], project: ProjectInput) {
+  const issues: string[] = [];
+  if (sections.length !== project.slideCount) {
+    issues.push(`expected ${project.slideCount} narration sections, got ${sections.length}`);
+  }
+
+  for (let index = 0; index < project.slideCount; index += 1) {
+    const section = sections[index];
+    const expectedOrder = index + 1;
+    if (!section) {
+      issues.push(`missing narration section for slide ${expectedOrder}`);
+      continue;
+    }
+    if (section.order !== expectedOrder) {
+      issues.push(`expected slide ${expectedOrder}, got slide ${section.order}`);
+    }
+    if (!section.title) {
+      issues.push(`slide ${expectedOrder} has no title`);
+    }
+    const count = sentenceCount(section.text);
+    if (count < 5 || count > 6) {
+      issues.push(`slide ${expectedOrder} must have 5-6 narration sentences, got ${count}`);
+    }
+  }
+
+  return issues;
+}
+
+function repairNarrationSections(sections: NarrationSection[], project: ProjectInput) {
+  return sections.map((section, index) => {
+    const expectedOrder = index + 1;
+    if (section.order !== expectedOrder || !section.title) {
+      return section;
+    }
+
+    const sentences = speechSentences(section.text);
+    if (sentences.length > 6) {
+      return { ...section, text: sentences.slice(0, 6).join(" ") };
+    }
+    if (sentences.length < 2 || sentences.length >= 5) {
+      return section;
+    }
+
+    const topic = cleanText(project.title || project.prompt);
+    const title = cleanText(section.title);
+    const additions = [
+      `Так становится понятнее, почему тема «${topic}» важна именно в этой части рассказа.`,
+      `Связь с разделом «${title}» помогает слушателю увидеть не только событие, но и его значение.`,
+      `Без этого уточнения дальнейший вывод звучал бы слишком резко и неполно.`,
+    ];
+    const repaired = [...sentences];
+
+    for (const addition of additions) {
+      if (repaired.length >= 5) break;
+      repaired.push(addition);
+    }
+
+    return { ...section, text: repaired.slice(0, 6).join(" ") };
+  });
+}
+
+export function buildNarrationPrompt(project: ProjectInput, sources: Source[]) {
+  return [
+    "Write the complete speech text for a StudyDeck presentation.",
+    `User topic and request: ${project.prompt}`,
+    `Project title: ${project.title}`,
+    `Scenario: ${project.scenario}`,
+    `Audience level: ${project.level}`,
+    `Exact slide count: ${project.slideCount}`,
+    `Mode: ${project.mode}`,
+    "Output format:",
+    "- plain text only;",
+    "- exactly one section per slide;",
+    "- every section starts with `Слайд N: semantic title`;",
+    "- N must run from 1 through the exact slide count without gaps;",
+    "- after each title line, write exactly 5-6 complete sentences for that slide;",
+    "- do not use bullet lists, markdown, JSON, citations, source names, or comments.",
+    "Style model:",
+    "- close to a school report like: `Слайд 1: За фасадом успеха` followed by a direct paragraph beginning `Я расскажу о...`;",
+    "- each paragraph should explain the real topic, not the slide as an object;",
+    "- use concrete facts from the material when available: names, events, organizations, causes, consequences, comparisons, examples;",
+    "- make the final slide a human conclusion, for example `Для меня эта книга - не пример для повторения, а предупреждение`, only when that fits the topic;",
+    "- keep the language natural and readable aloud.",
+    "Hard bans:",
+    "- do not write phrases like `нужно раскрыть через конкретные факты`, `этот слайд помогает`, `текст на слайде`, `опорные пункты`, or `основной смысл раскрывается`;",
+    "- do not invent precise facts, dates, names, numbers, images, or examples when the source material does not support them;",
+    "- do not repeat the user request as the speech text.",
+    `Source material for internal factual grounding only; do not show source labels to the user:\n${formatSourceText(sources)}`,
+  ].join("\n\n");
+}
+
+function buildNarrationRepairPrompt(project: ProjectInput, sources: Source[], previousText: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return [
+    buildNarrationPrompt(project, sources),
+    "The previous narration answer failed validation.",
+    `Validation error: ${message}`,
+    "Rewrite the full narration from scratch and fix every listed issue.",
+    "Do not shorten the paragraphs: every slide section must contain 5 or 6 complete sentences after its title line.",
+    previousText ? `Previous invalid answer, for diagnosis only:\n${cleanMultilineText(previousText).slice(0, 12000)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+export function buildGenerationPrompt(project: ProjectInput, sources: Source[], narrationText = "") {
+  const fixedNarration = cleanMultilineText(narrationText);
   return [
     "Create a complete StudyDeck PresentationDocument as JSON.",
     `User topic and request: ${project.prompt}`,
@@ -397,10 +620,11 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     `Exact slide count: ${project.slideCount}`,
     `Mode: ${project.mode}`,
     "All slide-facing text must be in Russian.",
-    "First create the complete Russian study narration in `generatedText`, divided exactly as `Слайд 1: ...` through the requested slide count.",
-    "`generatedText` is the single source of truth for the deck. It must read like a coherent short oral presentation, not like an outline or a template.",
-    "Then build every slide field from `generatedText`: slide titles, thesis, bullets, blocks, speakerNotes, and speechScript must only compress, split, or closely restate the matching slide part of `generatedText`.",
-    "Do not generate a separate second story outside `generatedText`.",
+    fixedNarration
+      ? `Use this fixed speech narration as the only source of truth. Copy it exactly into generatedText and do not rewrite its meaning:\n${fixedNarration}`
+      : "Use generatedText as the single source of truth for the deck, divided exactly as `Слайд 1: ...` through the requested slide count.",
+    "Build every slide field from the matching generatedText section: slide titles, thesis, bullets, blocks, visual.description, speakerNotes, and speechScript must only compress, split, copy, or closely restate that section.",
+    "Do not generate a separate second story outside generatedText.",
     "Voice model:",
     "- use the style of a school or college study report: clear, concrete, calm, and human;",
     "- give the audience a path through the subject: what it is, why it matters, what changes, where the conflict or key tension is, and what conclusion follows;",
@@ -427,8 +651,8 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     "- title: short, ideally 6-8 words or fewer;",
     "- title: semantic and memorable. Avoid generic titles such as 'Контекст', 'Ключевые факты', 'Примеры', 'Выводы', and 'Итоги' unless there is only one such title in the whole deck;",
     "- thesis: one concise sentence about the real subject matter, not a meta sentence about the slide;",
-    "- every slide must contain 1-3 useful slide-facing sentences total across thesis, bullets, and blocks; never leave a slide with only a title or one vague line;",
-    "- bullets: 0-3 short meaningful points; use bullets only when the slide is genuinely a list or a summary;",
+    "- every slide must contain one clear thesis plus 2-3 short meaningful points when the layout supports points;",
+    "- bullets: 0-3 short meaningful points; use bullets only when the slide is genuinely a list or a summary; every bullet must be a compressed phrase from the matching narration section;",
     "- definition: { term, text } only when an important term needs a simple definition; otherwise null;",
     "- keyConcepts: return an empty array; do not create small keyword chips on slides;",
     "- highlights: return an empty array; do not create small highlighted word badges on slides;",
@@ -442,8 +666,8 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     "- if the source material is thin, write a cautious general explanation instead of inventing facts or visuals.",
     "- never write generic filler such as 'Финальный вывод раскрывается через контекст, причины и последствия', 'Главные факты лучше воспринимаются, когда между ними видна связь', 'Точная формулировка помогает перейти от факта к смыслу', or similar universal placeholder phrases.",
     "Narration rules:",
-    "- speakerNotes must be a connected 2-5 sentence explanation for that exact slide, in Russian, derived from the matching part of generatedText;",
-    "- speechScript must contain one matching 2-5 sentence item for every slide and must duplicate or closely restate the matching speakerNotes;",
+    "- speakerNotes must be the matching generatedText section body or a very close 5-6 sentence restatement;",
+    "- speechScript must contain one matching 5-6 sentence item for every slide and must duplicate or closely restate the matching speakerNotes;",
     "- slide thesis, bullets, definition, blocks, and visual content must be a short outline based on generatedText, not on a separate story;",
     "- write narration in a concise study-report style: concrete, human, explanatory, and understandable to listeners;",
     "- write about the topic, event, phenomenon, causes, consequences, and conclusion, not about the presentation structure;",
@@ -466,7 +690,7 @@ export function buildGenerationPrompt(project: ProjectInput, sources: Source[]) 
     "- visual.items contains concrete steps/nodes; visual.rows with left/right columns is for tables and comparisons.",
     "- comparison/table visuals must include meaningful left and right values for each row;",
     "- process, timeline, mind_map, and schema visuals must include at least two concrete items;",
-    "- visual.description must describe a concrete, searchable image for this exact slide in Russian or English;",
+    "- visual.description must describe a concrete, searchable image for the real subject of the matching narration section in Russian or English;",
     "- every slide must have a different visual.description concept so later image search can choose different pictures;",
     "- do not put URLs or image provider names into visual.description; describe the desired scene, object, person, place, chart, or illustration only.",
     "Hard limits:",
@@ -533,12 +757,20 @@ function normalizePresentation(
   const input = raw && typeof raw === "object" ? (raw as Partial<PresentationDocument>) : {};
   assertRawGenerationQuality(input, project, generationMode);
   const publicSources = normalizeSources(sources, project);
-  const outline = normalizeOutline(input.outline);
+  const normalizedGeneratedText = normalizeGeneratedText(
+    generatedText || cleanMultilineText(input.generatedText) || buildFallbackGeneratedText(project),
+    project,
+  );
+  const narrationSections = parseNarrationSections(normalizedGeneratedText);
+  const narrationOutline = narrationSections.map((section) => section.title);
+  const outline = narrationOutline.length === project.slideCount ? narrationOutline : normalizeOutline(input.outline);
   const rawSlides = Array.isArray(input.slides) ? input.slides : [];
-  const slides = rawSlides.slice(0, project.slideCount).map((slide, index) => normalizeSlide(slide, index + 1, publicSources, project));
+  const slides = rawSlides
+    .slice(0, project.slideCount)
+    .map((slide, index) => normalizeSlide(slide, index + 1, publicSources, project, narrationSections[index]));
 
   while (slides.length < project.slideCount) {
-    slides.push(buildFallbackSlide(slides.length + 1, project, publicSources));
+    slides.push(buildFallbackSlide(slides.length + 1, project, publicSources, narrationSections[slides.length]));
   }
 
   repairRepeatedSlideTitles(slides, outline, project);
@@ -549,14 +781,14 @@ function normalizePresentation(
   const speechScript = slides.map((slide, index) => {
     const source = rawSpeechScript.find((item) => Number(item?.slideOrder) === slide.order) || rawSpeechScript[index];
     const sourceTitle = cleanText(source?.slideTitle);
+    const narrationSection = narrationSections[index];
 
     return {
       slideOrder: slide.order,
-      slideTitle: shouldReplaceTitle(sourceTitle, speechTitleCounts) ? slide.title : sourceTitle || slide.title,
-      text: normalizeSpeechScriptText(source?.text, slide, project, index),
+      slideTitle: shouldReplaceTitle(sourceTitle, speechTitleCounts) ? slide.title : sourceTitle || narrationSection?.title || slide.title,
+      text: normalizeSpeechScriptText(source?.text, slide, project, index, narrationSection?.text),
     };
   });
-  const fallbackGeneratedText = buildGeneratedTextFromSlides(slides);
 
   const presentation = presentationSchema.parse({
     id: cleanText(input.id) || crypto.randomUUID(),
@@ -565,7 +797,7 @@ function normalizePresentation(
     level: cleanText(input.level) || project.level,
     slideCount: slides.length,
     generationMode,
-    generatedText: normalizeGeneratedText(generatedText || cleanMultilineText(input.generatedText) || fallbackGeneratedText, project),
+    generatedText: normalizedGeneratedText,
     sources: publicSources,
     outline: slides.map((slide) => slide.title),
     speechScript,
@@ -576,14 +808,14 @@ function normalizePresentation(
   return presentation;
 }
 
-function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], project: ProjectInput): Slide {
+function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], project: ProjectInput, narrationSection?: NarrationSection): Slide {
   const slide = rawSlide && typeof rawSlide === "object" ? (rawSlide as Partial<Slide>) : {};
   const sourceRefs = Array.isArray(slide.sourceRefs) && slide.sourceRefs.length
     ? slide.sourceRefs
     : [sourceRefFromSource(sources[(order - 1) % sources.length])];
   const rawBlocks = Array.isArray(slide.blocks) ? slide.blocks.map(normalizeBlock).filter((block): block is SlideBlock => Boolean(block)) : [];
   const slideKind = normalizeSlideKind(slide.slideKind, order, project.slideCount);
-  const title = shortenWords(cleanText(slide.title) || fallbackTitle(project, order), slideKind === "title" ? 12 : 8);
+  const title = shortenWords(cleanText(slide.title) || narrationSection?.title || fallbackTitle(project, order), slideKind === "title" ? 12 : 8);
   const thesis = normalizeThesis(slide.thesis, rawBlocks, project, order, slideKind, title);
   const bullets = ensureSlideSentenceDensity(normalizeBullets(slide.bullets, rawBlocks, project, order, slideKind, title), thesis, project, order, slideKind);
   const definition = normalizeDefinition(slide.definition);
@@ -612,7 +844,7 @@ function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], pro
     visual,
     highlights,
     blocks,
-    speakerNotes: normalizeSpeakerNotes(slide.speakerNotes, { title, thesis, bullets, definition, visual }, project, order),
+    speakerNotes: normalizeSpeakerNotes(slide.speakerNotes, { title, thesis, bullets, definition, visual }, project, order, narrationSection?.text),
     timingSeconds: clampNumber(Number(slide.timingSeconds || 55), 20, 240),
     sourceRefs: sourceRefs.map((ref) => ({
       sourceId: cleanText(ref.sourceId) || sources[0]?.id || "src-prompt",
@@ -833,10 +1065,10 @@ function sourceRefFromSource(source: Source | undefined) {
   };
 }
 
-function buildFallbackSlide(order: number, project: ProjectInput, sources: Source[]): Slide {
+function buildFallbackSlide(order: number, project: ProjectInput, sources: Source[], narrationSection?: NarrationSection): Slide {
   const source = sources[(order - 1) % sources.length];
   const slideKind = normalizeSlideKind(undefined, order, project.slideCount);
-  const title = fallbackTitle(project, order);
+  const title = narrationSection?.title || fallbackTitle(project, order);
   const thesis = normalizeThesis("", [], project, order, slideKind);
   const bullets = ensureSlideSentenceDensity(normalizeBullets([], [], project, order, slideKind), thesis, project, order, slideKind);
   const definition = fallbackDefinition(order, title, thesis, slideKind);
@@ -855,7 +1087,7 @@ function buildFallbackSlide(order: number, project: ProjectInput, sources: Sourc
     visual,
     highlights: normalizeHighlights([], thesis, bullets, slideKind),
     blocks,
-    speakerNotes: buildFallbackSpeakerNotes(project, order),
+    speakerNotes: narrationSection?.text || buildFallbackSpeakerNotes(project, order),
     timingSeconds: order === 1 || order === project.slideCount ? 45 : 55,
     sourceRefs: [sourceRefFromSource(source)],
   };
@@ -973,19 +1205,30 @@ function normalizeSpeakerNotes(
   slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual">,
   project: ProjectInput,
   order: number,
+  narrationText = "",
 ) {
+  const narration = sanitizeSpeechText(narrationText);
+  if (isCompleteNarration(narration)) {
+    return limitSentences(narration, 6);
+  }
+
   const text = sanitizeSpeechText(value);
-  if (isSpecificNarration(text)) {
-    return limitSentences(text, 5);
+  if (isCompleteNarration(text)) {
+    return limitSentences(text, 6);
   }
 
   return buildSlideNarration(slide, project, order);
 }
 
-function normalizeSpeechScriptText(value: unknown, slide: Slide, project: ProjectInput, index: number) {
+function normalizeSpeechScriptText(value: unknown, slide: Slide, project: ProjectInput, index: number, narrationText = "") {
+  const narration = sanitizeSpeechText(narrationText);
+  if (isCompleteNarration(narration)) {
+    return limitSentences(narration, 6);
+  }
+
   const text = sanitizeSpeechText(value);
-  if (isSpecificNarration(text)) {
-    return limitSentences(text, 5);
+  if (isCompleteNarration(text)) {
+    return limitSentences(text, 6);
   }
 
   return normalizeSpeakerNotes(slide.speakerNotes, slide, project, index + 1);
@@ -997,6 +1240,7 @@ function buildSlideNarration(slide: Pick<Slide, "title" | "thesis" | "bullets" |
   const bullets = slide.bullets.map(cleanText).filter(Boolean);
   const firstPoint = bullets[0] || slide.definition?.text || thesis;
   const secondPoint = bullets.find((item) => item.toLowerCase() !== firstPoint.toLowerCase()) || visualNarrationText(slide.visual);
+  const thirdPoint = bullets.find((item) => item.toLowerCase() !== firstPoint.toLowerCase() && item.toLowerCase() !== secondPoint.toLowerCase());
   const lead = order === 1
     ? `${title}: ${sentenceFragment(thesis)}.`
     : `${title}: ${sentenceFragment(thesis)}.`;
@@ -1012,6 +1256,9 @@ function buildSlideNarration(slide: Pick<Slide, "title" | "thesis" | "bullets" |
       lead,
       `${sentenceFragment(firstPoint)}.`,
       detail,
+      thirdPoint
+        ? `Еще один важный момент: ${sentenceFragment(thirdPoint)}.`
+        : `Эта часть помогает не потерять связь между фактами и выводом.`,
       ending,
     ].join(" "),
   );
@@ -1025,20 +1272,25 @@ function visualNarrationText(visual: SlideVisual) {
   return cleanText(item?.text || item?.label || row?.left || row?.right || visual.description || visual.title);
 }
 
-function isSpecificNarration(text: string) {
-  if (sentenceCount(text) < 2) return false;
+function isCompleteNarration(text: string) {
+  const count = sentenceCount(text);
+  if (count < 5 || count > 6) return false;
   if (text.length < 80) return false;
   const lower = text.toLowerCase();
   return !GENERIC_NARRATION_PHRASES.some((phrase) => lower.includes(phrase));
 }
 
 function sentenceCount(text: string) {
-  return text.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean).length;
+  return speechSentences(text).length;
 }
 
 function limitSentences(text: string, max: number) {
-  const sentences = text.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean);
+  const sentences = speechSentences(text);
   return sentences.slice(0, max).join(" ");
+}
+
+function speechSentences(text: string) {
+  return text.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean);
 }
 
 function sentenceFragment(value: string) {
@@ -1353,6 +1605,25 @@ function assertPresentationQuality(presentation: PresentationDocument, project: 
     issues.push("generatedText is not divided into slide narration");
   }
 
+  const narrationIssues = validateNarrationSections(parseNarrationSections(presentation.generatedText), project);
+  if (narrationIssues.length) {
+    issues.push(...narrationIssues);
+  }
+
+  for (const slide of presentation.slides) {
+    const count = sentenceCount(slide.speakerNotes);
+    if (count < 5 || count > 6) {
+      issues.push(`slide ${slide.order} speakerNotes must have 5-6 sentences`);
+    }
+  }
+
+  for (const item of presentation.speechScript) {
+    const count = sentenceCount(item.text);
+    if (count < 5 || count > 6) {
+      issues.push(`slide ${item.slideOrder} speechScript must have 5-6 sentences`);
+    }
+  }
+
   const genericTitleCount = presentation.slides.filter((slide) => isGenericDeckTitle(slide.title)).length;
   if (genericTitleCount >= 3) {
     issues.push("too many generic slide titles");
@@ -1477,7 +1748,6 @@ function slideSemanticText(slide: Slide) {
   return [
     slide.title,
     slide.thesis,
-    slide.speakerNotes,
     ...slide.bullets,
     ...slide.blocks.flatMap((block) => (block.type === "bullets" ? block.items : [block.content])),
   ].join(" ");
