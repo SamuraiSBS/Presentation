@@ -103,6 +103,7 @@ export const demoPresentation: PresentationDocument = {
     .join("\n\n"),
   sources: [source],
   outline: slides.map((slide) => slide.title),
+  narrativePlan: [],
   speechScript: slides.map((slide) => ({
     slideOrder: slide.order,
     slideTitle: slide.title,

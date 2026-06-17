@@ -4,8 +4,9 @@ type ProjectWithPresentation = {
   presentation?: { document?: DisplayPresentationInput | null } | null;
 };
 
-type DisplayPresentationInput = Omit<PresentationDocument, "generatedText"> & {
+type DisplayPresentationInput = Omit<PresentationDocument, "generatedText" | "narrativePlan"> & {
   generatedText?: string;
+  narrativePlan?: PresentationDocument["narrativePlan"];
 };
 
 const GENERIC_NARRATION_PHRASES = [
@@ -113,6 +114,7 @@ export function sanitizePresentationForDisplay(document: DisplayPresentationInpu
     ...document,
     generatedText: sanitizeGeneratedTextForDisplay(document.generatedText),
     sources: [],
+    narrativePlan: document.narrativePlan ?? [],
     slides,
     speechScript: slides.map((slide, index) => {
       const existing = document.speechScript.find((item) => item.slideOrder === slide.order) || document.speechScript[index];

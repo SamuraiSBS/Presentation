@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { buildGenerationPrompt, generatePresentation, selectAiProviders } from "./presentation.js";
+import { buildGenerationPrompt, generatePresentation, normalizeNarrativePlan, selectAiProviders } from "./presentation.js";
 
 const originalEnv = { ...process.env };
 const forbiddenNarrationFragments = [
@@ -11,6 +11,26 @@ const forbiddenNarrationFragments = [
   "основной смысл раскрывается",
   "рассказе про",
   "Примеры. Поэтому",
+  "Так становится понятнее, почему тема",
+  "важна именно в этой части рассказа",
+  "Связь с разделом",
+  "помогает слушателю увидеть не только событие",
+  "увидеть не только событие, но и его значение",
+  "Без этого уточнения дальнейший вывод",
+  "Дальше раздел",
+  "продолжает тему",
+  "Сначала важно удержать конкретную мысль",
+  "Следующая деталь добавляет к объяснению",
+  "новый шаг",
+  "Этот шаг подводит рассказ",
+  "к следующей части",
+  "оставляет место для следующей мысли",
+  "готовит переход дальше",
+  "Это проявляется в том, что",
+  "Причина такого вывода в том",
+  "Последствия заметны там, где",
+  "поэтому итог звучит так",
+  "становится главным итогом выступления",
 ];
 const forbiddenSlideTextFragments = [
   "Главная идея связана с темой",
@@ -43,12 +63,29 @@ function yandexTextResponse(text: string) {
   );
 }
 
+function narrativePlanForTitles(titles: string[]) {
+  return titles.map((title, index) => ({
+    slideOrder: index + 1,
+    slideTitle: title,
+    slidePurpose: index === 0 ? "Открыть тему выступления через понятный контекст." : "Раскрыть следующий смысловой шаг выступления.",
+    keyMessage: `${title} помогает понять главную логику темы.`,
+    audienceQuestion: `Что важно понять про ${title}?`,
+    transitionToNext: index === titles.length - 1 ? "" : "После этой мысли логично уточнить следующий аспект темы.",
+  }));
+}
+
 function mockYandexTwoStep(narrationText: string, json: unknown, bodies?: unknown[]) {
   let callCount = 0;
+  const titles = narrationText
+    .split("\n")
+    .map((line) => line.match(/^РЎР»Р°Р№Рґ\s+\d+\s*:\s*(.+)$/i)?.[1])
+    .filter((title): title is string => Boolean(title));
+  const narrativePlan = narrativePlanForTitles(titles.length ? titles : ["Intro"]);
   global.fetch = async (_input, init) => {
     bodies?.push(JSON.parse(String(init?.body || "{}")));
     callCount += 1;
-    return yandexTextResponse(callCount === 1 ? narrationText : JSON.stringify(json));
+    if (callCount === 1) return yandexTextResponse(JSON.stringify(narrativePlan));
+    return yandexTextResponse(callCount === 2 ? narrationText : JSON.stringify(json));
   };
 }
 
@@ -61,12 +98,20 @@ function narrationForSlides(titles: string[]) {
     ["качество", "связь", "решение"],
     ["история", "поворот", "оценка"],
   ];
+  const endings = [
+    "В конце этой мысли становится ясно, почему тема звучит убедительно.",
+    "Такой вывод показывает реальное значение этой части истории.",
+    "Именно поэтому этот материал остается важным для общего понимания.",
+    "В результате слушатель видит не набор фактов, а понятную картину.",
+    "Так раскрывается практический смысл этой темы для выступления.",
+    "Эта мысль завершает объяснение спокойно и без лишних общих слов.",
+  ];
   return titles
     .map((title, index) => {
       const [first, second, third] = details[index % details.length];
       return [
         `Слайд ${index + 1}: ${title}`,
-        `${title} раскрывает ${first}, который задает направление всему объяснению. Затем появляется ${second}, потому что без него слушателю трудно увидеть развитие мысли. Конкретный ${third} показывает, чем эта часть отличается от соседних фрагментов. Дополнительная деталь связывает название "${title}" с реальной задачей выступления. Финальная фраза кратко собирает этот смысл и готовит переход дальше.`,
+        `${title} раскрывает ${first}, который задает направление всему объяснению. Затем появляется ${second}, потому что без него слушателю трудно увидеть развитие мысли. Конкретный ${third} показывает, чем эта часть отличается по смыслу. Важная деталь делает название "${title}" частью реального содержания. ${endings[index % endings.length]}`,
       ].join("\n");
     })
     .join("\n\n");
@@ -137,6 +182,38 @@ describe("buildGenerationPrompt", () => {
   });
 });
 
+describe("normalizeNarrativePlan", () => {
+  it("repairs plan length, order, generic fields, and final transition", () => {
+    const plan = normalizeNarrativePlan(
+      [
+        {
+          slideOrder: 99,
+          slideTitle: "Ключевые факты",
+          slidePurpose: "",
+          keyMessage: "AI changes how lessons are prepared.",
+          audienceQuestion: "How does AI change lesson prep?",
+          transitionToNext: "Перейдем к следующему слайду.",
+        },
+      ],
+      {
+        id: "project-1",
+        title: "AI in education",
+        prompt: "Explain how AI changes education",
+        scenario: "lesson",
+        level: "beginner",
+        mode: "with_sources",
+        slideCount: 3,
+      },
+    );
+
+    expect(plan).toHaveLength(3);
+    expect(plan.map((item) => item.slideOrder)).toEqual([1, 2, 3]);
+    expect(plan[0].slideTitle).not.toBe("Ключевые факты");
+    expect(plan[0].transitionToNext).toBeTruthy();
+    expect(plan[2].transitionToNext).toBe("");
+  });
+});
+
 describe("generatePresentation fallback behavior", () => {
   it("accepts a human study-story deck with semantic titles and concrete details", async () => {
     process.env.AI_PROVIDER = "yandex";
@@ -196,6 +273,11 @@ describe("generatePresentation fallback behavior", () => {
       );
 
       expect(presentation.generatedText).toBe(presentationText);
+      expect(presentation.narrativePlan).toHaveLength(3);
+      expect(presentation.narrativePlan[2].transitionToNext).toBe("");
+      expect(presentation.slides).toHaveLength(3);
+      expect(presentation.slides.every((slide) => slide.speakerNotes)).toBe(true);
+      expect(presentation.speechScript).toHaveLength(3);
       expect(presentation.slides.map((slide) => slide.title)).toEqual([
         "За фасадом успеха",
         "Stratton Oakmont и падение",
@@ -334,12 +416,16 @@ describe("generatePresentation fallback behavior", () => {
         [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "A story about success and responsibility." }],
       );
 
-      expect(bodies).toHaveLength(2);
-      expect(bodies[0].jsonObject).toBe(false);
-      expect(bodies[0].messages[1].text).toContain("exactly 5-6 complete sentences");
-      expect(bodies[1].jsonObject).toBe(true);
-      expect(bodies[1].messages[1].text).toContain(presentationText);
-      expect(bodies[1].messages[1].text).toContain("only source of truth");
+      expect(bodies).toHaveLength(3);
+      expect(bodies[0].jsonObject).toBe(true);
+      expect(bodies[0].messages[1].text).toContain("narrativePlan");
+      expect(bodies[1].jsonObject).toBe(false);
+      expect(bodies[1].messages[1].text).toContain("Narrative plan to follow exactly");
+      expect(bodies[1].messages[1].text).toContain("exactly 5-6 complete sentences");
+      expect(bodies[2].jsonObject).toBe(true);
+      expect(bodies[2].messages[1].text).toContain(presentationText);
+      expect(bodies[2].messages[1].text).toContain("only source of truth");
+      expect(bodies[2].messages[1].text).toContain("narrativePlan");
       expect(presentation.generatedText).toBe(presentationText);
       expect(presentation.slides[0].thesis).toContain("Внешний успех");
       expect(presentation.slides[1].bullets).toContain("Нужны принципы");
@@ -349,7 +435,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("pads short Yandex narration sections before building JSON", async () => {
+  it("repairs short Yandex narration sections before building JSON", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -364,12 +450,12 @@ describe("generatePresentation fallback behavior", () => {
       "Слайд 2: Главный вывод",
       "Финал показывает цену безответственности. Успех без принципов становится проблемой.",
     ].join("\n");
-    const normalizedText = [
+    const repairedText = [
       "Слайд 1: За фасадом успеха",
-      "История начинается с внешнего успеха. Но за ним быстро появляется потеря контроля. Поэтому тема звучит как предупреждение. Так становится понятнее, почему тема «За фасадом успеха» важна именно в этой части рассказа. Связь с разделом «За фасадом успеха» помогает слушателю увидеть не только событие, но и его значение.",
+      "История начинается с внешнего успеха, который выглядит ярко и убедительно. Но за этим успехом быстро появляется потеря контроля. Деньги и статус начинают менять поведение героя сильнее, чем он сам замечает. Поэтому тема звучит как предупреждение о цене быстрых побед. Эта часть открывает рассказ через контраст между блеском и внутренним разрушением.",
       "",
       "Слайд 2: Главный вывод",
-      "Финал показывает цену безответственности. Успех без принципов становится проблемой. Так становится понятнее, почему тема «За фасадом успеха» важна именно в этой части рассказа. Связь с разделом «Главный вывод» помогает слушателю увидеть не только событие, но и его значение. Без этого уточнения дальнейший вывод звучал бы слишком резко и неполно.",
+      "Финал показывает, что безответственность постепенно разрушает даже сильный внешний успех. Успех без принципов становится проблемой для самого человека и для тех, кто рядом. Важен не только результат, но и способ, которым человек к нему приходит. Если путь построен на обмане, победа быстро превращается в долг и наказание. Поэтому главный вывод связан с самоконтролем, честностью и ответственностью.",
     ].join("\n");
     const bodies: any[] = [];
     const originalFetch = global.fetch;
@@ -377,11 +463,16 @@ describe("generatePresentation fallback behavior", () => {
     global.fetch = async (_input, init) => {
       bodies.push(JSON.parse(String(init?.body || "{}")));
       callCount += 1;
-      if (callCount === 1) return yandexTextResponse(shortText);
+      if (callCount === 1) {
+        return yandexTextResponse(
+          JSON.stringify(narrativePlanForTitles(["Р—Р° С„Р°СЃР°РґРѕРј СѓСЃРїРµС…Р°", "Р“Р»Р°РІРЅС‹Р№ РІС‹РІРѕРґ"])),
+        );
+      }
+      if (callCount === 2) return yandexTextResponse(shortText);
       return yandexTextResponse(
         JSON.stringify({
           title: "За фасадом успеха",
-          generatedText: normalizedText,
+          generatedText: repairedText,
           outline: ["За фасадом успеха", "Главный вывод"],
           slides: [
             {
@@ -414,13 +505,95 @@ describe("generatePresentation fallback behavior", () => {
         [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "A story about success and responsibility." }],
       );
 
-      expect(bodies).toHaveLength(2);
-      expect(bodies[0].jsonObject).toBe(false);
-      expect(bodies[1].jsonObject).toBe(true);
-      expect(bodies[1].messages[1].text).toContain(normalizedText);
-      expect(presentation.generatedText).toBe(normalizedText);
+      expect(bodies).toHaveLength(3);
+      expect(bodies[0].jsonObject).toBe(true);
+      expect(bodies[1].jsonObject).toBe(false);
+      expect(bodies[2].jsonObject).toBe(true);
+      expect(bodies[2].messages[1].text).toContain("only source of truth");
+      expect(presentation.generatedText).not.toBe(shortText);
       expect(sentenceCount(presentation.speechScript[0].text)).toBe(5);
       expect(sentenceCount(presentation.speechScript[1].text)).toBe(5);
+      expectNoForbiddenNarration(visiblePresentationText(presentation));
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("rejects narration when neighboring slides repeat the same closing sentence", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const repeatedText = [
+      "Слайд 1: Начало истории",
+      "История начинается с первого заметного события. Оно задает конфликт и показывает главного участника. Затем появляется причина, которая меняет ход рассказа. Поэтому слушатель видит основу дальнейших событий. Финальная мысль кратко собирает смысл этих событий.",
+      "",
+      "Слайд 2: Развитие конфликта",
+      "Конфликт становится сильнее после нового решения героя. Это решение влияет на других участников истории. Последствия уже нельзя объяснить одной случайностью. Так рассказ переходит от завязки к более серьезной проблеме. Финальная мысль кратко собирает смысл этих событий.",
+    ].join("\n");
+    const originalFetch = global.fetch;
+    global.fetch = async () => yandexTextResponse(repeatedText);
+
+    try {
+      await expect(
+        generatePresentation(
+          {
+            id: "project-1",
+            title: "История",
+            prompt: "Сделай презентацию про развитие конфликта",
+            scenario: "school_report",
+            level: "8 класс",
+            mode: "with_sources",
+            slideCount: 2,
+          },
+          [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Conflict story excerpt." }],
+        ),
+      ).rejects.toThrow("adjacent narration sections repeat closing sentence");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("rejects narration when many slides repeat the same opening phrase", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const repeatedText = [
+      "Слайд 1: Первые изменения",
+      "Главная мысль здесь связана с тем, что кино стало разнообразнее. Онлайн-платформы изменили путь фильма к зрителю. Авторские драмы стали заметнее рядом с коммерческими проектами. Зрители начали чаще смотреть премьеры дома. Поэтому рынок стал более подвижным.",
+      "",
+      "Слайд 2: Новые привычки",
+      "Главная мысль здесь связана с тем, что зрители стали выбирать формат просмотра свободнее. Домашние премьеры перестали быть редким исключением. Платформы начали конкурировать с кинотеатрами за внимание аудитории. Жанры стали быстрее находить своих зрителей. Поэтому привычки просмотра заметно изменились.",
+      "",
+      "Слайд 3: Итог",
+      "Главная мысль здесь связана с тем, что индустрия стала зависеть от разных способов показа. Фестивальное кино получило новые возможности. Коммерческие проекты тоже начали активнее работать с онлайн-аудиторией. Это сделало рынок сложнее и разнообразнее. Поэтому современное кино нельзя объяснить только кинотеатрами.",
+    ].join("\n");
+
+    const originalFetch = global.fetch;
+    global.fetch = async () => yandexTextResponse(repeatedText);
+
+    try {
+      await expect(
+        generatePresentation(
+          {
+            id: "project-1",
+            title: "Русское кино",
+            prompt: "Сделай презентацию про русское кино",
+            scenario: "school_report",
+            level: "8-11 класс",
+            mode: "with_sources",
+            slideCount: 3,
+          },
+          [],
+        ),
+      ).rejects.toThrow("narration sections repeat opening phrase");
     } finally {
       global.fetch = originalFetch;
     }
@@ -672,6 +845,114 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
+  it("rejects complaint-style universal narration endings", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const badNarration = [
+      "Слайд 1: Новая волна",
+      "Новая волна российского кино связана с изменением жанров и способов просмотра. Онлайн-платформы сделали путь фильма к зрителю более гибким. Авторские драмы стали заметнее рядом с коммерческими проектами. Так становится понятнее, почему тема «Новая волна» важна именно в этой части рассказа. Связь с разделом «Новая волна» помогает слушателю увидеть не только событие, но и его значение.",
+    ].join("\n");
+
+    const originalFetch = global.fetch;
+    global.fetch = async () => yandexTextResponse(badNarration);
+
+    try {
+      await expect(
+        generatePresentation(
+          {
+            id: "project-1",
+            title: "Русское кино",
+            prompt: "Сделай презентацию про русское кино",
+            scenario: "school_report",
+            level: "8-11 класс",
+            mode: "with_sources",
+            slideCount: 1,
+          },
+          [],
+        ),
+      ).rejects.toThrow("template phrase detected");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("rejects direct slide-structure narration phrases", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const badNarration = [
+      "Слайд 1: Развитие темы",
+      "Дальше раздел «Развитие темы» продолжает тему «Русское кино» и показывает, что кино стало разнообразнее. Сначала важно удержать конкретную мысль: онлайн-платформы изменили путь фильма к зрителю. Следующая деталь добавляет к объяснению новый шаг: авторские драмы стали заметнее рядом с коммерческими проектами. Еще один содержательный момент связан с тем, что зрители стали чаще смотреть фильмы дома. Этот шаг подводит рассказ к следующей части через конкретную мысль о новых жанрах.",
+    ].join("\n");
+
+    const originalFetch = global.fetch;
+    global.fetch = async () => yandexTextResponse(badNarration);
+
+    try {
+      await expect(
+        generatePresentation(
+          {
+            id: "project-1",
+            title: "Русское кино",
+            prompt: "Сделай презентацию про русское кино",
+            scenario: "school_report",
+            level: "8-11 класс",
+            mode: "with_sources",
+            slideCount: 1,
+          },
+          [],
+        ),
+      ).rejects.toThrow("template phrase detected");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("rejects repeated fallback-like sentence formulas in narration", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const badNarration = [
+      "Слайд 1: Онлайн-платформы",
+      "Онлайн-платформы изменили то, как зрители смотрят российское кино. Это проявляется в том, что премьеры стали чаще выходить не только в кинотеатрах. Причина такого вывода в том, что зрительские привычки стали гибче. Последствия заметны там, где авторские фильмы находят аудиторию быстрее. Поэтому онлайн-платформы стали важной частью современной киноиндустрии.",
+    ].join("\n");
+
+    const originalFetch = global.fetch;
+    global.fetch = async () => yandexTextResponse(badNarration);
+
+    try {
+      await expect(
+        generatePresentation(
+          {
+            id: "project-1",
+            title: "Русское кино",
+            prompt: "Сделай презентацию про русское кино",
+            scenario: "school_report",
+            level: "8-11 класс",
+            mode: "with_sources",
+            slideCount: 1,
+          },
+          [],
+        ),
+      ).rejects.toThrow("template phrase detected");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it("reads Yandex completion text from result alternatives", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
@@ -895,6 +1176,20 @@ describe("generatePresentation fallback behavior", () => {
     expect(presentation.slides[presentation.slides.length - 1].slideKind).toBe("summary");
     expect(presentation.slides[presentation.slides.length - 1].bullets.length).toBeGreaterThanOrEqual(3);
     expect(presentation.slides.every((slide) => slide.thesis.length < 240)).toBe(true);
+    expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) === 5)).toBe(true);
+    expect(presentation.speechScript.every((item) => sentenceCount(item.text) === 5)).toBe(true);
+    const noteStarts = presentation.slides.map((slide) => sentenceStartKey(firstSentence(slide.speakerNotes)));
+    const noteEndings = presentation.slides.map((slide) => sentenceStartKey(lastSentence(slide.speakerNotes)));
+    expect(new Set(noteStarts).size).toBe(noteStarts.length);
+    expect(new Set(noteEndings).size).toBe(noteEndings.length);
+    const speechText = [
+      ...presentation.slides.map((slide) => slide.speakerNotes),
+      ...presentation.speechScript.map((item) => item.text),
+    ].join("\n").toLowerCase();
+    for (const fragment of ["раздел", "следующ", "переход", "слайд"]) {
+      expect(speechText).not.toContain(fragment);
+    }
+    expectNoForbiddenNarration(speechText);
     expect(presentation.speechScript[0].text.length).toBeGreaterThan(
       presentation.slides[0].thesis.length,
     );
@@ -904,6 +1199,7 @@ describe("generatePresentation fallback behavior", () => {
 function visiblePresentationText(presentation: Awaited<ReturnType<typeof generatePresentation>>) {
   return [
     presentation.title,
+    presentation.generatedText,
     ...presentation.slides.flatMap((slide) => [
       slide.title,
       slide.thesis,
@@ -923,8 +1219,9 @@ function visiblePresentationText(presentation: Awaited<ReturnType<typeof generat
 }
 
 function expectNoForbiddenNarration(text: string) {
+  const lower = text.toLowerCase();
   for (const fragment of forbiddenNarrationFragments) {
-    expect(text).not.toContain(fragment);
+    expect(lower).not.toContain(fragment.toLowerCase());
   }
 }
 
@@ -937,4 +1234,17 @@ function expectNoForbiddenSlideText(text: string) {
 
 function sentenceCount(text: string) {
   return text.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean).length;
+}
+
+function firstSentence(text: string) {
+  return text.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean)[0] || "";
+}
+
+function lastSentence(text: string) {
+  const sentences = text.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean);
+  return sentences[sentences.length - 1] || "";
+}
+
+function sentenceStartKey(text: string) {
+  return text.toLowerCase().replace(/[«»"“”'`.,!?;:()[\]{}<>]/g, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 3).join(" ");
 }

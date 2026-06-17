@@ -178,6 +178,16 @@ export const speechScriptItemSchema = z.object({
 });
 export type SpeechScriptItem = z.infer<typeof speechScriptItemSchema>;
 
+export const slideNarrativeSchema = z.object({
+  slideOrder: z.number().int().positive(),
+  slideTitle: z.string(),
+  slidePurpose: z.string(),
+  keyMessage: z.string(),
+  audienceQuestion: z.string(),
+  transitionToNext: z.string(),
+});
+export type SlideNarrative = z.infer<typeof slideNarrativeSchema>;
+
 export const presentationSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -188,6 +198,7 @@ export const presentationSchema = z.object({
   generatedText: z.string().default(""),
   sources: z.array(sourceSchema),
   outline: z.array(z.string()),
+  narrativePlan: z.array(slideNarrativeSchema).default([]),
   speechScript: z.array(speechScriptItemSchema),
   slides: z.array(slideSchema),
 });

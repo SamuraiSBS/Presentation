@@ -34,6 +34,16 @@ describe("shared contracts", () => {
       generatedText: "Слайд 1: Core idea\nA slide should teach one clear idea.",
       sources: [],
       outline: ["Core idea"],
+      narrativePlan: [
+        {
+          slideOrder: 1,
+          slideTitle: "Core idea",
+          slidePurpose: "Introduce the main role of this slide in the talk.",
+          keyMessage: "A slide should teach one clear idea.",
+          audienceQuestion: "What should one slide explain?",
+          transitionToNext: "",
+        },
+      ],
       speechScript: [{ slideOrder: 1, slideTitle: "Core idea", text: "Narration." }],
       slides: [
         {
@@ -64,6 +74,8 @@ describe("shared contracts", () => {
     });
 
     expect(parsed.slides[0].thesis).toBe("A slide should teach one clear idea.");
+    expect(parsed.narrativePlan).toHaveLength(1);
+    expect(parsed.narrativePlan[0].transitionToNext).toBe("");
     expect(parsed.generatedText).toContain("Слайд 1:");
     expect(parsed.slides[0].visual.type).toBe("process_diagram");
     expect(parsed.slides[0].highlights[0].tone).toBe("accent");
@@ -169,5 +181,6 @@ describe("shared contracts", () => {
     expect(parsed.slides[0].bullets).toEqual([]);
     expect(parsed.slides[0].visual.type).toBe("none");
     expect(parsed.generatedText).toBe("");
+    expect(parsed.narrativePlan).toEqual([]);
   });
 });

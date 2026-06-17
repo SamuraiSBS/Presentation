@@ -107,6 +107,7 @@ function fixturePresentation(): PresentationDocument {
     generatedText: "Слайд 1: Classroom context\nAI changes classroom routines.\n\nСлайд 2: Teacher workflow\nTeachers use AI to prepare and review tasks.",
     sources: [],
     outline: ["Classroom context", "Teacher workflow"],
+    narrativePlan: [],
     speechScript: [
       { slideOrder: 1, slideTitle: "Classroom context", text: "Narration one." },
       { slideOrder: 2, slideTitle: "Teacher workflow", text: "Narration two." },

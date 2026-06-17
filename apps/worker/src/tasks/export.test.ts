@@ -22,6 +22,7 @@ describe("createPptx", () => {
         },
       ],
       outline: ["Русское кино после 2010 года"],
+      narrativePlan: [],
       speechScript: [
         {
           slideOrder: 1,
@@ -88,6 +89,7 @@ describe("createPptx", () => {
       generatedText: "Слайд 1: Image metadata\nThe slide remains exportable even before an image is cached.",
       sources: [],
       outline: ["Image metadata"],
+      narrativePlan: [],
       speechScript: [{ slideOrder: 1, slideTitle: "Image metadata", text: "Narration." }],
       slides: [
         {
