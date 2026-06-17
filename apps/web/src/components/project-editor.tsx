@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { type CSSProperties, useState } from "react";
 import Link from "next/link";
-import type { PresentationDocument, SlideBlock } from "@studydeck/shared";
+import type { PresentationDocument, PresentationTheme, SlideBlock } from "@studydeck/shared";
 import { sanitizeProjectForDisplay } from "@/lib/presentation-display";
 
 type ProjectPayload = {
@@ -21,6 +21,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
   const presentation = project.presentation?.document;
   const slide = presentation?.slides[active];
   const activeSlideText = presentation && slide ? presentationTextForSlide(presentation, slide, active) : "";
+  const theme = presentation?.presentationTheme;
 
   async function refresh() {
     const response = await fetch(`/api/projects/${project.id}`);
@@ -107,7 +108,13 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
           </div>
           <div className="slide-workspace">
             <div className="slide-stage">
-              <article className="slide-canvas">
+              <article
+                className="slide-canvas"
+                data-theme-preset={theme?.preset || "minimal"}
+                data-theme-mood={theme?.mood || "neutral"}
+                data-bg-variant={slideBackgroundVariant(slide)}
+                style={theme ? slideThemeStyle(theme) : undefined}
+              >
                 <SlideCanvas slide={slide} />
               </article>
               <textarea
@@ -134,6 +141,28 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
       </section>
     </>
   );
+}
+
+function slideBackgroundVariant(slide: PresentationDocument["slides"][number]) {
+  if (slide.slideKind === "title") return "title";
+  if (slide.slideKind === "section") return "section";
+  if (slide.slideKind === "summary") return "summary";
+  return `v${(slide.order - 1) % 6}`;
+}
+
+function slideThemeStyle(theme: PresentationTheme): CSSProperties {
+  return {
+    "--slide-bg": theme.colors.background,
+    "--slide-surface": theme.colors.surface,
+    "--slide-surface-alt": theme.colors.surfaceAlt,
+    "--slide-text": theme.colors.text,
+    "--slide-muted": theme.colors.muted,
+    "--slide-accent": theme.colors.accent,
+    "--slide-accent-alt": theme.colors.accentAlt,
+    "--slide-line": theme.colors.line,
+    "--slide-heading-font": `${theme.fonts.heading}, Georgia, Arial, sans-serif`,
+    "--slide-body-font": `${theme.fonts.body}, Arial, sans-serif`,
+  } as CSSProperties;
 }
 
 function presentationTextForSlide(
@@ -185,7 +214,11 @@ function SlideCanvas({ slide }: { slide: PresentationDocument["slides"][number] 
     return (
       <div
         className={`slide-content slide-content-${slide.slideKind} ${imageUrl ? "slide-content-image" : ""}`}
-        style={imageUrl ? { backgroundImage: `linear-gradient(rgba(255, 253, 248, 0.9), rgba(255, 253, 248, 0.94)), url("${imageUrl}")` } : undefined}
+        style={
+          imageUrl
+            ? { backgroundImage: `linear-gradient(color-mix(in srgb, var(--slide-bg) 90%, transparent), color-mix(in srgb, var(--slide-bg) 94%, transparent)), url("${imageUrl}")` }
+            : undefined
+        }
       >
         <h2 className="slide-title">{slide.title}</h2>
         {slide.thesis ? <p className="slide-body">{slide.thesis}</p> : null}

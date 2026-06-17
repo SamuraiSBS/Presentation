@@ -179,6 +179,9 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("visual.description must describe a concrete, searchable image");
     expect(prompt).toContain("do not put URLs");
     expect(prompt).toContain("Do not invent precise facts");
+    expect(prompt).toContain("Visual theme rules");
+    expect(prompt).toContain("preset=");
+    expect(prompt).toContain("do not invent CSS");
   });
 });
 
@@ -215,6 +218,29 @@ describe("normalizeNarrativePlan", () => {
 });
 
 describe("generatePresentation fallback behavior", () => {
+  it("stores a deterministic dark theme for heavy topics in demo generation", async () => {
+    process.env.AI_PROVIDER = "";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "";
+    process.env.ALLOW_DEMO_GENERATION = "true";
+
+    const presentation = await generatePresentation(
+      {
+        id: "project-theme",
+        title: "Война и катастрофа",
+        prompt: "Сделай презентацию про войну, трагедию и кризис",
+        scenario: "school_report",
+        level: "8 класс",
+        mode: "fast_draft",
+        slideCount: 4,
+      },
+      [{ id: "src-1", label: "Prompt", type: "PROMPT", excerpt: "Материал о тяжелой теме." }],
+    );
+
+    expect(presentation.presentationTheme?.preset).toBe("moody");
+    expect(presentation.presentationTheme?.mood).toBe("dark");
+  });
+
   it("accepts a human study-story deck with semantic titles and concrete details", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";

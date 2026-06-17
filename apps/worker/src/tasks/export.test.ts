@@ -23,6 +23,25 @@ describe("createPptx", () => {
       ],
       outline: ["Русское кино после 2010 года"],
       narrativePlan: [],
+      presentationTheme: {
+        preset: "tech",
+        mood: "neutral",
+        colors: {
+          background: "#101820",
+          surface: "#172331",
+          surfaceAlt: "#20364A",
+          text: "#F1F7FB",
+          muted: "#B8CAD8",
+          accent: "#38BDF8",
+          accentAlt: "#A3E635",
+          line: "#315064",
+        },
+        fonts: {
+          heading: "Aptos Display",
+          body: "Aptos",
+          tone: "technical",
+        },
+      },
       speechScript: [
         {
           slideOrder: 1,
@@ -69,6 +88,8 @@ describe("createPptx", () => {
     const presentationXml = await zip.file("ppt/presentation.xml")?.async("string");
     const slideXml = await zip.file("ppt/slides/slide1.xml")?.async("string");
 
+    expect(slideXml).toContain("101820");
+    expect(slideXml).toContain("F1F7FB");
     expect(presentationXml).toContain('<p:sldSz cx="12192000" cy="6858000"/>');
     expect(slideXml).toContain("Русское кино после 2010 года");
     expect(slideXml).toContain("После 2010 года российское кино");

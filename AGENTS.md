@@ -11,9 +11,17 @@ Current architecture:
 - `packages/shared`: shared Zod contracts and TypeScript types.
 - `prisma`: PostgreSQL schema and migrations.
 - `infra/Caddyfile`: production reverse proxy for web/API.
+- `scripts/deploy.ps1`: SSH deploy helper that archives `HEAD`, builds compose on the server, runs Prisma deploy, and starts services.
 - `server.js` plus root `*.html`, `styles.css`, `script.js`: legacy MVP kept for fallback only.
 
 Prefer changing the monorepo apps over the legacy MVP unless the user explicitly asks for legacy work.
+
+Recent product areas to preserve:
+- Generation supports OpenAI and Yandex providers, with optional demo fallback.
+- `with_sources` generation and projects without uploaded files can create `WEB` sources through Tavily web search.
+- Presentation visuals can be enriched with Tavily image search and downloaded into MinIO.
+- The web app has local demo-preview behavior for non-POST project reads unless `NEXT_PUBLIC_DEMO_PREVIEW=false`.
+- Slide rendering/export depends on the richer shared presentation contract: themes, layouts, visuals, narrative plan, speech script, and source refs.
 
 ## Local Environment
 
@@ -31,6 +39,11 @@ Use `.env.example` as the baseline. Copy it to `.env` for local development if m
 ```powershell
 Copy-Item .env.example .env
 ```
+
+Environment areas that often affect behavior:
+- AI providers: `AI_PROVIDER`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `YANDEX_API_KEY`, `YANDEX_FOLDER_ID`, `YANDEX_MODEL_URI`, `YANDEX_MODEL_NAME`.
+- Web and image search: `TAVILY_API_KEY`, `WEB_SEARCH_PROVIDER`, `WEB_SEARCH_MAX_RESULTS`, `PRESENTATION_IMAGES_ENABLED`, `PRESENTATION_IMAGE_SEARCH_RESULTS`, `PRESENTATION_IMAGE_MAX_BYTES`, `PRESENTATION_IMAGE_TIMEOUT_MS`.
+- Local/demo behavior: `ALLOW_DEMO_GENERATION`, `NEXT_PUBLIC_DEMO_PREVIEW`, `TEMP_USER_ID`, `INTERNAL_API_TOKEN`.
 
 Important local note on this Windows host:
 - Docker Desktop previously failed because Windows pagefile was disabled.
@@ -95,6 +108,11 @@ Useful URLs after compose startup:
 
 For HTTPS on localhost, Caddy uses a local certificate. Use `curl.exe -k` for command-line checks when needed.
 
+Local auth/API notes:
+- `apps/web/src/lib/internal-api.ts` currently uses `TEMP_USER_ID` or `local-user` and forwards `x-user-id` plus `x-internal-token`.
+- Keep `INTERNAL_API_TOKEN` consistent between web/API when testing real API calls.
+- `NEXT_PUBLIC_DEMO_PREVIEW=false` is useful when you need the web app to show real API data instead of the bundled demo project.
+
 ## Applying Changes To The Running App
 
 If the user is checking the app in Docker compose (`http://localhost:3010` or `https://localhost`), source edits are not visible until the affected images are rebuilt and containers are recreated. Do this before handing off UI, API, or worker changes so the user does not need to ask whether changes were applied.
@@ -102,7 +120,7 @@ If the user is checking the app in Docker compose (`http://localhost:3010` or `h
 Use the narrowest service set that matches the files changed:
 - `apps/web`, `packages/shared` used by web, or UI display logic: `web`
 - `apps/api`, `packages/shared` used by API, or Prisma client/API contracts: `api`
-- `apps/worker`, generation/export/extraction logic, or `packages/shared` used by jobs: `worker`
+- `apps/worker`, generation/export/extraction/search/image logic, or `packages/shared` used by jobs: `worker`
 - `prisma/schema.prisma` or migrations: usually `api worker`, plus run migration/deploy as needed
 - `infra/Caddyfile`: `caddy`
 
@@ -151,6 +169,15 @@ npm run test
 docker compose config --quiet
 ```
 
+For targeted changes, use workspace tests/typechecks before the full suite when that is faster:
+
+```powershell
+npm run typecheck -w @studydeck/web
+npm run test -w @studydeck/web
+npm run typecheck -w @studydeck/worker
+npm run test -w @studydeck/worker
+```
+
 For Docker runtime verification:
 
 ```powershell
@@ -171,10 +198,24 @@ Expected healthy API response:
 - Keep shared request/response contracts in `packages/shared` and import them from apps instead of duplicating shapes.
 - Use Prisma migrations for DB schema changes.
 - API routes are globally prefixed with `/v1` in `apps/api/src/main.ts`.
-- The web app talks to the API through `INTERNAL_API_URL`.
+- The web app talks to the API through `INTERNAL_API_URL` and its own Next route handlers in `apps/web/src/app/api/**`.
 - Worker jobs depend on Redis, Postgres and MinIO.
 - MinIO bucket name defaults to `studydeck`.
 - Caddy maps `/v1/*` to `api:4000` and all other traffic to `web:3000`.
+- Tavily is used by worker web/image search. Keep network-dependent behavior optional in tests through injected dependencies or env gates.
+- Presentation generation output is validated and normalized in `apps/worker/src/tasks/presentation.ts`; update tests when changing prompts, layouts, quality checks, or schema fields.
+- Export behavior in `apps/worker/src/tasks/export.ts` must stay aligned with the web slide renderer in `apps/web/src/lib/presentation-display.ts`.
+- Avoid committing generated TypeScript build info such as `apps/web/tsconfig.tsbuildinfo`.
+
+## Remote Deploy
+
+Use `scripts/deploy.ps1` only when the user explicitly asks for a remote deploy:
+
+```powershell
+.\scripts\deploy.ps1 -HostName deploy@your-server -RemotePath /opt/studydeck
+```
+
+The script deploys committed `HEAD`, so commit or otherwise ensure the intended changes are in Git before using it.
 
 ## Git And Editing
 

@@ -13,6 +13,7 @@ import {
   type SlideVisual,
   type Source,
   presentationSchema,
+  resolvePresentationTheme,
 } from "@studydeck/shared";
 
 type ProjectInput = {
@@ -947,6 +948,7 @@ export function buildGenerationPrompt(
 ) {
   const fixedNarration = cleanMultilineText(narrationText);
   const planText = formatNarrativePlanForPrompt(narrativePlan);
+  const theme = resolvePresentationTheme(project);
   return [
     "Create a complete StudyDeck PresentationDocument as JSON.",
     `User topic and request: ${project.prompt}`,
@@ -963,6 +965,11 @@ export function buildGenerationPrompt(
     "Build title, thesis, bullets, blocks, visual.description, speakerNotes, and speechScript from the matching generatedText section and the matching narrativePlan item.",
     "Do not generate a separate second story outside generatedText or narrativePlan.",
     "Do not put slidePurpose or transitionToNext on the slide as visible text.",
+    "Visual theme rules:",
+    `- use this fixed visual theme for the deck: preset=${theme.preset}, mood=${theme.mood}, font tone=${theme.fonts.tone};`,
+    "- do not invent CSS, HTML, font files, or color tokens in the JSON;",
+    "- match image descriptions and visual choices to the theme mood: darker and stricter for serious material, lighter and softer for cheerful material;",
+    "- vary block presentation from slide to slide through layout and visual.type; do not make every content slide feel like the same card/list template.",
     "Voice model:",
     "- use the style of a school or college study report: clear, concrete, calm, and human;",
     "- give the audience a path through the subject: what it is, why it matters, what changes, where the conflict or key tension is, and what conclusion follows;",
@@ -1149,6 +1156,13 @@ function normalizePresentation(
     sources: publicSources,
     outline: slides.map((slide) => slide.title),
     narrativePlan: normalizedNarrativePlan,
+    presentationTheme: resolvePresentationTheme({
+      title: cleanText(input.title) || project.title,
+      prompt: project.prompt,
+      scenario: cleanText(input.scenario) || project.scenario,
+      level: cleanText(input.level) || project.level,
+      presentationTheme: input.presentationTheme,
+    }),
     speechScript,
     slides,
   });

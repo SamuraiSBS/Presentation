@@ -1,6 +1,6 @@
 import type { Job } from "bullmq";
 import { createRequire } from "node:module";
-import { presentationSchema } from "@studydeck/shared";
+import { presentationSchema, resolvePresentationTheme, type PresentationTheme } from "@studydeck/shared";
 import { getPrisma } from "../prisma.js";
 import { putObjectBuffer, readObjectBuffer } from "../storage.js";
 
@@ -19,6 +19,18 @@ const PptxGenConstructor = require("pptxgenjs") as new () => {
 };
 
 const WIDE_LAYOUT = { name: "STUDYDECK_WIDE", width: 40 / 3, height: 7.5 };
+type ExportTheme = PresentationTheme & {
+  pptx: {
+    background: string;
+    surface: string;
+    surfaceAlt: string;
+    text: string;
+    muted: string;
+    accent: string;
+    accentAlt: string;
+    line: string;
+  };
+};
 
 export async function handleExportJob(job: Job<{ exportId: string; projectId: string; type: "pdf" | "pptx" }>) {
   const prisma = getPrisma();
@@ -52,15 +64,16 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
   pptx.subject = presentation.scenario;
   pptx.title = presentation.title;
   pptx.lang = "ru-RU";
+  const theme = exportTheme(presentation);
   pptx.theme = {
-    headFontFace: "Arial",
-    bodyFontFace: "Arial",
+    headFontFace: theme.fonts.heading,
+    bodyFontFace: theme.fonts.body,
     lang: "ru-RU",
   };
 
   for (const item of presentation.slides) {
     const slide = pptx.addSlide();
-    slide.background = { color: "FBFAF5" };
+    slide.background = { color: theme.pptx.background };
     const imageData = await readSlideImageData(item);
 
     if (imageData && (item.slideKind === "title" || item.slideKind === "section")) {
@@ -70,18 +83,19 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
         y: 0,
         w: 13.333,
         h: 7.5,
-        fill: { color: "FBFAF5", transparency: 18 },
+        fill: { color: theme.pptx.background, transparency: theme.mood === "dark" ? 10 : 18 },
         line: { transparency: 100 },
       });
+      renderSlideBackground(pptx, slide, item, theme, 38);
       slide.addText(item.title, {
         x: 0.9,
         y: 2.15,
         w: 11.55,
         h: 1.25,
-        fontFace: "Arial",
+        fontFace: theme.fonts.heading,
         fontSize: 36,
         bold: true,
-        color: "17201B",
+        color: theme.pptx.text,
         align: "center",
         valign: "mid",
         fit: "shrink",
@@ -92,15 +106,16 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
         y: 3.65,
         w: 10,
         h: 1.25,
-        fontFace: "Arial",
+        fontFace: theme.fonts.body,
         fontSize: 19,
-        color: "27362F",
+        color: theme.pptx.muted,
         align: "center",
         valign: "mid",
         fit: "shrink",
       });
     } else {
-      renderContentSlide(pptx, slide, item, imageData);
+      renderSlideBackground(pptx, slide, item, theme);
+      renderContentSlide(pptx, slide, item, imageData, theme);
     }
 
     slide.addNotes(item.speakerNotes);
@@ -114,71 +129,144 @@ function renderContentSlide(
   slide: any,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   imageData: string | null,
+  theme: ExportTheme,
 ) {
   const layout = item.layout;
 
   if (imageData && layout !== "image-focus") {
-    return renderDefaultContentSlide(slide, item, imageData);
+    return renderDefaultContentSlide(slide, item, imageData, theme);
   }
 
-  if (layout === "statement") return renderStatementSlide(slide, item);
-  if (layout === "quote") return renderQuoteSlide(slide, item);
-  if (layout === "definition") return renderDefinitionSlide(pptx, slide, item);
-  if (layout === "timeline" || layout === "process") return renderSequenceSlide(pptx, slide, item);
-  if (layout === "comparison" || layout === "two-column") return renderComparisonSlide(pptx, slide, item);
-  if (layout === "image-focus" && imageData) return renderImageFocusSlide(slide, item, imageData);
-  if (layout === "case-study") return renderThreePanelSlide(pptx, slide, item, ["Ситуация", "Действие", "Результат"]);
-  if (layout === "question-answer") return renderQuestionAnswerSlide(pptx, slide, item);
-  if (layout === "myth-fact") return renderThreePanelSlide(pptx, slide, item, ["Миф", "Факт"]);
-  if (layout === "metrics") return renderMetricsSlide(pptx, slide, item);
-  renderDefaultContentSlide(slide, item, imageData);
+  if (layout === "statement") return renderStatementSlide(slide, item, theme);
+  if (layout === "quote") return renderQuoteSlide(slide, item, theme);
+  if (layout === "definition") return renderDefinitionSlide(pptx, slide, item, theme);
+  if (layout === "timeline" || layout === "process") return renderSequenceSlide(pptx, slide, item, theme);
+  if (layout === "comparison" || layout === "two-column") return renderComparisonSlide(pptx, slide, item, theme);
+  if (layout === "image-focus" && imageData) return renderImageFocusSlide(slide, item, imageData, theme);
+  if (layout === "case-study") return renderThreePanelSlide(pptx, slide, item, ["Ситуация", "Действие", "Результат"], theme);
+  if (layout === "question-answer") return renderQuestionAnswerSlide(pptx, slide, item, theme);
+  if (layout === "myth-fact") return renderThreePanelSlide(pptx, slide, item, ["Миф", "Факт"], theme);
+  if (layout === "metrics") return renderMetricsSlide(pptx, slide, item, theme);
+  renderDefaultContentSlide(slide, item, imageData, theme);
 }
 
-function renderSlideTitle(slide: any, title: string, options: { centered?: boolean; width?: number; fontSize?: number } = {}) {
+function renderSlideTitle(slide: any, title: string, theme: ExportTheme, options: { centered?: boolean; width?: number; fontSize?: number } = {}) {
   slide.addText(title, {
     x: options.centered ? 1.05 : 0.72,
     y: 0.58,
     w: options.width || (options.centered ? 11.2 : 11.9),
     h: 0.9,
-    fontFace: "Arial",
+    fontFace: theme.fonts.heading,
     fontSize: options.fontSize || 30,
     bold: true,
-    color: "17201B",
+    color: theme.pptx.text,
     align: options.centered ? "center" : "left",
     valign: "mid",
     fit: "shrink",
   });
 }
 
-function renderStatementSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
-  renderSlideTitle(slide, item.title, { centered: true, fontSize: 30 });
+function renderSlideBackground(
+  pptx: InstanceType<typeof PptxGenConstructor>,
+  slide: any,
+  item: ReturnType<typeof presentationSchema.parse>["slides"][number],
+  theme: ExportTheme,
+  transparencyOffset = 0,
+) {
+  const variant = slideBackgroundVariant(item);
+  const soft = Math.min(88, 70 + transparencyOffset);
+  const medium = Math.min(82, 58 + transparencyOffset);
+
+  if (variant === "title") {
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 4.1, h: 7.5, fill: { color: theme.pptx.accent, transparency: medium }, line: { transparency: 100 } });
+    slide.addShape(pptx.ShapeType.rect, { x: 10.8, y: 0, w: 2.53, h: 2.4, fill: { color: theme.pptx.accentAlt, transparency: soft }, line: { transparency: 100 } });
+    return;
+  }
+
+  if (variant === "section") {
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 2.15, h: 7.5, fill: { color: theme.pptx.surfaceAlt, transparency: medium }, line: { transparency: 100 } });
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 3.45, w: 13.333, h: 0.18, fill: { color: theme.pptx.accent, transparency: soft }, line: { transparency: 100 } });
+    return;
+  }
+
+  if (variant === "summary") {
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 5.95, w: 13.333, h: 1.55, fill: { color: theme.pptx.surfaceAlt, transparency: medium }, line: { transparency: 100 } });
+    slide.addShape(pptx.ShapeType.rect, { x: 10.45, y: 0, w: 2.88, h: 7.5, fill: { color: theme.pptx.accentAlt, transparency: soft }, line: { transparency: 100 } });
+    return;
+  }
+
+  if (variant === "v1") {
+    slide.addShape(pptx.ShapeType.rect, { x: 8.45, y: 0, w: 4.88, h: 7.5, fill: { color: theme.pptx.surfaceAlt, transparency: medium }, line: { transparency: 100 } });
+    slide.addShape(pptx.ShapeType.rect, { x: 9.25, y: 5.6, w: 3.35, h: 0.42, fill: { color: theme.pptx.accentAlt, transparency: soft }, line: { transparency: 100 } });
+    return;
+  }
+
+  if (variant === "v2") {
+    for (let x = 0.35; x < 13.2; x += 1.25) {
+      slide.addShape(pptx.ShapeType.rect, { x, y: 0.25, w: 0.03, h: 7, fill: { color: theme.pptx.line, transparency: 72 + transparencyOffset / 2 }, line: { transparency: 100 } });
+    }
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 3.2, h: 1.1, fill: { color: theme.pptx.accent, transparency: soft }, line: { transparency: 100 } });
+    return;
+  }
+
+  if (variant === "v3") {
+    slide.addShape(pptx.ShapeType.rect, { x: 0.28, y: 0.25, w: 12.77, h: 7.0, fill: { color: theme.pptx.background, transparency: 100 }, line: { color: theme.pptx.line, transparency: 18 + transparencyOffset / 3 } });
+    slide.addShape(pptx.ShapeType.rect, { x: 0.55, y: 0.52, w: 12.23, h: 6.46, fill: { color: theme.pptx.background, transparency: 100 }, line: { color: theme.pptx.accent, transparency: 62 + transparencyOffset / 3 } });
+    return;
+  }
+
+  if (variant === "v4") {
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 3.8, h: 7.5, fill: { color: theme.pptx.surfaceAlt, transparency: medium }, line: { transparency: 100 } });
+    slide.addShape(pptx.ShapeType.rect, { x: 9.8, y: 0, w: 3.53, h: 7.5, fill: { color: theme.pptx.accentAlt, transparency: soft }, line: { transparency: 100 } });
+    return;
+  }
+
+  if (variant === "v5") {
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.333, h: 1.25, fill: { color: theme.pptx.surfaceAlt, transparency: medium }, line: { transparency: 100 } });
+    slide.addShape(pptx.ShapeType.rect, { x: 11.25, y: 0, w: 2.08, h: 7.5, fill: { color: theme.pptx.accent, transparency: soft }, line: { transparency: 100 } });
+    return;
+  }
+
+  slide.addShape(pptx.ShapeType.rect, { x: 0, y: 5.1, w: 13.333, h: 2.4, fill: { color: theme.pptx.surfaceAlt, transparency: medium }, line: { transparency: 100 } });
+  slide.addShape(pptx.ShapeType.rect, { x: 0.2, y: 0.2, w: 2.2, h: 0.18, fill: { color: theme.pptx.accent, transparency: soft }, line: { transparency: 100 } });
+}
+
+function slideBackgroundVariant(item: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  if (item.slideKind === "title") return "title";
+  if (item.slideKind === "section") return "section";
+  if (item.slideKind === "summary") return "summary";
+  return `v${(item.order - 1) % 6}`;
+}
+
+function renderStatementSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number], theme: ExportTheme) {
+  renderSlideTitle(slide, item.title, theme, { centered: true, fontSize: 30 });
   slide.addText(slideBodyText(item), {
     x: 1.35,
     y: 2.05,
     w: 10.6,
     h: 2.85,
-    fontFace: "Arial",
+    fontFace: theme.fonts.heading,
     fontSize: 30,
     bold: true,
-    color: "17201B",
+    color: theme.pptx.text,
     align: "center",
     valign: "mid",
     fit: "shrink",
   });
 }
 
-function renderQuoteSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
-  renderSlideTitle(slide, item.title);
+function renderQuoteSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number], theme: ExportTheme) {
+  renderSlideTitle(slide, item.title, theme);
   slide.addText(`"${quoteText(item)}"`, {
     x: 1.1,
     y: 1.95,
     w: 11.1,
     h: 2.6,
-    fontFace: "Arial",
+    fontFace: theme.fonts.heading,
     fontSize: 27,
     bold: true,
     italic: true,
-    color: "17201B",
+    color: theme.pptx.text,
     align: "center",
     valign: "mid",
     fit: "shrink",
@@ -189,9 +277,9 @@ function renderQuoteSlide(slide: any, item: ReturnType<typeof presentationSchema
       y: 4.86,
       w: 9.1,
       h: 0.62,
-      fontFace: "Arial",
+      fontFace: theme.fonts.body,
       fontSize: 15,
-      color: "27362F",
+      color: theme.pptx.muted,
       align: "center",
       fit: "shrink",
     });
@@ -202,8 +290,9 @@ function renderDefinitionSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
   slide: any,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
+  theme: ExportTheme,
 ) {
-  renderSlideTitle(slide, item.title);
+  renderSlideTitle(slide, item.title, theme);
   const definition = item.definition || { term: item.title, text: item.thesis || slideBodyText(item) };
   slide.addShape(pptx.ShapeType.roundRect, {
     x: 0.9,
@@ -211,18 +300,18 @@ function renderDefinitionSlide(
     w: 11.55,
     h: 3.45,
     rectRadius: 0.08,
-    fill: { color: "FFF4E6" },
-    line: { color: "DDD7C9" },
+    fill: { color: theme.pptx.surfaceAlt },
+    line: { color: theme.pptx.line },
   });
   slide.addText(definition.term, {
     x: 1.25,
     y: 2.02,
     w: 10.8,
     h: 0.82,
-    fontFace: "Arial",
+    fontFace: theme.fonts.heading,
     fontSize: 28,
     bold: true,
-    color: "17201B",
+    color: theme.pptx.text,
     fit: "shrink",
   });
   slide.addText(definition.text, {
@@ -230,9 +319,9 @@ function renderDefinitionSlide(
     y: 3.05,
     w: 10.8,
     h: 1.35,
-    fontFace: "Arial",
+    fontFace: theme.fonts.body,
     fontSize: 18,
-    color: "27362F",
+    color: theme.pptx.muted,
     fit: "shrink",
   });
 }
@@ -241,8 +330,9 @@ function renderSequenceSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
   slide: any,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
+  theme: ExportTheme,
 ) {
-  renderSlideTitle(slide, item.title);
+  renderSlideTitle(slide, item.title, theme);
   const items = sequenceItems(item).slice(0, 5);
   const width = 11.7 / Math.max(items.length, 1);
   items.forEach((text, index) => {
@@ -252,19 +342,19 @@ function renderSequenceSlide(
       y: 2.12,
       w: width - 0.16,
       h: 2.7,
-      fill: { color: "FFFDF8" },
-      line: { color: "DDD7C9" },
+      fill: { color: theme.pptx.surface },
+      line: { color: theme.pptx.line },
     });
     slide.addText(String(index + 1), {
       x: x + 0.18,
       y: 2.32,
       w: 0.45,
       h: 0.36,
-      fontFace: "Arial",
+      fontFace: theme.fonts.body,
       fontSize: 13,
       bold: true,
       color: "FFFFFF",
-      fill: { color: "17201B" },
+      fill: { color: theme.pptx.text },
       align: "center",
       valign: "mid",
     });
@@ -273,9 +363,9 @@ function renderSequenceSlide(
       y: 2.95,
       w: width - 0.52,
       h: 1.35,
-      fontFace: "Arial",
+      fontFace: theme.fonts.body,
       fontSize: 14,
-      color: "27362F",
+      color: theme.pptx.muted,
       fit: "shrink",
     });
   });
@@ -285,38 +375,39 @@ function renderComparisonSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
   slide: any,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
+  theme: ExportTheme,
 ) {
-  renderSlideTitle(slide, item.title);
+  renderSlideTitle(slide, item.title, theme);
   const rows = comparisonRows(item).slice(0, 3);
   const leftLabel = item.visual.leftLabel || "Первое";
   const rightLabel = item.visual.rightLabel || "Второе";
-  slide.addText(leftLabel, { x: 0.9, y: 1.7, w: 5.55, h: 0.42, fontFace: "Arial", fontSize: 13, bold: true, color: "17201B" });
-  slide.addText(rightLabel, { x: 6.9, y: 1.7, w: 5.55, h: 0.42, fontFace: "Arial", fontSize: 13, bold: true, color: "17201B" });
+  slide.addText(leftLabel, { x: 0.9, y: 1.7, w: 5.55, h: 0.42, fontFace: theme.fonts.heading, fontSize: 13, bold: true, color: theme.pptx.text });
+  slide.addText(rightLabel, { x: 6.9, y: 1.7, w: 5.55, h: 0.42, fontFace: theme.fonts.heading, fontSize: 13, bold: true, color: theme.pptx.text });
   rows.forEach((row, index) => {
     const y = 2.18 + index * 1.22;
     for (const [x, text] of [[0.9, row.left || row.label], [6.9, row.right || row.label]] as const) {
-      slide.addShape(pptx.ShapeType.roundRect, { x, y, w: 5.55, h: 0.96, fill: { color: "FFFDF8" }, line: { color: "DDD7C9" } });
-      slide.addText(text, { x: x + 0.2, y: y + 0.16, w: 5.15, h: 0.56, fontFace: "Arial", fontSize: 14, color: "27362F", fit: "shrink" });
+      slide.addShape(pptx.ShapeType.roundRect, { x, y, w: 5.55, h: 0.96, fill: { color: theme.pptx.surface }, line: { color: theme.pptx.line } });
+      slide.addText(text, { x: x + 0.2, y: y + 0.16, w: 5.15, h: 0.56, fontFace: theme.fonts.body, fontSize: 14, color: theme.pptx.muted, fit: "shrink" });
     }
   });
 }
 
-function renderImageFocusSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number], imageData: string) {
-  renderSlideTitle(slide, item.title, { width: 5.5, fontSize: 28 });
+function renderImageFocusSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number], imageData: string, theme: ExportTheme) {
+  renderSlideTitle(slide, item.title, theme, { width: 5.5, fontSize: 28 });
   slide.addText(item.thesis || slideBodyText(item), {
     x: 0.82,
     y: 2.0,
     w: 5.25,
     h: 2.4,
-    fontFace: "Arial",
+    fontFace: theme.fonts.body,
     fontSize: 18,
-    color: "27362F",
+    color: theme.pptx.muted,
     fit: "shrink",
   });
   slide.addImage({ data: imageData, x: 6.65, y: 0.72, w: 5.95, h: 5.75 });
   const attribution = imageAttribution(item);
   if (attribution) {
-    slide.addText(attribution, { x: 6.65, y: 6.58, w: 5.95, h: 0.24, fontFace: "Arial", fontSize: 7, color: "6F766F", align: "right", fit: "shrink" });
+    slide.addText(attribution, { x: 6.65, y: 6.58, w: 5.95, h: 0.24, fontFace: theme.fonts.body, fontSize: 7, color: theme.pptx.muted, align: "right", fit: "shrink" });
   }
 }
 
@@ -325,15 +416,16 @@ function renderThreePanelSlide(
   slide: any,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   labels: string[],
+  theme: ExportTheme,
 ) {
-  renderSlideTitle(slide, item.title);
+  renderSlideTitle(slide, item.title, theme);
   const items = sequenceItems(item);
   const width = 11.5 / labels.length;
   labels.forEach((label, index) => {
     const x = 0.92 + index * width;
-    slide.addShape(pptx.ShapeType.roundRect, { x, y: 2.0, w: width - 0.18, h: 2.5, fill: { color: index % 2 ? "EDF5F1" : "FFF4E6" }, line: { color: "DDD7C9" } });
-    slide.addText(label, { x: x + 0.22, y: 2.24, w: width - 0.62, h: 0.35, fontFace: "Arial", fontSize: 12, bold: true, color: "17201B" });
-    slide.addText(items[index] || item.thesis || slideBodyText(item), { x: x + 0.22, y: 2.86, w: width - 0.62, h: 1.08, fontFace: "Arial", fontSize: 14, color: "27362F", fit: "shrink" });
+    slide.addShape(pptx.ShapeType.roundRect, { x, y: 2.0, w: width - 0.18, h: 2.5, fill: { color: index % 2 ? theme.pptx.surface : theme.pptx.surfaceAlt }, line: { color: theme.pptx.line } });
+    slide.addText(label, { x: x + 0.22, y: 2.24, w: width - 0.62, h: 0.35, fontFace: theme.fonts.heading, fontSize: 12, bold: true, color: theme.pptx.text });
+    slide.addText(items[index] || item.thesis || slideBodyText(item), { x: x + 0.22, y: 2.86, w: width - 0.62, h: 1.08, fontFace: theme.fonts.body, fontSize: 14, color: theme.pptx.muted, fit: "shrink" });
   });
 }
 
@@ -341,40 +433,42 @@ function renderQuestionAnswerSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
   slide: any,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
+  theme: ExportTheme,
 ) {
-  renderSlideTitle(slide, item.title, { centered: true, fontSize: 31 });
-  slide.addShape(pptx.ShapeType.roundRect, { x: 1.55, y: 2.12, w: 10.2, h: 2.2, fill: { color: "FFF4E6" }, line: { color: "DDD7C9" } });
-  slide.addText("Ответ", { x: 1.95, y: 2.38, w: 9.4, h: 0.32, fontFace: "Arial", fontSize: 12, bold: true, color: "17201B" });
-  slide.addText(item.thesis || slideBodyText(item), { x: 1.95, y: 2.95, w: 9.4, h: 0.85, fontFace: "Arial", fontSize: 18, color: "27362F", fit: "shrink" });
+  renderSlideTitle(slide, item.title, theme, { centered: true, fontSize: 31 });
+  slide.addShape(pptx.ShapeType.roundRect, { x: 1.55, y: 2.12, w: 10.2, h: 2.2, fill: { color: theme.pptx.surfaceAlt }, line: { color: theme.pptx.line } });
+  slide.addText("Ответ", { x: 1.95, y: 2.38, w: 9.4, h: 0.32, fontFace: theme.fonts.heading, fontSize: 12, bold: true, color: theme.pptx.text });
+  slide.addText(item.thesis || slideBodyText(item), { x: 1.95, y: 2.95, w: 9.4, h: 0.85, fontFace: theme.fonts.body, fontSize: 18, color: theme.pptx.muted, fit: "shrink" });
 }
 
 function renderMetricsSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
   slide: any,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
+  theme: ExportTheme,
 ) {
-  renderSlideTitle(slide, item.title);
+  renderSlideTitle(slide, item.title, theme);
   const items = sequenceItems(item).slice(0, 4);
   items.forEach((text, index) => {
     const x = 0.9 + index * 3;
-    slide.addShape(pptx.ShapeType.roundRect, { x, y: 2.0, w: 2.72, h: 2.35, fill: { color: "FFFDF8" }, line: { color: "DDD7C9" } });
-    slide.addText(metricLead(text, index), { x: x + 0.18, y: 2.28, w: 2.36, h: 0.46, fontFace: "Arial", fontSize: 22, bold: true, color: "6D3DF7", fit: "shrink" });
-    slide.addText(text, { x: x + 0.18, y: 3.08, w: 2.36, h: 0.78, fontFace: "Arial", fontSize: 12, color: "27362F", fit: "shrink" });
+    slide.addShape(pptx.ShapeType.roundRect, { x, y: 2.0, w: 2.72, h: 2.35, fill: { color: theme.pptx.surface }, line: { color: theme.pptx.line } });
+    slide.addText(metricLead(text, index), { x: x + 0.18, y: 2.28, w: 2.36, h: 0.46, fontFace: theme.fonts.heading, fontSize: 22, bold: true, color: theme.pptx.accentAlt, fit: "shrink" });
+    slide.addText(text, { x: x + 0.18, y: 3.08, w: 2.36, h: 0.78, fontFace: theme.fonts.body, fontSize: 12, color: theme.pptx.muted, fit: "shrink" });
   });
 }
 
-function renderDefaultContentSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number], imageData: string | null) {
+function renderDefaultContentSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number], imageData: string | null, theme: ExportTheme) {
   const hasSideImage = Boolean(imageData);
-  renderSlideTitle(slide, item.title, { centered: !hasSideImage, width: hasSideImage ? 5.5 : 11.9, fontSize: hasSideImage ? 28 : 34 });
+  renderSlideTitle(slide, item.title, theme, { centered: !hasSideImage, width: hasSideImage ? 5.5 : 11.9, fontSize: hasSideImage ? 28 : 34 });
 
   slide.addText(slideBodyText(item), {
     x: hasSideImage ? 0.82 : 1.5,
     y: hasSideImage ? 2.05 : 3.55,
     w: hasSideImage ? 5.35 : 10.33,
     h: hasSideImage ? 3.5 : 1.45,
-    fontFace: "Arial",
+    fontFace: theme.fonts.body,
     fontSize: hasSideImage ? 18 : 19,
-    color: "27362F",
+    color: theme.pptx.muted,
     align: hasSideImage ? "left" : "center",
     valign: "mid",
     breakLine: false,
@@ -390,9 +484,9 @@ function renderDefaultContentSlide(slide: any, item: ReturnType<typeof presentat
         y: 6.62,
         w: 5.9,
         h: 0.24,
-        fontFace: "Arial",
+        fontFace: theme.fonts.body,
         fontSize: 7,
-        color: "6F766F",
+        color: theme.pptx.muted,
         align: "right",
         fit: "shrink",
       });
@@ -420,6 +514,33 @@ startxref
 326
 %%EOF`;
   return Buffer.from(text, "utf8");
+}
+
+function exportTheme(presentation: ReturnType<typeof presentationSchema.parse>): ExportTheme {
+  const theme = resolvePresentationTheme({
+    title: presentation.title,
+    scenario: presentation.scenario,
+    level: presentation.level,
+    presentationTheme: presentation.presentationTheme,
+  });
+
+  return {
+    ...theme,
+    pptx: {
+      background: pptxColor(theme.colors.background),
+      surface: pptxColor(theme.colors.surface),
+      surfaceAlt: pptxColor(theme.colors.surfaceAlt),
+      text: pptxColor(theme.colors.text),
+      muted: pptxColor(theme.colors.muted),
+      accent: pptxColor(theme.colors.accent),
+      accentAlt: pptxColor(theme.colors.accentAlt),
+      line: pptxColor(theme.colors.line),
+    },
+  };
+}
+
+function pptxColor(value: string) {
+  return value.replace(/^#/, "").toUpperCase();
 }
 
 function slideBodyText(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {

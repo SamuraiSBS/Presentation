@@ -1,4 +1,12 @@
-import type { Highlight, KeyConcept, PresentationDocument, SlideBlock, SlideKind, SlideVisual } from "@studydeck/shared";
+import {
+  resolvePresentationTheme,
+  type Highlight,
+  type KeyConcept,
+  type PresentationDocument,
+  type SlideBlock,
+  type SlideKind,
+  type SlideVisual,
+} from "@studydeck/shared";
 
 type ProjectWithPresentation = {
   presentation?: { document?: DisplayPresentationInput | null } | null;
@@ -115,6 +123,12 @@ export function sanitizePresentationForDisplay(document: DisplayPresentationInpu
     generatedText: sanitizeGeneratedTextForDisplay(document.generatedText),
     sources: [],
     narrativePlan: document.narrativePlan ?? [],
+    presentationTheme: resolvePresentationTheme({
+      title: document.title,
+      scenario: document.scenario,
+      level: document.level,
+      presentationTheme: document.presentationTheme,
+    }),
     slides,
     speechScript: slides.map((slide, index) => {
       const existing = document.speechScript.find((item) => item.slideOrder === slide.order) || document.speechScript[index];

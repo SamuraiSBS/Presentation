@@ -70,6 +70,62 @@ describe("sanitizePresentationForDisplay", () => {
     expect(document.slides[1].slideKind).toBe("summary");
     expect(document.slides[1].bullets).toEqual(["First takeaway", "Second takeaway", "Third takeaway"]);
     expect(document.slides[1].visual.type).toBe("none");
+    expect(document.presentationTheme?.preset).toBeTruthy();
+  });
+
+  it("preserves a saved presentation theme during display cleanup", () => {
+    const document = sanitizePresentationForDisplay({
+      id: "presentation-1",
+      title: "Saved theme",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Saved theme"],
+      presentationTheme: {
+        preset: "tech",
+        mood: "neutral",
+        colors: {
+          background: "#101820",
+          surface: "#172331",
+          surfaceAlt: "#20364A",
+          text: "#F1F7FB",
+          muted: "#B8CAD8",
+          accent: "#38BDF8",
+          accentAlt: "#A3E635",
+          line: "#315064",
+        },
+        fonts: {
+          heading: "Aptos Display",
+          body: "Aptos",
+          tone: "technical",
+        },
+      },
+      speechScript: [{ slideOrder: 1, slideTitle: "Saved theme", text: "Narration." }],
+      slides: [
+        {
+          id: "slide-1",
+          order: 1,
+          title: "Saved theme",
+          slideKind: "title",
+          layout: "hero",
+          thesis: "Intro.",
+          bullets: [],
+          definition: null,
+          keyConcepts: [],
+          visual: { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] },
+          highlights: [],
+          blocks: [{ type: "callout", content: "Intro." }],
+          speakerNotes: "Intro notes.",
+          timingSeconds: 45,
+          sourceRefs: [],
+        },
+      ],
+    });
+
+    expect(document.presentationTheme?.preset).toBe("tech");
+    expect(document.presentationTheme?.colors.accent).toBe("#38BDF8");
   });
 
   it("hides weak saved visual blocks but keeps useful visuals and images", () => {

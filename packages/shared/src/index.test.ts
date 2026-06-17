@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createProjectInputSchema, planLimits, presentationSchema } from "./index";
+import { createProjectInputSchema, planLimits, presentationSchema, resolvePresentationTheme } from "./index";
 
 describe("shared contracts", () => {
   it("validates project input limits", () => {
@@ -182,5 +182,45 @@ describe("shared contracts", () => {
     expect(parsed.slides[0].visual.type).toBe("none");
     expect(parsed.generatedText).toBe("");
     expect(parsed.narrativePlan).toEqual([]);
+  });
+
+  it("accepts presentation theme while keeping legacy documents valid", () => {
+    const parsed = presentationSchema.parse({
+      id: "presentation-1",
+      title: "Dark deck",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Dark deck"],
+      presentationTheme: resolvePresentationTheme({ title: "Трагедия и кризис" }),
+      speechScript: [{ slideOrder: 1, slideTitle: "Dark deck", text: "Narration." }],
+      slides: [
+        {
+          id: "slide-1",
+          order: 1,
+          title: "Dark deck",
+          layout: "hero",
+          blocks: [{ type: "callout", content: "Body." }],
+          speakerNotes: "Notes.",
+          timingSeconds: 45,
+          sourceRefs: [],
+        },
+      ],
+    });
+
+    expect(parsed.presentationTheme?.preset).toBe("moody");
+    expect(parsed.presentationTheme?.colors.background).toMatch(/^#[0-9A-F]{6}$/);
+  });
+
+  it("resolves topic-sensitive and stable fallback themes", () => {
+    expect(resolvePresentationTheme({ title: "Война и катастрофа" }).mood).toBe("dark");
+    expect(resolvePresentationTheme({ title: "Веселый детский праздник" }).preset).toBe("bright");
+    expect(resolvePresentationTheme({ title: "Программирование и данные" }).preset).toBe("tech");
+
+    const first = resolvePresentationTheme({ title: "Neutral topic alpha" });
+    const second = resolvePresentationTheme({ title: "Neutral topic beta" });
+    expect(first.preset).not.toBe(second.preset);
   });
 });
