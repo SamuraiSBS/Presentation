@@ -1,5 +1,10 @@
 import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
-import { createProjectInputSchema, updateSlideInputSchema } from "@studydeck/shared";
+import {
+  createProjectInputSchema,
+  generatePresentationInputSchema,
+  updateNarrationInputSchema,
+  updateSlideInputSchema,
+} from "@studydeck/shared";
 import { InternalAuthGuard, type InternalRequest } from "../auth/internal-auth.guard.js";
 import { ProjectsService } from "./projects.service.js";
 
@@ -23,9 +28,19 @@ export class ProjectsController {
     return this.projects.getOwned(request.userId, id);
   }
 
+  @Post(":id/narration")
+  generateNarration(@Req() request: InternalRequest, @Param("id") id: string) {
+    return this.projects.enqueueNarration(request.userId, id);
+  }
+
+  @Patch(":id/narration")
+  updateNarration(@Req() request: InternalRequest, @Param("id") id: string, @Body() body: unknown) {
+    return this.projects.updateNarrationDraft(request.userId, id, updateNarrationInputSchema.parse(body));
+  }
+
   @Post(":id/generate")
-  generate(@Req() request: InternalRequest, @Param("id") id: string) {
-    return this.projects.enqueueGeneration(request.userId, id);
+  generate(@Req() request: InternalRequest, @Param("id") id: string, @Body() body: unknown) {
+    return this.projects.enqueueGeneration(request.userId, id, generatePresentationInputSchema.parse(body || {}));
   }
 
   @Patch(":id/slides/:slideId")

@@ -327,6 +327,88 @@ export async function generatePresentation(project: ProjectInput, sources: Sourc
   throw new Error(`AI generation failed. ${errors.join(" | ")}`);
 }
 
+export async function generateNarrationDraft(project: ProjectInput, sources: Source[]) {
+  const providers = selectAiProviders();
+  const errors: string[] = [];
+
+  for (const provider of providers) {
+    try {
+      if (provider === "openai") {
+        const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        const narrativePlan = await generateOpenAINarrativePlan(client, project, sources);
+        const text = await generateOpenAINarration(client, project, sources, narrativePlan);
+        return { text, narrativePlan, generationMode: provider };
+      }
+
+      const apiKey = process.env.YANDEX_API_KEY?.trim();
+      if (!apiKey) {
+        throw new Error("YANDEX_API_KEY is required");
+      }
+
+      const narrativePlan = await generateYandexNarrativePlan(apiKey, project, sources);
+      const text = await generateYandexNarration(apiKey, project, sources, narrativePlan);
+      return { text, narrativePlan, generationMode: provider };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`${provider}: ${message}`);
+      console.warn(`${provider} narration generation failed:`, error);
+    }
+  }
+
+  if (isDemoGenerationAllowed()) {
+    return {
+      text: buildFallbackGeneratedText(project),
+      narrativePlan: normalizeNarrativePlan([], project),
+      generationMode: providers.length ? "demo-fallback" : "demo",
+    };
+  }
+
+  if (!providers.length) {
+    throw new Error("No configured AI provider. Set OPENAI_API_KEY or YANDEX_API_KEY with YANDEX_FOLDER_ID/YANDEX_MODEL_URI.");
+  }
+
+  throw new Error(`AI narration generation failed. ${errors.join(" | ")}`);
+}
+
+export async function generatePresentationFromNarration(
+  project: ProjectInput,
+  sources: Source[],
+  narrationText: string,
+): Promise<PresentationDocument> {
+  const fixedNarration = normalizeNarrationText(narrationText, project);
+  const providers = selectAiProviders();
+  const errors: string[] = [];
+
+  for (const provider of providers) {
+    try {
+      return provider === "openai"
+        ? await generateOpenAIPresentationFromNarration(project, sources, fixedNarration)
+        : await generateYandexPresentationFromNarration(project, sources, fixedNarration);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`${provider}: ${message}`);
+      console.warn(`${provider} presentation generation failed:`, error);
+    }
+  }
+
+  if (isDemoGenerationAllowed()) {
+    return normalizePresentation(
+      {},
+      project,
+      sources,
+      providers.length ? "demo-fallback" : "demo",
+      fixedNarration,
+      normalizeNarrativePlan([], project),
+    );
+  }
+
+  if (!providers.length) {
+    throw new Error("No configured AI provider. Set OPENAI_API_KEY or YANDEX_API_KEY with YANDEX_FOLDER_ID/YANDEX_MODEL_URI.");
+  }
+
+  throw new Error(`AI presentation generation failed. ${errors.join(" | ")}`);
+}
+
 export function selectAiProviders(env: EnvLike = process.env): AiGenerationMode[] {
   const requested = normalizeProvider(env.AI_PROVIDER);
   const available: AiGenerationMode[] = [];
@@ -358,6 +440,36 @@ async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
         /* legacyContent:
           "Ты создаешь учебные презентации на русском языке. На каждом слайде нужен короткий текст для экрана: заголовок и 1-2 содержательные фразы без маркеров. Подробный связный текст для чтения пиши только в speakerNotes и speechScript. Не упоминай источники в тексте для пользователя, не пиши инструкции, заглушки или просьбы что-то проверить. Верни только валидный JSON.",
         */ content: SYSTEM_PROMPT,
+      },
+      {
+        role: "user",
+        content: buildGenerationPrompt(project, sources, narrationText, narrativePlan),
+      },
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: "studydeck_presentation",
+        strict: false,
+        schema: jsonSchema,
+      },
+    },
+  });
+
+  const typedResponse = response as typeof response & { output_parsed?: unknown };
+  const parsed = typedResponse.output_parsed || parseJsonText(response.output_text || "");
+  return normalizePresentation(parsed, project, sources, "openai", narrationText, narrativePlan);
+}
+
+async function generateOpenAIPresentationFromNarration(project: ProjectInput, sources: Source[], narrationText: string) {
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const narrativePlan = await generateOpenAINarrativePlan(client, project, sources);
+  const response = await client.responses.create({
+    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    input: [
+      {
+        role: "system",
+        content: SYSTEM_PROMPT,
       },
       {
         role: "user",
@@ -441,6 +553,19 @@ async function generateWithYandex(project: ProjectInput, sources: Source[]) {
 
   const narrativePlan = await generateYandexNarrativePlan(apiKey, project, sources);
   const narrationText = await generateYandexNarration(apiKey, project, sources, narrativePlan);
+  const outputText = await requestYandexText(apiKey, SYSTEM_PROMPT, buildGenerationPrompt(project, sources, narrationText, narrativePlan), true);
+
+  return normalizePresentation(parseJsonText(outputText), project, sources, "yandex", narrationText, narrativePlan);
+}
+
+async function generateYandexPresentationFromNarration(project: ProjectInput, sources: Source[], narrationText: string) {
+  const apiKey = process.env.YANDEX_API_KEY?.trim();
+
+  if (!apiKey) {
+    throw new Error("YANDEX_API_KEY is required");
+  }
+
+  const narrativePlan = await generateYandexNarrativePlan(apiKey, project, sources);
   const outputText = await requestYandexText(apiKey, SYSTEM_PROMPT, buildGenerationPrompt(project, sources, narrationText, narrativePlan), true);
 
   return normalizePresentation(parseJsonText(outputText), project, sources, "yandex", narrationText, narrativePlan);

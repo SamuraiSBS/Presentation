@@ -1,0 +1,249 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-18T00:00:00+03:00",
+  "title": "Design System: StudyDeck AI",
+  "extensions": {
+    "colorMeta": {
+      "app-bg": {
+        "role": "neutral",
+        "displayName": "Study Canvas",
+        "canonical": "#f8f8f5",
+        "tonalRamp": ["#20211f", "#363732", "#54554f", "#74756d", "#95968d", "#b8b9b1", "#ddded6", "#f8f8f5"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "White Surface",
+        "canonical": "#ffffff",
+        "tonalRamp": ["#1f1f1f", "#3a3a3a", "#5c5c5c", "#7f7f7f", "#a3a3a3", "#c8c8c8", "#eeeeee", "#ffffff"]
+      },
+      "surface-warm": {
+        "role": "neutral",
+        "displayName": "Warm Source Surface",
+        "canonical": "#fff4e6",
+        "tonalRamp": ["#251b10", "#49331d", "#724f2d", "#9b7044", "#c99564", "#e6bb82", "#ffe0b4", "#fff4e6"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#151914",
+        "tonalRamp": ["#151914", "#2f352d", "#4c5448", "#6b7567", "#8d9788", "#b0b9ab", "#d6ddd1", "#f5f8f1"]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted Text",
+        "canonical": "#626c62",
+        "tonalRamp": ["#151914", "#293028", "#40493e", "#596356", "#737f70", "#969f91", "#c0c7ba", "#eef4ea"]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Divider Line",
+        "canonical": "#ddded6",
+        "tonalRamp": ["#242520", "#3e4038", "#5e6056", "#808278", "#a4a69c", "#c7c9c0", "#ddded6", "#f4f5ee"]
+      },
+      "action-orange": {
+        "role": "primary",
+        "displayName": "Action Orange",
+        "canonical": "#ff8a00",
+        "tonalRamp": ["#2a1200", "#592600", "#8a3f00", "#bd5e00", "#e87b00", "#ff9f2f", "#ffc981", "#fff0d6"]
+      },
+      "verified-green": {
+        "role": "secondary",
+        "displayName": "Verified Green",
+        "canonical": "#137447",
+        "tonalRamp": ["#071b12", "#0b3522", "#105236", "#137447", "#28915f", "#56b083", "#95d1b3", "#eef4ea"]
+      },
+      "ai-purple": {
+        "role": "secondary",
+        "displayName": "AI Purple",
+        "canonical": "#6d3df7",
+        "tonalRamp": ["#13042f", "#26075d", "#3e1191", "#5621c8", "#6d3df7", "#9371ff", "#c4b4ff", "#eee9ff"]
+      },
+      "editor-dark": {
+        "role": "neutral",
+        "displayName": "Editor Dark",
+        "canonical": "#171915",
+        "tonalRamp": ["#171915", "#24271f", "#30342c", "#4a5043", "#686f5f", "#8a927f", "#b8c0ad", "#eef1e7"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Page-level headings and landing shell only."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Wizard prompts, editor titles, and slide headings."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Study copy, helper text, narration, and slide notes."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Navigation, controls, chips, and compact metadata."
+      }
+    },
+    "shadows": [
+      {
+        "name": "preview-object",
+        "value": "0 18px 42px rgba(21, 25, 20, 0.16)",
+        "purpose": "Large preview object only; ordinary UI remains flat."
+      },
+      {
+        "name": "slide-inset-frame",
+        "value": "inset 0 0 0 1px color-mix(in srgb, var(--slide-line) 88%, transparent)",
+        "purpose": "Generated slide theme frames."
+      }
+    ],
+    "motion": [
+      {
+        "name": "loading-band",
+        "value": "1.2s ease-in-out infinite alternate",
+        "purpose": "Progress feedback for script and generation waits."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "animation: none; width: 100%",
+        "purpose": "Static loading band for users who prefer reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "workspace-collapse",
+        "value": "1000px"
+      },
+      {
+        "name": "compact-mobile",
+        "value": "560px"
+      },
+      {
+        "name": "short-new-project",
+        "value": "max-height: 720px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary action control for create, next, generate, and export.",
+      "html": "<button class=\"ds-btn-primary\">Generate script</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; border: 0; border-radius: 8px; padding: 0 14px; background: #ff8a00; color: #151914; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 14px; font-weight: 850; cursor: pointer; transition: background-color 180ms ease, transform 180ms ease; } .ds-btn-primary:hover { background: #f07f00; } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:focus-visible { outline: 3px solid color-mix(in srgb, #ff8a00 38%, #151914); outline-offset: 2px; } .ds-btn-primary:disabled { cursor: not-allowed; opacity: 0.56; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary action control for back, refresh, pricing, and dashboard.",
+      "html": "<button class=\"ds-btn-ghost\">Refresh</button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; border: 1px solid #ddded6; border-radius: 8px; padding: 0 14px; background: #ffffff; color: #151914; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 14px; font-weight: 850; cursor: pointer; transition: border-color 180ms ease, background-color 180ms ease, transform 180ms ease; } .ds-btn-ghost:hover { border-color: #c8cabe; background: #fffefb; } .ds-btn-ghost:active { transform: translateY(1px); } .ds-btn-ghost:focus-visible { outline: 3px solid color-mix(in srgb, #ff8a00 34%, transparent); outline-offset: 2px; } .ds-btn-ghost:disabled { cursor: not-allowed; opacity: 0.56; }"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "refersTo": "status-chip",
+      "description": "Compact confidence/state marker for project and export status.",
+      "html": "<span class=\"ds-status-chip\">ready</span>",
+      "css": ".ds-status-chip { display: inline-flex; width: fit-content; border-radius: 999px; padding: 5px 9px; background: #eef4ea; color: #137447; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 12px; font-weight: 850; line-height: 1.2; }"
+    },
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Flat bordered container for forms, empty states, export panels, and project states.",
+      "html": "<section class=\"ds-panel\"><span class=\"ds-status-chip\">draft</span><h2>New presentation</h2><p>Enter a topic, choose slide count, and add materials when useful.</p></section>",
+      "css": ".ds-panel { display: grid; gap: 14px; border: 1px solid #ddded6; border-radius: 8px; background: #ffffff; color: #151914; padding: 24px; font-family: Inter, ui-sans-serif, system-ui, sans-serif; } .ds-panel h2 { margin: 0; font-size: 26px; line-height: 1.1; font-weight: 850; letter-spacing: 0; } .ds-panel p { margin: 0; color: #626c62; font-size: 16px; line-height: 1.55; } .ds-status-chip { display: inline-flex; width: fit-content; border-radius: 999px; padding: 5px 9px; background: #eef4ea; color: #137447; font-size: 12px; font-weight: 850; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Study prompt, notes, and script editing field.",
+      "html": "<label class=\"ds-field\">Presentation topic<textarea class=\"ds-textarea\" placeholder=\"For example: AI in education\"></textarea></label>",
+      "css": ".ds-field { display: grid; gap: 7px; color: #343b34; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 14px; font-weight: 800; } .ds-textarea { width: 100%; min-height: 150px; border: 1px solid #ddded6; border-radius: 8px; background: #fffefb; padding: 12px; color: #151914; font: inherit; font-weight: 400; line-height: 1.5; resize: vertical; } .ds-textarea::placeholder { color: #626c62; opacity: 1; } .ds-textarea:focus-visible { outline: 3px solid color-mix(in srgb, #ff8a00 34%, transparent); outline-offset: 2px; border-color: #ff8a00; }"
+    },
+    {
+      "name": "Top Navigation",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "Sticky app shell navigation with brand, primary product links, and action controls.",
+      "html": "<header class=\"ds-topbar\"><a class=\"ds-brand\" href=\"#\"><span class=\"ds-mark\">S</span><span>StudyDeck AI</span></a><nav class=\"ds-nav\"><a href=\"#\">Projects</a><a href=\"#\">Create</a><a href=\"#\">Pricing</a></nav><button class=\"ds-btn-primary\">Start</button></header>",
+      "css": ".ds-topbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 32px; border-bottom: 1px solid #ddded6; background: rgba(248, 248, 245, 0.9); backdrop-filter: blur(12px); font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #151914; } .ds-brand, .ds-nav { display: flex; align-items: center; } .ds-brand { gap: 10px; color: inherit; text-decoration: none; font-weight: 900; } .ds-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; background: #ff8a00; color: #151914; } .ds-nav { gap: 18px; color: #626c62; font-size: 14px; font-weight: 750; } .ds-nav a { color: inherit; text-decoration: none; } .ds-nav a:hover { color: #151914; } .ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; border: 0; border-radius: 8px; padding: 0 14px; background: #ff8a00; color: #151914; font-weight: 850; }"
+    },
+    {
+      "name": "Wizard Step",
+      "kind": "chip",
+      "refersTo": "wizard-step",
+      "description": "Prompt-to-export progression marker.",
+      "html": "<div class=\"ds-wizard-steps\"><span class=\"ds-wizard-step ds-wizard-step-active\"><span>1</span>Topic</span><span class=\"ds-wizard-step\"><span>2</span>Slides</span><span class=\"ds-wizard-step\"><span>3</span>Materials</span></div>",
+      "css": ".ds-wizard-steps { display: flex; flex-wrap: wrap; gap: 8px; font-family: Inter, ui-sans-serif, system-ui, sans-serif; } .ds-wizard-step { display: inline-flex; align-items: center; gap: 8px; border: 1px solid #ddded6; border-radius: 999px; padding: 7px 11px; background: #ffffff; color: #626c62; font-size: 13px; font-weight: 850; } .ds-wizard-step span { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; background: #eef4ea; color: #137447; } .ds-wizard-step-active { border-color: color-mix(in srgb, #ff8a00 48%, #ddded6); color: #151914; } .ds-wizard-step-active span { background: #ff8a00; color: #151914; }"
+    },
+    {
+      "name": "Slide Canvas",
+      "kind": "custom",
+      "refersTo": "slide-canvas",
+      "description": "16:9 generated slide preview aligned with export rendering.",
+      "html": "<article class=\"ds-slide-canvas\"><div class=\"ds-slide-content\"><h2>Photosynthesis in three stages</h2><p>Plants convert light, water, and carbon dioxide into energy-rich sugars.</p><div class=\"ds-mini-row\"><span>Light</span><span>Water</span><span>Glucose</span></div></div></article>",
+      "css": ".ds-slide-canvas { position: relative; display: flex; align-items: center; justify-content: center; aspect-ratio: 16 / 9; width: min(100%, 760px); border: 1px solid #ddd7c9; border-radius: 8px; background: #fffdf8; color: #17201b; overflow: hidden; padding: 34px; font-family: Inter, ui-sans-serif, system-ui, sans-serif; } .ds-slide-canvas::before { content: \"\"; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at 14% 22%, color-mix(in srgb, #ff8a00 22%, transparent), transparent 24%), linear-gradient(180deg, transparent 0 68%, color-mix(in srgb, #fff4e6 64%, transparent) 68%); } .ds-slide-content { position: relative; z-index: 1; display: grid; gap: 16px; max-width: 620px; text-align: center; } .ds-slide-content h2 { margin: 0; color: #17201b; font-size: 42px; line-height: 1.04; font-weight: 900; letter-spacing: 0; text-wrap: balance; } .ds-slide-content p { margin: 0; color: #3f463d; font-size: 21px; line-height: 1.42; } .ds-mini-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; } .ds-mini-row span { border-radius: 999px; padding: 7px 10px; background: color-mix(in srgb, #ff8a00 14%, #ffffff); color: #17201b; font-size: 12px; font-weight: 850; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Guided Study Desk",
+    "overview": "StudyDeck AI should feel like a clean, energetic workspace for a student under deadline: the next action is obvious, the source trail stays visible, and the interface helps the user prepare rather than pretending the work is magically done. The system is familiar product UI first, with just enough color to make workflow state legible.\n\nThe current interface is restrained and task-led. Warm neutral backgrounds reduce glare, orange carries primary action, green marks verified progress and status, and purple is reserved for AI/editor power inside generated presentation material. The editor is deliberately darker than the rest of the app so slide work feels like a focused canvas.\n\nIt explicitly rejects generic green SaaS styling, childish classroom cartoons, decorative AI gradients, heavy glassmorphism, oversized marketing hero layouts, and interfaces that hide source quality behind polished slides.",
+    "keyCharacteristics": [
+      "Workflow-first composition: prompt, files, plan, editor, script, export.",
+      "Single-family typography with heavy, readable labels and headings.",
+      "Orange action language, green confidence language, purple AI/editor language.",
+      "Mostly flat surfaces with borders; shadow appears only for the dark preview object.",
+      "Compact 8px geometry across cards, controls, editor panels, and slide primitives."
+    ],
+    "rules": [
+      {
+        "name": "The Task Color Rule",
+        "body": "Orange, green, and purple are not decoration. Each color must communicate action, confidence, or AI/editor power.",
+        "section": "colors"
+      },
+      {
+        "name": "The Warm Neutral Ceiling",
+        "body": "The app may be warm, but it must not become a cream SaaS page. Neutral backgrounds stay low-chroma and subordinate to the workflow.",
+        "section": "colors"
+      },
+      {
+        "name": "The Product Sans Rule",
+        "body": "Do not introduce display fonts into controls, labels, data, editor rails, or generated slide chrome. Inter carries the product.",
+        "section": "typography"
+      },
+      {
+        "name": "The Russian Label Rule",
+        "body": "Buttons, chips, and navigation must be sized for long Russian labels without clipping. Use wrapping or wider containers before reducing legibility.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Workflow Rule",
+        "body": "Panels, cards, inputs, rails, and lists are bordered or tonally layered at rest. Do not add ambient shadows to ordinary UI.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do start every screen from the student's next action: create, choose slides, add materials, edit script, review slide, export.",
+      "Do use orange only for action and active progress.",
+      "Do use green only for verified, completed, ready, or trustworthy states.",
+      "Do reserve purple for AI/editor power and generated presentation accents.",
+      "Do keep ordinary panels flat with 1px borders and 8px corners.",
+      "Do keep source confidence, speaker preparation, and export readiness visible in workflow surfaces.",
+      "Do test long Russian labels and small mobile widths before shipping any new control."
+    ],
+    "donts": [
+      "Don't use generic green SaaS styling.",
+      "Don't add childish classroom cartoons.",
+      "Don't add decorative AI gradients.",
+      "Don't use heavy glassmorphism.",
+      "Don't build oversized marketing hero layouts for authenticated product flows.",
+      "Don't hide source quality behind polished slides.",
+      "Don't add ambient shadows to cards, panels, or buttons.",
+      "Don't use side-stripe borders, gradient text, or repeated identical icon-card grids.",
+      "Don't introduce display fonts into controls, labels, data, or editor panels."
+    ]
+  }
+}

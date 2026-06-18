@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { createProjectInputSchema, planLimits, presentationSchema, resolvePresentationTheme } from "./index";
+import {
+  createProjectInputSchema,
+  generatePresentationInputSchema,
+  generationJobKindSchema,
+  planLimits,
+  presentationSchema,
+  projectStatusSchema,
+  resolvePresentationTheme,
+  updateNarrationInputSchema,
+} from "./index";
 
 describe("shared contracts", () => {
   it("validates project input limits", () => {
@@ -17,6 +26,21 @@ describe("shared contracts", () => {
 
   it("keeps free plan export limited to pdf", () => {
     expect(planLimits.free.exports).toEqual(["pdf"]);
+  });
+
+  it("accepts two-step generation statuses and job kinds", () => {
+    expect(projectStatusSchema.parse("script_queued")).toBe("script_queued");
+    expect(projectStatusSchema.parse("script_generating")).toBe("script_generating");
+    expect(projectStatusSchema.parse("script_ready")).toBe("script_ready");
+    expect(generationJobKindSchema.parse("narration")).toBe("narration");
+    expect(generationJobKindSchema.parse("presentation")).toBe("presentation");
+  });
+
+  it("validates editable speech drafts for final generation", () => {
+    const speechDraft = "Слайд 1: Введение\nЭто достаточно длинный текст выступления для проверки сохранения.";
+    expect(updateNarrationInputSchema.parse({ speechDraft }).speechDraft).toBe(speechDraft);
+    expect(generatePresentationInputSchema.parse({ speechDraft }).speechDraft).toBe(speechDraft);
+    expect(generatePresentationInputSchema.parse({})).toEqual({});
   });
 
   it("requires a structured presentation document", () => {

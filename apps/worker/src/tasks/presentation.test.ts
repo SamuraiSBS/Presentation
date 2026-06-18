@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { buildGenerationPrompt, generatePresentation, normalizeNarrativePlan, selectAiProviders } from "./presentation.js";
+import {
+  buildGenerationPrompt,
+  generateNarrationDraft,
+  generatePresentation,
+  generatePresentationFromNarration,
+  normalizeNarrativePlan,
+  selectAiProviders,
+} from "./presentation.js";
 
 const originalEnv = { ...process.env };
 const forbiddenNarrationFragments = [
@@ -218,6 +225,68 @@ describe("normalizeNarrativePlan", () => {
 });
 
 describe("generatePresentation fallback behavior", () => {
+  it("creates an editable narration draft before deck generation", async () => {
+    process.env.AI_PROVIDER = "";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "";
+    process.env.YANDEX_FOLDER_ID = "";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "true";
+
+    const draft = await generateNarrationDraft(
+      {
+        id: "project-script",
+        title: "Экология города",
+        prompt: "Сделай презентацию про экологию города",
+        scenario: "school_report",
+        level: "8-11 класс",
+        mode: "with_sources",
+        slideCount: 4,
+      },
+      [{ id: "src-1", label: "Prompt", type: "PROMPT", excerpt: "Городская экология зависит от воздуха, транспорта и поведения жителей." }],
+    );
+
+    expect(draft.generationMode).toBe("demo");
+    expect(draft.text.match(/Слайд\s+\d+\s*:/g)).toHaveLength(4);
+    expect(draft.narrativePlan).toHaveLength(4);
+  });
+
+  it("builds the final presentation from the accepted narration text", async () => {
+    process.env.AI_PROVIDER = "";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "";
+    process.env.YANDEX_FOLDER_ID = "";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "true";
+
+    const acceptedNarration = [
+      "Слайд 1: Городской воздух",
+      "Городской воздух меняется из-за транспорта и плотной застройки. Машины создают выхлопы, которые особенно заметны рядом с крупными дорогами. Зеленые зоны помогают удерживать пыль и делают улицы комфортнее. Жителям важно понимать, что качество воздуха зависит не только от заводов. Поэтому экологичный транспорт становится частью повседневной заботы о городе.",
+      "",
+      "Слайд 2: Практичный вывод",
+      "Экология города складывается из решений власти, бизнеса и самих жителей. Если люди чаще выбирают общественный транспорт, нагрузка на воздух становится меньше. Раздельный сбор помогает не превращать полезные материалы в лишний мусор. Небольшие привычки работают сильнее, когда их поддерживает много людей. Главный вывод в том, что чистый город начинается с понятных ежедневных действий.",
+    ].join("\n");
+
+    const presentation = await generatePresentationFromNarration(
+      {
+        id: "project-script",
+        title: "Экология города",
+        prompt: "Сделай презентацию про экологию города",
+        scenario: "school_report",
+        level: "8-11 класс",
+        mode: "with_sources",
+        slideCount: 2,
+      },
+      [{ id: "src-1", label: "Prompt", type: "PROMPT", excerpt: "Городская экология зависит от воздуха, транспорта и поведения жителей." }],
+      acceptedNarration,
+    );
+
+    expect(presentation.generatedText).toContain("Городской воздух меняется из-за транспорта");
+    expect(presentation.slides[0].speakerNotes).toContain("Городской воздух меняется из-за транспорта");
+    expect(presentation.speechScript[0].text).toContain("Городской воздух меняется из-за транспорта");
+    expect(presentation.slides).toHaveLength(2);
+  });
+
   it("stores a deterministic dark theme for heavy topics in demo generation", async () => {
     process.env.AI_PROVIDER = "";
     process.env.OPENAI_API_KEY = "";

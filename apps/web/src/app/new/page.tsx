@@ -7,9 +7,9 @@ export default async function NewProjectPage() {
   await requireUserId();
 
   return (
-    <main className="page">
+    <main className="page new-page">
       <h1 className="page-title" style={{ fontSize: 52 }}>Новая презентация</h1>
-      <p className="lead">Опишите задачу, выберите учебный сценарий и прикрепите материалы. Генерация уйдет в очередь worker.</p>
+      <p className="lead">Введите тему, выберите количество слайдов и при желании добавьте материалы. Сначала StudyDeck подготовит текст выступления, который можно отредактировать перед созданием слайдов.</p>
       <NewProjectForm />
     </main>
   );

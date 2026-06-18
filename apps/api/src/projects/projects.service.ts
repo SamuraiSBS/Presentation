@@ -3,7 +3,9 @@ import { InjectQueue } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import {
   type CreateProjectInput,
+  type GeneratePresentationInput,
   type PresentationDocument,
+  type UpdateNarrationInput,
   type UpdateSlideInput,
   planLimits,
   presentationSchema,
@@ -60,8 +62,45 @@ export class ProjectsService {
     return project;
   }
 
-  async enqueueGeneration(userId: string, id: string) {
+  async enqueueNarration(userId: string, id: string) {
     const project = await this.getOwned(userId, id);
+    await this.prisma.project.update({ where: { id: project.id }, data: { status: "script_queued", error: null } });
+    const job = await this.prisma.generationJob.create({
+      data: { projectId: project.id, kind: "narration", status: "queued" },
+    });
+    const queueJob = await this.generationQueue.add("generate-narration", { projectId: project.id, userId }, { attempts: 2 });
+
+    await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
+
+    return { projectId: project.id, jobId: job.id, queueJobId: queueJob.id, status: "script_queued" };
+  }
+
+  async updateNarrationDraft(userId: string, id: string, input: UpdateNarrationInput) {
+    const project = await this.getOwned(userId, id);
+    const nextStatus = project.status === "ready" ? project.status : "script_ready";
+
+    return this.prisma.project.update({
+      where: { id: project.id },
+      data: {
+        speechDraft: input.speechDraft,
+        speechDraftUpdatedAt: new Date(),
+        status: nextStatus,
+        error: null,
+      },
+      include: { sources: true, presentation: true, jobs: { orderBy: { createdAt: "desc" }, take: 1 }, exports: true },
+    });
+  }
+
+  async enqueueGeneration(userId: string, id: string, input: GeneratePresentationInput = {}) {
+    let project = await this.getOwned(userId, id);
+    if (input.speechDraft !== undefined) {
+      project = await this.updateNarrationDraft(userId, id, { speechDraft: input.speechDraft });
+    }
+
+    if (!project.speechDraft?.trim()) {
+      throw new BadRequestException("Accept or save the speech text before generating the presentation");
+    }
+
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
     const period = new Date().toISOString().slice(0, 7);
     const usage = await this.prisma.usageCounter.upsert({
@@ -76,7 +115,9 @@ export class ProjectsService {
     }
 
     await this.prisma.project.update({ where: { id: project.id }, data: { status: "queued", error: null } });
-    const job = await this.prisma.generationJob.create({ data: { projectId: project.id, status: "queued" } });
+    const job = await this.prisma.generationJob.create({
+      data: { projectId: project.id, kind: "presentation", status: "queued" },
+    });
     const queueJob = await this.generationQueue.add("generate-presentation", { projectId: project.id, userId }, { attempts: 2 });
 
     await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });

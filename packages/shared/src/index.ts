@@ -15,6 +15,9 @@ export type Scenario = z.infer<typeof scenarioSchema>;
 export const projectStatusSchema = z.enum([
   "draft",
   "uploading",
+  "script_queued",
+  "script_generating",
+  "script_ready",
   "queued",
   "generating",
   "ready",
@@ -24,6 +27,9 @@ export type ProjectStatus = z.infer<typeof projectStatusSchema>;
 
 export const jobStatusSchema = z.enum(["queued", "active", "completed", "failed"]);
 export type JobStatus = z.infer<typeof jobStatusSchema>;
+
+export const generationJobKindSchema = z.enum(["narration", "presentation"]);
+export type GenerationJobKind = z.infer<typeof generationJobKindSchema>;
 
 export const sourceSchema = z.object({
   id: z.string(),
@@ -533,6 +539,14 @@ export const updateSlideInputSchema = z.object({
   speakerNotes: z.string().max(5000).optional(),
 });
 export type UpdateSlideInput = z.infer<typeof updateSlideInputSchema>;
+
+export const updateNarrationInputSchema = z.object({
+  speechDraft: z.string().min(50).max(60000),
+});
+export type UpdateNarrationInput = z.infer<typeof updateNarrationInputSchema>;
+
+export const generatePresentationInputSchema = updateNarrationInputSchema.partial();
+export type GeneratePresentationInput = z.infer<typeof generatePresentationInputSchema>;
 
 export const exportTypeSchema = z.enum(["pdf", "pptx"]);
 export type ExportType = z.infer<typeof exportTypeSchema>;
