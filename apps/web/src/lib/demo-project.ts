@@ -1,4 +1,4 @@
-import type { PresentationDocument, SlideBlock } from "@studydeck/shared";
+import { ensureEditableCanvas, type PresentationDocument, type SlideBlock, type SlideCanvas } from "@studydeck/shared";
 
 const source = {
   id: "src-demo",
@@ -91,7 +91,7 @@ const slides: any[] = [
   },
 ];
 
-export const demoPresentation: PresentationDocument = {
+export const demoPresentation: PresentationDocument = ensureEditableCanvas({
   id: "presentation-demo",
   title: "Временный сценарий презентации",
   scenario: "Школьный доклад",
@@ -112,7 +112,7 @@ export const demoPresentation: PresentationDocument = {
       .join(" ")}`,
   })),
   slides: slides as PresentationDocument["slides"],
-};
+});
 
 export const demoProject = {
   id: "demo",
@@ -128,23 +128,24 @@ export const demoProject = {
   },
 };
 
-export function updateDemoSlide(slideId: string, input: { title?: string; blocks?: SlideBlock[]; speakerNotes?: string }) {
+export function updateDemoSlide(slideId: string, input: { title?: string; blocks?: SlideBlock[]; canvas?: SlideCanvas; speakerNotes?: string }) {
   const nextSlides = demoPresentation.slides.map((slide) =>
     slide.id === slideId
       ? {
           ...slide,
           title: input.title ?? slide.title,
           blocks: input.blocks ?? slide.blocks,
+          canvas: input.canvas ?? slide.canvas,
           speakerNotes: input.speakerNotes ?? slide.speakerNotes,
         }
       : slide,
   );
 
-  const nextPresentation: PresentationDocument = {
+  const nextPresentation: PresentationDocument = ensureEditableCanvas({
     ...demoPresentation,
     outline: nextSlides.map((slide) => slide.title),
     slides: nextSlides as PresentationDocument["slides"],
-  };
+  });
 
   return {
     ...demoProject,

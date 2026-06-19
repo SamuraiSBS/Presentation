@@ -1,6 +1,19 @@
 import type { Job } from "bullmq";
 import { createRequire } from "node:module";
-import { presentationSchema, resolvePresentationTheme, type PresentationTheme } from "@studydeck/shared";
+import { existsSync } from "node:fs";
+import {
+  ensureEditableCanvas,
+  hasCustomSlideCanvas,
+  presentationSchema,
+  resolvePresentationTheme,
+  sortCanvasElements,
+  type CanvasElement,
+  type CanvasImageElement,
+  type CanvasShapeElement,
+  type CanvasTextElement,
+  type PresentationTheme,
+  type SlideCanvas,
+} from "@studydeck/shared";
 import { getPrisma } from "../prisma.js";
 import { putObjectBuffer, readObjectBuffer } from "../storage.js";
 
@@ -12,7 +25,7 @@ const PptxGenConstructor = require("pptxgenjs") as new () => {
   title: string;
   lang: string;
   theme: Record<string, unknown>;
-  ShapeType: { rect: string; roundRect: string };
+  ShapeType: Record<string, string>;
   defineLayout: (layout: { name: string; width: number; height: number }) => void;
   addSlide: () => any;
   write: (options: { outputType: "nodebuffer" }) => Promise<Buffer>;
@@ -41,7 +54,7 @@ export async function handleExportJob(job: Job<{ exportId: string; projectId: st
     const presentationRow = await prisma.presentation.findUniqueOrThrow({ where: { projectId } });
     const presentation = presentationSchema.parse(presentationRow.document);
     const key = `projects/${projectId}/exports/${exportId}.${type}`;
-    const buffer = type === "pptx" ? await createPptx(presentation) : createPdfPlaceholder(presentation);
+    const buffer = type === "pptx" ? await createPptx(presentation) : await createPdf(presentation);
     const contentType =
       type === "pptx"
         ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -74,6 +87,12 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
   for (const item of presentation.slides) {
     const slide = pptx.addSlide();
     slide.background = { color: theme.pptx.background };
+    if (item.canvas && hasCustomSlideCanvas(item, theme)) {
+      await renderCanvasSlide(pptx, slide, item.canvas, theme);
+      slide.addNotes(item.speakerNotes);
+      continue;
+    }
+
     const imageData = await readSlideImageData(item);
 
     if (imageData && (item.slideKind === "title" || item.slideKind === "section")) {
@@ -148,6 +167,120 @@ function renderContentSlide(
   if (layout === "myth-fact") return renderThreePanelSlide(pptx, slide, item, ["Миф", "Факт"], theme);
   if (layout === "metrics") return renderMetricsSlide(pptx, slide, item, theme);
   renderDefaultContentSlide(slide, item, imageData, theme);
+}
+
+async function renderCanvasSlide(
+  pptx: InstanceType<typeof PptxGenConstructor>,
+  slide: any,
+  canvas: SlideCanvas,
+  theme: ExportTheme,
+) {
+  slide.background = { color: pptxColor(canvas.background || theme.colors.background) };
+  for (const element of sortCanvasElements(canvas.elements)) {
+    if (element.opacity <= 0) continue;
+    if (element.type === "text") {
+      renderCanvasText(slide, element, theme);
+      continue;
+    }
+    if (element.type === "shape") {
+      renderCanvasShape(pptx, slide, element);
+      continue;
+    }
+    if (element.type === "image") {
+      await renderCanvasImage(slide, element);
+    }
+  }
+}
+
+function renderCanvasText(slide: any, element: CanvasTextElement, theme: ExportTheme) {
+  const runs = element.runs.length
+    ? element.runs.map((run) => ({
+        text: run.text,
+        options: {
+          bold: run.bold ?? element.bold,
+          italic: run.italic ?? element.italic,
+          underline: run.underline ?? element.underline,
+          color: pptxColor(run.color || element.color),
+        },
+      }))
+    : element.text;
+
+  slide.addText(runs, {
+    ...canvasBox(element),
+    fontFace: element.fontFamily || theme.fonts.body,
+    fontSize: element.fontSize,
+    bold: element.bold,
+    italic: element.italic,
+    underline: element.underline,
+    color: pptxColor(element.color),
+    align: element.align,
+    valign: "top",
+    rotate: element.rotation,
+    fit: "shrink",
+    margin: 0.02,
+  });
+}
+
+function renderCanvasShape(
+  pptx: InstanceType<typeof PptxGenConstructor>,
+  slide: any,
+  element: CanvasShapeElement,
+) {
+  const shapeType =
+    element.shape === "ellipse"
+      ? pptx.ShapeType.ellipse
+      : element.shape === "line"
+        ? pptx.ShapeType.line
+        : element.shape === "roundRect"
+          ? pptx.ShapeType.roundRect
+          : pptx.ShapeType.rect;
+
+  slide.addShape(shapeType, {
+    ...canvasBox(element),
+    rotate: element.rotation,
+    fill: element.shape === "line" ? { transparency: 100 } : { color: pptxColor(element.fill), transparency: opacityToTransparency(element.opacity) },
+    line: {
+      color: pptxColor(element.stroke),
+      width: element.strokeWidth,
+      transparency: opacityToTransparency(element.opacity),
+    },
+  });
+}
+
+async function renderCanvasImage(slide: any, element: CanvasImageElement) {
+  const data = await imageDataForCanvasElement(element);
+  if (!data) return;
+  slide.addImage({
+    data,
+    ...canvasBox(element),
+    rotate: element.rotation,
+    transparency: opacityToTransparency(element.opacity),
+  });
+}
+
+async function imageDataForCanvasElement(element: CanvasImageElement) {
+  if (!element.objectKey) return null;
+  try {
+    const buffer = await readObjectBuffer(element.objectKey);
+    const contentType = element.contentType || contentTypeFromObjectKey(element.objectKey);
+    return `data:${contentType};base64,${buffer.toString("base64")}`;
+  } catch (error) {
+    console.warn(`Could not read canvas image ${element.objectKey}:`, error);
+    return null;
+  }
+}
+
+function canvasBox(element: Pick<CanvasElement, "x" | "y" | "w" | "h">) {
+  return {
+    x: element.x / 96,
+    y: element.y / 96,
+    w: element.w / 96,
+    h: element.h / 96,
+  };
+}
+
+function opacityToTransparency(opacity: number) {
+  return Math.max(0, Math.min(100, Math.round((1 - opacity) * 100)));
 }
 
 function renderSlideTitle(slide: any, title: string, theme: ExportTheme, options: { centered?: boolean; width?: number; fontSize?: number } = {}) {
@@ -494,26 +627,297 @@ function renderDefaultContentSlide(slide: any, item: ReturnType<typeof presentat
   }
 }
 
-function createPdfPlaceholder(presentation: ReturnType<typeof presentationSchema.parse>) {
-  const text = `%PDF-1.4
-1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
-2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj
-3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R>>endobj
-4 0 obj<</Length 72>>stream
-BT /F1 18 Tf 72 720 Td (${escapePdf(presentation.title)} - PDF export queued) Tj ET
-endstream endobj
-xref
-0 5
-0000000000 65535 f 
-0000000009 00000 n 
-0000000058 00000 n 
-0000000115 00000 n 
-0000000204 00000 n 
-trailer<</Size 5/Root 1 0 R>>
-startxref
-326
-%%EOF`;
-  return Buffer.from(text, "utf8");
+export async function createPdf(presentation: ReturnType<typeof presentationSchema.parse>) {
+  const document = ensureEditableCanvas(presentation);
+  const html = await renderPdfHtml(document);
+  const puppeteer = await import("puppeteer-core");
+  const browser = await puppeteer.default.launch({
+    executablePath: chromiumExecutablePath(),
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+    headless: true,
+  });
+
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 720, deviceScaleFactor: 1 });
+    await page.setContent(html, { waitUntil: "domcontentloaded" });
+    return Buffer.from(
+      await page.pdf({
+        printBackground: true,
+        width: "1280px",
+        height: "720px",
+        margin: { top: 0, right: 0, bottom: 0, left: 0 },
+        preferCSSPageSize: true,
+      }),
+    );
+  } finally {
+    await browser.close();
+  }
+}
+
+async function renderPdfHtml(presentation: ReturnType<typeof presentationSchema.parse>) {
+  const theme = exportTheme(presentation);
+  const slides = await Promise.all(
+    presentation.slides.map(async (slide) => {
+      if (slide.canvas && hasCustomSlideCanvas(slide, theme)) {
+        const elements = await Promise.all(sortCanvasElements(slide.canvas.elements).map((element) => renderPdfElement(element)));
+        return `<section class="slide canvas-slide" style="background:${escapeHtml(slide.canvas.background)}">${elements.join("")}</section>`;
+      }
+      return renderPdfTemplateSlide(slide, theme);
+    }),
+  );
+
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  @page { size: 1280px 720px; margin: 0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #000; font-family: Arial, "Noto Sans", "DejaVu Sans", sans-serif; }
+  .slide { position: relative; width: 1280px; height: 720px; overflow: hidden; page-break-after: always; }
+  .slide:last-child { page-break-after: auto; }
+  .template-slide { display: grid; place-items: center; padding: 54px; color: var(--slide-text); font-family: var(--slide-body-font); }
+  .template-slide::before { content: ""; position: absolute; inset: 0; pointer-events: none; }
+  .template-slide[data-bg="title"]::before { background: linear-gradient(90deg, color-mix(in srgb, var(--slide-accent) 18%, transparent) 0 32%, transparent 32%), radial-gradient(circle at 82% 22%, color-mix(in srgb, var(--slide-accent-alt) 26%, transparent), transparent 28%); }
+  .template-slide[data-bg="section"]::before { background: linear-gradient(135deg, transparent 0 46%, color-mix(in srgb, var(--slide-accent) 14%, transparent) 46% 54%, transparent 54%), linear-gradient(90deg, color-mix(in srgb, var(--slide-surface-alt) 58%, transparent) 0 18%, transparent 18%); }
+  .template-slide[data-bg="summary"]::before { background: linear-gradient(180deg, transparent 0 76%, color-mix(in srgb, var(--slide-surface-alt) 70%, transparent) 76%); }
+  .template-slide[data-bg="v1"]::before { background: linear-gradient(90deg, transparent 0 62%, color-mix(in srgb, var(--slide-surface-alt) 68%, transparent) 62%); }
+  .template-slide[data-bg="v4"]::before { background: linear-gradient(105deg, color-mix(in srgb, var(--slide-surface-alt) 78%, transparent) 0 28%, transparent 28% 72%, color-mix(in srgb, var(--slide-accent-alt) 12%, transparent) 72%); }
+  .template-content { position: relative; z-index: 1; width: 100%; max-width: 930px; display: grid; gap: 20px; }
+  .template-title { margin: 0; color: var(--slide-text); font-family: var(--slide-heading-font); font-size: 42px; line-height: 1.05; text-align: left; }
+  .template-title.center { text-align: center; font-size: 58px; }
+  .template-body { margin: 0; color: var(--slide-muted); font-size: 25px; line-height: 1.35; }
+  .template-body.center { text-align: center; max-width: 860px; margin: 0 auto; }
+  .template-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(330px, 0.9fr); gap: 24px; align-items: center; width: 100%; max-width: 1080px; }
+  .template-grid.reverse { grid-template-columns: minmax(330px, 0.9fr) minmax(0, 1fr); }
+  .template-grid.reverse .template-copy { order: 2; }
+  .template-grid.reverse .template-image { order: 1; }
+  .template-image { margin: 0; overflow: hidden; border-radius: 8px; background: var(--slide-surface); }
+  .template-image img { display: block; width: 100%; max-height: 430px; object-fit: contain; }
+  .template-image figcaption { padding: 7px 9px; color: var(--slide-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .template-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .template-card { border: 1px solid var(--slide-line); border-radius: 8px; padding: 16px; background: var(--slide-surface); color: var(--slide-muted); font-size: 18px; line-height: 1.35; }
+  .template-card strong, .template-label { display: block; color: var(--slide-text); font-family: var(--slide-heading-font); margin-bottom: 8px; }
+  .template-list { margin: 0; padding-left: 24px; color: var(--slide-muted); font-size: 22px; line-height: 1.38; }
+  .template-list li { margin-bottom: 10px; }
+  .template-chips { display: flex; flex-wrap: wrap; gap: 9px; }
+  .template-chips span { border-radius: 999px; padding: 8px 12px; background: color-mix(in srgb, var(--slide-accent) 14%, var(--slide-surface)); color: var(--slide-text); font-size: 14px; font-weight: 700; }
+  .template-quote { margin: 0; color: var(--slide-text); font-family: var(--slide-heading-font); font-size: 42px; line-height: 1.1; font-weight: 800; text-align: center; }
+  .template-definition { border: 1px solid var(--slide-line); border-radius: 8px; padding: 28px; background: var(--slide-surface-alt); }
+  .template-definition strong { display: block; color: var(--slide-text); font-family: var(--slide-heading-font); font-size: 36px; margin-bottom: 12px; }
+  .template-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .template-comparison > strong { border-radius: 8px; padding: 12px; background: var(--slide-text); color: var(--slide-bg); }
+  .template-metric strong { color: var(--slide-accent-alt); font-size: 36px; }
+  .element { position: absolute; transform-origin: center; overflow: hidden; }
+  .text { white-space: pre-wrap; overflow: hidden; }
+  .image { width: 100%; height: 100%; display: block; }
+  .shape { width: 100%; height: 100%; }
+</style>
+</head>
+<body>${slides.join("")}</body>
+</html>`;
+}
+
+async function renderPdfTemplateSlide(slide: ReturnType<typeof presentationSchema.parse>["slides"][number], theme: ExportTheme) {
+  const image = await pdfSlideImageFigure(slide);
+  const hasImage = Boolean(image);
+  const vars = pdfThemeVars(theme);
+  const bg = slideBackgroundVariant(slide);
+  const content = await pdfTemplateContent(slide, image);
+  return `<section class="slide template-slide" data-bg="${escapeHtml(bg)}" style="${vars}">${content}</section>`;
+}
+
+async function pdfTemplateContent(slide: ReturnType<typeof presentationSchema.parse>["slides"][number], imageFigure: string) {
+  if (slide.slideKind === "title" || slide.slideKind === "section") {
+    const imageStyle = slide.visual.image?.url ? ` style="background-image:linear-gradient(color-mix(in srgb, var(--slide-bg) 90%, transparent), color-mix(in srgb, var(--slide-bg) 94%, transparent)),url('${escapeHtml(slide.visual.image.url)}');background-position:center;background-size:contain;background-repeat:no-repeat;border-radius:8px;padding:56px"` : "";
+    return `<div class="template-content"${imageStyle}><h1 class="template-title center">${escapeHtml(slide.title)}</h1>${paragraph(slide.thesis || slideBodyText(slide), "template-body center")}${chips(slide.bullets.slice(0, 3))}</div>`;
+  }
+
+  const body = pdfLayoutBody(slide);
+  if (imageFigure && slide.layout !== "image-focus") {
+    const reverse = slide.order % 2 === 0 ? " reverse" : "";
+    return `<div class="template-grid${reverse}"><div class="template-copy template-content">${body}</div>${imageFigure}</div>`;
+  }
+  if (slide.layout === "image-focus" && imageFigure) {
+    return `<div class="template-grid"><div class="template-copy template-content">${title(slide)}${paragraph(slide.thesis || slideBodyText(slide), "template-body")}${chips(slide.bullets.slice(0, 3))}</div>${imageFigure}</div>`;
+  }
+  return `<div class="template-content">${body}</div>`;
+}
+
+function pdfLayoutBody(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  if (slide.slideKind === "summary") return `${title(slide)}${cards(sequenceItems(slide).slice(0, 6), "summary")}`;
+  if (slide.layout === "statement") return `${title(slide, "center")}${paragraph(slide.thesis || slideBodyText(slide), "template-quote")}${chips(slide.bullets.slice(0, 3))}`;
+  if (slide.layout === "quote") return `${title(slide)}<blockquote class="template-quote">${escapeHtml(quoteText(slide))}</blockquote>${paragraph(slide.bullets[0] || "", "template-body center")}`;
+  if (slide.layout === "definition") {
+    const definition = slide.definition || { term: slide.title, text: slide.thesis || slideBodyText(slide) };
+    return `${title(slide)}<div class="template-definition"><strong>${escapeHtml(definition.term)}</strong>${paragraph(definition.text, "template-body")}</div>${chips(slide.bullets.slice(0, 3))}`;
+  }
+  if (slide.layout === "timeline" || slide.layout === "process") return `${title(slide)}${paragraph(slide.thesis, "template-body")}${cards(sequenceItems(slide).slice(0, 5), "sequence")}`;
+  if (slide.layout === "comparison" || slide.layout === "two-column") return `${title(slide)}${comparison(slide)}`;
+  if (slide.layout === "case-study") return `${title(slide)}${cards(sequenceItems(slide).slice(0, 3), "case", ["Ситуация", "Действие", "Результат"])}`;
+  if (slide.layout === "question-answer") return `${title(slide, "center")}<div class="template-definition"><strong>Ответ</strong>${paragraph(slide.thesis || slideBodyText(slide), "template-body")}</div>${chips(slide.bullets.slice(0, 3))}`;
+  if (slide.layout === "myth-fact") return `${title(slide)}${cards(sequenceItems(slide).slice(0, 2), "myth", ["Миф", "Факт"])}`;
+  if (slide.layout === "metrics") return `${title(slide)}${cards(sequenceItems(slide).slice(0, 4), "metric")}`;
+  return `${title(slide)}${paragraph(slide.thesis, "template-body")}${bullets(slide.bullets.length ? slide.bullets : sequenceItems(slide).slice(0, 5))}`;
+}
+
+function title(slide: ReturnType<typeof presentationSchema.parse>["slides"][number], align = "") {
+  return `<h2 class="template-title${align ? ` ${align}` : ""}">${escapeHtml(slide.title)}</h2>`;
+}
+
+function paragraph(value: string, className: string) {
+  return value ? `<p class="${className}">${escapeHtml(value)}</p>` : "";
+}
+
+function bullets(items: string[]) {
+  return items.length ? `<ul class="template-list">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "";
+}
+
+function chips(items: string[]) {
+  return items.length ? `<div class="template-chips">${items.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : "";
+}
+
+function cards(items: string[], type: string, labels: string[] = []) {
+  return items.length
+    ? `<div class="template-cards">${items.map((item, index) => `<div class="template-card template-${type}"><strong>${escapeHtml(labels[index] || (type === "metric" ? metricLead(item, index) : String(index + 1)))}</strong>${escapeHtml(item)}</div>`).join("")}</div>`
+    : "";
+}
+
+function comparison(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  const rows = comparisonRows(slide).slice(0, 4);
+  return `<div class="template-comparison"><strong>${escapeHtml(slide.visual.leftLabel || "Первое")}</strong><strong>${escapeHtml(slide.visual.rightLabel || "Второе")}</strong>${rows.map((row) => `<div class="template-card">${escapeHtml(row.left || row.label)}</div><div class="template-card">${escapeHtml(row.right || row.label)}</div>`).join("")}</div>`;
+}
+
+async function pdfSlideImageFigure(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  const image = slide.visual.image;
+  if (!image) return "";
+  const src = await pdfSlideImageSrc(slide);
+  if (!src) return "";
+  const caption = image.sourceTitle || image.sourceUrl;
+  return `<figure class="template-image"><img src="${escapeHtml(src)}" alt="${escapeHtml(image.alt || "")}" />${caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ""}</figure>`;
+}
+
+async function pdfSlideImageSrc(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  const image = slide.visual.image;
+  if (!image) return "";
+  if (!image.objectKey) return image.url;
+  try {
+    const buffer = await readObjectBuffer(image.objectKey);
+    const contentType = image.contentType || contentTypeFromObjectKey(image.objectKey);
+    return `data:${contentType};base64,${buffer.toString("base64")}`;
+  } catch (error) {
+    console.warn(`Could not read PDF slide image ${image.objectKey}:`, error);
+    return image.url;
+  }
+}
+
+function pdfThemeVars(theme: ExportTheme) {
+  return [
+    `--slide-bg:${theme.colors.background}`,
+    `--slide-surface:${theme.colors.surface}`,
+    `--slide-surface-alt:${theme.colors.surfaceAlt}`,
+    `--slide-text:${theme.colors.text}`,
+    `--slide-muted:${theme.colors.muted}`,
+    `--slide-accent:${theme.colors.accent}`,
+    `--slide-accent-alt:${theme.colors.accentAlt}`,
+    `--slide-line:${theme.colors.line}`,
+    `--slide-heading-font:${cssString(theme.fonts.heading)}, Georgia, Arial, sans-serif`,
+    `--slide-body-font:${cssString(theme.fonts.body)}, Arial, sans-serif`,
+    `background:${theme.colors.background}`,
+  ].join(";");
+}
+
+async function renderPdfElement(element: CanvasElement) {
+  const style = [
+    `left:${element.x}px`,
+    `top:${element.y}px`,
+    `width:${element.w}px`,
+    `height:${element.h}px`,
+    `z-index:${element.zIndex}`,
+    `opacity:${element.opacity}`,
+    `transform:rotate(${element.rotation}deg)`,
+  ].join(";");
+
+  if (element.type === "text") {
+    return `<div class="element text" style="${style};${pdfTextStyle(element)}">${renderPdfText(element)}</div>`;
+  }
+
+  if (element.type === "shape") {
+    return `<div class="element" style="${style}"><div class="shape" style="${pdfShapeStyle(element)}"></div></div>`;
+  }
+
+  const src = await pdfImageSrc(element);
+  return src ? `<div class="element" style="${style}"><img class="image" src="${escapeHtml(src)}" alt="${escapeHtml(element.alt)}" style="object-fit:${element.fit}" /></div>` : "";
+}
+
+function renderPdfText(element: CanvasTextElement) {
+  if (!element.runs.length) return escapeHtml(element.text);
+  return element.runs
+    .map((run) => {
+      const style = [
+        (run.bold ?? element.bold) ? "font-weight:800" : "",
+        (run.italic ?? element.italic) ? "font-style:italic" : "",
+        (run.underline ?? element.underline) ? "text-decoration:underline" : "",
+        run.color ? `color:${run.color}` : "",
+      ]
+        .filter(Boolean)
+        .join(";");
+      return `<span style="${style}">${escapeHtml(run.text)}</span>`;
+    })
+    .join("");
+}
+
+function pdfTextStyle(element: CanvasTextElement) {
+  return [
+    `color:${element.color}`,
+    `font-family:${cssString(element.fontFamily)}, Arial, "Noto Sans", "DejaVu Sans", sans-serif`,
+    `font-size:${element.fontSize}px`,
+    `font-weight:${element.bold ? 800 : 400}`,
+    `font-style:${element.italic ? "italic" : "normal"}`,
+    `text-decoration:${element.underline ? "underline" : "none"}`,
+    `text-align:${element.align}`,
+    "line-height:1.14",
+  ].join(";");
+}
+
+function pdfShapeStyle(element: CanvasShapeElement) {
+  if (element.shape === "line") {
+    return `border-top:${Math.max(1, element.strokeWidth)}px solid ${element.stroke};margin-top:${Math.max(0, element.h / 2)}px`;
+  }
+
+  return [
+    `background:${element.fill}`,
+    `border:${element.strokeWidth}px solid ${element.stroke}`,
+    `border-radius:${element.shape === "roundRect" ? "18px" : element.shape === "ellipse" ? "50%" : "0"}`,
+  ].join(";");
+}
+
+async function pdfImageSrc(element: CanvasImageElement) {
+  if (!element.objectKey) return element.url;
+  try {
+    const buffer = await readObjectBuffer(element.objectKey);
+    const contentType = element.contentType || contentTypeFromObjectKey(element.objectKey);
+    return `data:${contentType};base64,${buffer.toString("base64")}`;
+  } catch (error) {
+    console.warn(`Could not read PDF image ${element.objectKey}:`, error);
+    return element.url;
+  }
+}
+
+function chromiumExecutablePath() {
+  const candidates = [
+    process.env.CHROMIUM_PATH,
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+    "/usr/bin/google-chrome-stable",
+  ].filter(Boolean) as string[];
+  const executable = candidates.find((candidate) => existsSync(candidate));
+  if (!executable) {
+    throw new Error("Chromium executable was not found. Set CHROMIUM_PATH or install chromium in the worker image.");
+  }
+  return executable;
 }
 
 function exportTheme(presentation: ReturnType<typeof presentationSchema.parse>): ExportTheme {
@@ -627,10 +1031,6 @@ function imageAttribution(slide: ReturnType<typeof presentationSchema.parse>["sl
   return [image.sourceTitle, image.sourceUrl].filter(Boolean).join(" - ");
 }
 
-function escapePdf(value: string) {
-  return value.replace(/[()\\]/g, "");
-}
-
 function sentencePreview(value: string) {
   const text = value.replace(/\s+/g, " ").trim();
   const sentences = text
@@ -641,4 +1041,16 @@ function sentencePreview(value: string) {
   const preview = sentences.length ? sentences.join(" ") : text;
 
   return preview.length > 320 ? `${preview.slice(0, 317).trim()}...` : preview;
+}
+
+function escapeHtml(value: string) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function cssString(value: string) {
+  return `"${String(value || "Arial").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }

@@ -1,5 +1,5 @@
 import type { Job } from "bullmq";
-import { type Source } from "@studydeck/shared";
+import { ensureEditableCanvas, type Source } from "@studydeck/shared";
 import { getPrisma } from "../prisma.js";
 import { readObjectBuffer } from "../storage.js";
 import { extractTextFromSource } from "./extract.js";
@@ -42,7 +42,7 @@ export async function handleGenerationJob(job: Job<{ projectId: string; userId: 
     }
 
     const generatedPresentation = await generatePresentationFromNarration(project, sources, project.speechDraft);
-    const presentation = await enrichPresentationImages(project, generatedPresentation);
+    const presentation = ensureEditableCanvas(await enrichPresentationImages(project, generatedPresentation));
     await prisma.presentation.upsert({
       where: { projectId },
       create: { projectId, document: presentation },

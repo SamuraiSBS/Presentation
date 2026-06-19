@@ -8,3 +8,11 @@ coverage
 .env.local
 uploads
 tmp
+**/node_modules
+**/.next
+**/dist
+**/coverage
+**/*.log
+**/*.tsbuildinfo
+Dockerfile*
+docker-compose*.yml

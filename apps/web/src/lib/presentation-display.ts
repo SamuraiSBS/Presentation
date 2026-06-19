@@ -1,4 +1,5 @@
 import {
+  ensureEditableCanvas,
   resolvePresentationTheme,
   type Highlight,
   type KeyConcept,
@@ -118,7 +119,7 @@ export function sanitizePresentationForDisplay(document: DisplayPresentationInpu
     };
   });
 
-  return {
+  return ensureEditableCanvas({
     ...document,
     generatedText: sanitizeGeneratedTextForDisplay(document.generatedText),
     sources: [],
@@ -142,7 +143,7 @@ export function sanitizePresentationForDisplay(document: DisplayPresentationInpu
         text: isGenericSpeechText(rawText) || shouldReplaceSpeechText(text, fallbackText) ? fallbackText : text || fallbackText,
       };
     }),
-  };
+  });
 }
 
 export function slideBodyTextForDisplay(blocks: SlideBlock[], fallback = "") {

@@ -1,9 +1,25 @@
 "use client";
 
-import { type CSSProperties, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import type { PresentationDocument, PresentationTheme, SlideBlock } from "@studydeck/shared";
+import type {
+  CanvasElement,
+  CanvasImageElement,
+  CanvasShapeElement,
+  CanvasTextElement,
+  PresentationDocument,
+  PresentationTheme,
+  Slide,
+  SlideCanvas,
+} from "@studydeck/shared";
+import { buildSlideCanvas, ensureEditableCanvas, hasCustomSlideCanvas, sortCanvasElements } from "@studydeck/shared";
 import { sanitizeProjectForDisplay } from "@/lib/presentation-display";
+import {
+  presentationTextForSlide,
+  slideBackgroundVariant,
+  slideTemplateThemeStyle,
+  SlideTemplatePreview,
+} from "./slide-template-renderer";
 
 type ProjectPayload = {
   id: string;
@@ -13,15 +29,102 @@ type ProjectPayload = {
   presentation?: { document: PresentationDocument } | null;
 };
 
+type Tool = "select" | "text" | "shape";
+type ViewMode = "preview" | "edit";
+type ElementPatch = Partial<CanvasElement> & Record<string, unknown>;
+type DragState =
+  | { mode: "move"; id: string; startX: number; startY: number; original: CanvasElement }
+  | { mode: "resize"; id: string; startX: number; startY: number; original: CanvasElement };
+
+const CANVAS_WIDTH = 1280;
+const CANVAS_HEIGHT = 720;
+const CUSTOM_CANVAS_MARKER_SUFFIX = "custom-canvas-marker";
+
 export function ProjectEditor({ initialProject }: { initialProject: ProjectPayload }) {
   const [project, setProject] = useState(() => sanitizeProjectForDisplay(initialProject));
   const [active, setActive] = useState(0);
+  const [selectedId, setSelectedId] = useState("");
+  const [tool, setTool] = useState<Tool>("select");
+  const [viewMode, setViewMode] = useState<ViewMode>("preview");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
-  const presentation = project.presentation?.document;
-  const slide = presentation?.slides[active];
-  const activeSlideText = presentation && slide ? presentationTextForSlide(presentation, slide, active) : "";
+  const [undoStack, setUndoStack] = useState<SlideCanvas[]>([]);
+  const [redoStack, setRedoStack] = useState<SlideCanvas[]>([]);
+  const [canvasScale, setCanvasScale] = useState(1);
+  const [editingTextId, setEditingTextId] = useState("");
+  const [imageReplaceTargetId, setImageReplaceTargetId] = useState("");
+  const frameRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragRef = useRef<DragState | null>(null);
+
+  const presentation = project.presentation?.document ? ensureEditableCanvas(project.presentation.document) : null;
   const theme = presentation?.presentationTheme;
+  const slide = presentation?.slides[active];
+  const canvas = slide?.canvas || (slide && theme ? buildSlideCanvas(slide, theme) : null);
+  const selected = canvas?.elements.find((element) => element.id === selectedId) || null;
+  const canvasWidth = canvas?.width ?? CANVAS_WIDTH;
+  const canvasHeight = canvas?.height ?? CANVAS_HEIGHT;
+  const hasCustomCanvas = Boolean(slide && theme && hasCustomSlideCanvas(slide, theme));
+  const showObjectCanvas = viewMode === "edit" || hasCustomCanvas;
+  const activeSlideText = presentation && slide ? presentationTextForSlide(presentation, slide, active) : "";
+  const canUpload = project.id !== "demo" || process.env.NEXT_PUBLIC_DEMO_PREVIEW === "false";
+
+  useEffect(() => {
+    setSelectedId("");
+    setUndoStack([]);
+    setRedoStack([]);
+    setTool("select");
+    setViewMode("preview");
+    setEditingTextId("");
+    setImageReplaceTargetId("");
+  }, [active]);
+
+  useEffect(() => {
+    if (editingTextId && editingTextId !== selectedId) {
+      setEditingTextId("");
+    }
+  }, [editingTextId, selectedId]);
+
+  useEffect(() => {
+    if (!editingTextId) return;
+    const editor = stageRef.current?.querySelector<HTMLElement>(`[data-element-editor="${editingTextId}"]`);
+    if (!editor) return;
+    editor.focus();
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, [editingTextId]);
+
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+
+    const updateScale = (width: number, height: number) => {
+      if (width <= 0 || height <= 0) return;
+      const nextScale = Math.min(width / canvasWidth, height / canvasHeight);
+      setCanvasScale((current) => (Math.abs(current - nextScale) < 0.001 ? current : nextScale));
+    };
+
+    const readFrameContentBox = () => {
+      const styles = window.getComputedStyle(frame);
+      const horizontalPadding = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
+      const verticalPadding = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+      updateScale(frame.clientWidth - horizontalPadding, frame.clientHeight - verticalPadding);
+    };
+
+    readFrameContentBox();
+
+    const observer = new ResizeObserver(([entry]) => {
+      updateScale(entry.contentRect.width, entry.contentRect.height);
+    });
+    observer.observe(frame);
+
+    return () => observer.disconnect();
+  }, [canvasHeight, canvasWidth, showObjectCanvas]);
 
   async function refresh() {
     const response = await fetch(`/api/projects/${project.id}`);
@@ -43,17 +146,332 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     }
   }
 
-  async function saveSlide(next: { title?: string; blocks?: SlideBlock[]; speakerNotes?: string }) {
+  async function saveSlide(next: { title?: string; canvas?: SlideCanvas; speakerNotes?: string }) {
     if (!slide) return;
     const response = await fetch(`/api/projects/${project.id}/slides/${slide.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(next),
     });
-    if (response.ok) await refresh();
+    if (!response.ok) {
+      setActionError(await response.text());
+    }
   }
 
-  if (!presentation || !slide) {
+  function setLocalCanvas(next: SlideCanvas) {
+    setProject((current) => {
+      const document = current.presentation?.document;
+      if (!document) return current;
+      const slides = document.slides.map((item, index) => (index === active ? { ...item, canvas: next } : item));
+      return {
+        ...current,
+        presentation: {
+          ...current.presentation,
+          document: ensureEditableCanvas({ ...document, slides }),
+        },
+      };
+    });
+  }
+
+  function commitCanvas(next: SlideCanvas, options: { history?: boolean; persist?: boolean } = { history: true, persist: true }) {
+    if (!canvas || !slide) return;
+    const nextCanvas = options.persist ? markCanvasAsCustom(slide.id, next) : next;
+    const normalized = { ...nextCanvas, elements: sortCanvasElements(nextCanvas.elements) };
+    if (options.history) {
+      setUndoStack((stack) => [...stack.slice(-29), cloneCanvas(canvas)]);
+      setRedoStack([]);
+    }
+    setLocalCanvas(normalized);
+    if (options.persist) {
+      void saveSlide({ title: titleFromCanvas(slide, normalized), canvas: normalized });
+    }
+  }
+
+  function updateSelected(patch: ElementPatch) {
+    if (!canvas || !selected) return;
+    commitCanvas({
+      ...canvas,
+      elements: canvas.elements.map((element) => (element.id === selected.id ? ({ ...element, ...patch } as CanvasElement) : element)),
+    });
+  }
+
+  function addTextElement() {
+    if (!canvas || !theme) return;
+    const id = `text-${crypto.randomUUID()}`;
+    const element: CanvasTextElement = {
+      id,
+      type: "text",
+      role: "free",
+      x: 170,
+      y: 150,
+      w: 520,
+      h: 120,
+      rotation: 0,
+      zIndex: nextZIndex(canvas),
+      opacity: 1,
+      locked: false,
+      text: "New text",
+      runs: [{ text: "New text" }],
+      fontSize: 34,
+      fontFamily: theme.fonts.body,
+      color: theme.colors.text,
+      bold: false,
+      italic: false,
+      underline: false,
+      align: "left",
+    };
+    commitCanvas({ ...canvas, elements: [...canvas.elements, element] });
+    setSelectedId(id);
+    setTool("select");
+  }
+
+  function addShapeElement(shape: CanvasShapeElement["shape"] = "roundRect") {
+    if (!canvas || !theme) return;
+    const id = `shape-${crypto.randomUUID()}`;
+    const element: CanvasShapeElement = {
+      id,
+      type: "shape",
+      shape,
+      x: 210,
+      y: 210,
+      w: 280,
+      h: 150,
+      rotation: 0,
+      zIndex: nextZIndex(canvas),
+      opacity: 1,
+      locked: false,
+      fill: theme.colors.surfaceAlt,
+      stroke: theme.colors.accent,
+      strokeWidth: 2,
+    };
+    commitCanvas({ ...canvas, elements: [...canvas.elements, element] });
+    setSelectedId(id);
+    setTool("select");
+  }
+
+  function deleteSelected() {
+    if (!canvas || !selected || selected.locked) return;
+    commitCanvas({ ...canvas, elements: canvas.elements.filter((element) => element.id !== selected.id) });
+    setSelectedId("");
+    setEditingTextId("");
+  }
+
+  function duplicateSelected() {
+    if (!canvas || !selected) return;
+    const copy = {
+      ...selected,
+      id: `${selected.type}-${crypto.randomUUID()}`,
+      x: clamp(selected.x + 32, 0, canvasWidth - selected.w),
+      y: clamp(selected.y + 32, 0, canvasHeight - selected.h),
+      zIndex: nextZIndex(canvas),
+    } as CanvasElement;
+    commitCanvas({ ...canvas, elements: [...canvas.elements, copy] });
+    setSelectedId(copy.id);
+  }
+
+  function moveLayer(direction: "up" | "down") {
+    if (!canvas || !selected) return;
+    const delta = direction === "up" ? 1 : -1;
+    updateSelected({ zIndex: Math.max(1, selected.zIndex + delta) });
+  }
+
+  function undo() {
+    const previous = undoStack.at(-1);
+    if (!previous || !canvas || !slide) return;
+    setUndoStack((stack) => stack.slice(0, -1));
+    setRedoStack((stack) => [...stack, cloneCanvas(canvas)]);
+    setLocalCanvas(previous);
+    void saveSlide({ title: titleFromCanvas(slide, previous), canvas: previous });
+  }
+
+  function redo() {
+    const next = redoStack.at(-1);
+    if (!next || !canvas || !slide) return;
+    setRedoStack((stack) => stack.slice(0, -1));
+    setUndoStack((stack) => [...stack, cloneCanvas(canvas)]);
+    setLocalCanvas(next);
+    void saveSlide({ title: titleFromCanvas(slide, next), canvas: next });
+  }
+
+  function onCanvasPointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (!canvas || !theme) return;
+    if (event.target !== event.currentTarget) return;
+    setSelectedId("");
+    setEditingTextId("");
+
+    if (tool === "text") {
+      const point = eventPoint(event, stageRef.current, canvasScale);
+      const id = `text-${crypto.randomUUID()}`;
+      const element: CanvasTextElement = {
+        id,
+        type: "text",
+        role: "free",
+        x: clamp(point.x - 180, 0, canvasWidth - 360),
+        y: clamp(point.y - 40, 0, canvasHeight - 90),
+        w: 360,
+        h: 90,
+        rotation: 0,
+        zIndex: nextZIndex(canvas),
+        opacity: 1,
+        locked: false,
+        text: "New text",
+        runs: [{ text: "New text" }],
+        fontSize: 32,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.text,
+        bold: false,
+        italic: false,
+        underline: false,
+        align: "left",
+      };
+      commitCanvas({ ...canvas, elements: [...canvas.elements, element] });
+      setSelectedId(id);
+      setTool("select");
+    }
+
+    if (tool === "shape") {
+      const point = eventPoint(event, stageRef.current, canvasScale);
+      const id = `shape-${crypto.randomUUID()}`;
+      const element: CanvasShapeElement = {
+        id,
+        type: "shape",
+        shape: "roundRect",
+        x: clamp(point.x - 130, 0, canvasWidth - 260),
+        y: clamp(point.y - 70, 0, canvasHeight - 140),
+        w: 260,
+        h: 140,
+        rotation: 0,
+        zIndex: nextZIndex(canvas),
+        opacity: 1,
+        locked: false,
+        fill: theme.colors.surfaceAlt,
+        stroke: theme.colors.accent,
+        strokeWidth: 2,
+      };
+      commitCanvas({ ...canvas, elements: [...canvas.elements, element] });
+      setSelectedId(id);
+      setTool("select");
+    }
+  }
+
+  function startMove(event: PointerEvent<HTMLDivElement>, element: CanvasElement) {
+    event.stopPropagation();
+    setSelectedId(element.id);
+    if (element.locked) return;
+    if (editingTextId !== element.id) {
+      setEditingTextId("");
+    }
+    const point = eventPoint(event, stageRef.current, canvasScale);
+    dragRef.current = { mode: "move", id: element.id, startX: point.x, startY: point.y, original: element };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function startResize(event: PointerEvent<HTMLButtonElement>, element: CanvasElement) {
+    if (element.locked) return;
+    event.stopPropagation();
+    const point = eventPoint(event, stageRef.current, canvasScale);
+    dragRef.current = { mode: "resize", id: element.id, startX: point.x, startY: point.y, original: element };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function onPointerMove(event: PointerEvent<HTMLElement>) {
+    if (!canvas || !dragRef.current) return;
+    const drag = dragRef.current;
+    const point = eventPoint(event, stageRef.current, canvasScale);
+    const dx = point.x - drag.startX;
+    const dy = point.y - drag.startY;
+    const elements = canvas.elements.map((element) => {
+      if (element.id !== drag.id) return element;
+      if (drag.mode === "move") {
+        return {
+          ...element,
+          x: clamp(drag.original.x + dx, 0, canvasWidth - element.w),
+          y: clamp(drag.original.y + dy, 0, canvasHeight - element.h),
+        } as CanvasElement;
+      }
+      return {
+        ...element,
+        w: clamp(drag.original.w + dx, 32, canvasWidth - drag.original.x),
+        h: clamp(drag.original.h + dy, 24, canvasHeight - drag.original.y),
+      } as CanvasElement;
+    });
+    setLocalCanvas({ ...canvas, elements });
+  }
+
+  function onPointerUp() {
+    if (!canvas || !dragRef.current) return;
+    dragRef.current = null;
+    commitCanvas(canvas, { history: true, persist: true });
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (!showObjectCanvas || !selected || !canvas || isTypingTarget(event.target)) return;
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      deleteSelected();
+      return;
+    }
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    const step = event.shiftKey ? 10 : 2;
+    const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+    const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+    updateSelected({
+      x: clamp(selected.x + dx, 0, canvasWidth - selected.w),
+      y: clamp(selected.y + dy, 0, canvasHeight - selected.h),
+    });
+  }
+
+  async function uploadImage(file: File | null, replaceElementId = "") {
+    if (!file || !slide) return;
+    setBusy(true);
+    setActionError("");
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const response = await fetch(`/api/projects/${project.id}/slides/${slide.id}/assets`, { method: "POST", body });
+      if (!response.ok) throw new Error(await response.text());
+      const payload = (await response.json()) as { element: CanvasImageElement };
+      const imageToReplace = replaceElementId
+        ? canvas?.elements.find((element): element is CanvasImageElement => element.id === replaceElementId && element.type === "image")
+        : null;
+      const nextElement: CanvasImageElement = imageToReplace
+        ? {
+            ...payload.element,
+            id: imageToReplace.id,
+            x: imageToReplace.x,
+            y: imageToReplace.y,
+            w: imageToReplace.w,
+            h: imageToReplace.h,
+            rotation: imageToReplace.rotation,
+            zIndex: imageToReplace.zIndex,
+            opacity: imageToReplace.opacity,
+            locked: imageToReplace.locked,
+            fit: imageToReplace.fit,
+            url: `/api/projects/${project.id}/slides/${slide.id}/assets/${imageToReplace.id}`,
+          }
+        : payload.element;
+      const next = canvas
+        ? {
+            ...canvas,
+            elements: imageToReplace
+              ? canvas.elements.map((element) => (element.id === imageToReplace.id ? nextElement : element))
+              : [...canvas.elements.filter((element) => element.id !== payload.element.id), nextElement],
+          }
+        : { width: CANVAS_WIDTH, height: CANVAS_HEIGHT, background: theme?.colors.background || "#F7F8FA", elements: [nextElement] };
+      setLocalCanvas(next);
+      setSelectedId(nextElement.id);
+      void saveSlide({ title: titleFromCanvas(slide, next), canvas: next });
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Image upload failed");
+    } finally {
+      setBusy(false);
+      setImageReplaceTargetId("");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  if (!presentation || !slide || !canvas) {
     const canStartGeneration = project.status === "draft" || project.status === "failed";
 
     return (
@@ -63,10 +481,10 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
         <p className="lead">
           {canStartGeneration
             ? "Презентация еще не отправлена в генерацию. Запустите ее вручную."
-            : "Генерация еще идет. Обновите страницу через несколько секунд. Если worker запущен, статус сменится на ready."}
+            : "Генерация еще идет. Обновите страницу через несколько секунд."}
         </p>
         {project.error ? <p className="muted">{project.error}</p> : null}
-        {actionError ? <p className="muted">{actionError}</p> : null}
+        {actionError ? <p className="form-error">{actionError}</p> : null}
         <div className="actions">
           {canStartGeneration ? (
             <button className="button" type="button" onClick={generate} disabled={busy}>
@@ -81,566 +499,860 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
 
   return (
     <>
-      <div className="row" style={{ justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+      <div className="editor-top">
         <div>
           <span className="status">{project.status}</span>
-          <h1 style={{ margin: "8px 0 0" }}>{presentation.title}</h1>
+          <h1>{presentation.title}</h1>
         </div>
         <div className="actions">
           <button className="ghost" type="button" onClick={refresh}>Обновить</button>
-          <Link className="button" href={`/projects/${project.id}/export`}>Экспорт</Link>
         </div>
       </div>
-      <section className="editor">
-        <aside className="rail">
-          <strong>План</strong>
-          <div style={{ height: 12 }} />
-          {presentation.slides.map((item, index) => (
-            <button className="slide-button" key={item.id} type="button" onClick={() => setActive(index)}>
-              {String(index + 1).padStart(2, "0")} · {item.title}
-            </button>
-          ))}
-        </aside>
-        <section className="canvas-panel">
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <strong>Слайд {active + 1}</strong>
-            <span className="muted">{slide.timingSeconds} сек</span>
-          </div>
-          <div className="slide-workspace">
-            <div className="slide-stage">
-              <article
-                className="slide-canvas"
-                data-theme-preset={theme?.preset || "minimal"}
-                data-theme-mood={theme?.mood || "neutral"}
-                data-bg-variant={slideBackgroundVariant(slide)}
-                style={theme ? slideThemeStyle(theme) : undefined}
+
+      {actionError ? <p className="form-error">{actionError}</p> : null}
+
+      <section className="power-editor" onKeyDown={onKeyDown} tabIndex={0}>
+        <aside className="slide-rail">
+          <strong>Слайды</strong>
+          <div className="slide-rail-list">
+            {presentation.slides.map((item, index) => (
+              <button
+                className={`slide-thumb ${index === active ? "slide-thumb-active" : ""}`}
+                key={item.id}
+                type="button"
+                onClick={() => setActive(index)}
               >
-                <SlideCanvas slide={slide} />
-              </article>
-              <textarea
-                key={`${slide.id}-${slide.speakerNotes}`}
-                className="textarea notes"
-                defaultValue={slide.speakerNotes}
-                onBlur={(event) => saveSlide({ speakerNotes: event.target.value })}
-                aria-label="Заметки спикера"
-              />
-            </div>
-            {activeSlideText ? (
-              <aside className="slide-text-panel">
-                <strong>Текст презентации</strong>
-                <textarea
-                  className="textarea notes"
-                  value={activeSlideText}
-                  readOnly
-                  aria-label="Текст презентации"
-                />
-              </aside>
-            ) : null}
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <strong>{item.title}</strong>
+              </button>
+            ))}
           </div>
-        </section>
+        </aside>
+
+        <main className="canvas-shell">
+          <EditorTopToolbar
+            projectId={project.id}
+            tool={tool}
+            setTool={(nextTool) => {
+              setTool(nextTool);
+              setViewMode("edit");
+            }}
+            viewMode={showObjectCanvas ? "edit" : "preview"}
+            onPreview={() => setViewMode("preview")}
+            onEdit={() => setViewMode("edit")}
+            previewDisabled={hasCustomCanvas}
+            busy={busy}
+            canUpload={canUpload}
+            undoDisabled={!undoStack.length}
+            redoDisabled={!redoStack.length}
+            onUploadClick={() => {
+              setViewMode("edit");
+              setImageReplaceTargetId("");
+              fileInputRef.current?.click();
+            }}
+            onUndo={undo}
+            onRedo={redo}
+          />
+          <input
+            ref={fileInputRef}
+            className="file-input"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            disabled={!canUpload || busy}
+            onChange={(event) => void uploadImage(event.target.files?.[0] || null, imageReplaceTargetId)}
+          />
+
+          {showObjectCanvas ? (
+            <>
+              <div className="canvas-scroll">
+                <div className="canvas-frame" ref={frameRef}>
+                  <div
+                    className="canvas-viewport"
+                    style={{
+                      width: `${canvasWidth * canvasScale}px`,
+                      height: `${canvasHeight * canvasScale}px`,
+                    }}
+                  >
+                    <div
+                      ref={stageRef}
+                      className="object-canvas"
+                      style={{
+                        width: `${canvasWidth}px`,
+                        height: `${canvasHeight}px`,
+                        background: canvas.background,
+                        transform: `scale(${canvasScale})`,
+                      }}
+                      onPointerDown={onCanvasPointerDown}
+                      onPointerMove={onPointerMove}
+                      onPointerUp={onPointerUp}
+                      onPointerCancel={onPointerUp}
+                    >
+                      {sortCanvasElements(canvas.elements).map((element) => (
+                        <CanvasElementView
+                          element={element}
+                          key={element.id}
+                          selected={element.id === selectedId}
+                          editing={editingTextId === element.id}
+                          onPointerDown={(event) => startMove(event, element)}
+                          onResizePointerDown={(event) => startResize(event, element)}
+                          onEditText={() => setEditingTextId(element.id)}
+                          onStopEditText={() => setEditingTextId("")}
+                          onTextChange={(text) => {
+                            if (element.type !== "text" || !canvas) return;
+                            const next = {
+                              ...element,
+                              text,
+                              runs: [{ text }],
+                            };
+                            commitCanvas({
+                              ...canvas,
+                              elements: canvas.elements.map((item) => (item.id === element.id ? next : item)),
+                            });
+                          }}
+                        />
+                      ))}
+                    </div>
+                    {selected ? (
+                      <ObjectFloatingMenu
+                        element={selected}
+                        scale={canvasScale}
+                        canvasWidth={canvasWidth}
+                        canvasHeight={canvasHeight}
+                        canUpload={canUpload}
+                        busy={busy}
+                        onEditText={() => setEditingTextId(selected.id)}
+                        onUpdate={updateSelected}
+                        onDuplicate={duplicateSelected}
+                        onDelete={deleteSelected}
+                        onLayerUp={() => moveLayer("up")}
+                        onLayerDown={() => moveLayer("down")}
+                        onReplaceImage={() => {
+                          setImageReplaceTargetId(selected.id);
+                          fileInputRef.current?.click();
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <TemplatePreviewFrame slide={slide} theme={theme} />
+          )}
+
+          {!showObjectCanvas && activeSlideText ? (
+            <aside className="slide-text-panel">
+              <strong>Текст презентации</strong>
+              <textarea className="textarea notes" value={activeSlideText} readOnly aria-label="Текст презентации" />
+            </aside>
+          ) : null}
+        </main>
+
+        <aside className="properties-panel">
+          <PropertiesPanel
+            selected={showObjectCanvas ? selected : null}
+            slide={slide}
+            onUpdate={updateSelected}
+            onDuplicate={duplicateSelected}
+            onDelete={deleteSelected}
+            onLayerUp={() => moveLayer("up")}
+            onLayerDown={() => moveLayer("down")}
+            onSaveNotes={(speakerNotes) => void saveSlide({ speakerNotes })}
+          />
+        </aside>
       </section>
     </>
   );
 }
 
-function slideBackgroundVariant(slide: PresentationDocument["slides"][number]) {
-  if (slide.slideKind === "title") return "title";
-  if (slide.slideKind === "section") return "section";
-  if (slide.slideKind === "summary") return "summary";
-  return `v${(slide.order - 1) % 6}`;
-}
-
-function slideThemeStyle(theme: PresentationTheme): CSSProperties {
-  return {
-    "--slide-bg": theme.colors.background,
-    "--slide-surface": theme.colors.surface,
-    "--slide-surface-alt": theme.colors.surfaceAlt,
-    "--slide-text": theme.colors.text,
-    "--slide-muted": theme.colors.muted,
-    "--slide-accent": theme.colors.accent,
-    "--slide-accent-alt": theme.colors.accentAlt,
-    "--slide-line": theme.colors.line,
-    "--slide-heading-font": `${theme.fonts.heading}, Georgia, Arial, sans-serif`,
-    "--slide-body-font": `${theme.fonts.body}, Arial, sans-serif`,
-  } as CSSProperties;
-}
-
-function presentationTextForSlide(
-  presentation: PresentationDocument,
-  slide: PresentationDocument["slides"][number],
-  activeIndex: number,
-) {
+function TemplatePreviewFrame({ slide, theme }: { slide: Slide; theme?: PresentationTheme }) {
   return (
-    extractGeneratedTextForSlide(presentation.generatedText, slide.order) ||
-    presentation.speechScript.find((item) => item.slideOrder === slide.order)?.text ||
-    presentation.speechScript[activeIndex]?.text ||
-    slide.speakerNotes
-  );
-}
-
-function extractGeneratedTextForSlide(generatedText: string, slideOrder: number) {
-  const text = generatedText.trim();
-  if (!text) return "";
-
-  const slideHeader = new RegExp(`(?:^|\\n)\\s*Слайд\\s+${slideOrder}\\s*:`, "i");
-  const current = slideHeader.exec(text);
-  if (!current) return "";
-
-  const start = current.index + current[0].length;
-  const rest = text.slice(start);
-  const next = /\n\s*Слайд\s+\d+\s*:/i.exec(rest);
-  return rest.slice(0, next?.index ?? undefined).trim();
-}
-
-function VisualImage({ image }: { image: NonNullable<PresentationDocument["slides"][number]["visual"]["image"]> }) {
-  return (
-    <figure className="visual-image">
-      <img src={image.url} alt={image.alt || ""} loading="lazy" />
-      {image.sourceTitle || image.sourceUrl ? <figcaption>{image.sourceTitle || image.sourceUrl}</figcaption> : null}
-    </figure>
-  );
-}
-
-function slideImageUrl(slide: PresentationDocument["slides"][number]) {
-  return slide.visual.image?.url || "";
-}
-
-function SlideCanvas({ slide }: { slide: PresentationDocument["slides"][number] }) {
-  const isDivider = slide.slideKind === "title" || slide.slideKind === "section";
-  const imageUrl = slideImageUrl(slide);
-  const hasVisualContent = hasSlideVisualContent(slide);
-
-  if (isDivider) {
-    return (
-      <div
-        className={`slide-content slide-content-${slide.slideKind} ${imageUrl ? "slide-content-image" : ""}`}
-        style={
-          imageUrl
-            ? { backgroundImage: `linear-gradient(color-mix(in srgb, var(--slide-bg) 90%, transparent), color-mix(in srgb, var(--slide-bg) 94%, transparent)), url("${imageUrl}")` }
-            : undefined
-        }
-      >
-        <h2 className="slide-title">{slide.title}</h2>
-        {slide.thesis ? <p className="slide-body">{slide.thesis}</p> : null}
-        {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
-      </div>
-    );
-  }
-
-  if (slide.slideKind === "summary") {
-    return <SummarySlide slide={slide} />;
-  }
-
-  if (slide.layout === "statement") {
-    return <StatementSlide slide={slide} />;
-  }
-
-  if (slide.layout === "quote") {
-    return <QuoteSlide slide={slide} />;
-  }
-
-  if (slide.layout === "definition") {
-    return <DefinitionSlide slide={slide} />;
-  }
-
-  if (slide.layout === "timeline" || slide.layout === "process") {
-    return <SequenceSlide slide={slide} mode={slide.layout} />;
-  }
-
-  if (slide.layout === "comparison" || slide.layout === "two-column") {
-    return <ComparisonSlide slide={slide} />;
-  }
-
-  if (slide.layout === "image-focus") {
-    return <ImageFocusSlide slide={slide} />;
-  }
-
-  if (slide.layout === "case-study") {
-    return <CaseStudySlide slide={slide} />;
-  }
-
-  if (slide.layout === "question-answer") {
-    return <QuestionAnswerSlide slide={slide} />;
-  }
-
-  if (slide.layout === "myth-fact") {
-    return <MythFactSlide slide={slide} />;
-  }
-
-  if (slide.layout === "metrics") {
-    return <MetricsSlide slide={slide} />;
-  }
-
-  return (
-    <div className="slide-content slide-content-structured">
-      <div className="slide-main">
-        <div>
-          <h2 className="slide-title">{slide.title}</h2>
-          {slide.thesis ? <p className="slide-thesis">{slide.thesis}</p> : null}
-        </div>
-      </div>
-
-      <div className={`slide-grid ${hasVisualContent ? "" : "slide-grid-single"}`}>
-        <section className="slide-copy">
-          {slide.bullets.length ? (
-            <ul className="slide-bullets">
-              {slide.bullets.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          ) : null}
-          {slide.definition ? (
-            <div className="definition-block">
-              <strong>{slide.definition.term}</strong>
-              <span>{slide.definition.text}</span>
-            </div>
-          ) : null}
-        </section>
-        {hasVisualContent ? <VisualBlock slide={slide} /> : null}
+    <div className="canvas-scroll">
+      <div className="slide-stage">
+        <article
+          className="slide-canvas"
+          data-theme-preset={theme?.preset || "minimal"}
+          data-theme-mood={theme?.mood || "neutral"}
+          data-bg-variant={slideBackgroundVariant(slide)}
+          style={theme ? slideTemplateThemeStyle(theme) : undefined}
+        >
+          <SlideTemplatePreview slide={slide} />
+        </article>
       </div>
     </div>
   );
 }
 
-function slideBlockText(slide: PresentationDocument["slides"][number], type?: SlideBlock["type"]) {
-  const blocks = type ? slide.blocks.filter((block) => block.type === type) : slide.blocks;
-  return blocks
-    .flatMap((block) => (block.type === "bullets" ? block.items : [block.content]))
-    .filter(Boolean)
-    .join(" ");
+function markCanvasAsCustom(slideId: string, canvas: SlideCanvas): SlideCanvas {
+  const markerId = `${slideId}-${CUSTOM_CANVAS_MARKER_SUFFIX}`;
+  if (canvas.elements.some((element) => element.id === markerId)) return canvas;
+
+  const marker: CanvasShapeElement = {
+    id: markerId,
+    type: "shape",
+    shape: "rect",
+    x: 0,
+    y: 0,
+    w: 1,
+    h: 1,
+    rotation: 0,
+    zIndex: -1,
+    opacity: 0,
+    locked: true,
+    fill: "#000000",
+    stroke: "#000000",
+    strokeWidth: 0,
+  };
+
+  return { ...canvas, elements: [...canvas.elements, marker] };
 }
 
-function compactItems(slide: PresentationDocument["slides"][number]) {
-  const visualItems = slide.visual.items.map((item) => item.label || item.text).filter(Boolean);
-  return (visualItems.length ? visualItems : slide.bullets.length ? slide.bullets : splitDisplaySentences(slideBlockText(slide) || slide.thesis)).slice(0, 5);
-}
+type IconName =
+  | "cursor"
+  | "text"
+  | "shape"
+  | "image"
+  | "undo"
+  | "redo"
+  | "preview"
+  | "export"
+  | "copy"
+  | "trash"
+  | "front"
+  | "back"
+  | "lock"
+  | "unlock"
+  | "replace"
+  | "alignLeft"
+  | "alignCenter"
+  | "alignRight";
 
-function splitDisplaySentences(value: string) {
-  return value
-    .split(/(?<=[.!?])\s+|[;\n]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function SlideImageLayout({
-  slide,
-  className,
-  children,
+function EditorTopToolbar({
+  projectId,
+  tool,
+  setTool,
+  viewMode,
+  onPreview,
+  onEdit,
+  previewDisabled,
+  busy,
+  canUpload,
+  undoDisabled,
+  redoDisabled,
+  onUploadClick,
+  onUndo,
+  onRedo,
 }: {
-  slide: PresentationDocument["slides"][number];
-  className: string;
-  children: React.ReactNode;
+  projectId: string;
+  tool: Tool;
+  setTool: (tool: Tool) => void;
+  viewMode: ViewMode;
+  onPreview: () => void;
+  onEdit: () => void;
+  previewDisabled: boolean;
+  busy: boolean;
+  canUpload: boolean;
+  undoDisabled: boolean;
+  redoDisabled: boolean;
+  onUploadClick: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
 }) {
-  const image = slide.visual.image;
-  if (!image) {
-    return <div className={className}>{children}</div>;
-  }
-
-  const reverse = slide.order % 2 === 0;
   return (
-    <div className={`${className} slide-with-image ${reverse ? "slide-with-image-reverse" : ""}`}>
-      <div className="slide-text-stack">{children}</div>
-      <VisualImage image={image} />
+    <div className="editor-toolbar editor-toolbar-primary">
+      <div className="toolbar-group mode-group" aria-label="View mode">
+        <button className={viewMode === "preview" ? "tool-active" : ""} type="button" onClick={onPreview} disabled={previewDisabled} title="Preview slide">
+          <Icon name="preview" />
+          <span>Preview</span>
+        </button>
+        <button className={viewMode === "edit" ? "tool-active" : ""} type="button" onClick={onEdit} title="Edit objects">
+          <Icon name="cursor" />
+          <span>Edit</span>
+        </button>
+      </div>
+      <div className="toolbar-group" aria-label="Tools">
+        <button className={tool === "select" && viewMode === "edit" ? "tool-active" : ""} type="button" onClick={() => setTool("select")} title="Select object">
+          <Icon name="cursor" />
+          <span>Select</span>
+        </button>
+        <button className={tool === "text" && viewMode === "edit" ? "tool-active" : ""} type="button" onClick={() => setTool("text")} title="Add text">
+          <Icon name="text" />
+          <span>Text</span>
+        </button>
+        <button className={tool === "shape" && viewMode === "edit" ? "tool-active" : ""} type="button" onClick={() => setTool("shape")} title="Add shape">
+          <Icon name="shape" />
+          <span>Shape</span>
+        </button>
+        <button type="button" onClick={onUploadClick} disabled={!canUpload || busy} title="Upload image">
+          <Icon name="image" />
+          <span>Image</span>
+        </button>
+      </div>
+      <div className="toolbar-spacer" />
+      <div className="toolbar-group toolbar-compact" aria-label="History">
+        <button type="button" onClick={onUndo} disabled={undoDisabled} title="Undo" aria-label="Undo">
+          <Icon name="undo" />
+        </button>
+        <button type="button" onClick={onRedo} disabled={redoDisabled} title="Redo" aria-label="Redo">
+          <Icon name="redo" />
+        </button>
+      </div>
+      <Link className="toolbar-export" href={`/projects/${projectId}/export`} title="Export presentation">
+        <Icon name="export" />
+        <span>Export</span>
+      </Link>
     </div>
   );
 }
 
-function SummarySlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
-  const items = compactItems(slide);
+function ObjectFloatingMenu({
+  element,
+  scale,
+  canvasWidth,
+  canvasHeight,
+  canUpload,
+  busy,
+  onEditText,
+  onUpdate,
+  onDuplicate,
+  onDelete,
+  onLayerUp,
+  onLayerDown,
+  onReplaceImage,
+}: {
+  element: CanvasElement;
+  scale: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  canUpload: boolean;
+  busy: boolean;
+  onEditText: () => void;
+  onUpdate: (patch: ElementPatch) => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  onLayerUp: () => void;
+  onLayerDown: () => void;
+  onReplaceImage: () => void;
+}) {
   return (
-    <SlideImageLayout slide={slide} className="slide-content slide-layout-summary">
-      <h2 className="slide-title">{slide.title}</h2>
-      <div className="summary-grid">
-        {items.map((item, index) => (
-          <div className="summary-takeaway" key={`${item}-${index}`}>
-            <span>{index + 1}</span>
-            <p>{item}</p>
-          </div>
-        ))}
+    <div
+      className="object-floating-menu"
+      style={floatingMenuStyle(element, scale, canvasWidth, canvasHeight)}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <div className="object-menu-title">
+        <strong>{elementLabel(element)}</strong>
+        {element.locked ? <span>Locked</span> : null}
       </div>
-    </SlideImageLayout>
-  );
-}
 
-function StatementSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
-  return (
-    <SlideImageLayout slide={slide} className="slide-content slide-layout-statement">
-      <h2 className="slide-title">{slide.title}</h2>
-      <p>{slide.thesis || slideBlockText(slide)}</p>
-      {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
-    </SlideImageLayout>
-  );
-}
+      <div className="object-menu-row">
+        {element.type === "text" ? (
+          <>
+            <button type="button" onClick={onEditText} disabled={element.locked} title="Edit text">
+              <Icon name="text" />
+              <span>Edit</span>
+            </button>
+            <button className={element.bold ? "tool-active" : ""} type="button" onClick={() => onUpdate({ bold: !element.bold } as Partial<CanvasTextElement>)} disabled={element.locked} title="Bold">
+              B
+            </button>
+            <button className={element.italic ? "tool-active" : ""} type="button" onClick={() => onUpdate({ italic: !element.italic } as Partial<CanvasTextElement>)} disabled={element.locked} title="Italic">
+              I
+            </button>
+            <button className={element.align === "left" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "left" } as Partial<CanvasTextElement>)} disabled={element.locked} title="Align left">
+              <Icon name="alignLeft" />
+            </button>
+            <button className={element.align === "center" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "center" } as Partial<CanvasTextElement>)} disabled={element.locked} title="Align center">
+              <Icon name="alignCenter" />
+            </button>
+            <button className={element.align === "right" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "right" } as Partial<CanvasTextElement>)} disabled={element.locked} title="Align right">
+              <Icon name="alignRight" />
+            </button>
+          </>
+        ) : null}
 
-function QuoteSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
-  const quote = slideBlockText(slide, "quote") || slide.thesis || slideBlockText(slide);
-  return (
-    <SlideImageLayout slide={slide} className="slide-content slide-layout-quote">
-      <h2 className="slide-title">{slide.title}</h2>
-      <blockquote>{quote}</blockquote>
-      {slide.bullets[0] ? <p>{slide.bullets[0]}</p> : null}
-    </SlideImageLayout>
-  );
-}
-
-function DefinitionSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
-  const definition = slide.definition || { term: slide.title, text: slide.thesis || slideBlockText(slide) };
-  const showTerm = definition.term && !isDuplicateDisplayText(definition.term, slide.title);
-  return (
-    <SlideImageLayout slide={slide} className="slide-content slide-layout-definition">
-      <h2 className="slide-title">{slide.title}</h2>
-      <div className="definition-hero">
-        {showTerm ? <strong>{definition.term}</strong> : null}
-        <p>{definition.text}</p>
+        {element.type === "image" ? (
+          <>
+            <button type="button" onClick={onReplaceImage} disabled={!canUpload || busy || element.locked} title="Replace image">
+              <Icon name="replace" />
+              <span>Replace</span>
+            </button>
+            <button className={element.fit === "cover" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ fit: "cover" } as Partial<CanvasImageElement>)} disabled={element.locked} title="Fill frame">
+              Cover
+            </button>
+            <button className={element.fit === "contain" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ fit: "contain" } as Partial<CanvasImageElement>)} disabled={element.locked} title="Fit image">
+              Fit
+            </button>
+          </>
+        ) : null}
       </div>
-      {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
-    </SlideImageLayout>
-  );
-}
 
-function SequenceSlide({ slide, mode }: { slide: PresentationDocument["slides"][number]; mode: "timeline" | "process" }) {
-  const items = compactItems(slide);
-  return (
-    <SlideImageLayout slide={slide} className={`slide-content slide-layout-sequence slide-layout-${mode}`}>
-      <h2 className="slide-title">{slide.title}</h2>
-      {slide.thesis ? <p className="slide-kicker">{slide.thesis}</p> : null}
-      <div className="sequence-track">
-        {items.map((item, index) => (
-          <div className="sequence-node" key={`${item}-${index}`}>
-            <span>{index + 1}</span>
-            <p>{item}</p>
-          </div>
-        ))}
+      <div className="object-menu-row">
+        <button type="button" onClick={onDuplicate} title="Duplicate">
+          <Icon name="copy" />
+        </button>
+        <button type="button" onClick={onLayerDown} title="Send backward">
+          <Icon name="back" />
+        </button>
+        <button type="button" onClick={onLayerUp} title="Bring forward">
+          <Icon name="front" />
+        </button>
+        <button type="button" onClick={() => onUpdate({ locked: !element.locked })} title={element.locked ? "Unlock" : "Lock"}>
+          <Icon name={element.locked ? "unlock" : "lock"} />
+        </button>
+        <button className="danger-action" type="button" onClick={onDelete} disabled={element.locked} title="Delete">
+          <Icon name="trash" />
+        </button>
       </div>
-    </SlideImageLayout>
-  );
-}
-
-function ComparisonSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
-  const rows = slide.visual.rows.length
-    ? slide.visual.rows
-    : [
-        {
-          label: slide.title,
-          left: slide.bullets[0] || slide.thesis,
-          right: slide.bullets[1] || slideBlockText(slide),
-        },
-      ];
-  return (
-    <SlideImageLayout slide={slide} className="slide-content slide-layout-comparison">
-      <h2 className="slide-title">{slide.title}</h2>
-      <div className="comparison-board">
-        <strong>{slide.visual.leftLabel || "Первое"}</strong>
-        <strong>{slide.visual.rightLabel || "Второе"}</strong>
-        {rows.slice(0, 4).map((row, index) => (
-          <div className="comparison-row" key={`${row.label}-${index}`}>
-            <p>{row.left || row.label}</p>
-            <p>{row.right || row.label}</p>
-          </div>
-        ))}
-      </div>
-    </SlideImageLayout>
-  );
-}
-
-function ImageFocusSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
-  return (
-    <div className="slide-content slide-layout-image-focus">
-      <div>
-        <h2 className="slide-title">{slide.title}</h2>
-        {slide.thesis ? <p>{slide.thesis}</p> : null}
-        {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
-      </div>
-      {slide.visual.image ? <VisualImage image={slide.visual.image} /> : null}
     </div>
   );
 }
 
-function CaseStudySlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
-  const items = compactItems(slide);
-  const labels = ["Ситуация", "Действие", "Результат"];
-  return (
-    <SlideImageLayout slide={slide} className="slide-content slide-layout-case">
-      <h2 className="slide-title">{slide.title}</h2>
-      <div className="case-grid">
-        {labels.map((label, index) => (
-          <div className="case-step" key={label}>
-            <strong>{label}</strong>
-            <p>{items[index] || slide.thesis}</p>
-          </div>
-        ))}
-      </div>
-    </SlideImageLayout>
-  );
-}
+function CanvasElementView({
+  element,
+  selected,
+  editing,
+  onPointerDown,
+  onResizePointerDown,
+  onEditText,
+  onStopEditText,
+  onTextChange,
+}: {
+  element: CanvasElement;
+  selected: boolean;
+  editing: boolean;
+  onPointerDown: (event: PointerEvent<HTMLDivElement>) => void;
+  onResizePointerDown: (event: PointerEvent<HTMLButtonElement>) => void;
+  onEditText: () => void;
+  onStopEditText: () => void;
+  onTextChange: (text: string) => void;
+}) {
+  const style = elementStyle(element);
 
-function QuestionAnswerSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
-  return (
-    <SlideImageLayout slide={slide} className="slide-content slide-layout-qa">
-      <h2 className="slide-title">{slide.title}</h2>
-      <div className="answer-panel">
-        <strong>Ответ</strong>
-        <p>{slide.thesis || slideBlockText(slide)}</p>
-      </div>
-      {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
-    </SlideImageLayout>
-  );
-}
-
-function MythFactSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
-  const items = compactItems(slide);
-  return (
-    <SlideImageLayout slide={slide} className="slide-content slide-layout-myth">
-      <h2 className="slide-title">{slide.title}</h2>
-      <div className="myth-fact-grid">
-        <div>
-          <strong>Миф</strong>
-          <p>{items[0] || slide.title}</p>
-        </div>
-        <div>
-          <strong>Факт</strong>
-          <p>{items[1] || slide.thesis}</p>
-        </div>
-      </div>
-    </SlideImageLayout>
-  );
-}
-
-function MetricsSlide({ slide }: { slide: PresentationDocument["slides"][number] }) {
-  const items = compactItems(slide);
-  return (
-    <SlideImageLayout slide={slide} className="slide-content slide-layout-metrics">
-      <h2 className="slide-title">{slide.title}</h2>
-      <div className="metric-grid">
-        {items.slice(0, 4).map((item, index) => (
-          <div className="metric-tile" key={`${item}-${index}`}>
-            <strong>{metricLead(item, index)}</strong>
-            <p>{item}</p>
-          </div>
-        ))}
-      </div>
-    </SlideImageLayout>
-  );
-}
-
-function metricLead(item: string, index: number) {
-  return item.match(/\d+[.,]?\d*\s*[%\wА-Яа-я-]*/u)?.[0] || String(index + 1).padStart(2, "0");
-}
-
-function MiniPointRow({ items }: { items: string[] }) {
-  return (
-    <div className="mini-point-row">
-      {items.map((item) => (
-        <span key={item}>{item}</span>
-      ))}
-    </div>
-  );
-}
-
-function hasSlideVisualContent(slide: PresentationDocument["slides"][number]) {
-  const visual = slide.visual;
-  return Boolean(visual?.image?.url || (visual && visual.type !== "none" && !isImageOnlyVisual(visual.type)));
-}
-
-function VisualBlock({ slide }: { slide: PresentationDocument["slides"][number] }) {
-  const visual = slide.visual;
-  const image = visual?.image;
-  const imageFigure = image ? <VisualImage image={image} /> : null;
-  const visualTitle = visual?.title && !isDuplicateDisplayText(visual.title, slide.title) ? visual.title : "";
-  if (!visual || visual.type === "none") {
-    return imageFigure ? <section className="visual-card visual-image-card">{imageFigure}</section> : null;
-  }
-
-  if (isImageOnlyVisual(visual.type)) {
-    return imageFigure ? <section className="visual-card visual-image-card">{imageFigure}</section> : null;
-  }
-
-  if (visual.rows.length && ["comparison_diagram", "before_after_table", "pros_cons_table", "cause_effect_diagram"].includes(visual.type)) {
+  if (element.type === "shape") {
     return (
-      <section className={`visual-card visual-${visual.type}`}>
-        {imageFigure}
-        {visualTitle ? <strong>{visualTitle}</strong> : null}
-        <div className="visual-table">
-          <span>{visual.leftLabel || "Первое"}</span>
-          <span>{visual.rightLabel || "Второе"}</span>
-          {visual.rows.map((row, index) => (
-            <div className="visual-row" key={`${row.label}-${index}`}>
-              <p>{row.left || row.label}</p>
-              <p>{row.right || row.label}</p>
+      <div className={`canvas-element ${selected ? "canvas-element-selected" : ""}`} style={style} onPointerDown={onPointerDown}>
+        <div className={`canvas-shape canvas-shape-${element.shape}`} style={shapeStyle(element)} />
+        {selected && !element.locked ? <button className="resize-handle" type="button" onPointerDown={onResizePointerDown} /> : null}
+      </div>
+    );
+  }
+
+  if (element.type === "image") {
+    return (
+      <div className={`canvas-element ${selected ? "canvas-element-selected" : ""}`} style={style} onPointerDown={onPointerDown}>
+        {element.url ? <img src={element.url} alt={element.alt} draggable={false} style={{ objectFit: element.fit }} /> : null}
+        {selected && !element.locked ? <button className="resize-handle" type="button" onPointerDown={onResizePointerDown} /> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className={`canvas-element canvas-text-element ${selected ? "canvas-element-selected" : ""}`} style={style} onPointerDown={onPointerDown}>
+      <div
+        contentEditable={selected && editing && !element.locked}
+        data-element-editor={element.id}
+        suppressContentEditableWarning
+        spellCheck={false}
+        onDoubleClick={onEditText}
+        onPointerDown={(event) => {
+          if (editing) event.stopPropagation();
+        }}
+        onBlur={(event) => {
+          onTextChange(event.currentTarget.innerText);
+          onStopEditText();
+        }}
+        style={textStyle(element)}
+      >
+        {element.text}
+      </div>
+      {selected && !element.locked ? <button className="resize-handle" type="button" onPointerDown={onResizePointerDown} /> : null}
+    </div>
+  );
+}
+
+function PropertiesPanel({
+  selected,
+  slide,
+  onUpdate,
+  onDuplicate,
+  onDelete,
+  onLayerUp,
+  onLayerDown,
+  onSaveNotes,
+}: {
+  selected: CanvasElement | null;
+  slide: Slide;
+  onUpdate: (patch: ElementPatch) => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  onLayerUp: () => void;
+  onLayerDown: () => void;
+  onSaveNotes: (speakerNotes: string) => void;
+}) {
+  return (
+    <div className="properties-stack">
+      <div className="properties-header">
+        <span>Properties</span>
+        <strong>{selected ? elementLabel(selected) : "Slide"}</strong>
+      </div>
+
+      {selected ? (
+        <>
+          <PropertySection title="Content" description="What this object says or shows.">
+            {selected.type === "text" ? <TextContentProperties selected={selected} onUpdate={onUpdate} /> : null}
+            {selected.type === "shape" ? <ShapeContentProperties selected={selected} onUpdate={onUpdate} /> : null}
+            {selected.type === "image" ? <ImageContentProperties selected={selected} onUpdate={onUpdate} /> : null}
+          </PropertySection>
+
+          <PropertySection title="Style" description="Make it match the slide.">
+            {selected.type === "text" ? <TextStyleProperties selected={selected} onUpdate={onUpdate} /> : null}
+            {selected.type === "shape" ? <ShapeStyleProperties selected={selected} onUpdate={onUpdate} /> : null}
+            {selected.type === "image" ? <ImageStyleProperties selected={selected} onUpdate={onUpdate} /> : null}
+            <label className="field">
+              Opacity
+              <input
+                className="input"
+                max={1}
+                min={0}
+                step={0.05}
+                type="number"
+                value={selected.opacity}
+                onChange={(event) => onUpdate({ opacity: Number(event.target.value) })}
+              />
+            </label>
+          </PropertySection>
+
+          <PropertySection title="Position" description="Place it precisely on the slide.">
+            <div className="property-grid">
+              <label className="field">
+                X
+                <input className="input" type="number" value={Math.round(selected.x)} onChange={(event) => onUpdate({ x: Number(event.target.value) })} />
+              </label>
+              <label className="field">
+                Y
+                <input className="input" type="number" value={Math.round(selected.y)} onChange={(event) => onUpdate({ y: Number(event.target.value) })} />
+              </label>
+              <label className="field">
+                Width
+                <input className="input" type="number" min={32} value={Math.round(selected.w)} onChange={(event) => onUpdate({ w: Number(event.target.value) })} />
+              </label>
+              <label className="field">
+                Height
+                <input className="input" type="number" min={24} value={Math.round(selected.h)} onChange={(event) => onUpdate({ h: Number(event.target.value) })} />
+              </label>
+              <label className="field">
+                Rotate
+                <input className="input" type="number" value={Math.round(selected.rotation)} onChange={(event) => onUpdate({ rotation: Number(event.target.value) })} />
+              </label>
             </div>
-          ))}
+          </PropertySection>
+
+          <PropertySection title="Layer" description="Control selection, order and safety.">
+            <div className="property-actions">
+              <button type="button" onClick={onDuplicate}>
+                <Icon name="copy" />
+                Duplicate
+              </button>
+              <button type="button" onClick={onLayerDown}>
+                <Icon name="back" />
+                Back
+              </button>
+              <button type="button" onClick={onLayerUp}>
+                <Icon name="front" />
+                Front
+              </button>
+            </div>
+            <label className="field property-check">
+              <input type="checkbox" checked={selected.locked} onChange={(event) => onUpdate({ locked: event.target.checked })} />
+              Lock object
+            </label>
+            <button className="property-danger" type="button" onClick={onDelete} disabled={selected.locked}>
+              <Icon name="trash" />
+              Delete object
+            </button>
+          </PropertySection>
+        </>
+      ) : (
+        <div className="properties-empty">
+          <strong>Select an object on the slide</strong>
+          <p>Click text, an image, or a shape to edit its content, style, position, and layer.</p>
         </div>
-      </section>
-    );
-  }
+      )}
 
-  if (visual.type === "timeline") {
-    return (
-      <section className="visual-card visual-timeline">
-        {imageFigure}
-        {visualTitle ? <strong>{visualTitle}</strong> : null}
-        {visual.items.map((item, index) => (
-          <div className="timeline-item" key={`${item.label}-${index}`}>
-            <span>{index + 1}</span>
-            <p>{item.label}</p>
-          </div>
-        ))}
-      </section>
-    );
-  }
+      <PropertySection title="Speaker notes" description="Keep your speaking script close to the slide.">
+        <label className="field">
+          Notes
+          <textarea key={slide.id} className="textarea notes" defaultValue={slide.speakerNotes} onBlur={(event) => onSaveNotes(event.target.value)} />
+        </label>
+      </PropertySection>
+    </div>
+  );
+}
 
-  if (visual.type === "mind_map") {
-    return (
-      <section className="visual-card visual-mindmap">
-        {imageFigure}
-        {visualTitle ? <strong>{visualTitle}</strong> : null}
-        <div className="mindmap-center">{slide.title}</div>
-        <div className="mindmap-nodes">
-          {visual.items.slice(0, 6).map((item) => (
-            <span key={item.label}>{item.label}</span>
-          ))}
-        </div>
-      </section>
-    );
-  }
-
+function PropertySection({ title, description, children }: { title: string; description: string; children: ReactNode }) {
   return (
-    <section className={`visual-card visual-${visual.type}`}>
-      {imageFigure}
-      {visualTitle ? <strong>{visualTitle}</strong> : null}
-      <div className="visual-steps">
-        {(visual.items.length ? visual.items : slide.bullets.map((label) => ({ label, text: "" }))).slice(0, 5).map((item, index) => (
-          <div className="visual-step" key={`${item.label}-${index}`}>
-            <span>{index + 1}</span>
-            <p>{item.label}</p>
-          </div>
-        ))}
+    <section className="property-section">
+      <div className="property-section-header">
+        <strong>{title}</strong>
+        <p>{description}</p>
       </div>
+      {children}
     </section>
   );
 }
 
-function isImageOnlyVisual(type: PresentationDocument["slides"][number]["visual"]["type"]) {
-  return type === "image" || type === "illustration";
+function TextContentProperties({ selected, onUpdate }: { selected: CanvasTextElement; onUpdate: (patch: ElementPatch) => void }) {
+  return (
+    <label className="field">
+      Text
+      <textarea
+        className="textarea element-textarea"
+        value={selected.text}
+        onChange={(event) => onUpdate({ text: event.target.value, runs: [{ text: event.target.value }] } as Partial<CanvasTextElement>)}
+      />
+    </label>
+  );
 }
 
-function isDuplicateDisplayText(value: string, reference: string) {
-  const left = normalizeComparableText(value);
-  const right = normalizeComparableText(reference);
-  if (!left || !right) return false;
-  if (left === right) return true;
-  const shorter = left.length < right.length ? left : right;
-  const longer = left.length < right.length ? right : left;
-  return shorter.length >= 18 && longer.includes(shorter);
+function TextStyleProperties({ selected, onUpdate }: { selected: CanvasTextElement; onUpdate: (patch: ElementPatch) => void }) {
+  return (
+    <>
+      <div className="property-grid">
+        <label className="field">
+          Size
+          <input className="input" type="number" min={8} max={160} value={selected.fontSize} onChange={(event) => onUpdate({ fontSize: Number(event.target.value) } as Partial<CanvasTextElement>)} />
+        </label>
+        <label className="field">
+          Color
+          <input className="input color-input" type="color" value={selected.color} onChange={(event) => onUpdate({ color: event.target.value } as Partial<CanvasTextElement>)} />
+        </label>
+      </div>
+      <label className="field">
+        Typeface
+        <input className="input" value={selected.fontFamily} onChange={(event) => onUpdate({ fontFamily: event.target.value } as Partial<CanvasTextElement>)} />
+      </label>
+      <div className="segmented segmented-five">
+        <button className={selected.bold ? "tool-active" : ""} type="button" onClick={() => onUpdate({ bold: !selected.bold } as Partial<CanvasTextElement>)}>B</button>
+        <button className={selected.italic ? "tool-active" : ""} type="button" onClick={() => onUpdate({ italic: !selected.italic } as Partial<CanvasTextElement>)}>I</button>
+        <button className={selected.underline ? "tool-active" : ""} type="button" onClick={() => onUpdate({ underline: !selected.underline } as Partial<CanvasTextElement>)}>U</button>
+        <button className={selected.align === "left" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "left" } as Partial<CanvasTextElement>)} title="Align left"><Icon name="alignLeft" /></button>
+        <button className={selected.align === "center" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "center" } as Partial<CanvasTextElement>)} title="Align center"><Icon name="alignCenter" /></button>
+        <button className={selected.align === "right" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "right" } as Partial<CanvasTextElement>)} title="Align right"><Icon name="alignRight" /></button>
+      </div>
+    </>
+  );
 }
 
-function normalizeComparableText(value: string) {
-  return value
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase()
-    .replace(/ё/g, "е")
-    .replace(/[^\p{L}\p{N}\s]/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
+function ShapeContentProperties({ selected, onUpdate }: { selected: CanvasShapeElement; onUpdate: (patch: ElementPatch) => void }) {
+  return (
+    <label className="field">
+      Shape
+      <select className="select" value={selected.shape} onChange={(event) => onUpdate({ shape: event.target.value as CanvasShapeElement["shape"] } as Partial<CanvasShapeElement>)}>
+        <option value="rect">Rectangle</option>
+        <option value="roundRect">Rounded</option>
+        <option value="ellipse">Ellipse</option>
+        <option value="line">Line</option>
+      </select>
+    </label>
+  );
+}
+
+function ShapeStyleProperties({ selected, onUpdate }: { selected: CanvasShapeElement; onUpdate: (patch: ElementPatch) => void }) {
+  return (
+    <>
+      <div className="property-grid">
+        <label className="field">
+          Fill
+          <input className="input color-input" type="color" value={selected.fill} onChange={(event) => onUpdate({ fill: event.target.value } as Partial<CanvasShapeElement>)} />
+        </label>
+        <label className="field">
+          Stroke
+          <input className="input color-input" type="color" value={selected.stroke} onChange={(event) => onUpdate({ stroke: event.target.value } as Partial<CanvasShapeElement>)} />
+        </label>
+      </div>
+      <label className="field">
+        Stroke
+        <input className="input" type="number" min={0} max={24} value={selected.strokeWidth} onChange={(event) => onUpdate({ strokeWidth: Number(event.target.value) } as Partial<CanvasShapeElement>)} />
+      </label>
+    </>
+  );
+}
+
+function ImageContentProperties({ selected, onUpdate }: { selected: CanvasImageElement; onUpdate: (patch: ElementPatch) => void }) {
+  return (
+    <label className="field">
+      Alt text
+      <input className="input" value={selected.alt} onChange={(event) => onUpdate({ alt: event.target.value } as Partial<CanvasImageElement>)} />
+    </label>
+  );
+}
+
+function ImageStyleProperties({ selected, onUpdate }: { selected: CanvasImageElement; onUpdate: (patch: ElementPatch) => void }) {
+  return (
+    <label className="field">
+      Fit
+      <select className="select" value={selected.fit} onChange={(event) => onUpdate({ fit: event.target.value as CanvasImageElement["fit"] } as Partial<CanvasImageElement>)}>
+        <option value="cover">Cover</option>
+        <option value="contain">Contain</option>
+      </select>
+    </label>
+  );
+}
+
+function Icon({ name }: { name: IconName }) {
+  const common = {
+    fill: "none",
+    stroke: "currentColor",
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    strokeWidth: 2,
+  };
+
+  return (
+    <svg className="tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {name === "cursor" ? <path {...common} d="M5 3l12 9-5 1.2 3 5.3-3 1.7-3-5.4-4 3.2z" /> : null}
+      {name === "text" ? <path {...common} d="M5 6h14M12 6v12M9 18h6" /> : null}
+      {name === "shape" ? <path {...common} d="M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" /> : null}
+      {name === "image" ? (
+        <>
+          <path {...common} d="M5 6h14v12H5z" />
+          <path {...common} d="M8 15l3-3 2 2 2-3 3 4" />
+          <path {...common} d="M8.5 9.5h.1" />
+        </>
+      ) : null}
+      {name === "undo" ? <path {...common} d="M9 7H5v4M5 7l5 5a6 6 0 0 0 9 1" /> : null}
+      {name === "redo" ? <path {...common} d="M15 7h4v4M19 7l-5 5a6 6 0 0 1-9 1" /> : null}
+      {name === "preview" ? (
+        <>
+          <path {...common} d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" />
+          <path {...common} d="M12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6z" />
+        </>
+      ) : null}
+      {name === "export" ? (
+        <>
+          <path {...common} d="M12 4v10M8 8l4-4 4 4" />
+          <path {...common} d="M5 14v5h14v-5" />
+        </>
+      ) : null}
+      {name === "copy" ? (
+        <>
+          <path {...common} d="M8 8h10v10H8z" />
+          <path {...common} d="M6 16H5V5h11v1" />
+        </>
+      ) : null}
+      {name === "trash" ? (
+        <>
+          <path {...common} d="M6 7h12M10 7V5h4v2M8 7l1 12h6l1-12" />
+        </>
+      ) : null}
+      {name === "front" ? <path {...common} d="M8 8h8v8H8zM5 5h8M5 5v8M11 19h8M19 11v8" /> : null}
+      {name === "back" ? <path {...common} d="M8 8h8v8H8zM11 5h8M19 5v8M5 11v8h8" /> : null}
+      {name === "lock" ? <path {...common} d="M7 11h10v8H7zM9 11V8a3 3 0 0 1 6 0v3" /> : null}
+      {name === "unlock" ? <path {...common} d="M7 11h10v8H7zM9 11V8a3 3 0 0 1 5.4-1.8" /> : null}
+      {name === "replace" ? <path {...common} d="M7 7h8l-2-2M17 17H9l2 2M17 17a6 6 0 0 0 1-7M7 7a6 6 0 0 0-1 7" /> : null}
+      {name === "alignLeft" ? <path {...common} d="M5 7h12M5 12h8M5 17h12" /> : null}
+      {name === "alignCenter" ? <path {...common} d="M6 7h12M9 12h6M6 17h12" /> : null}
+      {name === "alignRight" ? <path {...common} d="M7 7h12M11 12h8M7 17h12" /> : null}
+    </svg>
+  );
+}
+
+function floatingMenuStyle(element: CanvasElement, scale: number, canvasWidth: number, canvasHeight: number): CSSProperties {
+  const menuWidth = element.type === "text" ? 360 : 300;
+  const menuHeight = element.type === "text" ? 92 : 84;
+  const viewportWidth = canvasWidth * scale;
+  const viewportHeight = canvasHeight * scale;
+  const centerX = (element.x + element.w / 2) * scale;
+  const above = element.y * scale - menuHeight - 10;
+  const below = (element.y + element.h) * scale + 10;
+
+  return {
+    left: `${clamp(centerX - menuWidth / 2, 8, Math.max(8, viewportWidth - menuWidth - 8))}px`,
+    top: `${above >= 8 ? above : clamp(below, 8, Math.max(8, viewportHeight - menuHeight - 8))}px`,
+    width: `${menuWidth}px`,
+  };
+}
+
+function elementLabel(element: CanvasElement) {
+  if (element.type === "text") return "Text";
+  if (element.type === "image") return "Image";
+  return "Shape";
+}
+
+function elementStyle(element: CanvasElement): CSSProperties {
+  return {
+    left: `${element.x}px`,
+    top: `${element.y}px`,
+    width: `${element.w}px`,
+    height: `${element.h}px`,
+    transform: `rotate(${element.rotation}deg)`,
+    zIndex: element.zIndex,
+    opacity: element.opacity,
+  };
+}
+
+function textStyle(element: CanvasTextElement): CSSProperties {
+  return {
+    width: "100%",
+    height: "100%",
+    color: element.color,
+    fontFamily: `${element.fontFamily}, Arial, sans-serif`,
+    fontSize: `${element.fontSize}px`,
+    fontWeight: element.bold ? 800 : 400,
+    fontStyle: element.italic ? "italic" : "normal",
+    textDecoration: element.underline ? "underline" : "none",
+    textAlign: element.align,
+    lineHeight: 1.14,
+    outline: "none",
+    overflow: "hidden",
+    whiteSpace: "pre-wrap",
+  };
+}
+
+function shapeStyle(element: CanvasShapeElement): CSSProperties {
+  return {
+    width: "100%",
+    height: "100%",
+    background: element.shape === "line" ? "transparent" : element.fill,
+    border: element.shape === "line" ? "0" : `${element.strokeWidth}px solid ${element.stroke}`,
+    borderRadius: element.shape === "roundRect" ? 18 : element.shape === "ellipse" ? "50%" : 0,
+    borderTop: element.shape === "line" ? `${Math.max(1, element.strokeWidth)}px solid ${element.stroke}` : undefined,
+  };
+}
+
+function eventPoint(event: PointerEvent<HTMLElement>, stageElement: HTMLElement | null, scale: number) {
+  const stage = stageElement || findStage(event.currentTarget);
+  const rect = stage.getBoundingClientRect();
+  const safeScale = scale > 0 ? scale : 1;
+  return {
+    x: (event.clientX - rect.left) / safeScale,
+    y: (event.clientY - rect.top) / safeScale,
+  };
+}
+
+function findStage(target: HTMLElement) {
+  return (target.closest(".object-canvas") as HTMLElement | null) || target;
+}
+
+function nextZIndex(canvas: SlideCanvas) {
+  return Math.max(1, ...canvas.elements.map((element) => element.zIndex)) + 1;
+}
+
+function titleFromCanvas(slide: Slide, canvas: SlideCanvas) {
+  const title = canvas.elements.find((element): element is CanvasTextElement => element.type === "text" && element.role === "title");
+  return title?.text.trim() || slide.title;
+}
+
+function cloneCanvas(canvas: SlideCanvas): SlideCanvas {
+  return JSON.parse(JSON.stringify(canvas)) as SlideCanvas;
+}
+
+function clamp(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
+}
+
+function isTypingTarget(target: EventTarget) {
+  const element = target as HTMLElement | null;
+  return Boolean(element?.closest("input, textarea, select, [contenteditable='true']"));
 }

@@ -244,7 +244,10 @@ describe("sanitizePresentationForDisplay", () => {
     expect(document.slides[2].visual.type).toBe("process_diagram");
     expect(document.slides[2].visual.items).toHaveLength(2);
     expect(document.slides[3].visual.type).toBe("image");
+    expect(document.slides[3].layout).toBe("summary");
     expect(document.slides[3].visual.image?.url).toBe("https://example.com/image.jpg");
+    expect(document.slides[3].visual.image?.objectKey).toBe("projects/project-1/images/slide-4.jpg");
+    expect(document.slides[3].canvas?.elements.some((element) => element.type === "image" && element.url === "https://example.com/image.jpg")).toBe(true);
   });
 
   it("removes keyword chips from slides prepared for display", () => {

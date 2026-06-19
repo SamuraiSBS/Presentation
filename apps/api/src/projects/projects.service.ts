@@ -1,21 +1,32 @@
+import crypto from "node:crypto";
+import path from "node:path";
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
+import { ConfigService } from "@nestjs/config";
+import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Queue } from "bullmq";
 import {
+  type CanvasImageElement,
   type CreateProjectInput,
   type GeneratePresentationInput,
   type PresentationDocument,
   type UpdateNarrationInput,
   type UpdateSlideInput,
+  ensureEditableCanvas,
   planLimits,
   presentationSchema,
+  slideCanvasSchema,
 } from "@studydeck/shared";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 @Injectable()
 export class ProjectsService {
+  private s3Client?: S3Client;
+
   constructor(
     private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
     @InjectQueue("generation") private readonly generationQueue: Queue,
   ) {}
 
@@ -133,12 +144,13 @@ export class ProjectsService {
     const project = await this.getOwned(userId, projectId);
     if (!project.presentation) throw new NotFoundException("Presentation not generated yet");
 
-    const document = presentationSchema.parse(project.presentation.document) as PresentationDocument;
+    const document = ensureEditableCanvas(presentationSchema.parse(project.presentation.document) as PresentationDocument);
     const slide = document.slides.find((item) => item.id === slideId);
     if (!slide) throw new NotFoundException("Slide not found");
 
     if (input.title !== undefined) slide.title = input.title;
     if (input.blocks !== undefined) slide.blocks = input.blocks;
+    if (input.canvas !== undefined) slide.canvas = slideCanvasSchema.parse(input.canvas);
     if (input.speakerNotes !== undefined) slide.speakerNotes = input.speakerNotes;
 
     return this.prisma.presentation.update({
@@ -146,4 +158,119 @@ export class ProjectsService {
       data: { document },
     });
   }
+
+  async uploadSlideAsset(userId: string, projectId: string, slideId: string, file?: Express.Multer.File) {
+    if (!file) throw new BadRequestException("No image uploaded");
+    const contentType = cleanText(file.mimetype).toLowerCase();
+    const extension = extensionFromContentType(contentType);
+    if (!extension) throw new BadRequestException("Only PNG, JPEG and WEBP images are supported");
+
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, userId },
+      include: { user: true, presentation: true },
+    });
+    if (!project) throw new NotFoundException("Project not found");
+    if (!project.presentation) throw new NotFoundException("Presentation not generated yet");
+    if (file.size > planLimits[project.user.planCode].maxProjectBytes) {
+      throw new BadRequestException("Image upload limit exceeded");
+    }
+
+    const document = ensureEditableCanvas(presentationSchema.parse(project.presentation.document) as PresentationDocument);
+    const slide = document.slides.find((item) => item.id === slideId);
+    if (!slide) throw new NotFoundException("Slide not found");
+    const currentCanvas = slide.canvas;
+    if (!currentCanvas) throw new BadRequestException("Slide canvas could not be created");
+
+    const elementId = `image-${crypto.randomUUID()}`;
+    const objectKey = `projects/${projectId}/slides/${slideId}/assets/${elementId}-${safeFileName(file.originalname || `image.${extension}`)}`;
+    await this.getS3().send(
+      new PutObjectCommand({
+        Bucket: this.config.getOrThrow<string>("S3_BUCKET"),
+        Key: objectKey,
+        Body: file.buffer,
+        ContentType: contentType,
+      }),
+    );
+
+    const nextZ = Math.max(1, ...currentCanvas.elements.map((element) => element.zIndex)) + 1;
+    const element: CanvasImageElement = {
+      id: elementId,
+      type: "image",
+      x: 760,
+      y: 150,
+      w: 380,
+      h: 300,
+      rotation: 0,
+      zIndex: nextZ,
+      opacity: 1,
+      locked: false,
+      url: `/api/projects/${projectId}/slides/${slideId}/assets/${elementId}`,
+      objectKey,
+      alt: file.originalname || "Uploaded image",
+      contentType,
+      fit: "cover",
+    };
+
+    slide.canvas = {
+      ...currentCanvas,
+      elements: [...currentCanvas.elements, element],
+    };
+
+    await this.prisma.presentation.update({ where: { projectId }, data: { document } });
+    return { element };
+  }
+
+  async getSlideAssetDownloadUrl(userId: string, projectId: string, slideId: string, elementId: string) {
+    const project = await this.getOwned(userId, projectId);
+    if (!project.presentation) throw new NotFoundException("Presentation not generated yet");
+
+    const document = ensureEditableCanvas(presentationSchema.parse(project.presentation.document) as PresentationDocument);
+    const slide = document.slides.find((item) => item.id === slideId);
+    const element = slide?.canvas?.elements.find((item) => item.id === elementId && item.type === "image");
+    if (!element || element.type !== "image" || !element.objectKey) throw new NotFoundException("Asset not found");
+
+    const url = await getSignedUrl(
+      this.getS3(),
+      new GetObjectCommand({
+        Bucket: this.config.getOrThrow<string>("S3_BUCKET"),
+        Key: element.objectKey,
+      }),
+      { expiresIn: 60 * 5 },
+    );
+
+    return { url };
+  }
+
+  private getS3() {
+    if (!this.s3Client) {
+      this.s3Client = new S3Client({
+        region: this.config.get<string>("S3_REGION") || "us-east-1",
+        endpoint: this.config.get<string>("S3_ENDPOINT"),
+        forcePathStyle: this.config.get<string>("S3_FORCE_PATH_STYLE") !== "false",
+        credentials: {
+          accessKeyId: this.config.getOrThrow<string>("S3_ACCESS_KEY_ID"),
+          secretAccessKey: this.config.getOrThrow<string>("S3_SECRET_ACCESS_KEY"),
+        },
+      });
+    }
+
+    return this.s3Client;
+  }
+}
+
+function extensionFromContentType(contentType: string) {
+  if (contentType === "image/png") return "png";
+  if (contentType === "image/jpeg" || contentType === "image/jpg") return "jpg";
+  if (contentType === "image/webp") return "webp";
+  return "";
+}
+
+function safeFileName(value: string) {
+  const extension = path.extname(value);
+  const baseName = path.basename(value, extension).replace(/[^\w.-]+/g, "-").slice(0, 80) || "image";
+  return `${baseName}${extension || ""}`.slice(0, 120);
+}
+
+function cleanText(value: unknown) {
+  return String(value || "").replace(/\u0000/g, "").replace(/\s+/g, " ").trim();
 }

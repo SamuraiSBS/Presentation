@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Req, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
 import {
   createProjectInputSchema,
   generatePresentationInputSchema,
@@ -51,5 +52,26 @@ export class ProjectsController {
     @Body() body: unknown,
   ) {
     return this.projects.updateSlide(request.userId, projectId, slideId, updateSlideInputSchema.parse(body));
+  }
+
+  @Post(":id/slides/:slideId/assets")
+  @UseInterceptors(FileInterceptor("file"))
+  uploadSlideAsset(
+    @Req() request: InternalRequest,
+    @Param("id") projectId: string,
+    @Param("slideId") slideId: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    return this.projects.uploadSlideAsset(request.userId, projectId, slideId, file);
+  }
+
+  @Get(":id/slides/:slideId/assets/:elementId")
+  getSlideAsset(
+    @Req() request: InternalRequest,
+    @Param("id") projectId: string,
+    @Param("slideId") slideId: string,
+    @Param("elementId") elementId: string,
+  ) {
+    return this.projects.getSlideAssetDownloadUrl(request.userId, projectId, slideId, elementId);
   }
 }

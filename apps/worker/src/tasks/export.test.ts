@@ -1,6 +1,7 @@
+import { existsSync } from "node:fs";
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
-import { createPptx } from "./export.js";
+import { createPdf, createPptx } from "./export.js";
 
 describe("createPptx", () => {
   it("creates a wide deck without visible source text", async () => {
@@ -155,4 +156,136 @@ describe("createPptx", () => {
     expect(slideXml).toContain("Image metadata");
     expect(slideXml).toContain("The slide remains exportable");
   });
+
+  it("renders editable canvas text and shapes to pptx", async () => {
+    const buffer = await createPptx(canvasDeck());
+    const zip = await JSZip.loadAsync(buffer);
+    const slideXml = await zip.file("ppt/slides/slide1.xml")?.async("string");
+
+    expect(slideXml).toContain("Canvas title");
+    expect(slideXml).toContain("Canvas body");
+    expect(slideXml).toContain("FF8A00");
+    expect(slideXml).toContain("161A1F");
+  });
+
+  it.skipIf(!hasChromium())("renders editable canvas to a real pdf", async () => {
+    const buffer = await createPdf(canvasDeck());
+
+    expect(buffer.subarray(0, 5).toString("utf8")).toBe("%PDF-");
+    expect(buffer.length).toBeGreaterThan(1000);
+  });
 });
+
+function canvasDeck() {
+  return {
+    id: "presentation-canvas",
+    title: "Canvas deck",
+    scenario: "lesson",
+    level: "beginner",
+    slideCount: 1,
+    generationMode: "demo" as const,
+    generatedText: "Slide 1: Canvas title\nCanvas body.",
+    sources: [],
+    outline: ["Canvas title"],
+    narrativePlan: [],
+    speechScript: [{ slideOrder: 1, slideTitle: "Canvas title", text: "Narration." }],
+    slides: [
+      {
+        id: "slide-1",
+        order: 1,
+        title: "Canvas title",
+        slideKind: "content" as const,
+        layout: "bullets" as const,
+        thesis: "Canvas body.",
+        bullets: [],
+        definition: null,
+        keyConcepts: [],
+        visual: { type: "none" as const, title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] },
+        highlights: [],
+        blocks: [{ type: "callout" as const, content: "Canvas body." }],
+        canvas: {
+          width: 1280,
+          height: 720,
+          background: "#FFFFFF",
+          elements: [
+            {
+              id: "shape-1",
+              type: "shape" as const,
+              shape: "roundRect" as const,
+              x: 80,
+              y: 90,
+              w: 1120,
+              h: 500,
+              rotation: 0,
+              zIndex: 1,
+              opacity: 1,
+              locked: false,
+              fill: "#FF8A00",
+              stroke: "#161A1F",
+              strokeWidth: 2,
+            },
+            {
+              id: "text-1",
+              type: "text" as const,
+              role: "title" as const,
+              x: 150,
+              y: 160,
+              w: 980,
+              h: 120,
+              rotation: 0,
+              zIndex: 2,
+              opacity: 1,
+              locked: false,
+              text: "Canvas title",
+              runs: [{ text: "Canvas title", bold: true }],
+              fontSize: 46,
+              fontFamily: "Arial",
+              color: "#161A1F",
+              bold: true,
+              italic: false,
+              underline: false,
+              align: "center" as const,
+            },
+            {
+              id: "text-2",
+              type: "text" as const,
+              role: "body" as const,
+              x: 220,
+              y: 310,
+              w: 840,
+              h: 120,
+              rotation: 0,
+              zIndex: 3,
+              opacity: 1,
+              locked: false,
+              text: "Canvas body",
+              runs: [{ text: "Canvas body", italic: true }],
+              fontSize: 30,
+              fontFamily: "Arial",
+              color: "#161A1F",
+              bold: false,
+              italic: true,
+              underline: false,
+              align: "center" as const,
+            },
+          ],
+        },
+        speakerNotes: "Narration.",
+        timingSeconds: 45,
+        sourceRefs: [],
+      },
+    ],
+  };
+}
+
+function hasChromium() {
+  return [
+    process.env.CHROMIUM_PATH,
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+    "/usr/bin/google-chrome-stable",
+  ]
+    .filter(Boolean)
+    .some((candidate) => existsSync(candidate as string));
+}
