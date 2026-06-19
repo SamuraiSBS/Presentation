@@ -149,6 +149,7 @@ export class ProjectsService {
     if (!slide) throw new NotFoundException("Slide not found");
 
     if (input.title !== undefined) slide.title = input.title;
+    if (input.layout !== undefined) slide.layout = input.layout;
     if (input.blocks !== undefined) slide.blocks = input.blocks;
     if (input.canvas !== undefined) slide.canvas = slideCanvasSchema.parse(input.canvas);
     if (input.speakerNotes !== undefined) slide.speakerNotes = input.speakerNotes;

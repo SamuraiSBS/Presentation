@@ -12,6 +12,8 @@ import {
   type SlideNarrative,
   type SlideVisual,
   type Source,
+  SLIDE_LAYOUT_DEFINITIONS,
+  hasMeasurableValue,
   presentationSchema,
   resolvePresentationTheme,
 } from "@studydeck/shared";
@@ -251,23 +253,7 @@ const STOP_WORDS = new Set([
   "with",
 ]);
 
-const SLIDE_LAYOUTS = [
-  "hero",
-  "bullets",
-  "two-column",
-  "summary",
-  "statement",
-  "quote",
-  "definition",
-  "timeline",
-  "comparison",
-  "process",
-  "image-focus",
-  "case-study",
-  "question-answer",
-  "myth-fact",
-  "metrics",
-] satisfies SlideLayout[];
+const SLIDE_LAYOUTS = SLIDE_LAYOUT_DEFINITIONS.map((item) => item.id);
 
 const CONTENT_LAYOUT_CYCLE = [
   "statement",
@@ -279,6 +265,9 @@ const CONTENT_LAYOUT_CYCLE = [
   "definition",
   "myth-fact",
   "metrics",
+  "evidence",
+  "problem-solution",
+  "explain-example",
   "two-column",
   "quote",
   "image-focus",
@@ -1109,13 +1098,17 @@ export function buildGenerationPrompt(
     "Required JSON fields: id, title, scenario, level, slideCount, generatedText, sources, outline, narrativePlan, speechScript, slides.",
     "Each slide must include: id, order, title, slideKind, layout, thesis, bullets, definition, keyConcepts, visual, highlights, blocks, speakerNotes, timingSeconds, sourceRefs.",
     "Layout rules:",
-    "- layout must be one of: hero, bullets, two-column, summary, statement, quote, definition, timeline, comparison, process, image-focus, case-study, question-answer, myth-fact, metrics;",
+    "- layout must be one of: hero, bullets, two-column, summary, statement, quote, definition, timeline, comparison, process, image-focus, case-study, question-answer, myth-fact, metrics, evidence, problem-solution, explain-example;",
     "- do not use the same content layout more than twice in a row;",
     "- choose the layout from the slide's idea, not from a fixed template;",
     "- use statement for one strong claim with one short callout and no list;",
     "- use quote when a concise quote or author-like formulation is central;",
     "- use definition when one term needs explanation;",
-    "- use timeline for chronology, process for ordered actions, comparison for two sides, image-focus for a concrete image, case-study for situation/action/result, question-answer for a question with an answer, myth-fact for misconception correction, metrics for 2-4 numbers or measurable facts;",
+    "- use timeline for chronology, process for ordered actions, comparison for two sides, image-focus for a concrete image, case-study for situation/action/result, question-answer for a question with an answer, myth-fact for misconception correction;",
+    "- use metrics only for 2-4 explicit numbers, percentages, dates, durations, or measured quantities already supported by the material; never turn list order into a metric;",
+    "- use evidence for one thesis with 2-4 supporting facts; keep 1-3 sourceRefs as metadata so the renderer can show compact citations;",
+    "- use problem-solution for problem/cause/solution or problem/consequence/solution;",
+    "- use explain-example for a concept, a simple explanation, a concrete example, and an important caveat or common mistake;",
     "- use bullets only when the slide is genuinely a list of takeaways.",
     "Content slide rules:",
     "- title: short, ideally 6-8 words or fewer;",
@@ -1171,10 +1164,10 @@ export function buildGenerationPrompt(
     "- do not put URLs or image provider names into visual.description; describe the desired scene, object, person, place, chart, or illustration only.",
     "Hard limits:",
     "- Do not write long text blocks on slides.",
-    "- Do not put markdown headings, source names, citations, sourceRefs, TODOs, or instructions into slide text.",
+    "- Do not put markdown headings, source names, citations, sourceRefs, TODOs, or instructions into title, thesis, bullets, blocks, or speaker notes. sourceRefs remain structured metadata only.",
     "- Do not invent precise facts when the material does not support them; give a general explanation instead.",
     "- Keep detailed narration only in speakerNotes and speechScript.",
-    `Source material for internal factual grounding only; do not show source labels to the user:\n${formatSourceText(sources)}`,
+    `Source material for factual grounding. Keep source labels only in structured sourceRefs, primarily for evidence layouts:\n${formatSourceText(sources)}`,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -1356,6 +1349,7 @@ function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], pro
       definition,
       visual,
       blocks,
+      sourceRefs,
     }),
     thesis,
     bullets,
@@ -1366,7 +1360,7 @@ function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], pro
     blocks,
     speakerNotes: normalizeSpeakerNotes(slide.speakerNotes, { title, thesis, bullets, definition, visual }, project, order, narrationSection?.text),
     timingSeconds: clampNumber(Number(slide.timingSeconds || 55), 20, 240),
-    sourceRefs: sourceRefs.map((ref) => ({
+    sourceRefs: sourceRefs.slice(0, 3).map((ref) => ({
       sourceId: cleanText(ref.sourceId) || sources[0]?.id || "src-prompt",
       label: cleanText(ref.label) || sources.find((source) => source.id === ref.sourceId)?.label || "Материал",
       excerpt: cleanText(ref.excerpt) || sources.find((source) => source.id === ref.sourceId)?.excerpt || "",
@@ -2056,36 +2050,40 @@ function buildFallbackSpeakerNotes(project: ProjectInput, order: number) {
   );
 }
 
-function normalizeLayout(
+export function normalizeLayout(
   layout: unknown,
   order: number,
   slideCount: number,
   slideKind: SlideKind,
-  slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks">,
+  slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks"> & Partial<Pick<Slide, "sourceRefs">>,
 ): Slide["layout"] {
   if (order === 1 || slideKind === "title" || slideKind === "section") return "hero";
   if (order === slideCount || slideKind === "summary") return "summary";
 
   const requested = SLIDE_LAYOUTS.includes(layout as SlideLayout) ? (layout as SlideLayout) : undefined;
   if (requested && requested !== "hero" && requested !== "summary") {
-    return requested;
+    return layoutHasEnoughContent(requested, slide) ? requested : inferContentLayout(slide, order);
   }
 
   return inferContentLayout(slide, order);
 }
 
-function inferContentLayout(
-  slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks">,
+export function inferContentLayout(
+  slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks"> & Partial<Pick<Slide, "sourceRefs">>,
   order: number,
 ): Slide["layout"] {
   if (slide.visual.image?.url || slide.visual.type === "image" || slide.visual.type === "illustration") return "image-focus";
   if (slide.blocks.some((block) => block.type === "quote")) return "quote";
+  if (slide.definition && hasExampleLanguage(slide)) return "explain-example";
   if (slide.definition) return "definition";
   if (slide.visual.type === "timeline") return "timeline";
   if (slide.visual.type === "process_diagram") return "process";
-  if (["comparison_diagram", "before_after_table", "pros_cons_table", "cause_effect_diagram"].includes(slide.visual.type)) return "comparison";
+  if (slide.visual.type === "cause_effect_diagram" || hasProblemSolutionLanguage(slide)) return "problem-solution";
+  if (["comparison_diagram", "before_after_table", "pros_cons_table"].includes(slide.visual.type)) return "comparison";
   if (/[?？]$/.test(cleanText(slide.title))) return "question-answer";
   if (hasMeasurableText(slide)) return "metrics";
+  if (slide.sourceRefs?.length && slide.bullets.length >= 2) return "evidence";
+  if (hasExampleLanguage(slide)) return "explain-example";
 
   return CONTENT_LAYOUT_CYCLE[(order - 2 + CONTENT_LAYOUT_CYCLE.length) % CONTENT_LAYOUT_CYCLE.length];
 }
@@ -2124,12 +2122,15 @@ function nextDiverseLayout(index: number, previous: SlideLayout[], slide: Slide)
   return previous.at(-1) === "bullets" ? "statement" : "bullets";
 }
 
-function layoutHasEnoughContent(layout: SlideLayout, slide: Slide) {
+function layoutHasEnoughContent(layout: SlideLayout, slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks"> & Partial<Pick<Slide, "sourceRefs">>) {
   if (layout === "definition") return Boolean(slide.definition || slide.thesis);
   if (layout === "quote") return slide.blocks.some((block) => block.type === "quote") || Boolean(slide.thesis);
   if (layout === "comparison") return slide.visual.rows.length || slide.bullets.length >= 2;
   if (layout === "process" || layout === "timeline") return slide.visual.items.length >= 2 || slide.bullets.length >= 2;
-  if (layout === "metrics") return hasMeasurableText(slide) || slide.bullets.length >= 2;
+  if (layout === "metrics") return hasMeasurableText(slide);
+  if (layout === "evidence") return Boolean(slide.thesis && slide.bullets.length >= 2);
+  if (layout === "problem-solution") return slide.visual.items.length >= 3 || slide.bullets.length >= 3;
+  if (layout === "explain-example") return Boolean(slide.definition || slide.thesis) && slide.bullets.length >= 1;
   if (layout === "image-focus") return Boolean(slide.visual.image?.url || slide.thesis);
   return true;
 }
@@ -2142,7 +2143,18 @@ function hasMeasurableText(slide: Pick<Slide, "title" | "thesis" | "bullets" | "
     ...slide.blocks.flatMap((block) => (block.type === "bullets" ? block.items : [block.content])),
   ].join(" ");
 
-  return /\d/.test(text);
+  return hasMeasurableValue(text);
+}
+
+function hasProblemSolutionLanguage(slide: Pick<Slide, "title" | "thesis" | "bullets" | "blocks">) {
+  const text = [slide.title, slide.thesis, ...slide.bullets].join(" ").toLowerCase();
+  const hasProblem = /(проблем|трудност|риск|причин|последств|мешает|вызывает)/u.test(text);
+  const hasSolution = /(решени|исправ|помога|нужно|можно|способ|предлага)/u.test(text);
+  return hasProblem && hasSolution;
+}
+
+function hasExampleLanguage(slide: Pick<Slide, "title" | "thesis" | "bullets" | "blocks">) {
+  return /(пример|например|ошибк|важно помнить|оговорк)/iu.test([slide.title, slide.thesis, ...slide.bullets].join(" "));
 }
 
 function normalizeProvider(value: string | undefined): AiGenerationMode | undefined {

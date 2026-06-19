@@ -1,5 +1,13 @@
 import type { CSSProperties, ReactNode } from "react";
-import type { PresentationDocument, PresentationTheme, SlideBlock } from "@studydeck/shared";
+import {
+  compactSourceRefs,
+  fittedFontSize,
+  hasMeasurableValue,
+  metricLead,
+  type PresentationDocument,
+  type PresentationTheme,
+  type SlideBlock,
+} from "@studydeck/shared";
 
 type Slide = PresentationDocument["slides"][number];
 
@@ -81,6 +89,9 @@ export function SlideTemplatePreview({ slide }: { slide: Slide }) {
   if (slide.layout === "question-answer") return <QuestionAnswerSlide slide={slide} />;
   if (slide.layout === "myth-fact") return <MythFactSlide slide={slide} />;
   if (slide.layout === "metrics") return <MetricsSlide slide={slide} />;
+  if (slide.layout === "evidence") return <EvidenceSlide slide={slide} />;
+  if (slide.layout === "problem-solution") return <ProblemSolutionSlide slide={slide} />;
+  if (slide.layout === "explain-example") return <ExplainExampleSlide slide={slide} />;
 
   return (
     <div className="slide-content slide-content-structured">
@@ -177,10 +188,11 @@ function SummarySlide({ slide }: { slide: Slide }) {
 }
 
 function StatementSlide({ slide }: { slide: Slide }) {
+  const statement = slide.thesis || slideBlockText(slide);
   return (
     <SlideImageLayout slide={slide} className="slide-content slide-layout-statement">
       <h2 className="slide-title">{slide.title}</h2>
-      <p>{slide.thesis || slideBlockText(slide)}</p>
+      <p style={previewFontSize(statement, 46, 27, 230)}>{statement}</p>
       {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
     </SlideImageLayout>
   );
@@ -205,7 +217,7 @@ function DefinitionSlide({ slide }: { slide: Slide }) {
       <h2 className="slide-title">{slide.title}</h2>
       <div className="definition-hero">
         {showTerm ? <strong>{definition.term}</strong> : null}
-        <p>{definition.text}</p>
+        <p style={previewFontSize(definition.text, 25, 17, 150)}>{definition.text}</p>
       </div>
       {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
     </SlideImageLayout>
@@ -315,14 +327,15 @@ function MythFactSlide({ slide }: { slide: Slide }) {
 }
 
 function MetricsSlide({ slide }: { slide: Slide }) {
-  const items = compactItems(slide);
+  const items = compactItems(slide).filter(hasMeasurableValue);
+  if (!items.length) return <StatementSlide slide={slide} />;
   return (
     <SlideImageLayout slide={slide} className="slide-content slide-layout-metrics">
       <h2 className="slide-title">{slide.title}</h2>
       <div className="metric-grid">
         {items.slice(0, 4).map((item, index) => (
           <div className="metric-tile" key={`${item}-${index}`}>
-            <strong>{metricLead(item, index)}</strong>
+            <strong>{metricLead(item)}</strong>
             <p>{item}</p>
           </div>
         ))}
@@ -331,8 +344,75 @@ function MetricsSlide({ slide }: { slide: Slide }) {
   );
 }
 
-function metricLead(item: string, index: number) {
-  return item.match(/\d+[.,]?\d*\s*[%\wА-Яа-я-]*/u)?.[0] || String(index + 1).padStart(2, "0");
+function EvidenceSlide({ slide }: { slide: Slide }) {
+  const items = compactItems(slide).filter((item) => !isDuplicateDisplayText(item, slide.thesis)).slice(0, 4);
+  const sources = compactSourceRefs(slide.sourceRefs, 3);
+  return (
+    <SlideImageLayout slide={slide} className="slide-content slide-layout-evidence">
+      <h2 className="slide-title">{slide.title}</h2>
+      <p className="evidence-thesis" style={previewFontSize(slide.thesis, 34, 23, 118)}>{slide.thesis}</p>
+      <div className="evidence-list">
+        {items.map((item, index) => (
+          <div className="evidence-item" key={`${item}-${index}`}>
+            <span aria-hidden="true" />
+            <p>{item}</p>
+          </div>
+        ))}
+      </div>
+      {sources.length ? (
+        <div className="source-ref-row" aria-label="Источники">
+          {sources.map((source) => <small key={source}>{source}</small>)}
+        </div>
+      ) : null}
+    </SlideImageLayout>
+  );
+}
+
+function ProblemSolutionSlide({ slide }: { slide: Slide }) {
+  const items = compactItems(slide);
+  return (
+    <SlideImageLayout slide={slide} className="slide-content slide-layout-problem-solution">
+      <h2 className="slide-title">{slide.title}</h2>
+      <div className="problem-solution-flow">
+        {["Проблема", "Причина", "Решение"].map((label, index) => (
+          <section key={label}>
+            <strong>{label}</strong>
+            <p>{items[index] || slide.thesis}</p>
+          </section>
+        ))}
+      </div>
+    </SlideImageLayout>
+  );
+}
+
+function ExplainExampleSlide({ slide }: { slide: Slide }) {
+  const items = compactItems(slide);
+  const definition = slide.definition || { term: slide.title, text: slide.thesis || items[0] };
+  return (
+    <SlideImageLayout slide={slide} className="slide-content slide-layout-explain-example">
+      <h2 className="slide-title">{slide.title}</h2>
+      <div className="explain-example-board">
+        <section className="explain-definition">
+          <strong>{definition.term}</strong>
+          <p style={previewFontSize(definition.text, 23, 16, 190)}>{definition.text}</p>
+        </section>
+        <div className="explain-example-notes">
+          <section>
+            <strong>Пример</strong>
+            <p>{items[1] || items[0] || slide.thesis}</p>
+          </section>
+          <section>
+            <strong>Важно помнить</strong>
+            <p>{items[2] || slide.bullets[1] || "Пример помогает понять идею, но не заменяет точное определение."}</p>
+          </section>
+        </div>
+      </div>
+    </SlideImageLayout>
+  );
+}
+
+function previewFontSize(value: string, preferred: number, minimum: number, boxHeight: number): CSSProperties {
+  return { fontSize: `${fittedFontSize(value, preferred, minimum, boxHeight)}px` };
 }
 
 function MiniPointRow({ items }: { items: string[] }) {

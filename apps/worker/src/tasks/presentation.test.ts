@@ -4,6 +4,8 @@ import {
   generateNarrationDraft,
   generatePresentation,
   generatePresentationFromNarration,
+  inferContentLayout,
+  normalizeLayout,
   normalizeNarrativePlan,
   selectAiProviders,
 } from "./presentation.js";
@@ -168,6 +170,10 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("layout must be one of");
     expect(prompt).toContain("question-answer");
     expect(prompt).toContain("myth-fact");
+    expect(prompt).toContain("evidence");
+    expect(prompt).toContain("problem-solution");
+    expect(prompt).toContain("explain-example");
+    expect(prompt).toContain("never turn list order into a metric");
     expect(prompt).toContain("do not use the same content layout more than twice in a row");
     expect(prompt).toContain("one clear thesis plus 2-3 short meaningful points");
     expect(prompt).toContain("semantic and memorable");
@@ -189,6 +195,28 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("Visual theme rules");
     expect(prompt).toContain("preset=");
     expect(prompt).toContain("do not invent CSS");
+  });
+});
+
+describe("layout normalization", () => {
+  const base = {
+    title: "Почему меняется результат",
+    thesis: "Проблема возникает из-за неверного способа, а решение требует проверки.",
+    bullets: ["Проблема мешает получить результат", "Причина связана с исходными данными", "Решение начинается с проверки"],
+    definition: null,
+    visual: { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] },
+    blocks: [],
+    sourceRefs: [],
+  } as any;
+
+  it("selects problem-solution, evidence, and explain-example for matching content", () => {
+    expect(inferContentLayout(base, 2)).toBe("problem-solution");
+    expect(inferContentLayout({ ...base, thesis: "Тезис подтверждают несколько фактов.", bullets: ["Факт один", "Факт два"], sourceRefs: [{ sourceId: "s", label: "Источник", excerpt: "Факт", page: null }] }, 3)).toBe("evidence");
+    expect(inferContentLayout({ ...base, title: "Что такое фотосинтез", thesis: "Это процесс преобразования света.", bullets: ["Например, растение использует солнечный свет"], definition: { term: "Фотосинтез", text: "Преобразование энергии света." } }, 4)).toBe("explain-example");
+  });
+
+  it("does not keep metrics when the slide has no measurable values", () => {
+    expect(normalizeLayout("metrics", 2, 5, "content", { ...base, thesis: "Качественное изменение без чисел." })).not.toBe("metrics");
   });
 });
 

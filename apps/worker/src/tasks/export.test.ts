@@ -168,6 +168,25 @@ describe("createPptx", () => {
     expect(slideXml).toContain("161A1F");
   });
 
+  it("exports evidence sources compactly without breaking pptx", async () => {
+    const source = canvasDeck();
+    const evidenceSlide = {
+      ...source.slides[0],
+      layout: "evidence" as const,
+      canvas: undefined,
+      thesis: "The claim is supported by two concrete observations.",
+      bullets: ["Observation one supports the claim", "Observation two confirms the pattern"],
+      sourceRefs: [{ sourceId: "source-1", label: "Research notes", excerpt: "A compact supporting excerpt that remains readable.", page: "p. 4" }],
+    };
+    const buffer = await createPptx({ ...source, slides: [evidenceSlide] });
+    const zip = await JSZip.loadAsync(buffer);
+    const slideXml = await zip.file("ppt/slides/slide1.xml")?.async("string");
+
+    expect(slideXml).toContain("The claim is supported");
+    expect(slideXml).toContain("Research notes");
+    expect(slideXml).toContain("p. 4");
+  });
+
   it.skipIf(!hasChromium())("renders editable canvas to a real pdf", async () => {
     const buffer = await createPdf(canvasDeck());
 

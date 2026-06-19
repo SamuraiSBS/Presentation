@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "npm run build -w @studydeck/shared && npm run dev -w @studydeck/web",
     "dev:web": "npm run dev -w @studydeck/web",
+    "dev:web:fast": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-web-fast.ps1",
     "dev:api": "npm run dev -w @studydeck/api",
     "dev:worker": "npm run dev -w @studydeck/worker",
     "build": "npm run build --workspaces --if-present",

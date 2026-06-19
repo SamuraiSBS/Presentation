@@ -4,6 +4,9 @@ import { existsSync } from "node:fs";
 import {
   ensureEditableCanvas,
   hasCustomSlideCanvas,
+  compactSourceRefs,
+  hasMeasurableValue,
+  metricLead,
   presentationSchema,
   resolvePresentationTheme,
   sortCanvasElements,
@@ -166,6 +169,9 @@ function renderContentSlide(
   if (layout === "question-answer") return renderQuestionAnswerSlide(pptx, slide, item, theme);
   if (layout === "myth-fact") return renderThreePanelSlide(pptx, slide, item, ["Миф", "Факт"], theme);
   if (layout === "metrics") return renderMetricsSlide(pptx, slide, item, theme);
+  if (layout === "evidence") return renderEvidenceSlide(pptx, slide, item, theme);
+  if (layout === "problem-solution") return renderProblemSolutionSlide(pptx, slide, item, theme);
+  if (layout === "explain-example") return renderExplainExampleSlide(pptx, slide, item, theme);
   renderDefaultContentSlide(slide, item, imageData, theme);
 }
 
@@ -580,14 +586,73 @@ function renderMetricsSlide(
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   theme: ExportTheme,
 ) {
+  const items = sequenceItems(item).filter(hasMeasurableValue).slice(0, 4);
+  if (!items.length) return renderStatementSlide(slide, item, theme);
   renderSlideTitle(slide, item.title, theme);
-  const items = sequenceItems(item).slice(0, 4);
   items.forEach((text, index) => {
     const x = 0.9 + index * 3;
     slide.addShape(pptx.ShapeType.roundRect, { x, y: 2.0, w: 2.72, h: 2.35, fill: { color: theme.pptx.surface }, line: { color: theme.pptx.line } });
-    slide.addText(metricLead(text, index), { x: x + 0.18, y: 2.28, w: 2.36, h: 0.46, fontFace: theme.fonts.heading, fontSize: 22, bold: true, color: theme.pptx.accentAlt, fit: "shrink" });
+    slide.addText(metricLead(text), { x: x + 0.18, y: 2.28, w: 2.36, h: 0.46, fontFace: theme.fonts.heading, fontSize: 22, bold: true, color: theme.pptx.accentAlt, fit: "shrink" });
     slide.addText(text, { x: x + 0.18, y: 3.08, w: 2.36, h: 0.78, fontFace: theme.fonts.body, fontSize: 12, color: theme.pptx.muted, fit: "shrink" });
   });
+}
+
+function renderEvidenceSlide(
+  pptx: InstanceType<typeof PptxGenConstructor>,
+  slide: any,
+  item: ReturnType<typeof presentationSchema.parse>["slides"][number],
+  theme: ExportTheme,
+) {
+  renderSlideTitle(slide, item.title, theme);
+  slide.addText(item.thesis || slideBodyText(item), {
+    x: 0.9, y: 1.55, w: 11.55, h: 1.0, fontFace: theme.fonts.heading, fontSize: 25, bold: true,
+    color: theme.pptx.text, fit: "shrink",
+  });
+  slide.addShape(pptx.ShapeType.rect, { x: 0.9, y: 2.68, w: 11.55, h: 0.04, fill: { color: theme.pptx.accent }, line: { transparency: 100 } });
+  sequenceItems(item).slice(0, 4).forEach((text, index) => {
+    const x = 0.92 + (index % 2) * 5.85;
+    const y = 3.02 + Math.floor(index / 2) * 1.15;
+    slide.addShape(pptx.ShapeType.ellipse, { x, y: y + 0.06, w: 0.22, h: 0.22, fill: { color: theme.pptx.accentAlt }, line: { transparency: 100 } });
+    slide.addText(text, { x: x + 0.38, y, w: 5.25, h: 0.72, fontFace: theme.fonts.body, fontSize: 14, color: theme.pptx.muted, fit: "shrink" });
+  });
+  compactSourceRefs(item.sourceRefs, 3).forEach((source, index) => {
+    slide.addText(source, { x: 0.9 + index * 3.9, y: 6.35, w: 3.65, h: 0.38, fontFace: theme.fonts.body, fontSize: 7, color: theme.pptx.muted, fit: "shrink" });
+  });
+}
+
+function renderProblemSolutionSlide(
+  pptx: InstanceType<typeof PptxGenConstructor>,
+  slide: any,
+  item: ReturnType<typeof presentationSchema.parse>["slides"][number],
+  theme: ExportTheme,
+) {
+  renderSlideTitle(slide, item.title, theme);
+  const items = sequenceItems(item);
+  ["Проблема", "Причина", "Решение"].forEach((label, index) => {
+    const x = 0.9 + index * 4.05;
+    slide.addText(label, { x, y: 1.8, w: 3.55, h: 0.35, fontFace: theme.fonts.heading, fontSize: 13, bold: true, color: theme.pptx.text });
+    slide.addShape(pptx.ShapeType.rect, { x, y: 2.28, w: 3.55, h: 0.04, fill: { color: index === 2 ? theme.pptx.accentAlt : theme.pptx.line }, line: { transparency: 100 } });
+    slide.addText(items[index] || item.thesis || slideBodyText(item), { x, y: 2.65, w: 3.55, h: 2.2, fontFace: theme.fonts.body, fontSize: 16, color: theme.pptx.muted, fit: "shrink" });
+    if (index < 2) slide.addText("→", { x: x + 3.63, y: 3.4, w: 0.3, h: 0.3, fontFace: theme.fonts.heading, fontSize: 16, bold: true, color: theme.pptx.muted, align: "center" });
+  });
+}
+
+function renderExplainExampleSlide(
+  pptx: InstanceType<typeof PptxGenConstructor>,
+  slide: any,
+  item: ReturnType<typeof presentationSchema.parse>["slides"][number],
+  theme: ExportTheme,
+) {
+  renderSlideTitle(slide, item.title, theme);
+  const items = sequenceItems(item);
+  const definition = item.definition || { term: item.title, text: item.thesis || items[0] || slideBodyText(item) };
+  slide.addText(definition.term, { x: 0.9, y: 1.75, w: 4.35, h: 0.75, fontFace: theme.fonts.heading, fontSize: 25, bold: true, color: theme.pptx.text, fit: "shrink" });
+  slide.addText(definition.text, { x: 0.9, y: 2.75, w: 4.35, h: 2.15, fontFace: theme.fonts.body, fontSize: 17, color: theme.pptx.muted, fit: "shrink" });
+  slide.addShape(pptx.ShapeType.rect, { x: 5.55, y: 1.72, w: 0.03, h: 4.2, fill: { color: theme.pptx.line }, line: { transparency: 100 } });
+  slide.addText("Пример", { x: 6.0, y: 1.75, w: 5.3, h: 0.35, fontFace: theme.fonts.heading, fontSize: 13, bold: true, color: theme.pptx.text });
+  slide.addText(items[1] || items[0] || item.thesis, { x: 6.0, y: 2.25, w: 5.3, h: 1.35, fontFace: theme.fonts.body, fontSize: 17, bold: true, color: theme.pptx.text, fit: "shrink" });
+  slide.addText("Важно помнить", { x: 6.0, y: 4.0, w: 5.3, h: 0.35, fontFace: theme.fonts.heading, fontSize: 13, bold: true, color: theme.pptx.text });
+  slide.addText(items[2] || item.bullets[1] || "Пример помогает понять идею, но не заменяет точное определение.", { x: 6.0, y: 4.5, w: 5.3, h: 1.05, fontFace: theme.fonts.body, fontSize: 14, color: theme.pptx.muted, fit: "shrink" });
 }
 
 function renderDefaultContentSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number], imageData: string | null, theme: ExportTheme) {
@@ -679,7 +744,7 @@ async function renderPdfHtml(presentation: ReturnType<typeof presentationSchema.
   .slide:last-child { page-break-after: auto; }
   .template-slide { display: grid; place-items: center; padding: 54px; color: var(--slide-text); font-family: var(--slide-body-font); }
   .template-slide::before { content: ""; position: absolute; inset: 0; pointer-events: none; }
-  .template-slide[data-bg="title"]::before { background: linear-gradient(90deg, color-mix(in srgb, var(--slide-accent) 18%, transparent) 0 32%, transparent 32%), radial-gradient(circle at 82% 22%, color-mix(in srgb, var(--slide-accent-alt) 26%, transparent), transparent 28%); }
+  .template-slide[data-bg="title"]::before { background: linear-gradient(90deg, color-mix(in srgb, var(--slide-accent) 18%, transparent) 0 32%, transparent 32% 82%, color-mix(in srgb, var(--slide-accent-alt) 12%, transparent) 82%); }
   .template-slide[data-bg="section"]::before { background: linear-gradient(135deg, transparent 0 46%, color-mix(in srgb, var(--slide-accent) 14%, transparent) 46% 54%, transparent 54%), linear-gradient(90deg, color-mix(in srgb, var(--slide-surface-alt) 58%, transparent) 0 18%, transparent 18%); }
   .template-slide[data-bg="summary"]::before { background: linear-gradient(180deg, transparent 0 76%, color-mix(in srgb, var(--slide-surface-alt) 70%, transparent) 76%); }
   .template-slide[data-bg="v1"]::before { background: linear-gradient(90deg, transparent 0 62%, color-mix(in srgb, var(--slide-surface-alt) 68%, transparent) 62%); }
@@ -709,6 +774,22 @@ async function renderPdfHtml(presentation: ReturnType<typeof presentationSchema.
   .template-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .template-comparison > strong { border-radius: 8px; padding: 12px; background: var(--slide-text); color: var(--slide-bg); }
   .template-metric strong { color: var(--slide-accent-alt); font-size: 36px; }
+  .template-evidence-thesis { margin: 0; border-bottom: 3px solid var(--slide-accent); padding-bottom: 16px; color: var(--slide-text); font-family: var(--slide-heading-font); font-size: 32px; line-height: 1.15; font-weight: 800; }
+  .template-evidence-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 28px; }
+  .template-evidence-item { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 10px; color: var(--slide-muted); font-size: 17px; line-height: 1.35; }
+  .template-evidence-item::before { content: ""; width: 10px; height: 10px; margin-top: 6px; border-radius: 50%; background: var(--slide-accent-alt); }
+  .template-sources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; border-top: 1px solid var(--slide-line); padding-top: 10px; color: var(--slide-muted); font-size: 10px; line-height: 1.3; }
+  .template-flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; }
+  .template-flow section { position: relative; border-top: 3px solid var(--slide-line); padding-top: 16px; }
+  .template-flow section:last-child { border-color: var(--slide-accent-alt); }
+  .template-flow section:not(:last-child)::after { content: "→"; position: absolute; right: -22px; top: 48%; color: var(--slide-muted); font-size: 20px; font-weight: 800; }
+  .template-flow strong, .template-explain strong { display: block; margin-bottom: 14px; color: var(--slide-text); font-family: var(--slide-heading-font); }
+  .template-flow p, .template-explain p { margin: 0; color: var(--slide-muted); font-size: 17px; line-height: 1.4; }
+  .template-explain { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 30px; }
+  .template-explain > section { border-right: 2px solid var(--slide-line); padding-right: 26px; }
+  .template-explain > section > strong { font-size: 30px; }
+  .template-explain-notes { display: grid; gap: 24px; }
+  .template-explain-notes section { border-bottom: 1px solid var(--slide-line); padding-bottom: 16px; }
   .element { position: absolute; transform-origin: center; overflow: hidden; }
   .text { white-space: pre-wrap; overflow: hidden; }
   .image { width: 100%; height: 100%; display: block; }
@@ -758,7 +839,13 @@ function pdfLayoutBody(slide: ReturnType<typeof presentationSchema.parse>["slide
   if (slide.layout === "case-study") return `${title(slide)}${cards(sequenceItems(slide).slice(0, 3), "case", ["Ситуация", "Действие", "Результат"])}`;
   if (slide.layout === "question-answer") return `${title(slide, "center")}<div class="template-definition"><strong>Ответ</strong>${paragraph(slide.thesis || slideBodyText(slide), "template-body")}</div>${chips(slide.bullets.slice(0, 3))}`;
   if (slide.layout === "myth-fact") return `${title(slide)}${cards(sequenceItems(slide).slice(0, 2), "myth", ["Миф", "Факт"])}`;
-  if (slide.layout === "metrics") return `${title(slide)}${cards(sequenceItems(slide).slice(0, 4), "metric")}`;
+  if (slide.layout === "metrics") {
+    const items = sequenceItems(slide).filter(hasMeasurableValue).slice(0, 4);
+    return items.length ? `${title(slide)}${cards(items, "metric")}` : `${title(slide, "center")}${paragraph(slide.thesis || slideBodyText(slide), "template-quote")}`;
+  }
+  if (slide.layout === "evidence") return evidence(slide);
+  if (slide.layout === "problem-solution") return problemSolution(slide);
+  if (slide.layout === "explain-example") return explainExample(slide);
   return `${title(slide)}${paragraph(slide.thesis, "template-body")}${bullets(slide.bullets.length ? slide.bullets : sequenceItems(slide).slice(0, 5))}`;
 }
 
@@ -780,8 +867,25 @@ function chips(items: string[]) {
 
 function cards(items: string[], type: string, labels: string[] = []) {
   return items.length
-    ? `<div class="template-cards">${items.map((item, index) => `<div class="template-card template-${type}"><strong>${escapeHtml(labels[index] || (type === "metric" ? metricLead(item, index) : String(index + 1)))}</strong>${escapeHtml(item)}</div>`).join("")}</div>`
+    ? `<div class="template-cards">${items.map((item, index) => `<div class="template-card template-${type}"><strong>${escapeHtml(labels[index] || (type === "metric" ? metricLead(item) : String(index + 1)))}</strong>${escapeHtml(item)}</div>`).join("")}</div>`
     : "";
+}
+
+function evidence(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  const items = sequenceItems(slide).slice(0, 4);
+  const sources = compactSourceRefs(slide.sourceRefs, 3);
+  return `${title(slide)}<p class="template-evidence-thesis">${escapeHtml(slide.thesis || slideBodyText(slide))}</p><div class="template-evidence-list">${items.map((item) => `<div class="template-evidence-item">${escapeHtml(item)}</div>`).join("")}</div>${sources.length ? `<div class="template-sources">${sources.map((source) => `<small>${escapeHtml(source)}</small>`).join("")}</div>` : ""}`;
+}
+
+function problemSolution(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  const items = sequenceItems(slide);
+  return `${title(slide)}<div class="template-flow">${["Проблема", "Причина", "Решение"].map((label, index) => `<section><strong>${label}</strong><p>${escapeHtml(items[index] || slide.thesis || slideBodyText(slide))}</p></section>`).join("")}</div>`;
+}
+
+function explainExample(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  const items = sequenceItems(slide);
+  const definition = slide.definition || { term: slide.title, text: slide.thesis || items[0] || slideBodyText(slide) };
+  return `${title(slide)}<div class="template-explain"><section><strong>${escapeHtml(definition.term)}</strong><p>${escapeHtml(definition.text)}</p></section><div class="template-explain-notes"><section><strong>Пример</strong><p>${escapeHtml(items[1] || items[0] || slide.thesis)}</p></section><section><strong>Важно помнить</strong><p>${escapeHtml(items[2] || slide.bullets[1] || "Пример помогает понять идею, но не заменяет точное определение.")}</p></section></div></div>`;
 }
 
 function comparison(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
@@ -985,10 +1089,6 @@ function comparisonRows(slide: ReturnType<typeof presentationSchema.parse>["slid
       right: slide.bullets[1] || slideBodyText(slide),
     },
   ];
-}
-
-function metricLead(text: string, index: number) {
-  return text.match(/\d+[.,]?\d*\s*[%\wА-Яа-я-]*/u)?.[0] || String(index + 1).padStart(2, "0");
 }
 
 function definitionText(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {

@@ -87,10 +87,17 @@ docker compose run --rm api npm run prisma:deploy
 Run development services in separate terminals:
 
 ```powershell
-npm run dev:web
+npm run dev:web:fast
 npm run dev:api
 npm run dev:worker
 ```
+
+For frontend work, `npm run dev:web:fast` is the default preview workflow. It
+starts Next.js with hot reload at `http://localhost:3020`, loads the root
+`.env`, points to the API at `http://localhost:4000`, and builds
+`packages/shared` once before startup. Changes under `apps/web` should appear
+within seconds without rebuilding a Docker image. Restart the command after
+changing `packages/shared`.
 
 Run the full production-like compose stack on a free web port:
 
@@ -115,10 +122,28 @@ Local auth/API notes:
 
 ## Applying Changes To The Running App
 
-If the user is checking the app in Docker compose (`http://localhost:3010` or `https://localhost`), source edits are not visible until the affected images are rebuilt and containers are recreated. Do this before handing off UI, API, or worker changes so the user does not need to ask whether changes were applied.
+For ordinary frontend implementation and visual verification, do not run
+`docker compose build web`. Use `npm run dev:web:fast` and verify the result at
+`http://localhost:3020`. Keep the Docker API and infrastructure services
+running as needed. This is the preferred workflow because a production web
+image build can take many minutes.
+
+Only rebuild the `web` Docker image when the user explicitly asks to validate
+the production container, requests a production-like Docker check, or asks for
+deployment. If the user is specifically checking the compose web app at
+`http://localhost:3010` or `https://localhost`, explain that those URLs use the
+production container and rebuild it only when that production check is
+actually required.
+
+API and worker source changes are still not visible in their Docker containers
+until the affected images are rebuilt and containers recreated. Use the
+narrowest service set needed.
 
 Use the narrowest service set that matches the files changed:
-- `apps/web`, `packages/shared` used by web, or UI display logic: `web`
+- `apps/web` or UI display logic during development: use
+  `npm run dev:web:fast`, no Docker rebuild
+- `apps/web` production-container validation: `web`
+- `packages/shared` used by the dev web: restart `npm run dev:web:fast`
 - `apps/api`, `packages/shared` used by API, or Prisma client/API contracts: `api`
 - `apps/worker`, generation/export/extraction/search/image logic, or `packages/shared` used by jobs: `worker`
 - `prisma/schema.prisma` or migrations: usually `api worker`, plus run migration/deploy as needed
@@ -140,7 +165,11 @@ curl.exe -k -s https://localhost/api/internal-health
 Examples:
 
 ```powershell
-# Frontend-only change
+# Frontend-only development and visual verification
+npm run dev:web:fast
+# Open http://localhost:3020
+
+# Production web container validation only
 $services = @('web')
 docker compose build @services
 docker compose up -d @services
@@ -156,7 +185,10 @@ docker compose build @services
 docker compose up -d @services
 ```
 
-After rebuilding, tell the user which URL to refresh and whether a hard refresh (`Ctrl+F5`) is useful. If the user is running `npm run dev:*` instead of Docker compose, do not rebuild Docker; rely on the dev server reload and restart only the affected dev process when needed.
+After rebuilding production containers, tell the user which URL to refresh and
+whether a hard refresh (`Ctrl+F5`) is useful. When
+`npm run dev:web:fast` is running, rely on hot reload, verify at
+`http://localhost:3020`, and do not rebuild Docker.
 
 ## Verification
 

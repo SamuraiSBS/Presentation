@@ -85,8 +85,51 @@ export const slideLayoutSchema = z.enum([
   "question-answer",
   "myth-fact",
   "metrics",
+  "evidence",
+  "problem-solution",
+  "explain-example",
 ]);
 export type SlideLayout = z.infer<typeof slideLayoutSchema>;
+
+export type SlideLayoutRequirement = "definition" | "comparison" | "sequence" | "metrics" | "sources";
+
+export type SlideLayoutDefinition = {
+  id: SlideLayout;
+  label: string;
+  description: string;
+  kinds: SlideKind[];
+  requirements: SlideLayoutRequirement[];
+  fallback: SlideLayout;
+};
+
+export const SLIDE_LAYOUT_DEFINITIONS: SlideLayoutDefinition[] = [
+  { id: "hero", label: "Титульный", description: "Название и вводный тезис", kinds: ["title", "section"], requirements: [], fallback: "hero" },
+  { id: "summary", label: "Итоги", description: "Главные выводы презентации", kinds: ["summary"], requirements: [], fallback: "summary" },
+  { id: "statement", label: "Главный тезис", description: "Одна сильная мысль", kinds: ["content"], requirements: [], fallback: "bullets" },
+  { id: "bullets", label: "Список", description: "Короткие тезисы", kinds: ["content"], requirements: [], fallback: "statement" },
+  { id: "two-column", label: "Две колонки", description: "Два связанных блока", kinds: ["content"], requirements: ["comparison"], fallback: "bullets" },
+  { id: "quote", label: "Цитата", description: "Центральная формулировка", kinds: ["content"], requirements: [], fallback: "statement" },
+  { id: "definition", label: "Определение", description: "Термин и объяснение", kinds: ["content"], requirements: ["definition"], fallback: "explain-example" },
+  { id: "timeline", label: "Хронология", description: "События на временной оси", kinds: ["content"], requirements: ["sequence"], fallback: "process" },
+  { id: "comparison", label: "Сравнение", description: "Таблица из двух колонок", kinds: ["content"], requirements: ["comparison"], fallback: "two-column" },
+  { id: "process", label: "Процесс", description: "Последовательность шагов", kinds: ["content"], requirements: ["sequence"], fallback: "bullets" },
+  { id: "image-focus", label: "Изображение", description: "Визуальный пример и пояснение", kinds: ["content"], requirements: [], fallback: "statement" },
+  { id: "case-study", label: "Кейс", description: "Ситуация, действие, результат", kinds: ["content"], requirements: ["sequence"], fallback: "problem-solution" },
+  { id: "question-answer", label: "Вопрос и ответ", description: "Вопрос с ясным ответом", kinds: ["content"], requirements: [], fallback: "statement" },
+  { id: "myth-fact", label: "Миф и факт", description: "Исправление заблуждения", kinds: ["content"], requirements: ["comparison"], fallback: "comparison" },
+  { id: "metrics", label: "Показатели", description: "Только реальные числа и величины", kinds: ["content"], requirements: ["metrics"], fallback: "statement" },
+  { id: "evidence", label: "Тезис и доказательства", description: "Тезис, факты и компактные источники", kinds: ["content"], requirements: [], fallback: "bullets" },
+  { id: "problem-solution", label: "Проблема и решение", description: "Проблема, причина и решение", kinds: ["content"], requirements: ["sequence"], fallback: "process" },
+  { id: "explain-example", label: "Объяснение и пример", description: "Понятие, объяснение, пример и оговорка", kinds: ["content"], requirements: [], fallback: "definition" },
+];
+
+export function slideLayoutDefinition(layout: SlideLayout) {
+  return SLIDE_LAYOUT_DEFINITIONS.find((item) => item.id === layout) || SLIDE_LAYOUT_DEFINITIONS[0];
+}
+
+export function slideLayoutOptions(kind: SlideKind) {
+  return SLIDE_LAYOUT_DEFINITIONS.filter((item) => item.kinds.includes(kind));
+}
 
 export const visualTypeSchema = z.enum([
   "process_diagram",
@@ -606,6 +649,7 @@ export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
 
 export const updateSlideInputSchema = z.object({
   title: z.string().min(1).max(160).optional(),
+  layout: slideLayoutSchema.optional(),
   blocks: z.array(slideBlockSchema).optional(),
   canvas: slideCanvasSchema.optional(),
   speakerNotes: z.string().max(5000).optional(),
@@ -684,7 +728,7 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme): SlideC
     elements.push(
       textElement(`${slide.id}-title`, slide.title, 112, 188, 1056, 148, 5, {
         role: "title",
-        fontSize: 58,
+        fontSize: fittedFontSize(slide.title, 58, 38, 148),
         fontFamily: theme.fonts.heading,
         color: text,
         bold: true,
@@ -692,7 +736,7 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme): SlideC
       }),
       textElement(`${slide.id}-body`, slide.thesis || slideBodyText(slide), 158, 366, 964, 110, 5, {
         role: "body",
-        fontSize: 28,
+        fontSize: fittedFontSize(slide.thesis || slideBodyText(slide), 28, 20, 110),
         fontFamily: theme.fonts.body,
         color: muted,
         align: "center",
@@ -715,6 +759,9 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme): SlideC
   else if (slide.layout === "question-answer") addQuestionAnswerCanvas(slide, theme, elements);
   else if (slide.layout === "myth-fact") addPanelGridCanvas(slide, theme, elements, ["Миф", "Факт"]);
   else if (slide.layout === "metrics") addMetricsCanvas(slide, theme, elements);
+  else if (slide.layout === "evidence") addEvidenceCanvas(slide, theme, elements);
+  else if (slide.layout === "problem-solution") addProblemSolutionCanvas(slide, theme, elements);
+  else if (slide.layout === "explain-example") addExplainExampleCanvas(slide, theme, elements);
   else addDefaultContentCanvas(slide, theme, elements);
 
   addFallbackImageCanvas(slide, elements);
@@ -808,6 +855,10 @@ function isKnownGeneratedCanvasElementId(slideId: string, elementId: string) {
     elementId.startsWith(`${slideId}-right-`) ||
     elementId.startsWith(`${slideId}-qa-`) ||
     elementId.startsWith(`${slideId}-metric-`) ||
+    elementId.startsWith(`${slideId}-evidence-`) ||
+    elementId.startsWith(`${slideId}-source-`) ||
+    elementId.startsWith(`${slideId}-problem-`) ||
+    elementId.startsWith(`${slideId}-explain-`) ||
     elementId.startsWith(`${slideId}-mini-`) ||
     elementId.startsWith(`${slideId}-card-`) ||
     elementId.startsWith(`${slideId}-visual-`)
@@ -849,6 +900,23 @@ function backgroundElements(slide: Slide, theme: PresentationTheme): CanvasEleme
   const elements: CanvasElement[] = [
     shapeElement(`${slide.id}-bg`, "rect", 0, 0, 1280, 720, 0, theme.colors.background, theme.colors.background, 0, 1, true),
   ];
+  if (theme.preset === "academic") {
+    elements.push(
+      shapeElement(`${slide.id}-bg-theme-margin`, "rect", 84, 34, 2, 652, 1, theme.colors.line, theme.colors.line, 0, 0.55),
+      shapeElement(`${slide.id}-bg-theme-note`, "rect", 1100, 58, 118, 34, 1, theme.colors.surfaceAlt, theme.colors.surfaceAlt, 0, 0.72),
+    );
+  } else if (theme.preset === "tech") {
+    for (let x = 40; x < 1280; x += 80) {
+      elements.push(shapeElement(`${slide.id}-bg-theme-grid-${x}`, "rect", x, 0, 1, 720, 1, theme.colors.line, theme.colors.line, 0, 0.2));
+    }
+  } else if (theme.preset === "history") {
+    elements.push(shapeElement(`${slide.id}-bg-theme-archive`, "rect", 24, 22, 1232, 676, 1, theme.colors.background, theme.colors.line, 2, 0.82));
+  } else if (theme.preset === "nature") {
+    elements.push(
+      shapeElement(`${slide.id}-bg-theme-cycle-a`, "ellipse", 1050, 46, 128, 128, 1, theme.colors.surfaceAlt, theme.colors.line, 1, 0.42),
+      shapeElement(`${slide.id}-bg-theme-cycle-b`, "ellipse", 1114, 108, 86, 86, 1, theme.colors.accentAlt, theme.colors.accentAlt, 0, 0.18),
+    );
+  }
   const soft = 0.3;
   const medium = 0.42;
   const variant = slideBackgroundVariant(slide);
@@ -954,7 +1022,7 @@ function addStatementCanvas(slide: Slide, theme: PresentationTheme, elements: Ca
   elements.push(
     textElement(`${slide.id}-statement`, slideBodyText(slide), 130, 196, 1018, 274, 4, {
       role: "body",
-      fontSize: 40,
+      fontSize: fittedFontSize(slideBodyText(slide), 40, 25, 274),
       fontFamily: theme.fonts.heading,
       color: theme.colors.text,
       bold: true,
@@ -977,7 +1045,7 @@ function addQuoteCanvas(slide: Slide, theme: PresentationTheme, elements: Canvas
     }),
     textElement(`${slide.id}-quote`, quoteText(slide), 154, 188, 972, 250, 4, {
       role: "body",
-      fontSize: 36,
+      fontSize: fittedFontSize(quoteText(slide), 36, 23, 250),
       fontFamily: theme.fonts.heading,
       color: theme.colors.text,
       bold: true,
@@ -1011,7 +1079,7 @@ function addDefinitionCanvas(slide: Slide, theme: PresentationTheme, elements: C
     }),
     textElement(`${slide.id}-definition-text`, definition.text, 120, 293, 1038, 130, 4, {
       role: "body",
-      fontSize: 24,
+      fontSize: fittedFontSize(definition.text, 24, 17, 130),
       fontFamily: theme.fonts.body,
       color: theme.colors.muted,
     }),
@@ -1030,12 +1098,12 @@ function addSequenceCanvas(slide: Slide, theme: PresentationTheme, elements: Can
   }
   const items = sequenceItems(slide).slice(0, 5);
   const width = 1123 / Math.max(items.length, 1);
+  elements.push(shapeElement(`${slide.id}-sequence-line`, "rect", 100, 256, 1076, 4, 2, theme.colors.line, theme.colors.line, 0, 1));
   items.forEach((item, index) => {
     const x = 79 + index * width;
     elements.push(
-      shapeElement(`${slide.id}-step-${index}-card`, "roundRect", x, 204, width - 16, 260, 2, theme.colors.surface, theme.colors.line, 1, 1),
-      shapeElement(`${slide.id}-step-${index}-num-bg`, "ellipse", x + 18, 223, 43, 43, 3, theme.colors.text, theme.colors.text, 0, 1),
-      textElement(`${slide.id}-step-${index}-num`, String(index + 1), x + 18, 231, 43, 24, 4, {
+      shapeElement(`${slide.id}-step-${index}-num-bg`, "ellipse", x + 18, 236, 43, 43, 3, theme.colors.text, theme.colors.text, 0, 1),
+      textElement(`${slide.id}-step-${index}-num`, String(index + 1), x + 18, 244, 43, 24, 4, {
         role: "caption",
         fontSize: 16,
         fontFamily: theme.fonts.body,
@@ -1043,7 +1111,7 @@ function addSequenceCanvas(slide: Slide, theme: PresentationTheme, elements: Can
         bold: true,
         align: "center",
       }),
-      textElement(`${slide.id}-step-${index}`, item, x + 18, 283, width - 52, 132, 4, {
+      textElement(`${slide.id}-step-${index}`, item, x + 18, 306, width - 52, 132, 4, {
         role: "body",
         fontSize: 18,
         fontFamily: theme.fonts.body,
@@ -1061,6 +1129,7 @@ function addComparisonCanvas(slide: Slide, theme: PresentationTheme, elements: C
   elements.push(
     textElement(`${slide.id}-comparison-left-label`, leftLabel, 86, 164, 533, 42, 4, labelText(theme)),
     textElement(`${slide.id}-comparison-right-label`, rightLabel, 662, 164, 533, 42, 4, labelText(theme)),
+    shapeElement(`${slide.id}-comparison-divider`, "rect", 638, 164, 2, 404, 2, theme.colors.line, theme.colors.line, 0, 1),
   );
   rows.forEach((row, index) => {
     const y = 209 + index * 117;
@@ -1150,13 +1219,17 @@ function addQuestionAnswerCanvas(slide: Slide, theme: PresentationTheme, element
 }
 
 function addMetricsCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  const items = sequenceItems(slide).filter(hasMeasurableValue).slice(0, 4);
+  if (!items.length) {
+    addStatementCanvas(slide, theme, elements);
+    return;
+  }
   addSlideTitle(slide, theme, elements);
-  const items = sequenceItems(slide).slice(0, 4);
   items.forEach((item, index) => {
     const x = 86 + index * 288;
     elements.push(
       shapeElement(`${slide.id}-metric-${index}-card`, "roundRect", x, 192, 261, 226, 2, theme.colors.surface, theme.colors.line, 1, 1),
-      textElement(`${slide.id}-metric-${index}-lead`, metricLead(item, index), x + 17, 219, 226, 54, 4, {
+      textElement(`${slide.id}-metric-${index}-lead`, metricLead(item), x + 17, 219, 226, 54, 4, {
         role: "title",
         fontSize: 38,
         fontFamily: theme.fonts.heading,
@@ -1170,6 +1243,108 @@ function addMetricsCanvas(slide: Slide, theme: PresentationTheme, elements: Canv
         color: theme.colors.muted,
       }),
     );
+  });
+}
+
+function addEvidenceCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  addSlideTitle(slide, theme, elements);
+  const thesis = sentencePreview(slide.thesis || slideBodyText(slide), 180);
+  const evidence = sequenceItems(slide).filter((item) => !isDuplicateCanvasText(item, thesis)).slice(0, 4);
+  elements.push(
+    textElement(`${slide.id}-evidence-thesis`, thesis, 86, 158, 1108, 104, 4, {
+      role: "body",
+      fontSize: fittedFontSize(thesis, 34, 25, 105),
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.text,
+      bold: true,
+    }),
+    shapeElement(`${slide.id}-evidence-divider`, "rect", 86, 282, 1108, 3, 2, theme.colors.accent, theme.colors.accent, 0, 1),
+  );
+  evidence.forEach((item, index) => {
+    const column = index % 2;
+    const row = Math.floor(index / 2);
+    const x = 86 + column * 560;
+    const y = 315 + row * 112;
+    elements.push(
+      shapeElement(`${slide.id}-evidence-${index}-dot`, "ellipse", x, y + 4, 28, 28, 3, theme.colors.accentAlt, theme.colors.accentAlt, 0, 1),
+      textElement(`${slide.id}-evidence-${index}`, item, x + 44, y, 500, 72, 4, {
+        role: "body",
+        fontSize: fittedFontSize(item, 19, 15, 72),
+        fontFamily: theme.fonts.body,
+        color: theme.colors.muted,
+      }),
+    );
+  });
+  addSourceRefsCanvas(slide, theme, elements);
+}
+
+function addProblemSolutionCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  addSlideTitle(slide, theme, elements);
+  const items = sequenceItems(slide);
+  const labels = ["Проблема", "Причина", "Решение"];
+  labels.forEach((label, index) => {
+    const x = 86 + index * 370;
+    const value = items[index] || slide.thesis || slideBodyText(slide);
+    elements.push(
+      textElement(`${slide.id}-problem-${index}-label`, label, x, 180, 330, 34, 4, labelText(theme)),
+      shapeElement(`${slide.id}-problem-${index}-line`, "rect", x, 229, 330, 3, 2, index === 2 ? theme.colors.accentAlt : theme.colors.line, theme.colors.line, 0, 1),
+      textElement(`${slide.id}-problem-${index}-text`, value, x, 258, 330, 190, 4, {
+        role: "body",
+        fontSize: fittedFontSize(value, 21, 16, 190),
+        fontFamily: theme.fonts.body,
+        color: theme.colors.muted,
+      }),
+    );
+  });
+}
+
+function addExplainExampleCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  addSlideTitle(slide, theme, elements);
+  const items = sequenceItems(slide);
+  const definition = slide.definition || { term: slide.title, text: slide.thesis || items[0] || slideBodyText(slide) };
+  const example = items[1] || items[0] || slide.thesis;
+  const caveat = items[2] || slide.bullets[1] || "Пример помогает понять идею, но не заменяет её точное определение.";
+  elements.push(
+    textElement(`${slide.id}-explain-term`, definition.term, 86, 164, 416, 72, 4, {
+      role: "title",
+      fontSize: fittedFontSize(definition.term, 35, 25, 72),
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.text,
+      bold: true,
+    }),
+    textElement(`${slide.id}-explain-definition`, definition.text, 86, 252, 416, 168, 4, {
+      role: "body",
+      fontSize: fittedFontSize(definition.text, 23, 17, 168),
+      fontFamily: theme.fonts.body,
+      color: theme.colors.muted,
+    }),
+    shapeElement(`${slide.id}-explain-divider`, "rect", 548, 164, 3, 358, 2, theme.colors.line, theme.colors.line, 0, 1),
+    textElement(`${slide.id}-explain-example-label`, "Пример", 596, 164, 564, 34, 4, labelText(theme)),
+    textElement(`${slide.id}-explain-example`, example, 596, 220, 564, 126, 4, {
+      role: "body",
+      fontSize: fittedFontSize(example, 22, 17, 126),
+      fontFamily: theme.fonts.body,
+      color: theme.colors.text,
+      bold: true,
+    }),
+    textElement(`${slide.id}-explain-caveat-label`, "Важно помнить", 596, 382, 564, 34, 4, labelText(theme)),
+    textElement(`${slide.id}-explain-caveat`, caveat, 596, 438, 564, 82, 4, {
+      role: "body",
+      fontSize: fittedFontSize(caveat, 17, 14, 82),
+      fontFamily: theme.fonts.body,
+      color: theme.colors.muted,
+    }),
+  );
+}
+
+function addSourceRefsCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  compactSourceRefs(slide.sourceRefs, 3).forEach((ref, index) => {
+    elements.push(textElement(`${slide.id}-source-${index}`, ref, 86 + index * 370, 575, 344, 48, 4, {
+      role: "caption",
+      fontSize: fittedFontSize(ref, 13, 10, 48),
+      fontFamily: theme.fonts.body,
+      color: theme.colors.muted,
+    }));
   });
 }
 
@@ -1188,7 +1363,7 @@ function addSlideTitle(
 ) {
   elements.push(textElement(`${slide.id}-title`, slide.title, options.centered ? 101 : 69, 56, options.width || (options.centered ? 1075 : 1142), 104, 4, {
     role: "title",
-    fontSize: options.fontSize || 40,
+    fontSize: fittedFontSize(slide.title, options.fontSize || 40, 27, 104),
     fontFamily: theme.fonts.heading,
     color: theme.colors.text,
     bold: true,
@@ -1374,8 +1549,32 @@ function comparisonRows(slide: Slide) {
   ];
 }
 
-function metricLead(text: string, index: number) {
-  return text.match(/\d+[.,]?\d*\s*[%\wА-Яа-я-]*/u)?.[0] || String(index + 1).padStart(2, "0");
+export function hasMeasurableValue(text: string) {
+  return /(?:^|[\s(])(?:\d{1,4}(?:[.,]\d+)?\s*(?:%|°[CFСФ]?|км|м|см|мм|кг|г|мл|л|₽|\$|€|млн|млрд|тыс\.?|лет|год(?:а|ов)?|век(?:а|ов)?|мин(?:ут[аы]?)?|сек(?:унд[аы]?)?|ч(?:ас(?:а|ов)?)?)|\d{4}\s*(?:г\.?|год(?:а)?)?)(?=$|[\s,.;:)])/iu.test(text);
+}
+
+export function metricLead(text: string) {
+  return text.match(/(?:\d{1,4}(?:[.,]\d+)?\s*(?:%|°[CFСФ]?|км|м|см|мм|кг|г|мл|л|₽|\$|€|млн|млрд|тыс\.?|лет|год(?:а|ов)?|век(?:а|ов)?|мин(?:ут[аы]?)?|сек(?:унд[аы]?)?|ч(?:ас(?:а|ов)?)?)|\d{4}\s*(?:г\.?|год(?:а)?)?)/iu)?.[0] || "";
+}
+
+export function fittedFontSize(value: string, preferred: number, minimum: number, boxHeight: number) {
+  const text = cleanCanvasText(value);
+  const pressure = Math.max(text.length / 54, text.split(/\s+/).length / 9, text.split("\n").length);
+  const heightPressure = Math.max(1, 120 / Math.max(boxHeight, 1));
+  return Math.max(minimum, Math.round(preferred / Math.max(1, pressure * 0.72, heightPressure)));
+}
+
+export function compactSourceRefs(sourceRefs: SourceRef[], limit = 3) {
+  return sourceRefs.slice(0, limit).map((ref) => {
+    const location = ref.page ? `, ${ref.page}` : "";
+    const excerpt = sentencePreview(ref.excerpt, 86);
+    return [sentencePreview(ref.label, 42) + location, excerpt].filter(Boolean).join(" — ");
+  });
+}
+
+function isDuplicateCanvasText(left: string, right: string) {
+  const normalize = (value: string) => cleanCanvasText(value).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ");
+  return Boolean(normalize(left) && normalize(left) === normalize(right));
 }
 
 function miniChipText(value: string) {

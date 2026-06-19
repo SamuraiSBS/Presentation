@@ -11,8 +11,16 @@ import type {
   PresentationTheme,
   Slide,
   SlideCanvas,
+  SlideLayout,
 } from "@studydeck/shared";
-import { buildSlideCanvas, ensureEditableCanvas, hasCustomSlideCanvas, sortCanvasElements } from "@studydeck/shared";
+import {
+  buildSlideCanvas,
+  ensureEditableCanvas,
+  hasCustomSlideCanvas,
+  hasMeasurableValue,
+  slideLayoutOptions,
+  sortCanvasElements,
+} from "@studydeck/shared";
 import { sanitizeProjectForDisplay } from "@/lib/presentation-display";
 import {
   presentationTextForSlide,
@@ -146,7 +154,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     }
   }
 
-  async function saveSlide(next: { title?: string; canvas?: SlideCanvas; speakerNotes?: string }) {
+  async function saveSlide(next: { title?: string; layout?: SlideLayout; canvas?: SlideCanvas; speakerNotes?: string }) {
     if (!slide) return;
     const response = await fetch(`/api/projects/${project.id}/slides/${slide.id}`, {
       method: "PATCH",
@@ -185,6 +193,28 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     if (options.persist) {
       void saveSlide({ title: titleFromCanvas(slide, normalized), canvas: normalized });
     }
+  }
+
+  function applySlideLayout(layout: SlideLayout) {
+    if (!slide || !theme || layout === slide.layout) return;
+    const nextSlide = { ...slide, layout, canvas: undefined };
+    const nextCanvas = buildSlideCanvas(nextSlide, theme);
+    setProject((current) => {
+      const document = current.presentation?.document;
+      if (!document) return current;
+      const slides = document.slides.map((item, index) => (index === active ? { ...nextSlide, canvas: nextCanvas } : item));
+      return {
+        ...current,
+        presentation: {
+          ...current.presentation,
+          document: { ...document, slides },
+        },
+      };
+    });
+    setSelectedId("");
+    setUndoStack([]);
+    setRedoStack([]);
+    void saveSlide({ layout, title: slide.title, canvas: nextCanvas });
   }
 
   function updateSelected(patch: ElementPatch) {
@@ -657,6 +687,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
             onDelete={deleteSelected}
             onLayerUp={() => moveLayer("up")}
             onLayerDown={() => moveLayer("down")}
+            onChangeLayout={applySlideLayout}
             onSaveNotes={(speakerNotes) => void saveSlide({ speakerNotes })}
           />
         </aside>
@@ -978,6 +1009,7 @@ function PropertiesPanel({
   onDelete,
   onLayerUp,
   onLayerDown,
+  onChangeLayout,
   onSaveNotes,
 }: {
   selected: CanvasElement | null;
@@ -987,6 +1019,7 @@ function PropertiesPanel({
   onDelete: () => void;
   onLayerUp: () => void;
   onLayerDown: () => void;
+  onChangeLayout: (layout: SlideLayout) => void;
   onSaveNotes: (speakerNotes: string) => void;
 }) {
   return (
@@ -995,6 +1028,19 @@ function PropertiesPanel({
         <span>Properties</span>
         <strong>{selected ? elementLabel(selected) : "Slide"}</strong>
       </div>
+
+      <PropertySection title="Шаблон слайда" description="Композиция пересобирается из текущего содержания.">
+        <label className="field">
+          Шаблон
+          <select className="select" value={slide.layout} onChange={(event) => onChangeLayout(event.target.value as SlideLayout)}>
+            {slideLayoutOptions(slide.slideKind).map((option) => (
+              <option key={option.id} value={option.id} disabled={!layoutCanRender(option.id, slide)}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </PropertySection>
 
       {selected ? (
         <>
@@ -1099,6 +1145,22 @@ function PropertySection({ title, description, children }: { title: string; desc
       {children}
     </section>
   );
+}
+
+function layoutCanRender(layout: SlideLayout, slide: Slide) {
+  const sequenceCount = Math.max(slide.visual.items.length, slide.bullets.length);
+  if (layout === "metrics") {
+    const text = [slide.title, slide.thesis, ...slide.bullets, ...slide.blocks.flatMap((block) => (block.type === "bullets" ? block.items : [block.content]))].join(" ");
+    return hasMeasurableValue(text);
+  }
+  if (layout === "definition") return Boolean(slide.definition);
+  if (layout === "comparison" || layout === "two-column" || layout === "myth-fact") {
+    return slide.visual.rows.length > 0 || slide.bullets.length >= 2;
+  }
+  if (layout === "timeline" || layout === "process") return sequenceCount >= 2;
+  if (layout === "case-study" || layout === "problem-solution") return sequenceCount >= 3;
+  if (layout === "evidence") return Boolean(slide.thesis && slide.bullets.length >= 2);
+  return true;
 }
 
 function TextContentProperties({ selected, onUpdate }: { selected: CanvasTextElement; onUpdate: (patch: ElementPatch) => void }) {
