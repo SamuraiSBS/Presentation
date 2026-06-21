@@ -167,7 +167,7 @@ function renderContentSlide(
   if (layout === "image-focus" && imageData) return renderImageFocusSlide(slide, item, imageData, theme);
   if (layout === "case-study") return renderThreePanelSlide(pptx, slide, item, ["Ситуация", "Действие", "Результат"], theme);
   if (layout === "question-answer") return renderQuestionAnswerSlide(pptx, slide, item, theme);
-  if (layout === "myth-fact") return renderThreePanelSlide(pptx, slide, item, ["Миф", "Факт"], theme);
+  if (layout === "myth-fact") return renderMythFactSlide(pptx, slide, item, theme);
   if (layout === "metrics") return renderMetricsSlide(pptx, slide, item, theme);
   if (layout === "evidence") return renderEvidenceSlide(pptx, slide, item, theme);
   if (layout === "problem-solution") return renderProblemSolutionSlide(pptx, slide, item, theme);
@@ -472,7 +472,10 @@ function renderSequenceSlide(
   theme: ExportTheme,
 ) {
   renderSlideTitle(slide, item.title, theme);
-  const items = sequenceItems(item).slice(0, 5);
+  const detailedItems = item.visual.items.filter((entry) => entry.label || entry.text).slice(0, 5);
+  const items = detailedItems.length
+    ? detailedItems
+    : sequenceItems(item).slice(0, 5).map((text, index) => ({ label: `Шаг ${index + 1}`, text }));
   const width = 11.7 / Math.max(items.length, 1);
   items.forEach((text, index) => {
     const x = 0.82 + index * width;
@@ -497,13 +500,24 @@ function renderSequenceSlide(
       align: "center",
       valign: "mid",
     });
-    slide.addText(text, {
+    slide.addText(text.label, {
       x: x + 0.18,
-      y: 2.95,
+      y: 2.88,
       w: width - 0.52,
-      h: 1.35,
+      h: 0.48,
+      fontFace: theme.fonts.heading,
+      fontSize: 15,
+      bold: true,
+      color: theme.pptx.text,
+      fit: "shrink",
+    });
+    slide.addText(text.text || text.label, {
+      x: x + 0.18,
+      y: 3.45,
+      w: width - 0.52,
+      h: 0.72,
       fontFace: theme.fonts.body,
-      fontSize: 14,
+      fontSize: 12,
       color: theme.pptx.muted,
       fit: "shrink",
     });
@@ -520,13 +534,18 @@ function renderComparisonSlide(
   const rows = comparisonRows(item).slice(0, 3);
   const leftLabel = item.visual.leftLabel || "Первое";
   const rightLabel = item.visual.rightLabel || "Второе";
-  slide.addText(leftLabel, { x: 0.9, y: 1.7, w: 5.55, h: 0.42, fontFace: theme.fonts.heading, fontSize: 13, bold: true, color: theme.pptx.text });
-  slide.addText(rightLabel, { x: 6.9, y: 1.7, w: 5.55, h: 0.42, fontFace: theme.fonts.heading, fontSize: 13, bold: true, color: theme.pptx.text });
+  slide.addText("Критерий", { x: 0.9, y: 1.7, w: 2.1, h: 0.42, fontFace: theme.fonts.heading, fontSize: 13, bold: true, color: theme.pptx.text });
+  slide.addText(leftLabel, { x: 3.15, y: 1.7, w: 4.35, h: 0.42, fontFace: theme.fonts.heading, fontSize: 13, bold: true, color: theme.pptx.text });
+  slide.addText(rightLabel, { x: 7.65, y: 1.7, w: 4.8, h: 0.42, fontFace: theme.fonts.heading, fontSize: 13, bold: true, color: theme.pptx.text });
   rows.forEach((row, index) => {
     const y = 2.18 + index * 1.22;
-    for (const [x, text] of [[0.9, row.left || row.label], [6.9, row.right || row.label]] as const) {
-      slide.addShape(pptx.ShapeType.roundRect, { x, y, w: 5.55, h: 0.96, fill: { color: theme.pptx.surface }, line: { color: theme.pptx.line } });
-      slide.addText(text, { x: x + 0.2, y: y + 0.16, w: 5.15, h: 0.56, fontFace: theme.fonts.body, fontSize: 14, color: theme.pptx.muted, fit: "shrink" });
+    for (const [x, width, text, bold] of [
+      [0.9, 2.1, row.label || `Критерий ${index + 1}`, true],
+      [3.15, 4.35, row.left || row.label, false],
+      [7.65, 4.8, row.right || row.label, false],
+    ] as const) {
+      slide.addShape(pptx.ShapeType.roundRect, { x, y, w: width, h: 0.96, fill: { color: bold ? theme.pptx.surfaceAlt : theme.pptx.surface }, line: { color: theme.pptx.line } });
+      slide.addText(text, { x: x + 0.16, y: y + 0.16, w: width - 0.32, h: 0.56, fontFace: bold ? theme.fonts.heading : theme.fonts.body, fontSize: 13, bold, color: bold ? theme.pptx.text : theme.pptx.muted, fit: "shrink" });
     }
   });
 }
@@ -578,6 +597,34 @@ function renderQuestionAnswerSlide(
   slide.addShape(pptx.ShapeType.roundRect, { x: 1.55, y: 2.12, w: 10.2, h: 2.2, fill: { color: theme.pptx.surfaceAlt }, line: { color: theme.pptx.line } });
   slide.addText("Ответ", { x: 1.95, y: 2.38, w: 9.4, h: 0.32, fontFace: theme.fonts.heading, fontSize: 12, bold: true, color: theme.pptx.text });
   slide.addText(item.thesis || slideBodyText(item), { x: 1.95, y: 2.95, w: 9.4, h: 0.85, fontFace: theme.fonts.body, fontSize: 18, color: theme.pptx.muted, fit: "shrink" });
+  item.bullets.slice(0, 3).forEach((text, index) => {
+    const x = 1.55 + index * 3.45;
+    slide.addText(["Почему", "Пример", "Что это меняет"][index], { x, y: 4.72, w: 3.05, h: 0.28, fontFace: theme.fonts.heading, fontSize: 11, bold: true, color: theme.pptx.text });
+    slide.addText(text, { x, y: 5.1, w: 3.05, h: 0.7, fontFace: theme.fonts.body, fontSize: 12, color: theme.pptx.muted, fit: "shrink" });
+  });
+}
+
+function renderMythFactSlide(
+  pptx: InstanceType<typeof PptxGenConstructor>,
+  slide: any,
+  item: ReturnType<typeof presentationSchema.parse>["slides"][number],
+  theme: ExportTheme,
+) {
+  renderSlideTitle(slide, item.title, theme);
+  const visualItems = item.visual.items.slice(0, 2);
+  const fallback = sequenceItems(item);
+  ["Миф", "Факт"].forEach((label, index) => {
+    const x = 0.92 + index * 5.78;
+    const entry = visualItems[index];
+    const text = entry ? [entry.label, entry.text].filter(Boolean).join(". ") : fallback[index] || item.thesis;
+    slide.addShape(pptx.ShapeType.roundRect, { x, y: 1.85, w: 5.55, h: 2.0, fill: { color: index ? theme.pptx.surface : theme.pptx.surfaceAlt }, line: { color: theme.pptx.line } });
+    slide.addText(label, { x: x + 0.22, y: 2.08, w: 5.1, h: 0.3, fontFace: theme.fonts.heading, fontSize: 12, bold: true, color: theme.pptx.text });
+    slide.addText(text, { x: x + 0.22, y: 2.58, w: 5.1, h: 0.82, fontFace: theme.fonts.body, fontSize: 15, color: theme.pptx.muted, fit: "shrink" });
+    if (item.bullets[index]) {
+      slide.addText(index ? "Проверка" : "Почему в это верят", { x, y: 4.35, w: 5.55, h: 0.28, fontFace: theme.fonts.heading, fontSize: 11, bold: true, color: theme.pptx.text });
+      slide.addText(item.bullets[index], { x, y: 4.78, w: 5.55, h: 0.72, fontFace: theme.fonts.body, fontSize: 12, color: theme.pptx.muted, fit: "shrink" });
+    }
+  });
 }
 
 function renderMetricsSlide(
@@ -771,8 +818,13 @@ async function renderPdfHtml(presentation: ReturnType<typeof presentationSchema.
   .template-quote { margin: 0; color: var(--slide-text); font-family: var(--slide-heading-font); font-size: 42px; line-height: 1.1; font-weight: 800; text-align: center; }
   .template-definition { border: 1px solid var(--slide-line); border-radius: 8px; padding: 28px; background: var(--slide-surface-alt); }
   .template-definition strong { display: block; color: var(--slide-text); font-family: var(--slide-heading-font); font-size: 36px; margin-bottom: 12px; }
-  .template-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .template-comparison { display: grid; grid-template-columns: minmax(150px, .6fr) repeat(2, minmax(0, 1fr)); gap: 10px; }
   .template-comparison > strong { border-radius: 8px; padding: 12px; background: var(--slide-text); color: var(--slide-bg); }
+  .template-comparison .criterion { background: var(--slide-surface-alt); color: var(--slide-text); font-weight: 800; }
+  .template-support { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  .template-support section { border-top: 2px solid var(--slide-line); padding-top: 12px; }
+  .template-support strong { display: block; margin-bottom: 8px; color: var(--slide-text); font-family: var(--slide-heading-font); }
+  .template-support p { margin: 0; color: var(--slide-muted); font-size: 16px; line-height: 1.35; }
   .template-metric strong { color: var(--slide-accent-alt); font-size: 36px; }
   .template-evidence-thesis { margin: 0; border-bottom: 3px solid var(--slide-accent); padding-bottom: 16px; color: var(--slide-text); font-family: var(--slide-heading-font); font-size: 32px; line-height: 1.15; font-weight: 800; }
   .template-evidence-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 28px; }
@@ -834,11 +886,11 @@ function pdfLayoutBody(slide: ReturnType<typeof presentationSchema.parse>["slide
     const definition = slide.definition || { term: slide.title, text: slide.thesis || slideBodyText(slide) };
     return `${title(slide)}<div class="template-definition"><strong>${escapeHtml(definition.term)}</strong>${paragraph(definition.text, "template-body")}</div>${chips(slide.bullets.slice(0, 3))}`;
   }
-  if (slide.layout === "timeline" || slide.layout === "process") return `${title(slide)}${paragraph(slide.thesis, "template-body")}${cards(sequenceItems(slide).slice(0, 5), "sequence")}`;
+  if (slide.layout === "timeline" || slide.layout === "process") return `${title(slide)}${paragraph(slide.thesis, "template-body")}${sequence(slide)}`;
   if (slide.layout === "comparison" || slide.layout === "two-column") return `${title(slide)}${comparison(slide)}`;
   if (slide.layout === "case-study") return `${title(slide)}${cards(sequenceItems(slide).slice(0, 3), "case", ["Ситуация", "Действие", "Результат"])}`;
-  if (slide.layout === "question-answer") return `${title(slide, "center")}<div class="template-definition"><strong>Ответ</strong>${paragraph(slide.thesis || slideBodyText(slide), "template-body")}</div>${chips(slide.bullets.slice(0, 3))}`;
-  if (slide.layout === "myth-fact") return `${title(slide)}${cards(sequenceItems(slide).slice(0, 2), "myth", ["Миф", "Факт"])}`;
+  if (slide.layout === "question-answer") return `${title(slide, "center")}<div class="template-definition"><strong>Ответ</strong>${paragraph(slide.thesis || slideBodyText(slide), "template-body")}</div>${support(slide.bullets.slice(0, 3), ["Почему", "Пример", "Что это меняет"])}`;
+  if (slide.layout === "myth-fact") return mythFact(slide);
   if (slide.layout === "metrics") {
     const items = sequenceItems(slide).filter(hasMeasurableValue).slice(0, 4);
     return items.length ? `${title(slide)}${cards(items, "metric")}` : `${title(slide, "center")}${paragraph(slide.thesis || slideBodyText(slide), "template-quote")}`;
@@ -890,7 +942,28 @@ function explainExample(slide: ReturnType<typeof presentationSchema.parse>["slid
 
 function comparison(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
   const rows = comparisonRows(slide).slice(0, 4);
-  return `<div class="template-comparison"><strong>${escapeHtml(slide.visual.leftLabel || "Первое")}</strong><strong>${escapeHtml(slide.visual.rightLabel || "Второе")}</strong>${rows.map((row) => `<div class="template-card">${escapeHtml(row.left || row.label)}</div><div class="template-card">${escapeHtml(row.right || row.label)}</div>`).join("")}</div>`;
+  return `<div class="template-comparison"><strong class="criterion">Критерий</strong><strong>${escapeHtml(slide.visual.leftLabel || "Первое")}</strong><strong>${escapeHtml(slide.visual.rightLabel || "Второе")}</strong>${rows.map((row, index) => `<div class="template-card criterion">${escapeHtml(row.label || `Критерий ${index + 1}`)}</div><div class="template-card">${escapeHtml(row.left || row.label)}</div><div class="template-card">${escapeHtml(row.right || row.label)}</div>`).join("")}</div>`;
+}
+
+function sequence(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  const detailed = slide.visual.items.filter((item) => item.label || item.text).slice(0, 5);
+  const items = detailed.length ? detailed : sequenceItems(slide).slice(0, 5).map((text, index) => ({ label: `Шаг ${index + 1}`, text }));
+  return `<div class="template-cards">${items.map((item) => `<div class="template-card"><strong>${escapeHtml(item.label)}</strong>${escapeHtml(item.text || item.label)}</div>`).join("")}</div>`;
+}
+
+function support(items: string[], labels: string[]) {
+  if (!items.length) return "";
+  return `<div class="template-support">${items.map((item, index) => `<section><strong>${escapeHtml(labels[index] || `Пункт ${index + 1}`)}</strong><p>${escapeHtml(item)}</p></section>`).join("")}</div>`;
+}
+
+function mythFact(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  const detailed = slide.visual.items.slice(0, 2);
+  const fallback = sequenceItems(slide);
+  const items = [0, 1].map((index) => {
+    const item = detailed[index];
+    return item ? [item.label, item.text].filter(Boolean).join(". ") : fallback[index] || slide.thesis;
+  });
+  return `${title(slide)}${cards(items, "myth", ["Миф", "Факт"])}${support(slide.bullets.slice(0, 2), ["Почему в это верят", "Проверка"])}`;
 }
 
 async function pdfSlideImageFigure(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {

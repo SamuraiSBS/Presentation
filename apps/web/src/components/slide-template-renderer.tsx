@@ -225,16 +225,22 @@ function DefinitionSlide({ slide }: { slide: Slide }) {
 }
 
 function SequenceSlide({ slide, mode }: { slide: Slide; mode: "timeline" | "process" }) {
-  const items = compactItems(slide);
+  const detailedItems = slide.visual.items
+    .filter((item) => item.label || item.text)
+    .slice(0, 5);
+  const items = detailedItems.length
+    ? detailedItems
+    : compactItems(slide).map((text, index) => ({ label: mode === "process" ? `Шаг ${index + 1}` : `${index + 1}`, text }));
   return (
     <SlideImageLayout slide={slide} className={`slide-content slide-layout-sequence slide-layout-${mode}`}>
       <h2 className="slide-title">{slide.title}</h2>
       {slide.thesis ? <p className="slide-kicker">{slide.thesis}</p> : null}
       <div className="sequence-track">
         {items.map((item, index) => (
-          <div className="sequence-node" key={`${item}-${index}`}>
-            <span>{index + 1}</span>
-            <p>{item}</p>
+          <div className="sequence-node" key={`${item.label}-${index}`}>
+            <span>{mode === "process" ? index + 1 : item.label}</span>
+            <strong>{mode === "process" ? item.label : item.text}</strong>
+            {mode === "process" ? <p>{item.text}</p> : null}
           </div>
         ))}
       </div>
@@ -250,10 +256,12 @@ function ComparisonSlide({ slide }: { slide: Slide }) {
     <SlideImageLayout slide={slide} className="slide-content slide-layout-comparison">
       <h2 className="slide-title">{slide.title}</h2>
       <div className="comparison-board">
+        <strong className="comparison-criterion">Критерий</strong>
         <strong>{slide.visual.leftLabel || "Первое"}</strong>
         <strong>{slide.visual.rightLabel || "Второе"}</strong>
         {rows.slice(0, 4).map((row, index) => (
           <div className="comparison-row" key={`${row.label}-${index}`}>
+            <p className="comparison-criterion">{row.label || `Критерий ${index + 1}`}</p>
             <p>{row.left || row.label}</p>
             <p>{row.right || row.label}</p>
           </div>
@@ -295,6 +303,7 @@ function CaseStudySlide({ slide }: { slide: Slide }) {
 }
 
 function QuestionAnswerSlide({ slide }: { slide: Slide }) {
+  const support = slide.bullets.slice(0, 3);
   return (
     <SlideImageLayout slide={slide} className="slide-content slide-layout-qa">
       <h2 className="slide-title">{slide.title}</h2>
@@ -302,13 +311,25 @@ function QuestionAnswerSlide({ slide }: { slide: Slide }) {
         <strong>Ответ</strong>
         <p>{slide.thesis || slideBlockText(slide)}</p>
       </div>
-      {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
+      {support.length ? (
+        <div className="answer-support">
+          {support.map((item, index) => (
+            <section key={`${item}-${index}`}>
+              <strong>{["Почему", "Пример", "Что это меняет"][index]}</strong>
+              <p>{item}</p>
+            </section>
+          ))}
+        </div>
+      ) : null}
     </SlideImageLayout>
   );
 }
 
 function MythFactSlide({ slide }: { slide: Slide }) {
-  const items = compactItems(slide);
+  const items = slide.visual.items.length
+    ? slide.visual.items.slice(0, 2).map((item) => [item.label, item.text].filter(Boolean).join(". "))
+    : compactItems(slide);
+  const context = slide.bullets.slice(0, 2);
   return (
     <SlideImageLayout slide={slide} className="slide-content slide-layout-myth">
       <h2 className="slide-title">{slide.title}</h2>
@@ -322,6 +343,16 @@ function MythFactSlide({ slide }: { slide: Slide }) {
           <p>{items[1] || slide.thesis}</p>
         </div>
       </div>
+      {context.length ? (
+        <div className="myth-fact-context">
+          {context.map((item, index) => (
+            <section key={`${item}-${index}`}>
+              <strong>{index === 0 ? "Почему в это верят" : "Проверка"}</strong>
+              <p>{item}</p>
+            </section>
+          ))}
+        </div>
+      ) : null}
     </SlideImageLayout>
   );
 }

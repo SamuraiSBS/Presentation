@@ -268,7 +268,6 @@ const CONTENT_LAYOUT_CYCLE = [
   "evidence",
   "problem-solution",
   "explain-example",
-  "two-column",
   "quote",
   "image-focus",
   "bullets",
@@ -1098,13 +1097,18 @@ export function buildGenerationPrompt(
     "Required JSON fields: id, title, scenario, level, slideCount, generatedText, sources, outline, narrativePlan, speechScript, slides.",
     "Each slide must include: id, order, title, slideKind, layout, thesis, bullets, definition, keyConcepts, visual, highlights, blocks, speakerNotes, timingSeconds, sourceRefs.",
     "Layout rules:",
-    "- layout must be one of: hero, bullets, two-column, summary, statement, quote, definition, timeline, comparison, process, image-focus, case-study, question-answer, myth-fact, metrics, evidence, problem-solution, explain-example;",
+    "- layout must be one of: hero, bullets, summary, statement, quote, definition, timeline, comparison, process, image-focus, case-study, question-answer, myth-fact, metrics, evidence, problem-solution, explain-example;",
     "- do not use the same content layout more than twice in a row;",
     "- choose the layout from the slide's idea, not from a fixed template;",
     "- use statement for one strong claim with one short callout and no list;",
     "- use quote when a concise quote or author-like formulation is central;",
     "- use definition when one term needs explanation;",
-    "- use timeline for chronology, process for ordered actions, comparison for two sides, image-focus for a concrete image, case-study for situation/action/result, question-answer for a question with an answer, myth-fact for misconception correction;",
+    "- use timeline only for chronology with 3-5 dated or named periods; each visual.items entry must have a period in label and the event plus its significance in text;",
+    "- use process only for 3-5 ordered actions; each visual.items entry must have a short action in label and an explanation or result in text;",
+    "- use comparison only when two named subjects can be compared across 2-4 concrete criteria; put the criterion in visual.rows[].label and meaningful values in left and right;",
+    "- use question-answer only for a real question; thesis is the direct answer and bullets contain 2-3 supporting parts such as explanation, reason, example, or consequence;",
+    "- use myth-fact only for a genuine misconception correction; visual.items[0] is the myth, visual.items[1] is the corrected fact, and bullets add why the myth seems plausible plus evidence or an example;",
+    "- use image-focus for a concrete image and case-study for situation/action/result;",
     "- use metrics only for 2-4 explicit numbers, percentages, dates, durations, or measured quantities already supported by the material; never turn list order into a metric;",
     "- use evidence for one thesis with 2-4 supporting facts; keep 1-3 sourceRefs as metadata so the renderer can show compact citations;",
     "- use problem-solution for problem/cause/solution or problem/consequence/solution;",
@@ -1190,7 +1194,7 @@ function legacyBuildGenerationPrompt(project: ProjectInput, sources: Source[]) {
     "- не используй фразы: 'тезис нужно объяснить', 'проверьте тезис', 'добавьте источник', 'ключевой вывод нужно связать', 'основная мысль слайда'.",
     "Обязательный JSON: id, title, scenario, level, slideCount, outline, speechScript, slides.",
     "Для каждого slide: id, order, title, layout, blocks, speakerNotes, timingSeconds, sourceRefs.",
-    "layout: hero, bullets, two-column или summary. blocks лучше возвращать как один callout; bullets допустимы только если это 1-2 короткие фразы.",
+    "layout: hero, bullets, statement или summary. blocks лучше возвращать как один callout; bullets допустимы только если это 1-2 короткие фразы.",
     `Материалы для внутренней фактологии, не показывать пользователю:\n${formatSourceText(sources)}`,
   ].join("\n\n");
 }
@@ -2060,9 +2064,12 @@ export function normalizeLayout(
   if (order === 1 || slideKind === "title" || slideKind === "section") return "hero";
   if (order === slideCount || slideKind === "summary") return "summary";
 
-  const requested = SLIDE_LAYOUTS.includes(layout as SlideLayout) ? (layout as SlideLayout) : undefined;
+  const requestedLayout = layout === "two-column" ? "comparison" : layout;
+  const requested = SLIDE_LAYOUTS.includes(requestedLayout as SlideLayout) ? (requestedLayout as SlideLayout) : undefined;
   if (requested && requested !== "hero" && requested !== "summary") {
-    return layoutHasEnoughContent(requested, slide) ? requested : inferContentLayout(slide, order);
+    if (layoutHasEnoughContent(requested, slide)) return requested;
+    const inferred = inferContentLayout(slide, order);
+    return inferred !== requested && layoutHasEnoughContent(inferred, slide) ? inferred : fallbackForSparseLayout(requested, slide);
   }
 
   return inferContentLayout(slide, order);
@@ -2076,11 +2083,11 @@ export function inferContentLayout(
   if (slide.blocks.some((block) => block.type === "quote")) return "quote";
   if (slide.definition && hasExampleLanguage(slide)) return "explain-example";
   if (slide.definition) return "definition";
-  if (slide.visual.type === "timeline") return "timeline";
-  if (slide.visual.type === "process_diagram") return "process";
+  if (slide.visual.type === "timeline" && layoutHasEnoughContent("timeline", slide)) return "timeline";
+  if (slide.visual.type === "process_diagram" && layoutHasEnoughContent("process", slide)) return "process";
   if (slide.visual.type === "cause_effect_diagram" || hasProblemSolutionLanguage(slide)) return "problem-solution";
-  if (["comparison_diagram", "before_after_table", "pros_cons_table"].includes(slide.visual.type)) return "comparison";
-  if (/[?？]$/.test(cleanText(slide.title))) return "question-answer";
+  if (["comparison_diagram", "before_after_table", "pros_cons_table"].includes(slide.visual.type) && layoutHasEnoughContent("comparison", slide)) return "comparison";
+  if (/[?？]$/.test(cleanText(slide.title)) && layoutHasEnoughContent("question-answer", slide)) return "question-answer";
   if (hasMeasurableText(slide)) return "metrics";
   if (slide.sourceRefs?.length && slide.bullets.length >= 2) return "evidence";
   if (hasExampleLanguage(slide)) return "explain-example";
@@ -2125,14 +2132,38 @@ function nextDiverseLayout(index: number, previous: SlideLayout[], slide: Slide)
 function layoutHasEnoughContent(layout: SlideLayout, slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks"> & Partial<Pick<Slide, "sourceRefs">>) {
   if (layout === "definition") return Boolean(slide.definition || slide.thesis);
   if (layout === "quote") return slide.blocks.some((block) => block.type === "quote") || Boolean(slide.thesis);
-  if (layout === "comparison") return slide.visual.rows.length || slide.bullets.length >= 2;
-  if (layout === "process" || layout === "timeline") return slide.visual.items.length >= 2 || slide.bullets.length >= 2;
+  if (layout === "two-column") return false;
+  if (layout === "comparison") {
+    return slide.visual.rows.filter((row) => cleanText(row.left) && cleanText(row.right)).length >= 2
+      && Boolean(cleanText(slide.visual.leftLabel) && cleanText(slide.visual.rightLabel));
+  }
+  if (layout === "process") {
+    return slide.visual.items.filter((item) => cleanText(item.label) && cleanText(item.text)).length >= 3;
+  }
+  if (layout === "timeline") {
+    return slide.visual.items.filter((item) => cleanText(item.label) && cleanText(item.text)).length >= 3;
+  }
+  if (layout === "question-answer") return Boolean(cleanText(slide.thesis) && slide.bullets.filter(cleanText).length >= 2);
+  if (layout === "myth-fact") {
+    return slide.visual.items.filter((item) => cleanText(item.label) || cleanText(item.text)).length >= 2
+      && slide.bullets.filter(cleanText).length >= 1;
+  }
   if (layout === "metrics") return hasMeasurableText(slide);
   if (layout === "evidence") return Boolean(slide.thesis && slide.bullets.length >= 2);
   if (layout === "problem-solution") return slide.visual.items.length >= 3 || slide.bullets.length >= 3;
   if (layout === "explain-example") return Boolean(slide.definition || slide.thesis) && slide.bullets.length >= 1;
   if (layout === "image-focus") return Boolean(slide.visual.image?.url || slide.thesis);
   return true;
+}
+
+function fallbackForSparseLayout(
+  layout: SlideLayout,
+  slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks"> & Partial<Pick<Slide, "sourceRefs">>,
+): SlideLayout {
+  if (slide.sourceRefs?.length && slide.thesis && slide.bullets.length >= 2) return "evidence";
+  if (slide.definition && slide.bullets.length) return "explain-example";
+  if (layout === "question-answer" || layout === "myth-fact") return slide.thesis ? "statement" : "bullets";
+  return slide.bullets.length >= 2 ? "bullets" : "statement";
 }
 
 function hasMeasurableText(slide: Pick<Slide, "title" | "thesis" | "bullets" | "blocks">) {

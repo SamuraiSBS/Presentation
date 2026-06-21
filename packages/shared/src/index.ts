@@ -111,7 +111,7 @@ export const SLIDE_LAYOUT_DEFINITIONS: SlideLayoutDefinition[] = [
   { id: "quote", label: "Цитата", description: "Центральная формулировка", kinds: ["content"], requirements: [], fallback: "statement" },
   { id: "definition", label: "Определение", description: "Термин и объяснение", kinds: ["content"], requirements: ["definition"], fallback: "explain-example" },
   { id: "timeline", label: "Хронология", description: "События на временной оси", kinds: ["content"], requirements: ["sequence"], fallback: "process" },
-  { id: "comparison", label: "Сравнение", description: "Таблица из двух колонок", kinds: ["content"], requirements: ["comparison"], fallback: "two-column" },
+  { id: "comparison", label: "Сравнение", description: "Сравнение по нескольким критериям", kinds: ["content"], requirements: ["comparison"], fallback: "evidence" },
   { id: "process", label: "Процесс", description: "Последовательность шагов", kinds: ["content"], requirements: ["sequence"], fallback: "bullets" },
   { id: "image-focus", label: "Изображение", description: "Визуальный пример и пояснение", kinds: ["content"], requirements: [], fallback: "statement" },
   { id: "case-study", label: "Кейс", description: "Ситуация, действие, результат", kinds: ["content"], requirements: ["sequence"], fallback: "problem-solution" },
@@ -128,7 +128,7 @@ export function slideLayoutDefinition(layout: SlideLayout) {
 }
 
 export function slideLayoutOptions(kind: SlideKind) {
-  return SLIDE_LAYOUT_DEFINITIONS.filter((item) => item.kinds.includes(kind));
+  return SLIDE_LAYOUT_DEFINITIONS.filter((item) => item.id !== "two-column" && item.kinds.includes(kind));
 }
 
 export const visualTypeSchema = z.enum([
@@ -757,7 +757,7 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme): SlideC
   else if (slide.layout === "image-focus" && visual.image) addImageFocusCanvas(slide, theme, elements);
   else if (slide.layout === "case-study") addPanelGridCanvas(slide, theme, elements, ["Ситуация", "Действие", "Результат"]);
   else if (slide.layout === "question-answer") addQuestionAnswerCanvas(slide, theme, elements);
-  else if (slide.layout === "myth-fact") addPanelGridCanvas(slide, theme, elements, ["Миф", "Факт"]);
+  else if (slide.layout === "myth-fact") addMythFactCanvas(slide, theme, elements);
   else if (slide.layout === "metrics") addMetricsCanvas(slide, theme, elements);
   else if (slide.layout === "evidence") addEvidenceCanvas(slide, theme, elements);
   else if (slide.layout === "problem-solution") addProblemSolutionCanvas(slide, theme, elements);
@@ -1096,7 +1096,10 @@ function addSequenceCanvas(slide: Slide, theme: PresentationTheme, elements: Can
       color: theme.colors.muted,
     }));
   }
-  const items = sequenceItems(slide).slice(0, 5);
+  const detailedItems = slide.visual.items.filter((item) => item.label || item.text).slice(0, 5);
+  const items = detailedItems.length
+    ? detailedItems
+    : sequenceItems(slide).slice(0, 5).map((text, index) => ({ label: `Шаг ${index + 1}`, text }));
   const width = 1123 / Math.max(items.length, 1);
   elements.push(shapeElement(`${slide.id}-sequence-line`, "rect", 100, 256, 1076, 4, 2, theme.colors.line, theme.colors.line, 0, 1));
   items.forEach((item, index) => {
@@ -1111,9 +1114,16 @@ function addSequenceCanvas(slide: Slide, theme: PresentationTheme, elements: Can
         bold: true,
         align: "center",
       }),
-      textElement(`${slide.id}-step-${index}`, item, x + 18, 306, width - 52, 132, 4, {
-        role: "body",
+      textElement(`${slide.id}-step-${index}-label`, item.label, x + 18, 300, width - 52, 46, 4, {
+        role: "caption",
         fontSize: 18,
+        fontFamily: theme.fonts.heading,
+        color: theme.colors.text,
+        bold: true,
+      }),
+      textElement(`${slide.id}-step-${index}`, item.text || item.label, x + 18, 352, width - 52, 104, 4, {
+        role: "body",
+        fontSize: 16,
         fontFamily: theme.fonts.body,
         color: theme.colors.muted,
       }),
@@ -1127,14 +1137,15 @@ function addComparisonCanvas(slide: Slide, theme: PresentationTheme, elements: C
   const leftLabel = slide.visual?.leftLabel || "Первое";
   const rightLabel = slide.visual?.rightLabel || "Второе";
   elements.push(
-    textElement(`${slide.id}-comparison-left-label`, leftLabel, 86, 164, 533, 42, 4, labelText(theme)),
-    textElement(`${slide.id}-comparison-right-label`, rightLabel, 662, 164, 533, 42, 4, labelText(theme)),
-    shapeElement(`${slide.id}-comparison-divider`, "rect", 638, 164, 2, 404, 2, theme.colors.line, theme.colors.line, 0, 1),
+    textElement(`${slide.id}-comparison-criterion-label`, "Критерий", 86, 164, 222, 42, 4, labelText(theme)),
+    textElement(`${slide.id}-comparison-left-label`, leftLabel, 329, 164, 420, 42, 4, labelText(theme)),
+    textElement(`${slide.id}-comparison-right-label`, rightLabel, 770, 164, 425, 42, 4, labelText(theme)),
   );
   rows.forEach((row, index) => {
     const y = 209 + index * 117;
-    addComparisonCell(slide, theme, elements, `left-${index}`, 86, y, row.left || row.label);
-    addComparisonCell(slide, theme, elements, `right-${index}`, 662, y, row.right || row.label);
+    addComparisonCell(slide, theme, elements, `criterion-${index}`, 86, y, row.label || `Критерий ${index + 1}`, 222);
+    addComparisonCell(slide, theme, elements, `left-${index}`, 329, y, row.left || row.label, 420);
+    addComparisonCell(slide, theme, elements, `right-${index}`, 770, y, row.right || row.label, 425);
   });
 }
 
@@ -1215,7 +1226,55 @@ function addQuestionAnswerCanvas(slide: Slide, theme: PresentationTheme, element
       color: theme.colors.muted,
     }),
   );
-  addMiniPointRow(slide, theme, elements, 296, 520);
+  slide.bullets.slice(0, 3).forEach((item, index) => {
+    const x = 149 + index * 333;
+    elements.push(
+      textElement(`${slide.id}-answer-support-${index}-label`, ["Почему", "Пример", "Что это меняет"][index], x, 464, 294, 28, 4, labelText(theme)),
+      textElement(`${slide.id}-answer-support-${index}`, item, x, 501, 294, 76, 4, {
+        role: "body",
+        fontSize: 16,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.muted,
+      }),
+    );
+  });
+}
+
+function addMythFactCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  addSlideTitle(slide, theme, elements);
+  const items = slide.visual.items.slice(0, 2);
+  const fallback = sequenceItems(slide);
+  const content = [0, 1].map((index) => {
+    const item = items[index];
+    return item ? [item.label, item.text].filter(Boolean).join(". ") : fallback[index] || slide.thesis;
+  });
+
+  ["Миф", "Факт"].forEach((label, index) => {
+    const x = 88 + index * 552;
+    elements.push(
+      shapeElement(`${slide.id}-myth-fact-${index}`, "roundRect", x, 178, 534, 208, 2, index ? theme.colors.surface : theme.colors.surfaceAlt, theme.colors.line, 1, 1),
+      textElement(`${slide.id}-myth-fact-${index}-label`, label, x + 24, 203, 486, 34, 4, labelText(theme)),
+      textElement(`${slide.id}-myth-fact-${index}-text`, content[index], x + 24, 255, 486, 94, 4, {
+        role: "body",
+        fontSize: 18,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.muted,
+      }),
+    );
+  });
+
+  slide.bullets.slice(0, 2).forEach((item, index) => {
+    const x = 88 + index * 552;
+    elements.push(
+      textElement(`${slide.id}-myth-context-${index}-label`, index ? "Проверка" : "Почему в это верят", x, 430, 534, 30, 4, labelText(theme)),
+      textElement(`${slide.id}-myth-context-${index}`, item, x, 469, 534, 82, 4, {
+        role: "body",
+        fontSize: 16,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.muted,
+      }),
+    );
+  });
 }
 
 function addMetricsCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
@@ -1397,10 +1456,11 @@ function addComparisonCell(
   x: number,
   y: number,
   value: string,
+  width = 533,
 ) {
   elements.push(
-    shapeElement(`${slide.id}-comparison-${id}-card`, "roundRect", x, y, 533, 92, 2, theme.colors.surface, theme.colors.line, 1, 1),
-    textElement(`${slide.id}-comparison-${id}-text`, value, x + 19, y + 15, 495, 54, 4, {
+    shapeElement(`${slide.id}-comparison-${id}-card`, "roundRect", x, y, width, 92, 2, theme.colors.surface, theme.colors.line, 1, 1),
+    textElement(`${slide.id}-comparison-${id}-text`, value, x + 19, y + 15, width - 38, 54, 4, {
       role: "body",
       fontSize: 18,
       fontFamily: theme.fonts.body,

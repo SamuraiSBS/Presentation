@@ -11,6 +11,7 @@ import {
   projectStatusSchema,
   resolvePresentationTheme,
   slideCanvasSchema,
+  slideLayoutOptions,
   updateNarrationInputSchema,
 } from "./index";
 
@@ -30,6 +31,10 @@ describe("shared contracts", () => {
 
   it("keeps free plan export limited to pdf", () => {
     expect(planLimits.free.exports).toEqual(["pdf"]);
+  });
+
+  it("keeps the legacy two-column layout readable but hides it from new selections", () => {
+    expect(slideLayoutOptions("content").map((layout) => layout.id)).not.toContain("two-column");
   });
 
   it("accepts two-step generation statuses and job kinds", () => {

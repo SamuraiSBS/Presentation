@@ -170,6 +170,10 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("layout must be one of");
     expect(prompt).toContain("question-answer");
     expect(prompt).toContain("myth-fact");
+    expect(prompt).not.toContain("two-column");
+    expect(prompt).toContain("3-5 dated or named periods");
+    expect(prompt).toContain("criterion in visual.rows[].label");
+    expect(prompt).toContain("bullets contain 2-3 supporting parts");
     expect(prompt).toContain("evidence");
     expect(prompt).toContain("problem-solution");
     expect(prompt).toContain("explain-example");
@@ -217,6 +221,32 @@ describe("layout normalization", () => {
 
   it("does not keep metrics when the slide has no measurable values", () => {
     expect(normalizeLayout("metrics", 2, 5, "content", { ...base, thesis: "Качественное изменение без чисел." })).not.toBe("metrics");
+  });
+
+  it("maps the legacy two-column layout to comparison only when comparison data is complete", () => {
+    const comparison = {
+      ...base,
+      visual: {
+        ...base.visual,
+        type: "comparison_diagram",
+        leftLabel: "Первый подход",
+        rightLabel: "Второй подход",
+        rows: [
+          { label: "Скорость", left: "Быстро", right: "Медленно" },
+          { label: "Точность", left: "Средняя", right: "Высокая" },
+        ],
+      },
+    };
+
+    expect(normalizeLayout("two-column", 2, 5, "content", comparison)).toBe("comparison");
+    expect(normalizeLayout("comparison", 2, 5, "content", base)).not.toBe("comparison");
+  });
+
+  it("rejects sparse sequence, question-answer, and myth-fact layouts", () => {
+    expect(normalizeLayout("process", 2, 6, "content", base)).not.toBe("process");
+    expect(normalizeLayout("timeline", 2, 6, "content", base)).not.toBe("timeline");
+    expect(normalizeLayout("question-answer", 2, 6, "content", { ...base, title: "Почему это важно?", bullets: [] })).not.toBe("question-answer");
+    expect(normalizeLayout("myth-fact", 2, 6, "content", base)).not.toBe("myth-fact");
   });
 });
 

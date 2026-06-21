@@ -1154,10 +1154,15 @@ function layoutCanRender(layout: SlideLayout, slide: Slide) {
     return hasMeasurableValue(text);
   }
   if (layout === "definition") return Boolean(slide.definition);
-  if (layout === "comparison" || layout === "two-column" || layout === "myth-fact") {
-    return slide.visual.rows.length > 0 || slide.bullets.length >= 2;
+  if (layout === "comparison") {
+    return slide.visual.rows.filter((row) => row.left.trim() && row.right.trim()).length >= 2
+      && Boolean(slide.visual.leftLabel.trim() && slide.visual.rightLabel.trim());
   }
-  if (layout === "timeline" || layout === "process") return sequenceCount >= 2;
+  if (layout === "myth-fact") return slide.visual.items.length >= 2 && slide.bullets.length >= 1;
+  if (layout === "question-answer") return Boolean(slide.thesis.trim() && slide.bullets.length >= 2);
+  if (layout === "timeline" || layout === "process") {
+    return slide.visual.items.filter((item) => item.label.trim() && item.text.trim()).length >= 3;
+  }
   if (layout === "case-study" || layout === "problem-solution") return sequenceCount >= 3;
   if (layout === "evidence") return Boolean(slide.thesis && slide.bullets.length >= 2);
   return true;
