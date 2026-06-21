@@ -228,13 +228,18 @@ export class ProjectsService {
     const document = ensureEditableCanvas(presentationSchema.parse(project.presentation.document) as PresentationDocument);
     const slide = document.slides.find((item) => item.id === slideId);
     const element = slide?.canvas?.elements.find((item) => item.id === elementId && item.type === "image");
-    if (!element || element.type !== "image" || !element.objectKey) throw new NotFoundException("Asset not found");
+    const objectKey = elementId === "visual-image"
+      ? slide?.visual.image?.objectKey
+      : element?.type === "image"
+        ? element.objectKey
+        : undefined;
+    if (!objectKey) throw new NotFoundException("Asset not found");
 
     const url = await getSignedUrl(
       this.getS3(),
       new GetObjectCommand({
         Bucket: this.config.getOrThrow<string>("S3_BUCKET"),
-        Key: element.objectKey,
+        Key: objectKey,
       }),
       { expiresIn: 60 * 5 },
     );

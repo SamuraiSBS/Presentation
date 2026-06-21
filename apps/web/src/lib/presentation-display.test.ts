@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sanitizePresentationForDisplay } from "./presentation-display";
+import { sanitizePresentationForDisplay, sanitizeProjectForDisplay, useStoredImageUrls } from "./presentation-display";
 
 const forbiddenNarrationFragments = [
   'Слайд "',
@@ -248,6 +248,137 @@ describe("sanitizePresentationForDisplay", () => {
     expect(document.slides[3].visual.image?.url).toBe("https://example.com/image.jpg");
     expect(document.slides[3].visual.image?.objectKey).toBe("projects/project-1/images/slide-4.jpg");
     expect(document.slides[3].canvas?.elements.some((element) => element.type === "image" && element.url === "https://example.com/image.jpg")).toBe(true);
+  });
+
+  it("uses stored image assets for web display instead of external hotlinks", () => {
+    const project = sanitizeProjectForDisplay({
+      id: "project-1",
+      presentation: {
+        document: {
+          id: "presentation-1",
+          title: "Stored images",
+          scenario: "lesson",
+          level: "beginner",
+          slideCount: 1,
+          generationMode: "demo",
+          sources: [],
+          outline: ["Stored images"],
+          speechScript: [],
+          slides: [
+            {
+              id: "slide-1",
+              order: 1,
+              title: "Stored images",
+              slideKind: "title",
+              layout: "hero",
+              thesis: "The image is stored in MinIO.",
+              bullets: [],
+              definition: null,
+              keyConcepts: [],
+              visual: {
+                type: "image",
+                title: "",
+                description: "Stored image",
+                leftLabel: "",
+                rightLabel: "",
+                items: [],
+                rows: [],
+                image: {
+                  url: "https://external.example.com/image.jpg",
+                  objectKey: "projects/project-1/images/slide-1.jpg",
+                  alt: "Stored image",
+                  query: "stored image",
+                  sourceTitle: "External source",
+                  provider: "tavily",
+                  contentType: "image/jpeg",
+                },
+              },
+              highlights: [],
+              blocks: [{ type: "callout", content: "The image is stored in MinIO." }],
+              speakerNotes: "Stored image notes.",
+              timingSeconds: 45,
+              sourceRefs: [],
+            },
+          ],
+        },
+      },
+    } as any);
+
+    const slide = project.presentation?.document.slides[0];
+    expect(slide?.visual.image?.url).toBe("/api/projects/project-1/slides/slide-1/assets/visual-image");
+    expect(slide?.canvas?.elements.find((element: { type: string; url?: string }) => element.type === "image")?.url)
+      .toMatch(/^\/api\/projects\/project-1\/slides\/slide-1\/assets\//);
+
+    const sanitizedAgain = sanitizeProjectForDisplay(project as any);
+    expect(sanitizedAgain.presentation?.document.slides[0].visual.image?.url)
+      .toBe("/api/projects/project-1/slides/slide-1/assets/visual-image");
+    expect(sanitizedAgain.presentation?.document.slides[0].canvas?.elements.some((element: { type: string }) => element.type === "image"))
+      .toBe(true);
+  });
+
+  it("restores a generated image when legacy canvas cleanup removed its background image", () => {
+    const sanitized = sanitizePresentationForDisplay({
+      id: "presentation-1",
+      title: "Legacy stored image",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Legacy stored image"],
+      speechScript: [],
+      slides: [
+        {
+          id: "slide-1",
+          order: 1,
+          title: "Legacy stored image",
+          slideKind: "title",
+          layout: "hero",
+          thesis: "The old canvas lost its image element.",
+          bullets: [],
+          definition: null,
+          keyConcepts: [],
+          visual: {
+            type: "image",
+            title: "",
+            description: "Stored image",
+            leftLabel: "",
+            rightLabel: "",
+            items: [],
+            rows: [],
+            image: {
+              url: "https://external.example.com/image.jpg",
+              objectKey: "projects/project-1/images/slide-1.jpg",
+              alt: "Stored image",
+              query: "stored image",
+              sourceTitle: "",
+              provider: "tavily",
+              contentType: "image/jpeg",
+            },
+          },
+          highlights: [],
+          blocks: [{ type: "callout", content: "The old canvas lost its image element." }],
+          speakerNotes: "Image notes.",
+          timingSeconds: 45,
+          sourceRefs: [],
+        },
+      ],
+    });
+    const withoutCanvasImage = {
+      ...sanitized,
+      slides: sanitized.slides.map((slide) => ({
+        ...slide,
+        canvas: slide.canvas
+          ? { ...slide.canvas, elements: slide.canvas.elements.filter((element) => element.type !== "image") }
+          : slide.canvas,
+      })),
+    };
+
+    const restored = useStoredImageUrls(withoutCanvasImage, "project-1");
+    const image = restored.slides[0].canvas?.elements.find((element) => element.type === "image");
+
+    expect(image?.url).toBe("/api/projects/project-1/slides/slide-1/assets/visual-image");
+    expect(image?.objectKey).toBe("projects/project-1/images/slide-1.jpg");
   });
 
   it("removes keyword chips from slides prepared for display", () => {

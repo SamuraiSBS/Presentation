@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import {
   ensureEditableCanvas,
-  hasCustomSlideCanvas,
+  canvasBackgroundCss,
   compactSourceRefs,
   hasMeasurableValue,
   metricLead,
@@ -73,6 +73,7 @@ export async function handleExportJob(job: Job<{ exportId: string; projectId: st
 }
 
 export async function createPptx(presentation: ReturnType<typeof presentationSchema.parse>) {
+  const document = ensureEditableCanvas(presentation);
   const pptx = new PptxGenConstructor();
   pptx.defineLayout(WIDE_LAYOUT);
   pptx.layout = WIDE_LAYOUT.name;
@@ -87,10 +88,10 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
     lang: "ru-RU",
   };
 
-  for (const item of presentation.slides) {
+  for (const item of document.slides) {
     const slide = pptx.addSlide();
     slide.background = { color: theme.pptx.background };
-    if (item.canvas && hasCustomSlideCanvas(item, theme)) {
+    if (item.canvas) {
       await renderCanvasSlide(pptx, slide, item.canvas, theme);
       slide.addNotes(item.speakerNotes);
       continue;
@@ -182,6 +183,9 @@ async function renderCanvasSlide(
   theme: ExportTheme,
 ) {
   slide.background = { color: pptxColor(canvas.background || theme.colors.background) };
+  if (canvas.backgroundStyle?.type === "gradient") {
+    slide.addImage({ data: canvasBackgroundSvgData(canvas), x: 0, y: 0, w: WIDE_LAYOUT.width, h: WIDE_LAYOUT.height });
+  }
   for (const element of sortCanvasElements(canvas.elements)) {
     if (element.opacity <= 0) continue;
     if (element.type === "text") {
@@ -220,7 +224,7 @@ function renderCanvasText(slide: any, element: CanvasTextElement, theme: ExportT
     underline: element.underline,
     color: pptxColor(element.color),
     align: element.align,
-    valign: "top",
+    valign: element.valign === "middle" ? "mid" : element.valign,
     rotate: element.rotation,
     fit: "shrink",
     margin: 0.02,
@@ -771,9 +775,9 @@ async function renderPdfHtml(presentation: ReturnType<typeof presentationSchema.
   const theme = exportTheme(presentation);
   const slides = await Promise.all(
     presentation.slides.map(async (slide) => {
-      if (slide.canvas && hasCustomSlideCanvas(slide, theme)) {
+      if (slide.canvas) {
         const elements = await Promise.all(sortCanvasElements(slide.canvas.elements).map((element) => renderPdfElement(element)));
-        return `<section class="slide canvas-slide" style="background:${escapeHtml(slide.canvas.background)}">${elements.join("")}</section>`;
+        return `<section class="slide canvas-slide" style="background:${escapeHtml(canvasBackgroundCss(slide.canvas.backgroundStyle, slide.canvas.background))}">${elements.join("")}</section>`;
       }
       return renderPdfTemplateSlide(slide, theme);
     }),
@@ -1054,8 +1058,31 @@ function pdfTextStyle(element: CanvasTextElement) {
     `font-style:${element.italic ? "italic" : "normal"}`,
     `text-decoration:${element.underline ? "underline" : "none"}`,
     `text-align:${element.align}`,
+    "display:flex",
+    "flex-direction:column",
+    `justify-content:${element.valign === "middle" ? "center" : element.valign === "bottom" ? "flex-end" : "flex-start"}`,
     "line-height:1.14",
   ].join(";");
+}
+
+function canvasBackgroundSvgData(canvas: SlideCanvas) {
+  const style = canvas.backgroundStyle;
+  if (!style || style.type === "solid") {
+    const color = style?.color || canvas.background;
+    return `data:image/svg+xml;base64,${Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}"><rect width="100%" height="100%" fill="${color}"/></svg>`).toString("base64")}`;
+  }
+  const x1 = 50 - Math.cos((style.angle * Math.PI) / 180) * 50;
+  const y1 = 50 - Math.sin((style.angle * Math.PI) / 180) * 50;
+  const x2 = 100 - x1;
+  const y2 = 100 - y1;
+  const stops = style.stops.map((stop) => `<stop offset="${stop.offset * 100}%" stop-color="${stop.color}" stop-opacity="${stop.opacity}"/>`).join("");
+  const blobs = style.blobs.map((blob, index) => {
+    const radius = blob.size * Math.min(canvas.width, canvas.height) * 0.52;
+    return `<circle cx="${blob.x * canvas.width}" cy="${blob.y * canvas.height}" r="${radius}" fill="${blob.color}" fill-opacity="${blob.opacity}" filter="url(#blur${index})"/>`;
+  }).join("");
+  const filters = style.blobs.map((blob, index) => `<filter id="blur${index}" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="${blob.blur}"/></filter>`).join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="0 0 ${canvas.width} ${canvas.height}"><defs><linearGradient id="base" x1="${x1}%" y1="${y1}%" x2="${x2}%" y2="${y2}%">${stops}</linearGradient>${filters}</defs><rect width="100%" height="100%" fill="url(#base)"/>${blobs}</svg>`;
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
 function pdfShapeStyle(element: CanvasShapeElement) {

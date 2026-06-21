@@ -1,4 +1,5 @@
 import {
+  buildSlideCanvas,
   ensureEditableCanvas,
   resolvePresentationTheme,
   type Highlight,
@@ -10,6 +11,7 @@ import {
 } from "@studydeck/shared";
 
 type ProjectWithPresentation = {
+  id?: string;
   presentation?: { document?: DisplayPresentationInput | null } | null;
 };
 
@@ -74,13 +76,75 @@ const GENERIC_SCREEN_TEXT_PHRASES = [
 export function sanitizeProjectForDisplay<T extends ProjectWithPresentation>(project: T): T {
   const document = project.presentation?.document;
   if (!document) return project;
+  const sanitizedDocument = sanitizePresentationForDisplay(document);
 
   return {
     ...project,
     presentation: {
       ...project.presentation,
-      document: sanitizePresentationForDisplay(document),
+      document: project.id ? useStoredImageUrls(sanitizedDocument, project.id) : sanitizedDocument,
     },
+  };
+}
+
+export function useStoredImageUrls(document: PresentationDocument, projectId: string): PresentationDocument {
+  return {
+    ...document,
+    slides: document.slides.map((slide) => {
+      const assetBase = `/api/projects/${encodeURIComponent(projectId)}/slides/${encodeURIComponent(slide.id)}/assets`;
+      const storedVisualImage = slide.visual.image?.objectKey ? slide.visual.image : undefined;
+      const visualAssetUrl = `${assetBase}/visual-image`;
+      const hasCustomMarker = slide.canvas?.elements.some((element) => element.id === `${slide.id}-custom-canvas-marker`);
+      let canvas = slide.canvas;
+
+      if (storedVisualImage && canvas && !hasCustomMarker && !canvas.elements.some((element) => element.type === "image")) {
+        const generatedCanvas = buildSlideCanvas(
+          {
+            ...slide,
+            visual: {
+              ...slide.visual,
+              image: { ...storedVisualImage, url: visualAssetUrl },
+            },
+          },
+          document.presentationTheme || resolvePresentationTheme(document),
+        );
+        canvas = {
+          ...canvas,
+          elements: [
+            ...generatedCanvas.elements.filter((element) => element.type === "image"),
+            ...canvas.elements,
+          ],
+        };
+      }
+
+      return {
+        ...slide,
+        visual: storedVisualImage
+          ? {
+              ...slide.visual,
+              image: {
+                ...storedVisualImage,
+                url: visualAssetUrl,
+              },
+            }
+          : slide.visual,
+        canvas: canvas
+          ? {
+              ...canvas,
+              elements: canvas.elements.map((element) =>
+                element.type === "image" && element.objectKey
+                  ? {
+                      ...element,
+                      url: storedVisualImage?.objectKey === element.objectKey
+                        ? visualAssetUrl
+                        : `${assetBase}/${encodeURIComponent(element.id)}`,
+                    }
+                  : element,
+              ),
+            }
+          : canvas,
+      };
+    }),
   };
 }
 
@@ -234,7 +298,7 @@ function normalizeVisual(value: unknown, title: string, _bullets: string[], _sli
 function normalizeVisualImage(value: unknown): SlideVisual["image"] | undefined {
   if (!value || typeof value !== "object") return undefined;
   const candidate = value as NonNullable<SlideVisual["image"]>;
-  const url = validUrl(candidate.url) ? candidate.url : "";
+  const url = validImageUrl(candidate.url) ? candidate.url : "";
   if (!url) return undefined;
 
   return {
@@ -515,6 +579,14 @@ function validUrl(value: unknown): value is string {
   } catch {
     return false;
   }
+}
+
+function validImageUrl(value: unknown): value is string {
+  const text = String(value || "");
+  if (/^\/api\/projects\/[^/]+\/slides\/[^/]+\/assets\/[^/]+$/.test(text)) {
+    return true;
+  }
+  return validUrl(text);
 }
 
 function shortenText(value: string, maxLength: number) {

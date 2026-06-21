@@ -291,12 +291,11 @@ describe("shared contracts", () => {
     }).slides[0];
 
     const canvas = buildSlideCanvas(slide, theme);
-    const panel = canvas.elements.find((element) => element.id === "slide-1-panel");
     const image = canvas.elements.find((element) => element.id === "slide-1-image-bg");
     const chips = canvas.elements.filter((element) => element.id.startsWith("slide-1-mini-") && element.type === "text");
 
-    expect(panel).toMatchObject({ type: "shape", x: 66, y: 54, w: 1148, h: 612 });
-    expect(image).toMatchObject({ type: "image", fit: "contain", x: 66, y: 54, w: 1148, h: 612 });
+    expect(canvas.elements.find((element) => element.id === "slide-1-panel")).toBeUndefined();
+    expect(image).toMatchObject({ type: "image", fit: "cover", x: 0, y: 0, w: 1280, h: 720 });
     expect(chips).toHaveLength(3);
   });
 
@@ -364,7 +363,8 @@ describe("shared contracts", () => {
 
     expect(heroTitle).toMatchObject({ type: "text", fontSize: 58, h: 148 });
     expect(miniChip).toMatchObject({ type: "text", fontSize: 15, h: 36 });
-    expect(contentTitle).toMatchObject({ type: "text", fontSize: 46, h: 112 });
+    expect(contentTitle).toMatchObject({ type: "text", h: 112 });
+    expect(contentTitle?.type === "text" ? contentTitle.fontSize : 0).toBeLessThanOrEqual(46);
     expect(miniChip?.type === "text" ? miniChip.text.length : 0).toBeLessThanOrEqual(28);
   });
 
@@ -458,7 +458,7 @@ describe("shared contracts", () => {
     const legacySlide = { ...parsed.slides[0], canvas: legacyCanvas };
 
     expect(hasCustomSlideCanvas(legacySlide, theme)).toBe(false);
-    expect(ensureEditableCanvas({ ...parsed, slides: [legacySlide] }).slides[0].canvas?.elements.some((element) => element.id === "slide-legacy-panel")).toBe(true);
+    expect(ensureEditableCanvas({ ...parsed, slides: [legacySlide] }).slides[0].canvas?.backgroundStyle?.type).toBe("gradient");
   });
 
   it("rebuilds old fullscreen title image canvases as generated content", () => {
@@ -526,7 +526,7 @@ describe("shared contracts", () => {
 
     const editable = ensureEditableCanvas(parsed);
 
-    expect(editable.slides[0].canvas?.elements.find((element) => element.id === "slide-1-image-bg")).toMatchObject({ type: "image", fit: "contain" });
+    expect(editable.slides[0].canvas?.elements.find((element) => element.id === "slide-1-image-bg")).toMatchObject({ type: "image", fit: "cover" });
     expect(editable.slides[0].canvas?.elements.find((element) => element.id === "slide-1-image")).toBeUndefined();
   });
 

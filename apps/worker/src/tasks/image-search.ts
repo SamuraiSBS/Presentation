@@ -41,6 +41,9 @@ type ImageSearchDependencies = {
   warn?: (message: string, error: unknown) => void;
 };
 
+const TAVILY_QUERY_MAX_LENGTH = 400;
+const TAVILY_QUERY_SAFE_LENGTH = 380;
+
 export async function enrichPresentationImages(
   project: ProjectInput,
   presentation: PresentationDocument,
@@ -62,35 +65,44 @@ export async function enrichPresentationImages(
     try {
       const query = buildSlideImageQuery(project, slide);
       const candidates = await searchImages(query);
-      const candidate = chooseImageCandidate(candidates, usedUrls, usedDomains);
-      if (!candidate) {
-        slides.push(slide);
-        continue;
+      let image: SlideVisualImage | undefined;
+      let lastDownloadError: unknown;
+
+      while (!image) {
+        const candidate = chooseImageCandidate(candidates, usedUrls, usedDomains);
+        if (!candidate) break;
+
+        try {
+          const downloaded = await downloadImage(candidate.url);
+          const hash = crypto.createHash("sha1").update(candidate.url).digest("hex").slice(0, 12);
+          const objectKey = `projects/${project.id}/images/slide-${slide.order}-${hash}.${downloaded.extension}`;
+          await putObject(objectKey, downloaded.buffer, downloaded.contentType);
+
+          image = {
+            url: candidate.url,
+            objectKey,
+            alt: buildImageAlt(slide.title, candidate.description),
+            query,
+            sourceUrl: candidate.sourceUrl || candidate.url,
+            sourceTitle: candidate.sourceTitle,
+            provider: "tavily",
+            contentType: downloaded.contentType,
+          };
+        } catch (error) {
+          lastDownloadError = error;
+        }
       }
 
-      const downloaded = await downloadImage(candidate.url);
-      const hash = crypto.createHash("sha1").update(candidate.url).digest("hex").slice(0, 12);
-      const objectKey = `projects/${project.id}/images/slide-${slide.order}-${hash}.${downloaded.extension}`;
-      await putObject(objectKey, downloaded.buffer, downloaded.contentType);
-
-      const image: SlideVisualImage = {
-        url: candidate.url,
-        objectKey,
-        alt: buildImageAlt(slide.title, candidate.description),
-        query,
-        sourceUrl: candidate.sourceUrl,
-        sourceTitle: candidate.sourceTitle,
-        provider: "tavily",
-        contentType: downloaded.contentType,
-      };
-
-      slides.push({
-        ...slide,
-        visual: {
-          ...slide.visual,
-          image,
-        },
-      });
+      if (!image && lastDownloadError) throw lastDownloadError;
+      slides.push(image
+        ? {
+            ...slide,
+            visual: {
+              ...slide.visual,
+              image,
+            },
+          }
+        : slide);
     } catch (error) {
       warn(`Slide image lookup failed for slide ${slide.order}`, error);
       slides.push(slide);
@@ -105,25 +117,19 @@ export async function enrichPresentationImages(
 
 export function buildSlideImageQuery(project: ProjectInput, slide: PresentationDocument["slides"][number]) {
   const parts = [
+    "educational presentation image",
+    slide.title,
+    slide.visual.description,
+    slide.thesis,
     project.title,
     project.prompt,
-    slide.title,
-    slide.thesis,
-    slide.visual.description,
     ...slide.bullets.slice(0, 3),
-    slide.speakerNotes,
   ]
     .map(cleanText)
     .filter(Boolean);
 
-  return shorten(
-    [
-      "educational presentation image",
-      ...unique(parts).slice(0, 7),
-      "high quality photo or clear illustration",
-    ].join(" "),
-    420,
-  );
+  const query = shorten([...unique(parts).slice(0, 7), "high quality photo or clear illustration"].join(" "), TAVILY_QUERY_SAFE_LENGTH);
+  return query.length <= TAVILY_QUERY_MAX_LENGTH ? query : query.slice(0, TAVILY_QUERY_MAX_LENGTH);
 }
 
 export function tavilyResponseToImageCandidates(payload: TavilyImageResponse): ImageCandidate[] {
@@ -276,6 +282,7 @@ function buildImageAlt(title: string, description: string) {
 function extensionFromContentType(contentType: string) {
   if (contentType === "image/jpeg" || contentType === "image/jpg") return "jpg";
   if (contentType === "image/png") return "png";
+  if (contentType === "image/webp") return "webp";
   return "";
 }
 

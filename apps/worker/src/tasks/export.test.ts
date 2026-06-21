@@ -264,6 +264,7 @@ function canvasDeck() {
               italic: false,
               underline: false,
               align: "center" as const,
+              valign: "middle" as const,
             },
             {
               id: "text-2",
@@ -286,6 +287,7 @@ function canvasDeck() {
               italic: true,
               underline: false,
               align: "center" as const,
+              valign: "middle" as const,
             },
           ],
         },

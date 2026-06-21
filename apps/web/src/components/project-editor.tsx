@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type {
   CanvasElement,
@@ -15,19 +15,14 @@ import type {
 } from "@studydeck/shared";
 import {
   buildSlideCanvas,
+  canvasBackgroundCss,
   ensureEditableCanvas,
-  hasCustomSlideCanvas,
   hasMeasurableValue,
   slideLayoutOptions,
   sortCanvasElements,
 } from "@studydeck/shared";
 import { sanitizeProjectForDisplay } from "@/lib/presentation-display";
-import {
-  presentationTextForSlide,
-  slideBackgroundVariant,
-  slideTemplateThemeStyle,
-  SlideTemplatePreview,
-} from "./slide-template-renderer";
+import { presentationTextForSlide } from "./slide-template-renderer";
 
 type ProjectPayload = {
   id: string;
@@ -41,8 +36,8 @@ type Tool = "select" | "text" | "shape";
 type ViewMode = "preview" | "edit";
 type ElementPatch = Partial<CanvasElement> & Record<string, unknown>;
 type DragState =
-  | { mode: "move"; id: string; startX: number; startY: number; original: CanvasElement }
-  | { mode: "resize"; id: string; startX: number; startY: number; original: CanvasElement };
+  | { mode: "move"; id: string; startX: number; startY: number; original: CanvasElement; originals: CanvasElement[] }
+  | { mode: "resize"; id: string; startX: number; startY: number; original: CanvasElement; originals: CanvasElement[] };
 
 const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = 720;
@@ -73,8 +68,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
   const selected = canvas?.elements.find((element) => element.id === selectedId) || null;
   const canvasWidth = canvas?.width ?? CANVAS_WIDTH;
   const canvasHeight = canvas?.height ?? CANVAS_HEIGHT;
-  const hasCustomCanvas = Boolean(slide && theme && hasCustomSlideCanvas(slide, theme));
-  const showObjectCanvas = viewMode === "edit" || hasCustomCanvas;
+  const showObjectCanvas = viewMode === "edit";
   const activeSlideText = presentation && slide ? presentationTextForSlide(presentation, slide, active) : "";
   const canUpload = project.id !== "demo" || process.env.NEXT_PUBLIC_DEMO_PREVIEW === "false";
 
@@ -249,6 +243,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
       italic: false,
       underline: false,
       align: "left",
+      valign: "top",
     };
     commitCanvas({ ...canvas, elements: [...canvas.elements, element] });
     setSelectedId(id);
@@ -281,28 +276,41 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
 
   function deleteSelected() {
     if (!canvas || !selected || selected.locked) return;
-    commitCanvas({ ...canvas, elements: canvas.elements.filter((element) => element.id !== selected.id) });
+    commitCanvas({
+      ...canvas,
+      elements: canvas.elements.filter((element) => selected.groupId ? element.groupId !== selected.groupId : element.id !== selected.id),
+    });
     setSelectedId("");
     setEditingTextId("");
   }
 
   function duplicateSelected() {
     if (!canvas || !selected) return;
-    const copy = {
-      ...selected,
-      id: `${selected.type}-${crypto.randomUUID()}`,
-      x: clamp(selected.x + 32, 0, canvasWidth - selected.w),
-      y: clamp(selected.y + 32, 0, canvasHeight - selected.h),
-      zIndex: nextZIndex(canvas),
-    } as CanvasElement;
-    commitCanvas({ ...canvas, elements: [...canvas.elements, copy] });
-    setSelectedId(copy.id);
+    const source = selected.groupId ? canvas.elements.filter((element) => element.groupId === selected.groupId) : [selected];
+    const nextGroupId = selected.groupId ? `group:${crypto.randomUUID()}` : undefined;
+    const baseZ = nextZIndex(canvas);
+    const copies = source.map((element, index) => ({
+      ...element,
+      id: `${element.type}-${crypto.randomUUID()}`,
+      groupId: nextGroupId,
+      x: clamp(element.x + 32, 0, canvasWidth - element.w),
+      y: clamp(element.y + 32, 0, canvasHeight - element.h),
+      zIndex: baseZ + index,
+    } as CanvasElement));
+    commitCanvas({ ...canvas, elements: [...canvas.elements, ...copies] });
+    setSelectedId(copies.find((element) => element.type === selected.type)?.id || copies[0].id);
   }
 
   function moveLayer(direction: "up" | "down") {
     if (!canvas || !selected) return;
     const delta = direction === "up" ? 1 : -1;
-    updateSelected({ zIndex: Math.max(1, selected.zIndex + delta) });
+    commitCanvas({
+      ...canvas,
+      elements: canvas.elements.map((element) =>
+        selected.groupId ? element.groupId === selected.groupId ? { ...element, zIndex: Math.max(1, element.zIndex + delta) } : element
+          : element.id === selected.id ? { ...element, zIndex: Math.max(1, element.zIndex + delta) } : element,
+      ),
+    });
   }
 
   function undo() {
@@ -353,6 +361,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
         italic: false,
         underline: false,
         align: "left",
+        valign: "top",
       };
       commitCanvas({ ...canvas, elements: [...canvas.elements, element] });
       setSelectedId(id);
@@ -392,7 +401,8 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
       setEditingTextId("");
     }
     const point = eventPoint(event, stageRef.current, canvasScale);
-    dragRef.current = { mode: "move", id: element.id, startX: point.x, startY: point.y, original: element };
+    const originals = element.groupId ? canvas!.elements.filter((item) => item.groupId === element.groupId) : [element];
+    dragRef.current = { mode: "move", id: element.id, startX: point.x, startY: point.y, original: element, originals };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
@@ -400,7 +410,8 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     if (element.locked) return;
     event.stopPropagation();
     const point = eventPoint(event, stageRef.current, canvasScale);
-    dragRef.current = { mode: "resize", id: element.id, startX: point.x, startY: point.y, original: element };
+    const originals = element.groupId ? canvas!.elements.filter((item) => item.groupId === element.groupId) : [element];
+    dragRef.current = { mode: "resize", id: element.id, startX: point.x, startY: point.y, original: element, originals };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
@@ -410,19 +421,26 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     const point = eventPoint(event, stageRef.current, canvasScale);
     const dx = point.x - drag.startX;
     const dy = point.y - drag.startY;
+    const originalById = new Map(drag.originals.map((element) => [element.id, element]));
     const elements = canvas.elements.map((element) => {
-      if (element.id !== drag.id) return element;
+      const original = originalById.get(element.id);
+      if (!original) return element;
       if (drag.mode === "move") {
         return {
           ...element,
-          x: clamp(drag.original.x + dx, 0, canvasWidth - element.w),
-          y: clamp(drag.original.y + dy, 0, canvasHeight - element.h),
+          x: clamp(original.x + dx, 0, canvasWidth - element.w),
+          y: clamp(original.y + dy, 0, canvasHeight - element.h),
         } as CanvasElement;
       }
+      const scaleX = clamp((drag.original.w + dx) / drag.original.w, 0.2, 5);
+      const scaleY = clamp((drag.original.h + dy) / drag.original.h, 0.2, 5);
       return {
         ...element,
-        w: clamp(drag.original.w + dx, 32, canvasWidth - drag.original.x),
-        h: clamp(drag.original.h + dy, 24, canvasHeight - drag.original.y),
+        x: drag.original.x + (original.x - drag.original.x) * scaleX,
+        y: drag.original.y + (original.y - drag.original.y) * scaleY,
+        w: clamp(original.w * scaleX, 24, canvasWidth),
+        h: clamp(original.h * scaleY, 20, canvasHeight),
+        ...(element.type === "text" ? { fontSize: clamp(Math.round(element.fontSize * Math.min(scaleX, scaleY)), 8, 160) } : {}),
       } as CanvasElement;
     });
     setLocalCanvas({ ...canvas, elements });
@@ -446,9 +464,16 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     const step = event.shiftKey ? 10 : 2;
     const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
     const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
-    updateSelected({
-      x: clamp(selected.x + dx, 0, canvasWidth - selected.w),
-      y: clamp(selected.y + dy, 0, canvasHeight - selected.h),
+    commitCanvas({
+      ...canvas,
+      elements: canvas.elements.map((element) => {
+        const included = selected.groupId ? element.groupId === selected.groupId : element.id === selected.id;
+        return included ? {
+          ...element,
+          x: clamp(element.x + dx, 0, canvasWidth - element.w),
+          y: clamp(element.y + dy, 0, canvasHeight - element.h),
+        } : element;
+      }),
     });
   }
 
@@ -570,7 +595,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
             viewMode={showObjectCanvas ? "edit" : "preview"}
             onPreview={() => setViewMode("preview")}
             onEdit={() => setViewMode("edit")}
-            previewDisabled={hasCustomCanvas}
+            previewDisabled={false}
             busy={busy}
             canUpload={canUpload}
             undoDisabled={!undoStack.length}
@@ -609,7 +634,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
                       style={{
                         width: `${canvasWidth}px`,
                         height: `${canvasHeight}px`,
-                        background: canvas.background,
+                        background: canvasBackgroundCss(canvas.backgroundStyle, canvas.background),
                         transform: `scale(${canvasScale})`,
                       }}
                       onPointerDown={onCanvasPointerDown}
@@ -667,7 +692,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
               </div>
             </>
           ) : (
-            <TemplatePreviewFrame slide={slide} theme={theme} />
+            <TemplatePreviewFrame slide={slide} theme={theme} scale={canvasScale} frameRef={frameRef} />
           )}
 
           {!showObjectCanvas && activeSlideText ? (
@@ -696,22 +721,40 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
   );
 }
 
-function TemplatePreviewFrame({ slide, theme }: { slide: Slide; theme?: PresentationTheme }) {
+function TemplatePreviewFrame({ slide, theme, scale, frameRef }: { slide: Slide; theme?: PresentationTheme; scale: number; frameRef: RefObject<HTMLDivElement | null> }) {
+  const canvas = slide.canvas || (theme ? buildSlideCanvas(slide, theme) : null);
+  if (!canvas) return null;
   return (
     <div className="canvas-scroll">
-      <div className="slide-stage">
-        <article
-          className="slide-canvas"
-          data-theme-preset={theme?.preset || "minimal"}
-          data-theme-mood={theme?.mood || "neutral"}
-          data-bg-variant={slideBackgroundVariant(slide)}
-          style={theme ? slideTemplateThemeStyle(theme) : undefined}
-        >
-          <SlideTemplatePreview slide={slide} />
-        </article>
+      <div className="canvas-frame" ref={frameRef}>
+        <div className="canvas-viewport" style={{ width: canvas.width * scale, height: canvas.height * scale }}>
+          <div
+            className="object-canvas object-canvas-preview"
+            style={{
+              width: canvas.width,
+              height: canvas.height,
+              background: canvasBackgroundCss(canvas.backgroundStyle, canvas.background),
+              transform: `scale(${scale})`,
+            }}
+          >
+            {sortCanvasElements(canvas.elements).filter((element) => element.opacity > 0).map((element) => (
+              <ReadonlyCanvasElement element={element} key={element.id} />
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
+}
+
+function ReadonlyCanvasElement({ element }: { element: CanvasElement }) {
+  if (element.type === "shape") {
+    return <div className="canvas-element" style={elementStyle(element)}><div className={`canvas-shape canvas-shape-${element.shape}`} style={shapeStyle(element)} /></div>;
+  }
+  if (element.type === "image") {
+    return <div className="canvas-element" style={elementStyle(element)}>{element.url ? <img src={element.url} alt={element.alt} style={{ objectFit: element.fit }} /> : null}</div>;
+  }
+  return <div className="canvas-element canvas-text-element" style={elementStyle(element)}><div style={textStyle(element)}>{element.text}</div></div>;
 }
 
 function markCanvasAsCustom(slideId: string, canvas: SlideCanvas): SlideCanvas {
@@ -1384,6 +1427,9 @@ function textStyle(element: CanvasTextElement): CSSProperties {
     fontStyle: element.italic ? "italic" : "normal",
     textDecoration: element.underline ? "underline" : "none",
     textAlign: element.align,
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: element.valign === "middle" ? "center" : element.valign === "bottom" ? "flex-end" : "flex-start",
     lineHeight: 1.14,
     outline: "none",
     overflow: "hidden",

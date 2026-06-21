@@ -5,6 +5,7 @@ import {
   metricLead,
   presentationSchema,
   resolvePresentationTheme,
+  SLIDE_LAYOUT_DEFINITIONS,
   slideLayoutSchema,
 } from "./index.js";
 
@@ -20,6 +21,52 @@ describe("slide layouts", () => {
 
     expect(canvas.elements.some((element) => element.id.includes("-evidence-thesis"))).toBe(true);
     expect(canvas.elements.some((element) => element.id.includes("-source-0"))).toBe(true);
+  });
+
+  it("keeps the full layout and theme matrix inside the slide with real gradient backgrounds", () => {
+    const themeTopics = [
+      "Трагедия и кризис",
+      "Веселый детский праздник",
+      "История древнего мира",
+      "Программирование и данные",
+      "Природа и экология",
+      "Neutral topic alpha",
+      "Neutral topic beta",
+    ];
+    const source = presentationSchema.parse(deckWithLayout("evidence")).slides[0];
+
+    for (const topic of themeTopics) {
+      const theme = resolvePresentationTheme({ title: topic });
+      for (const definition of SLIDE_LAYOUT_DEFINITIONS) {
+        const slideKind = definition.id === "hero" ? "title" : definition.id === "summary" ? "summary" : "content";
+        const canvas = buildSlideCanvas({
+          ...source,
+          id: `${theme.preset}-${definition.id}`,
+          order: 2,
+          slideKind,
+          layout: definition.id,
+          title: "Очень длинный заголовок для проверки безопасной композиции",
+          thesis: "Развернутый тезис содержит достаточно текста, чтобы проверить уменьшение шрифта и отсутствие выхода за пределы слайда.",
+          bullets: [
+            "Первый развернутый пункт с важным объяснением",
+            "Второй развернутый пункт с конкретным примером",
+            "Третий развернутый пункт показывает итог",
+          ],
+        }, theme);
+
+        expect(canvas.backgroundStyle?.type, `${theme.preset}/${definition.id}`).toBe("gradient");
+        expect(canvas.elements.some((element) => element.id.startsWith(`${theme.preset}-${definition.id}-bg`)), `${theme.preset}/${definition.id}`).toBe(false);
+        for (const element of canvas.elements) {
+          expect(element.x, element.id).toBeGreaterThanOrEqual(0);
+          expect(element.y, element.id).toBeGreaterThanOrEqual(0);
+          expect(element.x + element.w, element.id).toBeLessThanOrEqual(canvas.width);
+          expect(element.y + element.h, element.id).toBeLessThanOrEqual(canvas.height);
+          if (element.type === "text" && element.groupId) {
+            expect(element.valign, element.id).toBe("middle");
+          }
+        }
+      }
+    }
   });
 });
 

@@ -27,6 +27,32 @@ describe("image search helpers", () => {
     expect(first).not.toEqual(second);
   });
 
+  it("keeps Tavily image queries below the provider limit", () => {
+    const presentation = fixturePresentation();
+    const slide = {
+      ...presentation.slides[0],
+      title: "Очень длинный заголовок ".repeat(20),
+      thesis: "Подробное объяснение темы ".repeat(30),
+      bullets: ["Первый длинный пункт ".repeat(20), "Второй длинный пункт ".repeat(20)],
+      visual: {
+        ...presentation.slides[0].visual,
+        description: "Конкретная сцена для поиска изображения ".repeat(20),
+      },
+    };
+
+    const query = buildSlideImageQuery(
+      {
+        id: "project-1",
+        title: "История международной компании ".repeat(20),
+        prompt: "Подготовь подробную учебную презентацию ".repeat(30),
+      },
+      slide,
+    );
+
+    expect(query.length).toBeLessThanOrEqual(400);
+    expect(query).toContain("Очень длинный заголовок");
+  });
+
   it("maps Tavily image responses into candidates", () => {
     expect(
       tavilyResponseToImageCandidates({
@@ -93,6 +119,36 @@ describe("image search helpers", () => {
     expect(enriched.slides[0].visual.image?.objectKey).toContain("projects/project-1/images/slide-1-");
     expect(enriched.slides[1].visual.image).toBeUndefined();
     expect(warnings).toEqual(["Slide image lookup failed for slide 2"]);
+  });
+
+  it("tries another Tavily candidate when the first image cannot be downloaded", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    const attemptedUrls: string[] = [];
+
+    const enriched = await enrichPresentationImages(
+      { id: "project-1", title: "AI in education", prompt: "Explain practical AI in school" },
+      { ...presentation, slides: [presentation.slides[0]] },
+      {
+        searchImages: async () => [
+          { url: "https://bad.example.com/page", description: "Bad result", sourceTitle: "" },
+          { url: "https://cdn.example.com/classroom.webp", description: "Classroom", sourceTitle: "Image source" },
+        ],
+        downloadImage: async (url) => {
+          attemptedUrls.push(url);
+          if (url.includes("bad.example.com")) throw new Error("Unsupported image content type: text/html");
+          return { buffer: Buffer.from("image"), contentType: "image/webp", extension: "webp" };
+        },
+        putObject: async () => undefined,
+      },
+    );
+
+    expect(attemptedUrls).toEqual([
+      "https://bad.example.com/page",
+      "https://cdn.example.com/classroom.webp",
+    ]);
+    expect(enriched.slides[0].visual.image?.objectKey).toMatch(/\.webp$/);
+    expect(enriched.slides[0].visual.image?.sourceUrl).toBe("https://cdn.example.com/classroom.webp");
   });
 });
 
