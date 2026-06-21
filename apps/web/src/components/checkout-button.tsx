@@ -19,7 +19,7 @@ export function CheckoutButton({ plan }: { plan: "student" | "pro" }) {
 
   return (
     <button className="button" type="button" onClick={checkout} disabled={busy}>
-      {busy ? "Открываем Stripe..." : "Оформить"}
+      {busy ? "Открываем страницу оплаты..." : "Оформить"}
     </button>
   );
 }

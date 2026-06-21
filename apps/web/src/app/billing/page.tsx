@@ -8,10 +8,10 @@ export default async function BillingPage() {
   return (
     <main className="page">
       <section className="panel">
-        <h1 className="page-title" style={{ fontSize: 48 }}>Биллинг</h1>
+        <h1 className="page-title" style={{ fontSize: 48 }}>Оплата и подписка</h1>
         <p className="lead">
-          Здесь будет Stripe Customer Portal: управление подпиской, смена тарифа и история платежей.
-          Backend webhook уже заложен в production-архитектуру.
+          Здесь появятся управление подпиской, смена тарифа и история платежей.
+          Обработка уведомлений платёжного сервиса уже предусмотрена в рабочей архитектуре.
         </p>
       </section>
     </main>

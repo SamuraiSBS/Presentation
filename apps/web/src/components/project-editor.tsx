@@ -148,7 +148,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
       if (!response.ok) throw new Error(await response.text());
       await refresh();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Generation failed");
+      setActionError(error instanceof Error ? error.message : "Не удалось запустить генерацию");
     } finally {
       setBusy(false);
     }
@@ -240,8 +240,8 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
       zIndex: nextZIndex(canvas),
       opacity: 1,
       locked: false,
-      text: "New text",
-      runs: [{ text: "New text" }],
+      text: "Новый текст",
+      runs: [{ text: "Новый текст" }],
       fontSize: 34,
       fontFamily: theme.fonts.body,
       color: theme.colors.text,
@@ -344,8 +344,8 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
         zIndex: nextZIndex(canvas),
         opacity: 1,
         locked: false,
-        text: "New text",
-        runs: [{ text: "New text" }],
+        text: "Новый текст",
+        runs: [{ text: "Новый текст" }],
         fontSize: 32,
         fontFamily: theme.fonts.body,
         color: theme.colors.text,
@@ -493,7 +493,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
       setSelectedId(nextElement.id);
       void saveSlide({ title: titleFromCanvas(slide, next), canvas: next });
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Image upload failed");
+      setActionError(error instanceof Error ? error.message : "Не удалось загрузить изображение");
     } finally {
       setBusy(false);
       setImageReplaceTargetId("");
@@ -506,7 +506,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
 
     return (
       <section className="panel">
-        <span className="status">{project.status}</span>
+        <span className="status">{projectStatusLabel(project.status)}</span>
         <h1 className="page-title" style={{ fontSize: 44 }}>{project.title}</h1>
         <p className="lead">
           {canStartGeneration
@@ -531,7 +531,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     <>
       <div className="editor-top">
         <div>
-          <span className="status">{project.status}</span>
+          <span className="status">{projectStatusLabel(project.status)}</span>
           <h1>{presentation.title}</h1>
         </div>
         <div className="actions">
@@ -791,46 +791,46 @@ function EditorTopToolbar({
 }) {
   return (
     <div className="editor-toolbar editor-toolbar-primary">
-      <div className="toolbar-group mode-group" aria-label="View mode">
-        <button className={viewMode === "preview" ? "tool-active" : ""} type="button" onClick={onPreview} disabled={previewDisabled} title="Preview slide">
+      <div className="toolbar-group mode-group" aria-label="Режим просмотра">
+        <button className={viewMode === "preview" ? "tool-active" : ""} type="button" onClick={onPreview} disabled={previewDisabled} title="Предпросмотр слайда">
           <Icon name="preview" />
-          <span>Preview</span>
+          <span>Просмотр</span>
         </button>
-        <button className={viewMode === "edit" ? "tool-active" : ""} type="button" onClick={onEdit} title="Edit objects">
+        <button className={viewMode === "edit" ? "tool-active" : ""} type="button" onClick={onEdit} title="Редактировать объекты">
           <Icon name="cursor" />
-          <span>Edit</span>
+          <span>Правка</span>
         </button>
       </div>
-      <div className="toolbar-group" aria-label="Tools">
-        <button className={tool === "select" && viewMode === "edit" ? "tool-active" : ""} type="button" onClick={() => setTool("select")} title="Select object">
+      <div className="toolbar-group" aria-label="Инструменты">
+        <button className={tool === "select" && viewMode === "edit" ? "tool-active" : ""} type="button" onClick={() => setTool("select")} title="Выбрать объект">
           <Icon name="cursor" />
-          <span>Select</span>
+          <span>Выбрать</span>
         </button>
-        <button className={tool === "text" && viewMode === "edit" ? "tool-active" : ""} type="button" onClick={() => setTool("text")} title="Add text">
+        <button className={tool === "text" && viewMode === "edit" ? "tool-active" : ""} type="button" onClick={() => setTool("text")} title="Добавить текст">
           <Icon name="text" />
-          <span>Text</span>
+          <span>Текст</span>
         </button>
-        <button className={tool === "shape" && viewMode === "edit" ? "tool-active" : ""} type="button" onClick={() => setTool("shape")} title="Add shape">
+        <button className={tool === "shape" && viewMode === "edit" ? "tool-active" : ""} type="button" onClick={() => setTool("shape")} title="Добавить фигуру">
           <Icon name="shape" />
-          <span>Shape</span>
+          <span>Фигура</span>
         </button>
-        <button type="button" onClick={onUploadClick} disabled={!canUpload || busy} title="Upload image">
+        <button type="button" onClick={onUploadClick} disabled={!canUpload || busy} title="Загрузить изображение">
           <Icon name="image" />
-          <span>Image</span>
+          <span>Изображение</span>
         </button>
       </div>
       <div className="toolbar-spacer" />
-      <div className="toolbar-group toolbar-compact" aria-label="History">
-        <button type="button" onClick={onUndo} disabled={undoDisabled} title="Undo" aria-label="Undo">
+      <div className="toolbar-group toolbar-compact" aria-label="История изменений">
+        <button type="button" onClick={onUndo} disabled={undoDisabled} title="Отменить" aria-label="Отменить">
           <Icon name="undo" />
         </button>
-        <button type="button" onClick={onRedo} disabled={redoDisabled} title="Redo" aria-label="Redo">
+        <button type="button" onClick={onRedo} disabled={redoDisabled} title="Повторить" aria-label="Повторить">
           <Icon name="redo" />
         </button>
       </div>
-      <Link className="toolbar-export" href={`/projects/${projectId}/export`} title="Export presentation">
+      <Link className="toolbar-export" href={`/projects/${projectId}/export`} title="Экспортировать презентацию">
         <Icon name="export" />
-        <span>Export</span>
+        <span>Экспорт</span>
       </Link>
     </div>
   );
@@ -873,29 +873,29 @@ function ObjectFloatingMenu({
     >
       <div className="object-menu-title">
         <strong>{elementLabel(element)}</strong>
-        {element.locked ? <span>Locked</span> : null}
+        {element.locked ? <span>Заблокирован</span> : null}
       </div>
 
       <div className="object-menu-row">
         {element.type === "text" ? (
           <>
-            <button type="button" onClick={onEditText} disabled={element.locked} title="Edit text">
+            <button type="button" onClick={onEditText} disabled={element.locked} title="Редактировать текст">
               <Icon name="text" />
-              <span>Edit</span>
+              <span>Правка</span>
             </button>
-            <button className={element.bold ? "tool-active" : ""} type="button" onClick={() => onUpdate({ bold: !element.bold } as Partial<CanvasTextElement>)} disabled={element.locked} title="Bold">
-              B
+            <button className={element.bold ? "tool-active" : ""} type="button" onClick={() => onUpdate({ bold: !element.bold } as Partial<CanvasTextElement>)} disabled={element.locked} title="Полужирный">
+              Ж
             </button>
-            <button className={element.italic ? "tool-active" : ""} type="button" onClick={() => onUpdate({ italic: !element.italic } as Partial<CanvasTextElement>)} disabled={element.locked} title="Italic">
-              I
+            <button className={element.italic ? "tool-active" : ""} type="button" onClick={() => onUpdate({ italic: !element.italic } as Partial<CanvasTextElement>)} disabled={element.locked} title="Курсив">
+              К
             </button>
-            <button className={element.align === "left" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "left" } as Partial<CanvasTextElement>)} disabled={element.locked} title="Align left">
+            <button className={element.align === "left" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "left" } as Partial<CanvasTextElement>)} disabled={element.locked} title="Выровнять по левому краю">
               <Icon name="alignLeft" />
             </button>
-            <button className={element.align === "center" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "center" } as Partial<CanvasTextElement>)} disabled={element.locked} title="Align center">
+            <button className={element.align === "center" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "center" } as Partial<CanvasTextElement>)} disabled={element.locked} title="Выровнять по центру">
               <Icon name="alignCenter" />
             </button>
-            <button className={element.align === "right" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "right" } as Partial<CanvasTextElement>)} disabled={element.locked} title="Align right">
+            <button className={element.align === "right" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "right" } as Partial<CanvasTextElement>)} disabled={element.locked} title="Выровнять по правому краю">
               <Icon name="alignRight" />
             </button>
           </>
@@ -903,34 +903,34 @@ function ObjectFloatingMenu({
 
         {element.type === "image" ? (
           <>
-            <button type="button" onClick={onReplaceImage} disabled={!canUpload || busy || element.locked} title="Replace image">
+            <button type="button" onClick={onReplaceImage} disabled={!canUpload || busy || element.locked} title="Заменить изображение">
               <Icon name="replace" />
-              <span>Replace</span>
+              <span>Заменить</span>
             </button>
-            <button className={element.fit === "cover" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ fit: "cover" } as Partial<CanvasImageElement>)} disabled={element.locked} title="Fill frame">
-              Cover
+            <button className={element.fit === "cover" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ fit: "cover" } as Partial<CanvasImageElement>)} disabled={element.locked} title="Заполнить рамку">
+              Заполнить
             </button>
-            <button className={element.fit === "contain" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ fit: "contain" } as Partial<CanvasImageElement>)} disabled={element.locked} title="Fit image">
-              Fit
+            <button className={element.fit === "contain" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ fit: "contain" } as Partial<CanvasImageElement>)} disabled={element.locked} title="Вписать изображение">
+              Вписать
             </button>
           </>
         ) : null}
       </div>
 
       <div className="object-menu-row">
-        <button type="button" onClick={onDuplicate} title="Duplicate">
+        <button type="button" onClick={onDuplicate} title="Дублировать">
           <Icon name="copy" />
         </button>
-        <button type="button" onClick={onLayerDown} title="Send backward">
+        <button type="button" onClick={onLayerDown} title="Переместить назад">
           <Icon name="back" />
         </button>
-        <button type="button" onClick={onLayerUp} title="Bring forward">
+        <button type="button" onClick={onLayerUp} title="Переместить вперёд">
           <Icon name="front" />
         </button>
-        <button type="button" onClick={() => onUpdate({ locked: !element.locked })} title={element.locked ? "Unlock" : "Lock"}>
+        <button type="button" onClick={() => onUpdate({ locked: !element.locked })} title={element.locked ? "Разблокировать" : "Заблокировать"}>
           <Icon name={element.locked ? "unlock" : "lock"} />
         </button>
-        <button className="danger-action" type="button" onClick={onDelete} disabled={element.locked} title="Delete">
+        <button className="danger-action" type="button" onClick={onDelete} disabled={element.locked} title="Удалить">
           <Icon name="trash" />
         </button>
       </div>
@@ -1025,8 +1025,8 @@ function PropertiesPanel({
   return (
     <div className="properties-stack">
       <div className="properties-header">
-        <span>Properties</span>
-        <strong>{selected ? elementLabel(selected) : "Slide"}</strong>
+        <span>Свойства</span>
+        <strong>{selected ? elementLabel(selected) : "Слайд"}</strong>
       </div>
 
       <PropertySection title="Шаблон слайда" description="Композиция пересобирается из текущего содержания.">
@@ -1044,18 +1044,18 @@ function PropertiesPanel({
 
       {selected ? (
         <>
-          <PropertySection title="Content" description="What this object says or shows.">
+          <PropertySection title="Содержимое" description="Текст или изображение внутри объекта.">
             {selected.type === "text" ? <TextContentProperties selected={selected} onUpdate={onUpdate} /> : null}
             {selected.type === "shape" ? <ShapeContentProperties selected={selected} onUpdate={onUpdate} /> : null}
             {selected.type === "image" ? <ImageContentProperties selected={selected} onUpdate={onUpdate} /> : null}
           </PropertySection>
 
-          <PropertySection title="Style" description="Make it match the slide.">
+          <PropertySection title="Оформление" description="Настройте внешний вид объекта.">
             {selected.type === "text" ? <TextStyleProperties selected={selected} onUpdate={onUpdate} /> : null}
             {selected.type === "shape" ? <ShapeStyleProperties selected={selected} onUpdate={onUpdate} /> : null}
             {selected.type === "image" ? <ImageStyleProperties selected={selected} onUpdate={onUpdate} /> : null}
             <label className="field">
-              Opacity
+              Прозрачность
               <input
                 className="input"
                 max={1}
@@ -1068,7 +1068,7 @@ function PropertiesPanel({
             </label>
           </PropertySection>
 
-          <PropertySection title="Position" description="Place it precisely on the slide.">
+          <PropertySection title="Положение" description="Точно разместите объект на слайде.">
             <div className="property-grid">
               <label className="field">
                 X
@@ -1079,55 +1079,55 @@ function PropertiesPanel({
                 <input className="input" type="number" value={Math.round(selected.y)} onChange={(event) => onUpdate({ y: Number(event.target.value) })} />
               </label>
               <label className="field">
-                Width
+                Ширина
                 <input className="input" type="number" min={32} value={Math.round(selected.w)} onChange={(event) => onUpdate({ w: Number(event.target.value) })} />
               </label>
               <label className="field">
-                Height
+                Высота
                 <input className="input" type="number" min={24} value={Math.round(selected.h)} onChange={(event) => onUpdate({ h: Number(event.target.value) })} />
               </label>
               <label className="field">
-                Rotate
+                Поворот
                 <input className="input" type="number" value={Math.round(selected.rotation)} onChange={(event) => onUpdate({ rotation: Number(event.target.value) })} />
               </label>
             </div>
           </PropertySection>
 
-          <PropertySection title="Layer" description="Control selection, order and safety.">
+          <PropertySection title="Слой" description="Настройте порядок и блокировку объекта.">
             <div className="property-actions">
               <button type="button" onClick={onDuplicate}>
                 <Icon name="copy" />
-                Duplicate
+                Дублировать
               </button>
               <button type="button" onClick={onLayerDown}>
                 <Icon name="back" />
-                Back
+                Назад
               </button>
               <button type="button" onClick={onLayerUp}>
                 <Icon name="front" />
-                Front
+                Вперёд
               </button>
             </div>
             <label className="field property-check">
               <input type="checkbox" checked={selected.locked} onChange={(event) => onUpdate({ locked: event.target.checked })} />
-              Lock object
+              Заблокировать объект
             </label>
             <button className="property-danger" type="button" onClick={onDelete} disabled={selected.locked}>
               <Icon name="trash" />
-              Delete object
+              Удалить объект
             </button>
           </PropertySection>
         </>
       ) : (
         <div className="properties-empty">
-          <strong>Select an object on the slide</strong>
-          <p>Click text, an image, or a shape to edit its content, style, position, and layer.</p>
+          <strong>Выберите объект на слайде</strong>
+          <p>Нажмите на текст, изображение или фигуру, чтобы изменить содержимое, оформление и положение.</p>
         </div>
       )}
 
-      <PropertySection title="Speaker notes" description="Keep your speaking script close to the slide.">
+      <PropertySection title="Заметки докладчика" description="Текст выступления для этого слайда.">
         <label className="field">
-          Notes
+          Заметки
           <textarea key={slide.id} className="textarea notes" defaultValue={slide.speakerNotes} onBlur={(event) => onSaveNotes(event.target.value)} />
         </label>
       </PropertySection>
@@ -1171,7 +1171,7 @@ function layoutCanRender(layout: SlideLayout, slide: Slide) {
 function TextContentProperties({ selected, onUpdate }: { selected: CanvasTextElement; onUpdate: (patch: ElementPatch) => void }) {
   return (
     <label className="field">
-      Text
+      Текст
       <textarea
         className="textarea element-textarea"
         value={selected.text}
@@ -1186,25 +1186,25 @@ function TextStyleProperties({ selected, onUpdate }: { selected: CanvasTextEleme
     <>
       <div className="property-grid">
         <label className="field">
-          Size
+          Размер
           <input className="input" type="number" min={8} max={160} value={selected.fontSize} onChange={(event) => onUpdate({ fontSize: Number(event.target.value) } as Partial<CanvasTextElement>)} />
         </label>
         <label className="field">
-          Color
+          Цвет
           <input className="input color-input" type="color" value={selected.color} onChange={(event) => onUpdate({ color: event.target.value } as Partial<CanvasTextElement>)} />
         </label>
       </div>
       <label className="field">
-        Typeface
+        Шрифт
         <input className="input" value={selected.fontFamily} onChange={(event) => onUpdate({ fontFamily: event.target.value } as Partial<CanvasTextElement>)} />
       </label>
       <div className="segmented segmented-five">
-        <button className={selected.bold ? "tool-active" : ""} type="button" onClick={() => onUpdate({ bold: !selected.bold } as Partial<CanvasTextElement>)}>B</button>
-        <button className={selected.italic ? "tool-active" : ""} type="button" onClick={() => onUpdate({ italic: !selected.italic } as Partial<CanvasTextElement>)}>I</button>
-        <button className={selected.underline ? "tool-active" : ""} type="button" onClick={() => onUpdate({ underline: !selected.underline } as Partial<CanvasTextElement>)}>U</button>
-        <button className={selected.align === "left" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "left" } as Partial<CanvasTextElement>)} title="Align left"><Icon name="alignLeft" /></button>
-        <button className={selected.align === "center" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "center" } as Partial<CanvasTextElement>)} title="Align center"><Icon name="alignCenter" /></button>
-        <button className={selected.align === "right" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "right" } as Partial<CanvasTextElement>)} title="Align right"><Icon name="alignRight" /></button>
+        <button className={selected.bold ? "tool-active" : ""} type="button" onClick={() => onUpdate({ bold: !selected.bold } as Partial<CanvasTextElement>)} title="Полужирный">Ж</button>
+        <button className={selected.italic ? "tool-active" : ""} type="button" onClick={() => onUpdate({ italic: !selected.italic } as Partial<CanvasTextElement>)} title="Курсив">К</button>
+        <button className={selected.underline ? "tool-active" : ""} type="button" onClick={() => onUpdate({ underline: !selected.underline } as Partial<CanvasTextElement>)} title="Подчёркнутый">Ч</button>
+        <button className={selected.align === "left" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "left" } as Partial<CanvasTextElement>)} title="Выровнять по левому краю"><Icon name="alignLeft" /></button>
+        <button className={selected.align === "center" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "center" } as Partial<CanvasTextElement>)} title="Выровнять по центру"><Icon name="alignCenter" /></button>
+        <button className={selected.align === "right" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "right" } as Partial<CanvasTextElement>)} title="Выровнять по правому краю"><Icon name="alignRight" /></button>
       </div>
     </>
   );
@@ -1213,12 +1213,12 @@ function TextStyleProperties({ selected, onUpdate }: { selected: CanvasTextEleme
 function ShapeContentProperties({ selected, onUpdate }: { selected: CanvasShapeElement; onUpdate: (patch: ElementPatch) => void }) {
   return (
     <label className="field">
-      Shape
+      Фигура
       <select className="select" value={selected.shape} onChange={(event) => onUpdate({ shape: event.target.value as CanvasShapeElement["shape"] } as Partial<CanvasShapeElement>)}>
-        <option value="rect">Rectangle</option>
-        <option value="roundRect">Rounded</option>
-        <option value="ellipse">Ellipse</option>
-        <option value="line">Line</option>
+        <option value="rect">Прямоугольник</option>
+        <option value="roundRect">Скруглённый прямоугольник</option>
+        <option value="ellipse">Эллипс</option>
+        <option value="line">Линия</option>
       </select>
     </label>
   );
@@ -1229,16 +1229,16 @@ function ShapeStyleProperties({ selected, onUpdate }: { selected: CanvasShapeEle
     <>
       <div className="property-grid">
         <label className="field">
-          Fill
+          Заливка
           <input className="input color-input" type="color" value={selected.fill} onChange={(event) => onUpdate({ fill: event.target.value } as Partial<CanvasShapeElement>)} />
         </label>
         <label className="field">
-          Stroke
+          Обводка
           <input className="input color-input" type="color" value={selected.stroke} onChange={(event) => onUpdate({ stroke: event.target.value } as Partial<CanvasShapeElement>)} />
         </label>
       </div>
       <label className="field">
-        Stroke
+        Толщина обводки
         <input className="input" type="number" min={0} max={24} value={selected.strokeWidth} onChange={(event) => onUpdate({ strokeWidth: Number(event.target.value) } as Partial<CanvasShapeElement>)} />
       </label>
     </>
@@ -1248,7 +1248,7 @@ function ShapeStyleProperties({ selected, onUpdate }: { selected: CanvasShapeEle
 function ImageContentProperties({ selected, onUpdate }: { selected: CanvasImageElement; onUpdate: (patch: ElementPatch) => void }) {
   return (
     <label className="field">
-      Alt text
+      Описание изображения
       <input className="input" value={selected.alt} onChange={(event) => onUpdate({ alt: event.target.value } as Partial<CanvasImageElement>)} />
     </label>
   );
@@ -1257,10 +1257,10 @@ function ImageContentProperties({ selected, onUpdate }: { selected: CanvasImageE
 function ImageStyleProperties({ selected, onUpdate }: { selected: CanvasImageElement; onUpdate: (patch: ElementPatch) => void }) {
   return (
     <label className="field">
-      Fit
+      Размещение
       <select className="select" value={selected.fit} onChange={(event) => onUpdate({ fit: event.target.value as CanvasImageElement["fit"] } as Partial<CanvasImageElement>)}>
-        <option value="cover">Cover</option>
-        <option value="contain">Contain</option>
+        <option value="cover">Заполнить рамку</option>
+        <option value="contain">Вписать целиком</option>
       </select>
     </label>
   );
@@ -1341,9 +1341,24 @@ function floatingMenuStyle(element: CanvasElement, scale: number, canvasWidth: n
 }
 
 function elementLabel(element: CanvasElement) {
-  if (element.type === "text") return "Text";
-  if (element.type === "image") return "Image";
-  return "Shape";
+  if (element.type === "text") return "Текст";
+  if (element.type === "image") return "Изображение";
+  return "Фигура";
+}
+
+function projectStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    draft: "Черновик",
+    uploading: "Загрузка файлов",
+    script_queued: "Текст в очереди",
+    script_generating: "Создаём текст",
+    script_ready: "Текст готов",
+    queued: "В очереди",
+    generating: "Создаём презентацию",
+    ready: "Готово",
+    failed: "Ошибка",
+  };
+  return labels[status] || status;
 }
 
 function elementStyle(element: CanvasElement): CSSProperties {

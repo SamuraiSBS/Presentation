@@ -32,7 +32,7 @@ export function ExportPanel({ project }: { project: ProjectPayload }) {
 
   return (
     <section className="panel">
-      <span className="status">{project.status}</span>
+      <span className="status">{statusLabel(project.status)}</span>
       <h1 className="page-title" style={{ fontSize: 48 }}>Экспорт</h1>
       <p className="lead">
         {project.title}: {document?.slides?.length || 0} слайдов.
@@ -47,13 +47,26 @@ export function ExportPanel({ project }: { project: ProjectPayload }) {
           <div className="card" key={item.id}>
             <div className="row" style={{ justifyContent: "space-between" }}>
               <strong>{item.type.toUpperCase()}</strong>
-              <span className="status">{item.status}</span>
+              <span className="status">{statusLabel(item.status)}</span>
             </div>
-            <p className="muted">{item.objectKey || "Файл появится после обработки worker."}</p>
+            <p className="muted">{item.objectKey || "Файл появится после обработки фоновой задачей."}</p>
             {item.status === "ready" ? <button className="ghost" type="button" onClick={() => download(item)}>Скачать</button> : null}
           </div>
         ))}
       </div>
     </section>
   );
+}
+
+function statusLabel(status: string) {
+  const labels: Record<string, string> = {
+    draft: "Черновик",
+    queued: "В очереди",
+    active: "Обрабатывается",
+    generating: "Создаётся",
+    completed: "Готово",
+    ready: "Готово",
+    failed: "Ошибка",
+  };
+  return labels[status] || status;
 }

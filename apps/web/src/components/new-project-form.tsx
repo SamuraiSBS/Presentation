@@ -168,7 +168,7 @@ export function NewProjectForm() {
                   onChange={(event) => updateFiles(event.target.files)}
                 />
                 <span>Перетащите PDF, DOCX, PPTX, TXT или выберите файлы</span>
-                <small>Без файлов StudyDeck использует тему и при необходимости web-поиск.</small>
+                <small>Без файлов StudyDeck использует тему и при необходимости ищет источники в интернете.</small>
               </label>
               {files.length ? (
                 <div className="source-list" aria-label="Выбранные файлы">
@@ -182,7 +182,7 @@ export function NewProjectForm() {
               ) : (
                 <div className="source-mode">
                   <strong>Режим без файлов</strong>
-                  <span>Подготовим текст по теме и подключим web-поиск, если источников не хватает.</span>
+                  <span>Подготовим текст по теме и найдём источники в интернете, если материалов не хватает.</span>
                 </div>
               )}
             </div>
@@ -231,13 +231,13 @@ export function NewProjectForm() {
             disabled={!normalizedTopic}
           >
             <span>Источники</span>
-            <strong>{files.length ? `${files.length} файл${files.length === 1 ? "" : "а"}` : "Web-поиск"}</strong>
+            <strong>{files.length ? `${files.length} файл${files.length === 1 ? "" : "а"}` : "Поиск в интернете"}</strong>
             <small>{files.length ? "Используем материалы" : "Файлы можно пропустить"}</small>
           </button>
         </div>
         <div className="source-confidence">
           <span>{files.length ? "Источники добавлены" : "Источник будет уточнен"}</span>
-          <strong>{files.length ? "Текст опирается на ваши материалы." : "Если материалов нет, StudyDeck начнет с темы и web-поиска."}</strong>
+          <strong>{files.length ? "Текст опирается на ваши материалы." : "Если материалов нет, StudyDeck начнёт с темы и поиска источников в интернете."}</strong>
         </div>
       </aside>
     </section>
