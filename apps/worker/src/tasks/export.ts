@@ -801,9 +801,9 @@ async function renderPdfHtml(presentation: ReturnType<typeof presentationSchema.
   .template-slide[data-bg="v1"]::before { background: linear-gradient(90deg, transparent 0 62%, color-mix(in srgb, var(--slide-surface-alt) 68%, transparent) 62%); }
   .template-slide[data-bg="v4"]::before { background: linear-gradient(105deg, color-mix(in srgb, var(--slide-surface-alt) 78%, transparent) 0 28%, transparent 28% 72%, color-mix(in srgb, var(--slide-accent-alt) 12%, transparent) 72%); }
   .template-content { position: relative; z-index: 1; width: 100%; max-width: 930px; display: grid; gap: 20px; }
-  .template-title { margin: 0; color: var(--slide-text); font-family: var(--slide-heading-font); font-size: 42px; line-height: 1.05; text-align: left; }
+  .template-title { width: fit-content; max-width: 100%; margin: 0; border-radius: 8px; padding: 10px 14px; background: color-mix(in srgb, var(--slide-surface) 92%, transparent); color: var(--slide-text); font-family: var(--slide-heading-font); font-size: 42px; line-height: 1.05; text-align: left; }
   .template-title.center { text-align: center; font-size: 58px; }
-  .template-body { margin: 0; color: var(--slide-muted); font-size: 25px; line-height: 1.35; }
+  .template-body { width: fit-content; max-width: 100%; margin: 0; border-radius: 8px; padding: 10px 14px; background: color-mix(in srgb, var(--slide-surface) 92%, transparent); color: var(--slide-muted); font-size: 25px; line-height: 1.35; }
   .template-body.center { text-align: center; max-width: 860px; margin: 0 auto; }
   .template-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(330px, 0.9fr); gap: 24px; align-items: center; width: 100%; max-width: 1080px; }
   .template-grid.reverse { grid-template-columns: minmax(330px, 0.9fr) minmax(0, 1fr); }
@@ -818,7 +818,7 @@ async function renderPdfHtml(presentation: ReturnType<typeof presentationSchema.
   .template-list { margin: 0; padding-left: 24px; color: var(--slide-muted); font-size: 22px; line-height: 1.38; }
   .template-list li { margin-bottom: 10px; }
   .template-chips { display: flex; flex-wrap: wrap; gap: 9px; }
-  .template-chips span { border-radius: 999px; padding: 8px 12px; background: color-mix(in srgb, var(--slide-accent) 14%, var(--slide-surface)); color: var(--slide-text); font-size: 14px; font-weight: 700; }
+  .template-chips span { max-width: 280px; border-radius: 8px; padding: 8px 12px; background: color-mix(in srgb, var(--slide-accent) 14%, var(--slide-surface)); color: var(--slide-text); font-size: 14px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
   .template-quote { margin: 0; color: var(--slide-text); font-family: var(--slide-heading-font); font-size: 42px; line-height: 1.1; font-weight: 800; text-align: center; }
   .template-definition { border: 1px solid var(--slide-line); border-radius: 8px; padding: 28px; background: var(--slide-surface-alt); }
   .template-definition strong { display: block; color: var(--slide-text); font-family: var(--slide-heading-font); font-size: 36px; margin-bottom: 12px; }

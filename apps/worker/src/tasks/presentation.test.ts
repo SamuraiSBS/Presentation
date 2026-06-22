@@ -174,9 +174,10 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("3-5 dated or named periods");
     expect(prompt).toContain("criterion in visual.rows[].label");
     expect(prompt).toContain("bullets contain 2-3 supporting parts");
-    expect(prompt).toContain("evidence");
     expect(prompt).toContain("problem-solution");
-    expect(prompt).toContain("explain-example");
+    expect(prompt).not.toContain("layout must be one of: hero, bullets, summary, statement, quote, definition");
+    expect(prompt).not.toContain("use evidence for");
+    expect(prompt).not.toContain("use explain-example for");
     expect(prompt).toContain("never turn list order into a metric");
     expect(prompt).toContain("do not use the same content layout more than twice in a row");
     expect(prompt).toContain("one clear thesis plus 2-3 short meaningful points");
@@ -213,10 +214,10 @@ describe("layout normalization", () => {
     sourceRefs: [],
   } as any;
 
-  it("selects problem-solution, evidence, and explain-example for matching content", () => {
+  it("selects supported layouts without returning removed templates", () => {
     expect(inferContentLayout(base, 2)).toBe("problem-solution");
-    expect(inferContentLayout({ ...base, thesis: "Тезис подтверждают несколько фактов.", bullets: ["Факт один", "Факт два"], sourceRefs: [{ sourceId: "s", label: "Источник", excerpt: "Факт", page: null }] }, 3)).toBe("evidence");
-    expect(inferContentLayout({ ...base, title: "Что такое фотосинтез", thesis: "Это процесс преобразования света.", bullets: ["Например, растение использует солнечный свет"], definition: { term: "Фотосинтез", text: "Преобразование энергии света." } }, 4)).toBe("explain-example");
+    expect(inferContentLayout({ ...base, thesis: "Тезис подтверждают несколько фактов.", bullets: ["Факт один", "Факт два"], sourceRefs: [{ sourceId: "s", label: "Источник", excerpt: "Факт", page: null }] }, 3)).not.toBe("evidence");
+    expect(inferContentLayout({ ...base, title: "Что такое фотосинтез", thesis: "Это процесс преобразования света.", bullets: ["Например, растение использует солнечный свет"], definition: { term: "Фотосинтез", text: "Преобразование энергии света." } }, 4)).not.toBe("explain-example");
   });
 
   it("does not keep metrics when the slide has no measurable values", () => {
@@ -1325,6 +1326,8 @@ describe("generatePresentation fallback behavior", () => {
     expect(visibleText).not.toContain("Проверьте");
     expect(visibleText).not.toContain("Добавьте источник");
     expect(visibleText.toLowerCase()).not.toContain("источник");
+    expect(visibleText).not.toContain("Смысл темы понятнее, когда видны причины и последствия.");
+    expect(visibleText).not.toContain("понятнее через факты, примеры и последствия.");
     expect(presentation.slides[0].slideKind).toBe("title");
     expect(presentation.slides[presentation.slides.length - 1].slideKind).toBe("summary");
     expect(presentation.slides[presentation.slides.length - 1].bullets.length).toBeGreaterThanOrEqual(3);

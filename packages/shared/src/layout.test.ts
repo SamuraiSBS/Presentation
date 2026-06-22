@@ -64,7 +64,47 @@ describe("slide layouts", () => {
           if (element.type === "text" && element.groupId) {
             expect(element.valign, element.id).toBe("middle");
           }
+          if (element.type === "text" && !element.id.endsWith("-quote-mark")) {
+            const backplate = canvas.elements.find((candidate) => candidate.id === `${element.id}-backplate`);
+            const containingShape = canvas.elements.find((candidate) =>
+              candidate.type === "shape" &&
+              candidate.shape !== "line" &&
+              element.x >= candidate.x &&
+              element.y >= candidate.y &&
+              element.x + element.w <= candidate.x + candidate.w &&
+              element.y + element.h <= candidate.y + candidate.h,
+            );
+            expect(backplate || containingShape, `${element.id} must have a text backplate`).toBeTruthy();
+          }
         }
+      }
+    }
+  });
+
+  it("grows mini text plaques and keeps their text inside the rounded rectangle", () => {
+    const deck = presentationSchema.parse(deckWithLayout("problem-solution"));
+    const slide = {
+      ...deck.slides[0],
+      slideKind: "title" as const,
+      bullets: [
+        "Сибирская и русская голубая известны выразительным характером",
+        "Длинная подпись должна переноситься без обрезания текста",
+        "Плашка растет по высоте вместе с содержимым",
+      ],
+    };
+    const canvas = buildSlideCanvas(slide, resolvePresentationTheme(deck));
+
+    for (let index = 0; index < 3; index += 1) {
+      const shape = canvas.elements.find((element) => element.id === `${slide.id}-mini-${index}-shape`);
+      const text = canvas.elements.find((element) => element.id === `${slide.id}-mini-${index}`);
+      expect(shape).toMatchObject({ type: "shape", shape: "roundRect" });
+      expect(text).toMatchObject({ type: "text" });
+      if (shape?.type === "shape" && text?.type === "text") {
+        expect(shape.h).toBeGreaterThanOrEqual(50);
+        expect(text.x).toBeGreaterThanOrEqual(shape.x);
+        expect(text.y).toBeGreaterThanOrEqual(shape.y);
+        expect(text.x + text.w).toBeLessThanOrEqual(shape.x + shape.w);
+        expect(text.y + text.h).toBeLessThanOrEqual(shape.y + shape.h);
       }
     }
   });

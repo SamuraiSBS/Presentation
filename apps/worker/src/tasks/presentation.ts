@@ -165,6 +165,8 @@ const GENERIC_SCREEN_TEXT_PHRASES = [
   "итог этой части связан с запросом",
   "нужно раскрыть через конкретные факты",
   "раскрыть через конкретные факты",
+  "понятнее через факты, примеры и последствия",
+  "смысл темы понятнее, когда видны причины и последствия",
 ];
 
 const GENERIC_TITLES = [
@@ -253,7 +255,8 @@ const STOP_WORDS = new Set([
   "with",
 ]);
 
-const SLIDE_LAYOUTS = SLIDE_LAYOUT_DEFINITIONS.map((item) => item.id);
+const REMOVED_SLIDE_LAYOUTS = new Set<SlideLayout>(["definition", "evidence", "explain-example"]);
+const SLIDE_LAYOUTS = SLIDE_LAYOUT_DEFINITIONS.map((item) => item.id).filter((layout) => !REMOVED_SLIDE_LAYOUTS.has(layout));
 
 const CONTENT_LAYOUT_CYCLE = [
   "statement",
@@ -262,12 +265,9 @@ const CONTENT_LAYOUT_CYCLE = [
   "question-answer",
   "case-study",
   "timeline",
-  "definition",
   "myth-fact",
   "metrics",
-  "evidence",
   "problem-solution",
-  "explain-example",
   "quote",
   "image-focus",
   "bullets",
@@ -1097,12 +1097,11 @@ export function buildGenerationPrompt(
     "Required JSON fields: id, title, scenario, level, slideCount, generatedText, sources, outline, narrativePlan, speechScript, slides.",
     "Each slide must include: id, order, title, slideKind, layout, thesis, bullets, definition, keyConcepts, visual, highlights, blocks, speakerNotes, timingSeconds, sourceRefs.",
     "Layout rules:",
-    "- layout must be one of: hero, bullets, summary, statement, quote, definition, timeline, comparison, process, image-focus, case-study, question-answer, myth-fact, metrics, evidence, problem-solution, explain-example;",
+    "- layout must be one of: hero, bullets, summary, statement, quote, timeline, comparison, process, image-focus, case-study, question-answer, myth-fact, metrics, problem-solution;",
     "- do not use the same content layout more than twice in a row;",
     "- choose the layout from the slide's idea, not from a fixed template;",
     "- use statement for one strong claim with one short callout and no list;",
     "- use quote when a concise quote or author-like formulation is central;",
-    "- use definition when one term needs explanation;",
     "- use timeline only for chronology with 3-5 dated or named periods; each visual.items entry must have a period in label and the event plus its significance in text;",
     "- use process only for 3-5 ordered actions; each visual.items entry must have a short action in label and an explanation or result in text;",
     "- use comparison only when two named subjects can be compared across 2-4 concrete criteria; put the criterion in visual.rows[].label and meaningful values in left and right;",
@@ -1110,9 +1109,7 @@ export function buildGenerationPrompt(
     "- use myth-fact only for a genuine misconception correction; visual.items[0] is the myth, visual.items[1] is the corrected fact, and bullets add why the myth seems plausible plus evidence or an example;",
     "- use image-focus for a concrete image and case-study for situation/action/result;",
     "- use metrics only for 2-4 explicit numbers, percentages, dates, durations, or measured quantities already supported by the material; never turn list order into a metric;",
-    "- use evidence for one thesis with 2-4 supporting facts; keep 1-3 sourceRefs as metadata so the renderer can show compact citations;",
     "- use problem-solution for problem/cause/solution or problem/consequence/solution;",
-    "- use explain-example for a concept, a simple explanation, a concrete example, and an important caveat or common mistake;",
     "- use bullets only when the slide is genuinely a list of takeaways.",
     "Content slide rules:",
     "- title: short, ideally 6-8 words or fewer;",
@@ -1334,7 +1331,8 @@ function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], pro
   const slideKind = normalizeSlideKind(slide.slideKind, order, project.slideCount);
   const title = shortenWords(cleanText(slide.title) || narrationSection?.title || fallbackTitle(project, order), slideKind === "title" ? 12 : 8);
   const thesis = normalizeThesis(slide.thesis, rawBlocks, project, order, slideKind, title);
-  const bullets = ensureSlideSentenceDensity(normalizeBullets(slide.bullets, rawBlocks, project, order, slideKind, title), thesis, project, order, slideKind);
+  const fallbackSource = [narrationSection?.text, thesis, slideText(rawBlocks)].filter(Boolean).join(" ");
+  const bullets = ensureSlideSentenceDensity(normalizeBullets(slide.bullets, rawBlocks, project, order, slideKind, title, fallbackSource), thesis, project, order, slideKind, fallbackSource);
   const definition = normalizeDefinition(slide.definition);
   const keyConcepts = normalizeKeyConcepts(slide.keyConcepts, title, bullets, slideKind);
   const highlights = normalizeHighlights(slide.highlights, thesis, bullets, slideKind);
@@ -1409,7 +1407,7 @@ function normalizeThesis(value: unknown, blocks: SlideBlock[], project: ProjectI
   return shortenSentence(fallback || fallbackSlideText(project, order), slideKind === "title" ? 150 : 180);
 }
 
-function normalizeBullets(value: unknown, blocks: SlideBlock[], project: ProjectInput, order: number, slideKind: SlideKind, title = "") {
+function normalizeBullets(value: unknown, blocks: SlideBlock[], project: ProjectInput, order: number, slideKind: SlideKind, title = "", fallbackSource = "") {
   const fromValue = Array.isArray(value) ? value.map(sanitizeScreenText).filter(Boolean) : [];
   const fromBlocks = blocks.flatMap((block) => (block.type === "bullets" ? block.items : splitIntoSentences("content" in block ? block.content : "")));
   const items = uniqueShortItems([...fromValue, ...fromBlocks]).filter((item) => !isDuplicateDisplayText(item, title)).slice(0, 5);
@@ -1423,11 +1421,11 @@ function normalizeBullets(value: unknown, blocks: SlideBlock[], project: Project
   }
 
   const minimum = slideKind === "summary" ? 3 : 2;
-  const fallback = buildFallbackBulletItems(project, order);
+  const fallback = buildFallbackBulletItems(project, order, fallbackSource);
   return ensureRange(items, fallback, minimum, 5);
 }
 
-function ensureSlideSentenceDensity(items: string[], thesis: string, project: ProjectInput, order: number, slideKind: SlideKind) {
+function ensureSlideSentenceDensity(items: string[], thesis: string, project: ProjectInput, order: number, slideKind: SlideKind, fallbackSource = "") {
   const existing = uniqueShortItems(items).slice(0, slideKind === "summary" ? 5 : 3);
   const visibleSentenceCount = splitIntoSentences([thesis, ...existing].join(" ")).length;
   const minimum = slideKind === "summary" ? 3 : 2;
@@ -1436,7 +1434,7 @@ function ensureSlideSentenceDensity(items: string[], thesis: string, project: Pr
     return existing;
   }
 
-  const fallback = buildFallbackBulletItems(project, order).filter((item) => item.toLowerCase() !== thesis.toLowerCase());
+  const fallback = buildFallbackBulletItems(project, order, fallbackSource).filter((item) => item.toLowerCase() !== thesis.toLowerCase());
   return uniqueShortItems([...existing, ...fallback]).slice(0, slideKind === "summary" ? 5 : 3);
 }
 
@@ -1589,7 +1587,7 @@ function buildFallbackSlide(order: number, project: ProjectInput, sources: Sourc
   const title = narrationSection?.title || fallbackTitle(project, order);
   const thesis = normalizeThesis("", [], project, order, slideKind);
   const bullets = ensureSlideSentenceDensity(normalizeBullets([], [], project, order, slideKind), thesis, project, order, slideKind);
-  const definition = fallbackDefinition(order, title, thesis, slideKind);
+  const definition = null;
   const visual = fallbackVisual(order, title, thesis, bullets, slideKind, project);
   const blocks = buildFallbackBlocks(project, order, thesis, bullets, slideKind);
   return {
@@ -1621,7 +1619,7 @@ function buildFallbackBlocks(project: ProjectInput, order = 1, thesis = "", bull
     return [{ type: "quote", content: thesis || fallbackSlideText(project, order) }];
   }
 
-  if (["statement", "question-answer", "case-study", "image-focus", "definition"].includes(layout)) {
+  if (["statement", "question-answer", "case-study", "image-focus"].includes(layout)) {
     return [{ type: "callout", content: thesis || fallbackSlideText(project, order) }];
   }
 
@@ -1630,16 +1628,6 @@ function buildFallbackBlocks(project: ProjectInput, order = 1, thesis = "", bull
   }
 
   return [{ type: "callout", content: thesis || fallbackSlideText(project, order) }];
-}
-
-function fallbackDefinition(order: number, title: string, thesis: string, slideKind: SlideKind): SlideDefinition | null {
-  if (slideKind !== "content") return null;
-  const layout = CONTENT_LAYOUT_CYCLE[(order - 2 + CONTENT_LAYOUT_CYCLE.length) % CONTENT_LAYOUT_CYCLE.length];
-  if (layout !== "definition") return null;
-  return {
-    term: shortenSentence(title, 60),
-    text: shortenSentence(thesis, 180),
-  };
 }
 
 function fallbackVisual(order: number, title: string, thesis: string, bullets: string[], slideKind: SlideKind, project: ProjectInput): SlideVisual {
@@ -1878,17 +1866,25 @@ function sentenceEdgeKey(value: string) {
   return normalizeForQuality(value).split(/\s+/).filter(Boolean).slice(0, 4).join(" ");
 }
 
-function buildFallbackBulletItems(project: ProjectInput, order: number) {
+function buildFallbackBulletItems(project: ProjectInput, order: number, sourceText = "") {
   const topic = cleanText(project.title || project.prompt);
   const focus = order > 1 ? fallbackTitle(project, order) : topic;
+  const sourceItems = uniqueShortItems(
+    splitIntoSentences(sourceText)
+      .flatMap((sentence) => sentence.split(/[,;:]\s+/))
+      .map((item) => shortenWords(item, 10)),
+  );
+  if (sourceItems.length >= 3) {
+    return sourceItems.slice(0, 5);
+  }
   const base = [
-    `${focus}: главный смысл темы без лишних общих слов.`,
-    `${topic} понятнее через факты, примеры и последствия.`,
-    `Смысл темы понятнее, когда видны причины и последствия.`,
-    `Для аудитории важен простой вывод без лишних общих слов.`,
-    `Финальная мысль должна связывать факты с понятным выводом.`,
+    ...sourceItems,
+    shortenWords(cleanText(project.prompt), 10),
+    shortenWords(`Главный вывод: ${focus}`, 10),
+    shortenWords(`Важно запомнить: ${topic}`, 10),
+    shortenWords(`Итог по теме: ${topic}`, 10),
   ];
-  return base.map((item) => shortenSentence(item, 120));
+  return uniqueShortItems(base).slice(0, 5);
 }
 
 function ensureRange(items: string[], fallback: string[], min: number, max: number) {
@@ -2081,16 +2077,12 @@ export function inferContentLayout(
 ): Slide["layout"] {
   if (slide.visual.image?.url || slide.visual.type === "image" || slide.visual.type === "illustration") return "image-focus";
   if (slide.blocks.some((block) => block.type === "quote")) return "quote";
-  if (slide.definition && hasExampleLanguage(slide)) return "explain-example";
-  if (slide.definition) return "definition";
   if (slide.visual.type === "timeline" && layoutHasEnoughContent("timeline", slide)) return "timeline";
   if (slide.visual.type === "process_diagram" && layoutHasEnoughContent("process", slide)) return "process";
   if (slide.visual.type === "cause_effect_diagram" || hasProblemSolutionLanguage(slide)) return "problem-solution";
   if (["comparison_diagram", "before_after_table", "pros_cons_table"].includes(slide.visual.type) && layoutHasEnoughContent("comparison", slide)) return "comparison";
   if (/[?？]$/.test(cleanText(slide.title)) && layoutHasEnoughContent("question-answer", slide)) return "question-answer";
   if (hasMeasurableText(slide)) return "metrics";
-  if (slide.sourceRefs?.length && slide.bullets.length >= 2) return "evidence";
-  if (hasExampleLanguage(slide)) return "explain-example";
 
   return CONTENT_LAYOUT_CYCLE[(order - 2 + CONTENT_LAYOUT_CYCLE.length) % CONTENT_LAYOUT_CYCLE.length];
 }
@@ -2160,8 +2152,6 @@ function fallbackForSparseLayout(
   layout: SlideLayout,
   slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks"> & Partial<Pick<Slide, "sourceRefs">>,
 ): SlideLayout {
-  if (slide.sourceRefs?.length && slide.thesis && slide.bullets.length >= 2) return "evidence";
-  if (slide.definition && slide.bullets.length) return "explain-example";
   if (layout === "question-answer" || layout === "myth-fact") return slide.thesis ? "statement" : "bullets";
   return slide.bullets.length >= 2 ? "bullets" : "statement";
 }

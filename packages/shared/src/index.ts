@@ -123,12 +123,14 @@ export const SLIDE_LAYOUT_DEFINITIONS: SlideLayoutDefinition[] = [
   { id: "explain-example", label: "Объяснение и пример", description: "Понятие, объяснение, пример и оговорка", kinds: ["content"], requirements: [], fallback: "definition" },
 ];
 
+const HIDDEN_SLIDE_LAYOUTS = new Set<SlideLayout>(["definition", "evidence", "explain-example"]);
+
 export function slideLayoutDefinition(layout: SlideLayout) {
   return SLIDE_LAYOUT_DEFINITIONS.find((item) => item.id === layout) || SLIDE_LAYOUT_DEFINITIONS[0];
 }
 
 export function slideLayoutOptions(kind: SlideKind) {
-  return SLIDE_LAYOUT_DEFINITIONS.filter((item) => item.id !== "two-column" && item.kinds.includes(kind));
+  return SLIDE_LAYOUT_DEFINITIONS.filter((item) => item.id !== "two-column" && !HIDDEN_SLIDE_LAYOUTS.has(item.id) && item.kinds.includes(kind));
 }
 
 export const visualTypeSchema = z.enum([
@@ -700,6 +702,9 @@ export type GeneratePresentationInput = z.infer<typeof generatePresentationInput
 export const exportTypeSchema = z.enum(["pdf", "pptx"]);
 export type ExportType = z.infer<typeof exportTypeSchema>;
 
+const READABLE_BODY_FONT_SIZE = 30;
+const READABLE_PLAQUE_FONT_SIZE = 24;
+
 export const planLimits = {
   free: {
     monthlyPresentations: 3,
@@ -737,7 +742,7 @@ export function ensureEditableCanvas(document: PresentationDocument): Presentati
       return {
         ...slide,
         canvas: hasCustomSlideCanvas(slide, theme, generatedCanvas)
-          ? upgradeCustomCanvas(slide.canvas!, generatedCanvas)
+          ? upgradeCustomCanvas(slide.canvas!, generatedCanvas, theme)
           : generatedCanvas,
       };
     }),
@@ -777,7 +782,7 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme): SlideC
 
     addMiniPointRow(slide, theme, elements, 296, 512);
 
-    return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: sortCanvasElements(linkContainedElements(elements)) };
+    return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: finalizeGeneratedElements(elements, theme) };
   }
 
   if (slide.slideKind === "summary") addSummaryCanvas(slide, theme, elements);
@@ -798,7 +803,57 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme): SlideC
 
   addFallbackImageCanvas(slide, elements);
 
-  return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: sortCanvasElements(linkContainedElements(elements)) };
+  return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: finalizeGeneratedElements(elements, theme) };
+}
+
+function finalizeGeneratedElements(elements: CanvasElement[], theme: PresentationTheme) {
+  return sortCanvasElements(linkContainedElements(addStandaloneTextBackplates(elements, theme)));
+}
+
+function addStandaloneTextBackplates(elements: CanvasElement[], theme: PresentationTheme) {
+  const resizedElements = reflowTextPlaques(resizeTextPlaques(elements));
+  const containers = resizedElements.filter((element): element is CanvasShapeElement =>
+    element.type === "shape" && element.shape !== "line",
+  );
+  const result: CanvasElement[] = [];
+
+  resizedElements.forEach((element) => {
+    if (element.type !== "text" || element.id.endsWith("-quote-mark")) {
+      result.push(element);
+      return;
+    }
+
+    const centerX = element.x + element.w / 2;
+    const centerY = element.y + element.h / 2;
+    const alreadyContained = containers.some((shape) =>
+      centerX >= shape.x &&
+      centerX <= shape.x + shape.w &&
+      centerY >= shape.y &&
+      centerY <= shape.y + shape.h,
+    );
+    if (alreadyContained) {
+      result.push(element);
+      return;
+    }
+
+    const backplate = shapeElement(
+      `${element.id}-backplate`,
+      "roundRect",
+      element.x,
+      element.y,
+      element.w,
+      element.h,
+      Math.max(1, element.zIndex - 1),
+      theme.colors.surface,
+      theme.colors.line,
+      1,
+      0.92,
+      true,
+    );
+    result.push(backplate, fitCanvasTextElement(element));
+  });
+
+  return result;
 }
 
 function linkContainedElements(elements: CanvasElement[]) {
@@ -806,7 +861,7 @@ function linkContainedElements(elements: CanvasElement[]) {
     .filter((element): element is CanvasShapeElement =>
       element.type === "shape" &&
       element.shape !== "line" &&
-      element.w <= 1120 &&
+      element.w <= 1200 &&
       element.h <= 420 &&
       element.w >= 36 &&
       element.h >= 30,
@@ -826,7 +881,12 @@ function linkContainedElements(elements: CanvasElement[]) {
     );
     if (!container) return element;
     const groupId = `group:${container.id}`;
-    return { ...element, groupId, valign: "middle" as const };
+    return {
+      ...element,
+      groupId,
+      align: "center" as const,
+      valign: "middle" as const,
+    };
   });
   return assigned.map((element) => {
     if (element.type !== "shape") return element;
@@ -846,19 +906,37 @@ export function hasCustomSlideCanvas(slide: Slide, theme: PresentationTheme, gen
   if (slide.canvas.elements.some((element) => element.id === `${slide.id}-custom-canvas-marker`)) return true;
   if (isLegacyFullscreenImageCanvas(slide)) return false;
   if (sameCanvas(slide.canvas, generatedCanvas) || sameCanvasStructure(slide.canvas, generatedCanvas)) return false;
+  if (sameCanvasStructure(slide.canvas, legacyGeneratedCanvas(generatedCanvas))) return false;
   if (isLegacyLeanTitleCanvas(slide)) return false;
   if ((slide.canvas.version || 1) >= 2) return true;
   return !hasAutoGeneratedCanvasMarker(slide);
 }
 
-function upgradeCustomCanvas(canvas: SlideCanvas, generatedCanvas: SlideCanvas): SlideCanvas {
+function upgradeCustomCanvas(canvas: SlideCanvas, generatedCanvas: SlideCanvas, theme: PresentationTheme): SlideCanvas {
+  const elements = canvas.elements
+    .filter((element) => !isLegacyBackgroundElement(element.id))
+    .map((element) => {
+      if (element.type !== "text") return element;
+      const isPlaque = /-mini-\d+$/.test(element.id);
+      const fontSize = isPlaque
+        ? element.fontSize === 15
+          ? READABLE_PLAQUE_FONT_SIZE
+          : element.fontSize
+        : element.fontSize === 24
+          ? READABLE_BODY_FONT_SIZE
+          : element.fontSize;
+      return {
+        ...element,
+        fontSize,
+        h: Math.max(element.h, estimatedTextHeight(element.text, fontSize, element.w)),
+        valign: element.valign || "top",
+      };
+    });
   return {
     ...canvas,
     background: generatedCanvas.background,
     backgroundStyle: generatedCanvas.backgroundStyle,
-    elements: canvas.elements
-      .filter((element) => !isLegacyBackgroundElement(element.id))
-      .map((element) => element.type === "text" ? { ...element, valign: element.valign || "top" } : element),
+    elements: sortCanvasElements(linkContainedElements(addStandaloneTextBackplates(elements, theme))),
   };
 }
 
@@ -918,6 +996,9 @@ function isLegacyLeanTitleCanvas(slide: Slide) {
 }
 
 function isKnownGeneratedCanvasElementId(slideId: string, elementId: string) {
+  if (elementId.endsWith("-backplate")) {
+    return isKnownGeneratedCanvasElementId(slideId, elementId.slice(0, -"-backplate".length));
+  }
   if (
     elementId === `${slideId}-bg` ||
     elementId === `${slideId}-accent` ||
@@ -947,6 +1028,23 @@ function isKnownGeneratedCanvasElementId(slideId: string, elementId: string) {
     elementId.startsWith(`${slideId}-card-`) ||
     elementId.startsWith(`${slideId}-visual-`)
   );
+}
+
+function legacyGeneratedCanvas(canvas: SlideCanvas): SlideCanvas {
+  return {
+    ...canvas,
+    elements: canvas.elements
+      .filter((element) => !element.id.endsWith("-backplate"))
+      .map((element) => {
+        if (element.id.includes("-mini-") && element.type === "shape") {
+          return { ...element, h: 50 };
+        }
+        if (element.id.includes("-mini-") && element.type === "text") {
+          return { ...element, h: 36 };
+        }
+        return element;
+      }),
+  };
 }
 
 function sameCanvas(left: SlideCanvas, right: SlideCanvas) {
@@ -1046,7 +1144,7 @@ function addDefaultContentCanvas(slide: Slide, theme: PresentationTheme, element
     }),
     textElement(`${slide.id}-body`, body, hasImage ? 78 : 144, hasImage ? 197 : 300, hasImage ? 514 : 992, hasImage ? 336 : 160, 4, {
       role: "body",
-      fontSize: fittedFontSize(body, hasImage ? 24 : 26, 16, hasImage ? 336 : 160),
+      fontSize: fittedFontSize(body, hasImage ? READABLE_BODY_FONT_SIZE : 26, 16, hasImage ? 336 : 160),
       fontFamily: theme.fonts.body,
       color: theme.colors.muted,
       align: hasImage ? "left" : "center",
@@ -1119,7 +1217,7 @@ function addDefinitionCanvas(slide: Slide, theme: PresentationTheme, elements: C
     }),
     textElement(`${slide.id}-definition-text`, definition.text, 120, 293, 1038, 130, 4, {
       role: "body",
-      fontSize: fittedFontSize(definition.text, 24, 17, 130),
+      fontSize: fittedFontSize(definition.text, READABLE_BODY_FONT_SIZE, 17, 130),
       fontFamily: theme.fonts.body,
       color: theme.colors.muted,
     }),
@@ -1194,7 +1292,7 @@ function addImageFocusCanvas(slide: Slide, theme: PresentationTheme, elements: C
   addSlideTitle(slide, theme, elements, { width: 528, fontSize: 38 });
   elements.push(textElement(`${slide.id}-body`, slide.thesis || slideBodyText(slide), 79, 192, 504, 230, 4, {
     role: "body",
-    fontSize: 24,
+    fontSize: READABLE_BODY_FONT_SIZE,
     fontFamily: theme.fonts.body,
     color: theme.colors.muted,
   }));
@@ -1261,7 +1359,7 @@ function addQuestionAnswerCanvas(slide: Slide, theme: PresentationTheme, element
     textElement(`${slide.id}-answer-label`, "Ответ", 187, 228, 902, 32, 4, labelText(theme)),
     textElement(`${slide.id}-answer-text`, slide.thesis || slideBodyText(slide), 187, 283, 902, 82, 4, {
       role: "body",
-      fontSize: 24,
+      fontSize: READABLE_BODY_FONT_SIZE,
       fontFamily: theme.fonts.body,
       color: theme.colors.muted,
     }),
@@ -1474,20 +1572,28 @@ function addSlideTitle(
 }
 
 function addMiniPointRow(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], x: number, y: number) {
-  (slide.bullets || []).slice(0, 3).forEach((item, index) => {
-    const chipX = x + index * 230;
-    const label = miniChipText(item);
+  const labels = (slide.bullets || []).slice(0, 3).map((item, index) => miniChipText(item, slide, index));
+  const gap = 18;
+  const widths = labels.map((label) => plaqueWidth(label, READABLE_PLAQUE_FONT_SIZE));
+  const totalWidth = widths.reduce((total, width) => total + width, 0) + gap * Math.max(0, widths.length - 1);
+  let chipX = Math.min(x, 1280 - totalWidth - 48);
+
+  labels.forEach((label, index) => {
+    const chipWidth = widths[index];
+    const textWidth = chipWidth - 20;
+    const chipHeight = plaqueHeight(label, READABLE_PLAQUE_FONT_SIZE, textWidth);
     elements.push(
-      shapeElement(`${slide.id}-mini-${index}-shape`, "roundRect", chipX, y, 204, 50, 3, theme.colors.surface, theme.colors.accent, 1, 1),
-      textElement(`${slide.id}-mini-${index}`, label, chipX + 10, y + 7, 184, 36, 4, {
+      shapeElement(`${slide.id}-mini-${index}-shape`, "roundRect", chipX, y, chipWidth, chipHeight, 3, theme.colors.surface, theme.colors.accent, 1, 1),
+      textElement(`${slide.id}-mini-${index}`, label, chipX + 10, y + 7, textWidth, chipHeight - 14, 4, {
         role: "caption",
-        fontSize: 15,
+        fontSize: READABLE_PLAQUE_FONT_SIZE,
         fontFamily: theme.fonts.body,
         color: theme.colors.text,
         bold: true,
         align: "center",
       }),
     );
+    chipX += chipWidth + gap;
   });
 }
 
@@ -1574,7 +1680,7 @@ function textElement(
   options: Partial<CanvasTextElement>,
 ): CanvasTextElement {
   const text = cleanCanvasText(value);
-  return {
+  return fitCanvasTextElement({
     id,
     type: "text",
     role: options.role || "free",
@@ -1597,7 +1703,150 @@ function textElement(
     align: options.align || "left",
     valign: options.valign || "top",
     groupId: options.groupId,
-  };
+  });
+}
+
+function fitCanvasTextElement(element: CanvasTextElement): CanvasTextElement {
+  if (element.fontSize === READABLE_BODY_FONT_SIZE || element.fontSize === READABLE_PLAQUE_FONT_SIZE) {
+    return {
+      ...element,
+      h: Math.max(element.h, estimatedTextHeight(element.text, element.fontSize, element.w)),
+    };
+  }
+  let fontSize = element.fontSize;
+  while (fontSize > 8 && estimatedTextHeight(element.text, fontSize, element.w) > element.h) {
+    fontSize -= 1;
+  }
+  return { ...element, fontSize };
+}
+
+function resizeTextPlaques(elements: CanvasElement[]) {
+  const plaqueSizes = new Map<string, { width: number; height: number }>();
+  elements.forEach((element) => {
+    if (element.type !== "text" || !/-mini-\d+$/.test(element.id)) return;
+    const width = plaqueWidth(element.text, element.fontSize);
+    plaqueSizes.set(`${element.id}-shape`, {
+      width,
+      height: plaqueHeight(element.text, element.fontSize, width - 20),
+    });
+  });
+
+  return elements.map((element) => {
+    if (element.type === "shape") {
+      const size = plaqueSizes.get(element.id);
+      return size ? {
+        ...element,
+        w: Math.max(element.w, size.width),
+        h: Math.max(element.h, size.height),
+      } : element;
+    }
+    if (element.type === "text" && /-mini-\d+$/.test(element.id)) {
+      const size = plaqueSizes.get(`${element.id}-shape`);
+      return size ? {
+        ...element,
+        w: Math.max(element.w, size.width - 20),
+        h: Math.max(element.h, size.height - 14),
+      } : element;
+    }
+    return element;
+  });
+}
+
+function reflowTextPlaques(elements: CanvasElement[]) {
+  const plaqueShapes = elements
+    .filter((element): element is CanvasShapeElement =>
+      element.type === "shape" && /-mini-\d+-shape$/.test(element.id),
+    )
+    .sort((left, right) => left.y - right.y || left.x - right.x);
+  if (!plaqueShapes.length) return elements;
+
+  const rows = new Map<number, CanvasShapeElement[]>();
+  plaqueShapes.forEach((shape) => {
+    const rowKey = Math.round(shape.y);
+    rows.set(rowKey, [...(rows.get(rowKey) || []), shape]);
+  });
+
+  const updates = new Map<string, Partial<CanvasElement>>();
+  rows.forEach((row) => {
+    const sorted = [...row].sort((left, right) => left.x - right.x);
+    const startX = Math.max(48, Math.min(...sorted.map((shape) => shape.x)));
+    const rowTop = Math.min(...sorted.map((shape) => shape.y));
+    const rowBottom = Math.max(...sorted.map((shape) => shape.y + shape.h));
+    const imageBoundary = elements
+      .filter((element): element is CanvasImageElement =>
+        element.type === "image" &&
+        element.x > startX &&
+        element.y < rowBottom &&
+        element.y + element.h > rowTop,
+      )
+      .reduce((boundary, image) => Math.min(boundary, image.x - 28), 1232);
+    const rightBoundary = Math.max(startX + 150, imageBoundary);
+    const gap = 18;
+    const availableWidth = rightBoundary - startX;
+    const desiredWidth = sorted.reduce((total, shape) => total + shape.w, 0) + gap * Math.max(0, sorted.length - 1);
+    const fittedWidth = desiredWidth > availableWidth
+      ? Math.max(150, Math.floor((availableWidth - gap * Math.max(0, sorted.length - 1)) / sorted.length))
+      : 0;
+    const rowHeight = Math.max(...sorted.map((shape) => {
+      const text = elements.find((element): element is CanvasTextElement =>
+        element.type === "text" && `${element.id}-shape` === shape.id,
+      );
+      const width = fittedWidth || shape.w;
+      return text ? plaqueHeight(text.text, text.fontSize, width - 20) : shape.h;
+    }));
+
+    let nextX = startX;
+    sorted.forEach((shape) => {
+      const width = fittedWidth || shape.w;
+      const textId = shape.id.replace(/-shape$/, "");
+      updates.set(shape.id, { x: nextX, y: rowTop, w: width, h: rowHeight });
+      updates.set(textId, {
+        x: nextX + 10,
+        y: rowTop + 7,
+        w: width - 20,
+        h: rowHeight - 14,
+        align: "center",
+        valign: "middle",
+      });
+      nextX += width + gap;
+    });
+  });
+
+  return elements.map((element) => {
+    const update = updates.get(element.id);
+    return update ? { ...element, ...update } as CanvasElement : element;
+  });
+}
+
+function estimatedTextHeight(value: string, fontSize: number, width: number) {
+  const safeWidth = Math.max(1, width);
+  const averageCharacterWidth = fontSize * 0.54;
+  const charactersPerLine = Math.max(1, Math.floor(safeWidth / averageCharacterWidth));
+  const lines = cleanCanvasText(value)
+    .split("\n")
+    .reduce((total, line) => total + Math.max(1, Math.ceil(line.length / charactersPerLine)), 0);
+  return Math.ceil(lines * fontSize * 1.14);
+}
+
+function estimatedPlaqueTextHeight(value: string, fontSize: number, width: number) {
+  const safeWidth = Math.max(1, width);
+  const charactersPerLine = Math.max(1, Math.floor(safeWidth / (fontSize * 0.75)));
+  const lines = cleanCanvasText(value)
+    .split("\n")
+    .reduce((total, line) => total + Math.max(1, Math.ceil(line.length / charactersPerLine)), 0);
+  return Math.ceil(lines * fontSize * 1.28);
+}
+
+function plaqueHeight(value: string, fontSize: number, width: number) {
+  const wordCount = cleanCanvasText(value).split(/\s+/).filter(Boolean).length;
+  const contentHeight = estimatedPlaqueTextHeight(value, fontSize, width) + 40;
+  const longLabelMinimum = wordCount >= 6 ? 104 : wordCount >= 5 ? 88 : wordCount >= 4 ? 72 : 58;
+  return Math.max(58, contentHeight, longLabelMinimum);
+}
+
+function plaqueWidth(value: string, fontSize: number) {
+  const estimatedSingleLineWidth = cleanCanvasText(value).length * fontSize * 0.58 + 28;
+  return Math.max(204, Math.min(260, Math.ceil(estimatedSingleLineWidth)));
 }
 
 function imageElement(
@@ -1682,8 +1931,25 @@ function isDuplicateCanvasText(left: string, right: string) {
   return Boolean(normalize(left) && normalize(left) === normalize(right));
 }
 
-function miniChipText(value: string) {
-  return sentencePreview(value, 28);
+function miniChipText(value: string, slide: Slide, index: number) {
+  const bullets = slide.bullets || [];
+  const candidates = [
+    value,
+    [value, slide.thesis].filter(Boolean).join(" "),
+    [value, bullets[index + 1]].filter(Boolean).join(" "),
+    [value, slide.title].filter(Boolean).join(" "),
+    slideBodyText(slide),
+  ];
+  const source = candidates.find((candidate) => phraseWords(candidate).length >= 5) || candidates.find(Boolean) || "";
+  return phraseWords(source).slice(0, 6).join(" ");
+}
+
+function phraseWords(value: string) {
+  return cleanCanvasText(value)
+    .replace(/\.{3,}|…/g, "")
+    .split(/\s+/)
+    .map((word) => word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}%№+-]+$/gu, ""))
+    .filter(Boolean);
 }
 
 function slideBodyText(slide: Slide) {

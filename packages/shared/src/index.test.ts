@@ -11,6 +11,7 @@ import {
   projectStatusSchema,
   resolvePresentationTheme,
   slideCanvasSchema,
+  slideLayoutSchema,
   slideLayoutOptions,
   updateNarrationInputSchema,
 } from "./index";
@@ -35,6 +36,14 @@ describe("shared contracts", () => {
 
   it("keeps the legacy two-column layout readable but hides it from new selections", () => {
     expect(slideLayoutOptions("content").map((layout) => layout.id)).not.toContain("two-column");
+  });
+
+  it("hides removed layouts from new selections while keeping legacy schema support", () => {
+    const layouts = slideLayoutOptions("content").map((layout) => layout.id);
+    expect(layouts).not.toContain("definition");
+    expect(layouts).not.toContain("evidence");
+    expect(layouts).not.toContain("explain-example");
+    expect(() => slideLayoutSchema.parse("definition")).not.toThrow();
   });
 
   it("accepts two-step generation statuses and job kinds", () => {
@@ -358,14 +367,25 @@ describe("shared contracts", () => {
     const titleCanvas = buildSlideCanvas(titleSlide, theme);
     const heroTitle = titleCanvas.elements.find((element) => element.id === "slide-title-title");
     const miniChip = titleCanvas.elements.find((element) => element.id === "slide-title-mini-0");
+    const miniChips = titleCanvas.elements
+      .filter((element) => element.type === "shape" && /-mini-\d+-shape$/.test(element.id))
+      .sort((left, right) => left.x - right.x);
     const contentCanvas = buildSlideCanvas(contentSlide, theme);
     const contentTitle = contentCanvas.elements.find((element) => element.id === "slide-content-title");
 
     expect(heroTitle).toMatchObject({ type: "text", fontSize: 58, h: 148 });
-    expect(miniChip).toMatchObject({ type: "text", fontSize: 15, h: 36 });
+    expect(miniChip).toMatchObject({ type: "text", fontSize: 24 });
+    expect(miniChip?.h || 0).toBeGreaterThanOrEqual(74);
+    expect(miniChip?.w || 0).toBeGreaterThan(184);
     expect(contentTitle).toMatchObject({ type: "text", h: 112 });
     expect(contentTitle?.type === "text" ? contentTitle.fontSize : 0).toBeLessThanOrEqual(46);
-    expect(miniChip?.type === "text" ? miniChip.text.length : 0).toBeLessThanOrEqual(28);
+    expect(miniChip?.type === "text" ? miniChip.text.split(/\s+/).length : 0).toBeGreaterThanOrEqual(5);
+    expect(miniChip?.type === "text" ? miniChip.text.split(/\s+/).length : 0).toBeLessThanOrEqual(6);
+    expect(miniChip?.type === "text" ? miniChip.text : "").not.toContain("...");
+    expect(miniChip).toMatchObject({ align: "center", valign: "middle" });
+    miniChips.slice(1).forEach((shape, index) => {
+      expect(miniChips[index].x + miniChips[index].w).toBeLessThan(shape.x);
+    });
   });
 
   it("distinguishes generated canvases from user-edited canvases", () => {
