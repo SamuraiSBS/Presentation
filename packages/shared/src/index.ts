@@ -111,19 +111,26 @@ export const SLIDE_LAYOUT_DEFINITIONS: SlideLayoutDefinition[] = [
   { id: "quote", label: "Цитата", description: "Центральная формулировка", kinds: ["content"], requirements: [], fallback: "statement" },
   { id: "definition", label: "Определение", description: "Термин и объяснение", kinds: ["content"], requirements: ["definition"], fallback: "explain-example" },
   { id: "timeline", label: "Хронология", description: "События на временной оси", kinds: ["content"], requirements: ["sequence"], fallback: "process" },
-  { id: "comparison", label: "Сравнение", description: "Сравнение по нескольким критериям", kinds: ["content"], requirements: ["comparison"], fallback: "evidence" },
+  { id: "comparison", label: "Сравнение", description: "Сравнение по нескольким критериям", kinds: ["content"], requirements: ["comparison"], fallback: "bullets" },
   { id: "process", label: "Процесс", description: "Последовательность шагов", kinds: ["content"], requirements: ["sequence"], fallback: "bullets" },
   { id: "image-focus", label: "Изображение", description: "Визуальный пример и пояснение", kinds: ["content"], requirements: [], fallback: "statement" },
-  { id: "case-study", label: "Кейс", description: "Ситуация, действие, результат", kinds: ["content"], requirements: ["sequence"], fallback: "problem-solution" },
+  { id: "case-study", label: "Кейс", description: "Ситуация, действие, результат", kinds: ["content"], requirements: ["sequence"], fallback: "process" },
   { id: "question-answer", label: "Вопрос и ответ", description: "Вопрос с ясным ответом", kinds: ["content"], requirements: [], fallback: "statement" },
-  { id: "myth-fact", label: "Миф и факт", description: "Исправление заблуждения", kinds: ["content"], requirements: ["comparison"], fallback: "comparison" },
+  { id: "myth-fact", label: "Миф и факт", description: "Исправление заблуждения", kinds: ["content"], requirements: ["comparison"], fallback: "statement" },
   { id: "metrics", label: "Показатели", description: "Только реальные числа и величины", kinds: ["content"], requirements: ["metrics"], fallback: "statement" },
   { id: "evidence", label: "Тезис и доказательства", description: "Тезис, факты и компактные источники", kinds: ["content"], requirements: [], fallback: "bullets" },
   { id: "problem-solution", label: "Проблема и решение", description: "Проблема, причина и решение", kinds: ["content"], requirements: ["sequence"], fallback: "process" },
   { id: "explain-example", label: "Объяснение и пример", description: "Понятие, объяснение, пример и оговорка", kinds: ["content"], requirements: [], fallback: "definition" },
 ];
 
-const HIDDEN_SLIDE_LAYOUTS = new Set<SlideLayout>(["definition", "evidence", "explain-example"]);
+const HIDDEN_SLIDE_LAYOUTS = new Set<SlideLayout>([
+  "comparison",
+  "definition",
+  "evidence",
+  "explain-example",
+  "myth-fact",
+  "problem-solution",
+]);
 
 export function slideLayoutDefinition(layout: SlideLayout) {
   return SLIDE_LAYOUT_DEFINITIONS.find((item) => item.id === layout) || SLIDE_LAYOUT_DEFINITIONS[0];
@@ -704,6 +711,8 @@ export type ExportType = z.infer<typeof exportTypeSchema>;
 
 const READABLE_BODY_FONT_SIZE = 30;
 const READABLE_PLAQUE_FONT_SIZE = 24;
+const PLAQUE_PADDING_X = 18;
+const PLAQUE_PADDING_Y = 12;
 
 export const planLimits = {
   free: {
@@ -758,29 +767,33 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme): SlideC
   const elements: CanvasElement[] = backgroundElements(slide, theme);
 
   if (slide.slideKind === "title" || slide.slideKind === "section") {
+    const isTitleSlide = slide.slideKind === "title";
     if (visual.image) {
       elements.push(imageElement(`${slide.id}-image-bg`, visual.image, 0, 0, 1280, 720, 1, 0.1, "cover"));
     }
 
     elements.push(
-      textElement(`${slide.id}-title`, slide.title, 178, 188, 924, 148, 5, {
+      textElement(`${slide.id}-title`, slide.title, 178, isTitleSlide ? 118 : 188, 924, 148, 5, {
         role: "title",
         fontSize: fittedFontSize(slide.title, 58, 38, 148),
         fontFamily: theme.fonts.heading,
         color: text,
         bold: true,
         align: "center",
+        valign: "middle",
       }),
-      textElement(`${slide.id}-body`, slide.thesis || slideBodyText(slide), 210, 356, 860, 112, 5, {
+      textElement(`${slide.id}-body`, slide.thesis || slideBodyText(slide), 210, isTitleSlide ? 282 : 356, 860, 112, 5, {
         role: "body",
         fontSize: fittedFontSize(slide.thesis || slideBodyText(slide), 28, 20, 110),
         fontFamily: theme.fonts.body,
         color: muted,
         align: "center",
+        valign: "middle",
       }),
     );
 
-    addMiniPointRow(slide, theme, elements, 296, 512);
+    if (isTitleSlide) addTitleMiniPointGrid(slide, theme, elements);
+    else addMiniPointRow(slide, theme, elements, 296, 512);
 
     return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: finalizeGeneratedElements(elements, theme) };
   }
@@ -807,7 +820,7 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme): SlideC
 }
 
 function finalizeGeneratedElements(elements: CanvasElement[], theme: PresentationTheme) {
-  return sortCanvasElements(linkContainedElements(addStandaloneTextBackplates(elements, theme)));
+  return sortCanvasElements(clampCanvasElements(linkContainedElements(addStandaloneTextBackplates(elements, theme))));
 }
 
 function addStandaloneTextBackplates(elements: CanvasElement[], theme: PresentationTheme) {
@@ -836,13 +849,15 @@ function addStandaloneTextBackplates(elements: CanvasElement[], theme: Presentat
       return;
     }
 
+    const paddingX = element.role === "title" ? 26 : 18;
+    const paddingY = element.role === "title" ? 16 : 12;
     const backplate = shapeElement(
       `${element.id}-backplate`,
       "roundRect",
-      element.x,
-      element.y,
-      element.w,
-      element.h,
+      element.x - paddingX,
+      element.y - paddingY,
+      element.w + paddingX * 2,
+      element.h + paddingY * 2,
       Math.max(1, element.zIndex - 1),
       theme.colors.surface,
       theme.colors.line,
@@ -897,14 +912,54 @@ function linkContainedElements(elements: CanvasElement[]) {
   });
 }
 
+function clampCanvasElements(elements: CanvasElement[]) {
+  const canvasWidth = 1280;
+  const canvasHeight = 720;
+  const groupBounds = new Map<string, { x: number; y: number; right: number; bottom: number }>();
+
+  elements.forEach((element) => {
+    if (!element.groupId) return;
+    const current = groupBounds.get(element.groupId);
+    const next = {
+      x: current ? Math.min(current.x, element.x) : element.x,
+      y: current ? Math.min(current.y, element.y) : element.y,
+      right: current ? Math.max(current.right, element.x + element.w) : element.x + element.w,
+      bottom: current ? Math.max(current.bottom, element.y + element.h) : element.y + element.h,
+    };
+    groupBounds.set(element.groupId, next);
+  });
+
+  const groupOffsets = new Map<string, { dx: number; dy: number }>();
+  groupBounds.forEach((bounds, groupId) => {
+    const dx = Math.min(0, canvasWidth - bounds.right) + Math.max(0, -bounds.x);
+    const dy = Math.min(0, canvasHeight - bounds.bottom) + Math.max(0, -bounds.y);
+    groupOffsets.set(groupId, { dx, dy });
+  });
+
+  return elements.map((element) => {
+    const offset = element.groupId ? groupOffsets.get(element.groupId) : undefined;
+    const moved = offset ? { ...element, x: element.x + offset.dx, y: element.y + offset.dy } : element;
+    return {
+      ...moved,
+      x: clamp(moved.x, 0, Math.max(0, canvasWidth - moved.w)),
+      y: clamp(moved.y, 0, Math.max(0, canvasHeight - moved.h)),
+      w: Math.min(moved.w, canvasWidth),
+      h: Math.min(moved.h, canvasHeight),
+    } as CanvasElement;
+  });
+}
+
 export function sortCanvasElements(elements: CanvasElement[]) {
   return [...elements].sort((left, right) => left.zIndex - right.zIndex);
 }
 
 export function hasCustomSlideCanvas(slide: Slide, theme: PresentationTheme, generatedCanvas = buildSlideCanvas(slide, theme)) {
   if (!slide.canvas) return false;
+  if (isLegacySummaryStoryCanvas(slide)) return false;
   if (slide.canvas.elements.some((element) => element.id === `${slide.id}-custom-canvas-marker`)) return true;
+  if (isLegacySummaryCanvas(slide)) return false;
   if (isLegacyFullscreenImageCanvas(slide)) return false;
+  if (isLegacyTitleMiniRowCanvas(slide)) return false;
   if (sameCanvas(slide.canvas, generatedCanvas) || sameCanvasStructure(slide.canvas, generatedCanvas)) return false;
   if (sameCanvasStructure(slide.canvas, legacyGeneratedCanvas(generatedCanvas))) return false;
   if (isLegacyLeanTitleCanvas(slide)) return false;
@@ -995,6 +1050,105 @@ function isLegacyLeanTitleCanvas(slide: Slide) {
   );
 }
 
+function isLegacyTitleMiniRowCanvas(slide: Slide) {
+  if (!slide.canvas || slide.slideKind !== "title") return false;
+  if (!slide.canvas.elements.some((element) => element.id === `${slide.id}-mini-0-shape`)) return false;
+  if (!slide.canvas.elements.every((element) => isKnownGeneratedCanvasElementId(slide.id, element.id))) return false;
+
+  const title = slide.canvas.elements.find((element) => element.id === `${slide.id}-title`);
+  const body = slide.canvas.elements.find((element) => element.id === `${slide.id}-body`);
+  const miniShapes = slide.canvas.elements
+    .filter((element): element is CanvasShapeElement =>
+      element.type === "shape" && new RegExp(`^${escapeRegExp(slide.id)}-mini-\\d+-shape$`).test(element.id),
+    )
+    .sort((left, right) => left.x - right.x);
+
+  return (
+    title?.type === "text" &&
+    body?.type === "text" &&
+    title.text === slide.title &&
+    title.x === 178 &&
+    title.y === 188 &&
+    title.w === 924 &&
+    title.h === 148 &&
+    body.x === 210 &&
+    body.y === 356 &&
+    body.w === 860 &&
+    body.h >= 112 &&
+    miniShapes.length > 0 &&
+    miniShapes.every((shape) => shape.y === 512) &&
+    miniShapes.slice(1).every((shape, index) => miniShapes[index].x + miniShapes[index].w < shape.x)
+  );
+}
+
+function isLegacySummaryCanvas(slide: Slide) {
+  if (!slide.canvas || slide.slideKind !== "summary") return false;
+  const summaryPrefix = `${slide.id}-summary-`;
+  const items = sequenceItems(slide).slice(0, 6);
+  const columns = items.length > 3 ? 3 : Math.max(items.length, 1);
+  const cardWidth = 340;
+  const gap = 24;
+  const startX = (1280 - columns * cardWidth - (columns - 1) * gap) / 2;
+
+  const matchesLegacyGeometry = items.every((item, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    const x = startX + column * (cardWidth + gap);
+    const y = 176 + row * 148;
+    const card = slide.canvas!.elements.find((element) => element.id === `${summaryPrefix}${index}-card`);
+    const number = slide.canvas!.elements.find((element) => element.id === `${summaryPrefix}${index}-num`);
+    const text = slide.canvas!.elements.find((element) => element.id === `${summaryPrefix}${index}`);
+    return (
+      card?.type === "shape" &&
+      card.x === x &&
+      card.y === y &&
+      card.w === cardWidth &&
+      card.h === 118 &&
+      number?.type === "text" &&
+      number.text === String(index + 1) &&
+      number.x === x + 16 &&
+      number.y === y + 25 &&
+      text?.type === "text" &&
+      text.text === item &&
+      text.x === x + 66 &&
+      text.y === y + 18 &&
+      text.w === cardWidth - 86 &&
+      text.h === 78
+    );
+  });
+  if (!items.length || !matchesLegacyGeometry) return false;
+
+  return slide.canvas.elements.every((element) => {
+    const id = element.id.endsWith("-backplate") ? element.id.slice(0, -"-backplate".length) : element.id;
+    return (
+      id === `${slide.id}-custom-canvas-marker` ||
+      id === `${slide.id}-title` ||
+      id === `${slide.id}-image` ||
+      new RegExp(`^${escapeRegExp(summaryPrefix)}\\d+(?:-card|-num-bg|-num)?$`).test(id)
+    );
+  });
+}
+
+function isLegacySummaryStoryCanvas(slide: Slide) {
+  if (!slide.canvas || slide.slideKind !== "summary") return false;
+  if (!slide.canvas.elements.some((element) => element.id === `${slide.id}-summary-conclusion`)) return false;
+  const generatedOnly = slide.canvas.elements.every((element) =>
+    element.id === `${slide.id}-custom-canvas-marker` || isKnownGeneratedCanvasElementId(slide.id, element.id),
+  );
+  if (!generatedOnly) return false;
+
+  const supportLabel = slide.canvas.elements.find((element) => element.id === `${slide.id}-summary-support-label`);
+  const finalLabel = slide.canvas.elements.find((element) => element.id === `${slide.id}-summary-final-label`);
+  return (
+    (supportLabel?.type === "text" && supportLabel.fontSize < READABLE_PLAQUE_FONT_SIZE) ||
+    (finalLabel?.type === "text" && finalLabel.fontSize < READABLE_PLAQUE_FONT_SIZE)
+  );
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function isKnownGeneratedCanvasElementId(slideId: string, elementId: string) {
   if (elementId.endsWith("-backplate")) {
     return isKnownGeneratedCanvasElementId(slideId, elementId.slice(0, -"-backplate".length));
@@ -1024,6 +1178,7 @@ function isKnownGeneratedCanvasElementId(slideId: string, elementId: string) {
     elementId.startsWith(`${slideId}-source-`) ||
     elementId.startsWith(`${slideId}-problem-`) ||
     elementId.startsWith(`${slideId}-explain-`) ||
+    elementId.startsWith(`${slideId}-summary-`) ||
     elementId.startsWith(`${slideId}-mini-`) ||
     elementId.startsWith(`${slideId}-card-`) ||
     elementId.startsWith(`${slideId}-visual-`)
@@ -1302,35 +1457,67 @@ function addImageFocusCanvas(slide: Slide, theme: PresentationTheme, elements: C
 
 function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
   addSlideTitle(slide, theme, elements);
-  const items = sequenceItems(slide).slice(0, 6);
-  const columns = items.length > 3 ? 3 : Math.max(items.length, 1);
-  const cardW = 340;
-  const gap = 24;
-  const startX = (1280 - columns * cardW - (columns - 1) * gap) / 2;
-  items.forEach((item, index) => {
-    const column = index % columns;
-    const row = Math.floor(index / columns);
-    const x = startX + column * (cardW + gap);
-    const y = 176 + row * 148;
+  const items = sequenceItems(slide).slice(0, 5);
+  const mainConclusion = slide.thesis || items[0] || slideBodyText(slide);
+  const supportingItems = items.filter((item) => item !== mainConclusion).slice(0, 3);
+  const finalThought = items.filter((item) => item !== mainConclusion).slice(3, 4)[0];
+
+  elements.push(
+    textElement(`${slide.id}-summary-conclusion`, mainConclusion, 70, 184, 640, 270, 4, {
+      role: "body",
+      fontSize: fittedFontSize(mainConclusion, 44, 25, 270),
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.text,
+      bold: true,
+    }),
+    shapeElement(`${slide.id}-summary-accent`, "rect", 70, 470, 640, 5, 3, theme.colors.accent, theme.colors.accent, 0, 1),
+  );
+
+  if (supportingItems.length) {
     elements.push(
-      shapeElement(`${slide.id}-summary-${index}-card`, "roundRect", x, y, cardW, 118, 2, theme.colors.surface, theme.colors.line, 1, 1),
-      shapeElement(`${slide.id}-summary-${index}-num-bg`, "ellipse", x + 16, y + 18, 38, 38, 3, theme.colors.text, theme.colors.text, 0, 1),
-      textElement(`${slide.id}-summary-${index}-num`, String(index + 1), x + 16, y + 25, 38, 22, 4, {
+      textElement(`${slide.id}-summary-support-label`, "Ключевые мысли", 790, 190, 398, 34, 4, {
         role: "caption",
-        fontSize: 14,
-        fontFamily: theme.fonts.body,
-        color: theme.colors.background,
+        fontSize: READABLE_PLAQUE_FONT_SIZE,
+        fontFamily: theme.fonts.heading,
+        color: theme.colors.text,
         bold: true,
-        align: "center",
       }),
-      textElement(`${slide.id}-summary-${index}`, item, x + 66, y + 18, cardW - 86, 78, 4, {
+    );
+  }
+
+  supportingItems.forEach((item, index) => {
+    const y = 250 + index * 82;
+    elements.push(
+      shapeElement(`${slide.id}-summary-support-${index}-dot`, "ellipse", 792, y + 8, 12, 12, 3, theme.colors.accentAlt, theme.colors.accentAlt, 0, 1),
+      textElement(`${slide.id}-summary-support-${index}`, item, 826, y, 362, 72, 4, {
         role: "body",
-        fontSize: 18,
+        fontSize: READABLE_PLAQUE_FONT_SIZE,
         fontFamily: theme.fonts.body,
         color: theme.colors.muted,
       }),
     );
   });
+
+  if (finalThought) {
+    elements.push(
+      shapeElement(`${slide.id}-summary-final-bg`, "roundRect", 70, 536, 1140, 112, 2, theme.colors.surfaceAlt, theme.colors.line, 1, 0.92),
+      textElement(`${slide.id}-summary-final-label`, "Что стоит запомнить", 94, 558, 270, 68, 4, {
+        role: "caption",
+        fontSize: READABLE_PLAQUE_FONT_SIZE,
+        fontFamily: theme.fonts.heading,
+        color: theme.colors.text,
+        bold: true,
+        valign: "middle",
+      }),
+      textElement(`${slide.id}-summary-final`, finalThought, 390, 554, 790, 76, 4, {
+        role: "body",
+        fontSize: READABLE_PLAQUE_FONT_SIZE,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.muted,
+        valign: "middle",
+      }),
+    );
+  }
 }
 
 function addPanelGridCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], labels: string[]) {
@@ -1549,6 +1736,7 @@ function addSourceRefsCanvas(slide: Slide, theme: PresentationTheme, elements: C
 }
 
 function addFallbackImageCanvas(slide: Slide, elements: CanvasElement[]) {
+  if (slide.slideKind === "summary") return;
   const image = slide.visual?.image;
   if (!image) return;
   if (elements.some((element) => element.type === "image")) return;
@@ -1580,11 +1768,11 @@ function addMiniPointRow(slide: Slide, theme: PresentationTheme, elements: Canva
 
   labels.forEach((label, index) => {
     const chipWidth = widths[index];
-    const textWidth = chipWidth - 20;
+    const textWidth = chipWidth - PLAQUE_PADDING_X * 2;
     const chipHeight = plaqueHeight(label, READABLE_PLAQUE_FONT_SIZE, textWidth);
     elements.push(
       shapeElement(`${slide.id}-mini-${index}-shape`, "roundRect", chipX, y, chipWidth, chipHeight, 3, theme.colors.surface, theme.colors.accent, 1, 1),
-      textElement(`${slide.id}-mini-${index}`, label, chipX + 10, y + 7, textWidth, chipHeight - 14, 4, {
+      textElement(`${slide.id}-mini-${index}`, label, chipX + PLAQUE_PADDING_X, y + PLAQUE_PADDING_Y, textWidth, chipHeight - PLAQUE_PADDING_Y * 2, 4, {
         role: "caption",
         fontSize: READABLE_PLAQUE_FONT_SIZE,
         fontFamily: theme.fonts.body,
@@ -1594,6 +1782,40 @@ function addMiniPointRow(slide: Slide, theme: PresentationTheme, elements: Canva
       }),
     );
     chipX += chipWidth + gap;
+  });
+}
+
+function addTitleMiniPointGrid(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  const labels = (slide.bullets || []).slice(0, 3).map((item, index) => miniChipText(item, slide, index));
+  if (!labels.length) return;
+
+  const gap = 18;
+  const columnWidth = 280;
+  const rowWidth = labels.length === 1 ? 538 : columnWidth * 2 + gap;
+  const startX = (1280 - rowWidth) / 2;
+  const topY = 430;
+  const topHeights = labels.slice(0, 2).map((label) => plaqueHeight(label, READABLE_PLAQUE_FONT_SIZE, columnWidth - PLAQUE_PADDING_X * 2));
+  const topHeight = Math.max(...topHeights);
+
+  labels.forEach((label, index) => {
+    const isSingleBottom = labels.length === 3 && index === 2;
+    const chipWidth = isSingleBottom || labels.length === 1 ? rowWidth : columnWidth;
+    const chipX = isSingleBottom || labels.length === 1 ? startX : startX + index * (columnWidth + gap);
+    const chipY = isSingleBottom ? topY + topHeight + gap : topY;
+    const textWidth = chipWidth - PLAQUE_PADDING_X * 2;
+    const chipHeight = plaqueHeight(label, READABLE_PLAQUE_FONT_SIZE, textWidth);
+    elements.push(
+      shapeElement(`${slide.id}-mini-${index}-shape`, "roundRect", chipX, chipY, chipWidth, chipHeight, 3, theme.colors.surface, theme.colors.accent, 1, 1),
+      textElement(`${slide.id}-mini-${index}`, label, chipX + PLAQUE_PADDING_X, chipY + PLAQUE_PADDING_Y, textWidth, chipHeight - PLAQUE_PADDING_Y * 2, 4, {
+        role: "caption",
+        fontSize: READABLE_PLAQUE_FONT_SIZE,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.text,
+        bold: true,
+        align: "center",
+        valign: "middle",
+      }),
+    );
   });
 }
 
@@ -1727,7 +1949,7 @@ function resizeTextPlaques(elements: CanvasElement[]) {
     const width = plaqueWidth(element.text, element.fontSize);
     plaqueSizes.set(`${element.id}-shape`, {
       width,
-      height: plaqueHeight(element.text, element.fontSize, width - 20),
+      height: plaqueHeight(element.text, element.fontSize, width - PLAQUE_PADDING_X * 2),
     });
   });
 
@@ -1744,8 +1966,8 @@ function resizeTextPlaques(elements: CanvasElement[]) {
       const size = plaqueSizes.get(`${element.id}-shape`);
       return size ? {
         ...element,
-        w: Math.max(element.w, size.width - 20),
-        h: Math.max(element.h, size.height - 14),
+        w: Math.max(element.w, size.width - PLAQUE_PADDING_X * 2),
+        h: Math.max(element.h, size.height - PLAQUE_PADDING_Y * 2),
       } : element;
     }
     return element;
@@ -1792,7 +2014,7 @@ function reflowTextPlaques(elements: CanvasElement[]) {
         element.type === "text" && `${element.id}-shape` === shape.id,
       );
       const width = fittedWidth || shape.w;
-      return text ? plaqueHeight(text.text, text.fontSize, width - 20) : shape.h;
+      return text ? plaqueHeight(text.text, text.fontSize, width - PLAQUE_PADDING_X * 2) : shape.h;
     }));
 
     let nextX = startX;
@@ -1801,10 +2023,10 @@ function reflowTextPlaques(elements: CanvasElement[]) {
       const textId = shape.id.replace(/-shape$/, "");
       updates.set(shape.id, { x: nextX, y: rowTop, w: width, h: rowHeight });
       updates.set(textId, {
-        x: nextX + 10,
-        y: rowTop + 7,
-        w: width - 20,
-        h: rowHeight - 14,
+        x: nextX + PLAQUE_PADDING_X,
+        y: rowTop + PLAQUE_PADDING_Y,
+        w: width - PLAQUE_PADDING_X * 2,
+        h: rowHeight - PLAQUE_PADDING_Y * 2,
         align: "center",
         valign: "middle",
       });
@@ -1845,8 +2067,12 @@ function plaqueHeight(value: string, fontSize: number, width: number) {
 }
 
 function plaqueWidth(value: string, fontSize: number) {
-  const estimatedSingleLineWidth = cleanCanvasText(value).length * fontSize * 0.58 + 28;
-  return Math.max(204, Math.min(260, Math.ceil(estimatedSingleLineWidth)));
+  const estimatedSingleLineWidth = cleanCanvasText(value).length * fontSize * 0.58 + PLAQUE_PADDING_X * 2;
+  return Math.max(220, Math.min(330, Math.ceil(estimatedSingleLineWidth)));
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function imageElement(
@@ -1933,15 +2159,46 @@ function isDuplicateCanvasText(left: string, right: string) {
 
 function miniChipText(value: string, slide: Slide, index: number) {
   const bullets = slide.bullets || [];
+  const primary = compactChipSentence(value, 12);
+  if (primary) return primary;
   const candidates = [
-    value,
-    [value, slide.thesis].filter(Boolean).join(" "),
-    [value, bullets[index + 1]].filter(Boolean).join(" "),
-    [value, slide.title].filter(Boolean).join(" "),
+    bullets[index + 1],
+    slide.thesis,
+    slide.title,
     slideBodyText(slide),
   ];
+  const complete = candidates.map((candidate) => compactChipSentence(candidate, 12)).find(Boolean);
+  if (complete) return complete;
   const source = candidates.find((candidate) => phraseWords(candidate).length >= 5) || candidates.find(Boolean) || "";
-  return phraseWords(source).slice(0, 6).join(" ");
+  const words = phraseWords(source);
+  const fallback = words.join(" ");
+  return fallback && words.length <= 12 && !looksLikeChipFragment(fallback) ? `${fallback}.` : compactChipSentence(slide.title, 12);
+}
+
+function compactChipSentence(value: string, maxWords: number) {
+  const text = cleanCanvasText(value);
+  if (!text) return "";
+  const sentences = text
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const source = sentences.find((sentence) => !looksLikeChipFragment(sentence)) || (!/[.!?]/.test(text) && !looksLikeChipFragment(text) ? text : "");
+  if (!source) return "";
+  const words = phraseWords(source);
+  if (!words.length) return "";
+  if (words.length > maxWords) return "";
+  const sentence = words.join(" ");
+  return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
+}
+
+function looksLikeChipFragment(value: string) {
+  const text = cleanCanvasText(value).replace(/[.!?]+$/g, "").toLowerCase();
+  const words = text.split(/\s+/).filter(Boolean);
+  const last = words.at(-1) || "";
+  if (words.length < 2) return true;
+  if (/[,;:\-–—]$/.test(text)) return true;
+  const hasPredicateSetup = /(?:^|[^\p{L}])(\u044d\u0442\u043e|\u044d\u0442\u0430|\u044d\u0442\u043e\u0442|\u044d\u0442\u0438|\u044f\u0432\u043b\u044f\u0435\u0442\u0441\u044f|\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u0441\u044f|\u043e\u0441\u0442\u0430\u0435\u0442\u0441\u044f|\u043e\u0441\u0442\u0430\u0451\u0442\u0441\u044f|\u0431\u044b\u043b\u0430|\u0431\u044b\u043b|\u0431\u044b\u043b\u043e|\u0431\u0443\u0434\u0435\u0442|\u0441\u0442\u0430\u043b\u0430|\u0441\u0442\u0430\u043b|\u0441\u0442\u0430\u043b\u043e)(?=$|[^\p{L}])/iu.test(text);
+  return hasPredicateSetup && /(\u0430\u044f|\u044f\u044f|\u044b\u0439|\u0438\u0439|\u043e\u0439|\u043e\u0435|\u0435\u0435|\u044b\u0435|\u0438\u0435|\u0443\u044e|\u044e\u044e|\u043e\u0433\u043e|\u0435\u0433\u043e|\u043e\u043c\u0443|\u0435\u043c\u0443|\u044b\u043c|\u0438\u043c|\u044b\u0445|\u0438\u0445)$/.test(last);
 }
 
 function phraseWords(value: string) {

@@ -172,18 +172,33 @@ function SlideImageLayout({ slide, className, children }: { slide: Slide; classN
 
 function SummarySlide({ slide }: { slide: Slide }) {
   const items = compactItems(slide);
+  const mainConclusion = slide.thesis || items[0] || slideBlockText(slide);
+  const supportingItems = items.filter((item) => item !== mainConclusion).slice(0, 3);
+  const finalThought = items.filter((item) => item !== mainConclusion).slice(3, 4)[0];
+
   return (
-    <SlideImageLayout slide={slide} className="slide-content slide-layout-summary">
+    <div className="slide-content slide-layout-summary">
       <h2 className="slide-title">{slide.title}</h2>
-      <div className="summary-grid">
-        {items.map((item, index) => (
-          <div className="summary-takeaway" key={`${item}-${index}`}>
-            <span>{index + 1}</span>
-            <p>{item}</p>
-          </div>
-        ))}
+      <div className="summary-story">
+        <p className="summary-conclusion">{mainConclusion}</p>
+        {supportingItems.length ? (
+          <section className="summary-support" aria-label="Ключевые мысли">
+            <strong>Ключевые мысли</strong>
+            <div>
+              {supportingItems.map((item) => (
+                <p key={item}>{item}</p>
+              ))}
+            </div>
+          </section>
+        ) : null}
       </div>
-    </SlideImageLayout>
+      {finalThought ? (
+        <p className="summary-final">
+          <strong>Что стоит запомнить</strong>
+          <span>{finalThought}</span>
+        </p>
+      ) : null}
+    </div>
   );
 }
 

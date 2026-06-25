@@ -752,7 +752,7 @@ function ReadonlyCanvasElement({ element }: { element: CanvasElement }) {
     return <div className="canvas-element" style={elementStyle(element)}><div className={`canvas-shape canvas-shape-${element.shape}`} style={shapeStyle(element)} /></div>;
   }
   if (element.type === "image") {
-    return <div className="canvas-element" style={elementStyle(element)}>{element.url ? <img src={element.url} alt={element.alt} style={{ objectFit: element.fit }} /> : null}</div>;
+    return <div className="canvas-element" style={{ ...elementStyle(element), borderRadius: 18, overflow: "hidden" }}>{element.url ? <img src={element.url} alt={element.alt} style={{ objectFit: element.fit }} /> : null}</div>;
   }
   return <div className="canvas-element canvas-text-element" style={elementStyle(element)}><div style={textStyle(element)}>{element.text}</div></div>;
 }
@@ -1013,7 +1013,7 @@ function CanvasElementView({
 
   if (element.type === "image") {
     return (
-      <div className={`canvas-element ${selected ? "canvas-element-selected" : ""}`} style={style} onPointerDown={onPointerDown}>
+      <div className={`canvas-element ${selected ? "canvas-element-selected" : ""}`} style={{ ...style, borderRadius: 18, overflow: "hidden" }} onPointerDown={onPointerDown}>
         {element.url ? <img src={element.url} alt={element.alt} draggable={false} style={{ objectFit: element.fit }} /> : null}
         {selected && !element.locked ? <button className="resize-handle" type="button" onPointerDown={onResizePointerDown} /> : null}
       </div>

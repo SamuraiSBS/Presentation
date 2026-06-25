@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildGenerationPrompt,
+  findSlideTextIssues,
   generateNarrationDraft,
   generatePresentation,
   generatePresentationFromNarration,
@@ -83,7 +84,7 @@ function narrativePlanForTitles(titles: string[]) {
   }));
 }
 
-function mockYandexTwoStep(narrationText: string, json: unknown, bodies?: unknown[]) {
+function mockYandexTwoStep(narrationText: string, json: unknown, bodies?: unknown[], repairJson?: unknown) {
   let callCount = 0;
   const titles = narrationText
     .split("\n")
@@ -94,7 +95,8 @@ function mockYandexTwoStep(narrationText: string, json: unknown, bodies?: unknow
     bodies?.push(JSON.parse(String(init?.body || "{}")));
     callCount += 1;
     if (callCount === 1) return yandexTextResponse(JSON.stringify(narrativePlan));
-    return yandexTextResponse(callCount === 2 ? narrationText : JSON.stringify(json));
+    if (callCount === 2) return yandexTextResponse(narrationText);
+    return yandexTextResponse(JSON.stringify(callCount === 3 || repairJson === undefined ? json : repairJson));
   };
 }
 
@@ -169,12 +171,12 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("slideKind summary");
     expect(prompt).toContain("layout must be one of");
     expect(prompt).toContain("question-answer");
-    expect(prompt).toContain("myth-fact");
+    expect(prompt).not.toContain("myth-fact");
     expect(prompt).not.toContain("two-column");
     expect(prompt).toContain("3-5 dated or named periods");
-    expect(prompt).toContain("criterion in visual.rows[].label");
+    expect(prompt).not.toContain("criterion in visual.rows[].label");
     expect(prompt).toContain("bullets contain 2-3 supporting parts");
-    expect(prompt).toContain("problem-solution");
+    expect(prompt).not.toContain("problem-solution");
     expect(prompt).not.toContain("layout must be one of: hero, bullets, summary, statement, quote, definition");
     expect(prompt).not.toContain("use evidence for");
     expect(prompt).not.toContain("use explain-example for");
@@ -188,6 +190,7 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("generatedText");
     expect(prompt).toContain("Do not generate a separate second story");
     expect(prompt).toContain("Do not write long text blocks");
+    expect(prompt).toContain("must be a complete thought");
     expect(prompt).toContain("every slide, including title, section, and summary slides, must include visual.description");
     expect(prompt).toContain("set visual.type to image or illustration");
     expect(prompt).toContain("never fill visual.title, visual.items, or visual.rows with generic placeholder text");
@@ -203,6 +206,33 @@ describe("buildGenerationPrompt", () => {
   });
 });
 
+describe("slide-facing text quality", () => {
+  it("flags visible bullets that end as unfinished predicate phrases", () => {
+    const issues = findSlideTextIssues({
+      slides: [
+        {
+          order: 2,
+          title: "Что стоит понять сначала",
+          thesis: "РКСИ имеет богатую историю и традиции.",
+          bullets: ["Первое что стоит отметить это богатая"],
+          blocks: [],
+          definition: null,
+          visual: { title: "", items: [], rows: [], leftLabel: "", rightLabel: "" },
+          speakerNotes: "РКСИ имеет богатую историю и традиции. Колледж прошел долгий путь развития. Его девиз помогает понять отношение к образованию. Эта мысль важна для вступления. Так слушатель видит основу темы.",
+        },
+      ],
+    } as any);
+
+    expect(issues).toEqual([
+      {
+        slideOrder: 2,
+        fields: ["bullets.0"],
+        reasons: ["sentence fragment"],
+      },
+    ]);
+  });
+});
+
 describe("layout normalization", () => {
   const base = {
     title: "Почему меняется результат",
@@ -215,7 +245,7 @@ describe("layout normalization", () => {
   } as any;
 
   it("selects supported layouts without returning removed templates", () => {
-    expect(inferContentLayout(base, 2)).toBe("problem-solution");
+    expect(inferContentLayout(base, 2)).not.toBe("problem-solution");
     expect(inferContentLayout({ ...base, thesis: "Тезис подтверждают несколько фактов.", bullets: ["Факт один", "Факт два"], sourceRefs: [{ sourceId: "s", label: "Источник", excerpt: "Факт", page: null }] }, 3)).not.toBe("evidence");
     expect(inferContentLayout({ ...base, title: "Что такое фотосинтез", thesis: "Это процесс преобразования света.", bullets: ["Например, растение использует солнечный свет"], definition: { term: "Фотосинтез", text: "Преобразование энергии света." } }, 4)).not.toBe("explain-example");
   });
@@ -224,7 +254,7 @@ describe("layout normalization", () => {
     expect(normalizeLayout("metrics", 2, 5, "content", { ...base, thesis: "Качественное изменение без чисел." })).not.toBe("metrics");
   });
 
-  it("maps the legacy two-column layout to comparison only when comparison data is complete", () => {
+  it("does not normalize removed comparison templates for new generation", () => {
     const comparison = {
       ...base,
       visual: {
@@ -239,7 +269,7 @@ describe("layout normalization", () => {
       },
     };
 
-    expect(normalizeLayout("two-column", 2, 5, "content", comparison)).toBe("comparison");
+    expect(normalizeLayout("two-column", 2, 5, "content", comparison)).not.toBe("comparison");
     expect(normalizeLayout("comparison", 2, 5, "content", base)).not.toBe("comparison");
   });
 
@@ -817,16 +847,19 @@ describe("generatePresentation fallback behavior", () => {
         {
           title: "Пустая схема",
           thesis: "Схема без узлов не объясняет тему.",
+          bullets: ["Узлы обозначают ключевые понятия", "Связи показывают отношения между ними"],
           visual: { type: "schema", title: "Schema" },
         },
         {
           title: "Неполное сравнение",
           thesis: "Сравнение работает только тогда, когда у него есть две стороны.",
+          bullets: ["Критерии должны быть одинаковыми", "Обе стороны требуют содержательных значений"],
           visual: { type: "comparison_diagram", rows: [{ label: "Only one side", left: "First value", right: "" }] },
         },
         {
           title: "Полезный процесс",
           thesis: "Процесс помогает, когда у него есть понятные шаги.",
+          bullets: ["Шаги располагаются в правильном порядке", "Каждое действие получает краткое объяснение"],
           visual: {
             type: "process_diagram",
             items: [
@@ -839,6 +872,28 @@ describe("generatePresentation fallback behavior", () => {
           title: "Что считать качеством",
           thesis: "Визуальный блок должен быть связан с мыслью слайда.",
           bullets: ["Блок не должен быть пустым", "Сравнение требует двух сторон", "Процесс требует шагов"],
+        },
+      ],
+    }, undefined, {
+      slides: [
+        {
+          slideOrder: 5,
+          thesis: "Визуальный блок должен быть связан с основной мыслью материала.",
+          bullets: ["Блок не должен быть пустым", "Сравнение требует двух сторон", "Процесс требует шагов"],
+          blocks: [
+            {
+              type: "bullets",
+              items: ["Блок не должен быть пустым", "Сравнение требует двух сторон", "Процесс требует шагов"],
+            },
+          ],
+          definition: null,
+          visual: {
+            title: "",
+            items: [],
+            rows: [],
+            leftLabel: "",
+            rightLabel: "",
+          },
         },
       ],
     });
@@ -901,7 +956,7 @@ describe("generatePresentation fallback behavior", () => {
     expectNoForbiddenSlideText(visiblePresentationText(presentation));
   });
 
-  it("rejects generic filler and unsupported visual references in production output", async () => {
+  it("repairs generic filler and fragments before saving production output", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -910,6 +965,7 @@ describe("generatePresentation fallback behavior", () => {
     process.env.ALLOW_DEMO_GENERATION = "false";
 
     const presentationText = narrationForSlides(["Экология города", "Воздух и транспорт", "Вывод"]);
+    const bodies: any[] = [];
     const originalFetch = global.fetch;
     mockYandexTwoStep(presentationText, {
       title: "Экология города",
@@ -917,20 +973,21 @@ describe("generatePresentation fallback behavior", () => {
       slides: [
         {
           title: "Экология города",
-          thesis: "Городская среда зависит от транспорта, воздуха и поведения жителей.",
+          thesis: "Экология города зависит от транспорта, воздуха и поведения жителей.",
         },
         {
           title: "Воздух и транспорт",
-          thesis: "Главная идея связана с темой: экология города.",
+          thesis: "Космические аппараты исследуют далёкие планеты за пределами Солнечной системы.",
           bullets: [
-            "Материал стоит разбирать по смысловым частям",
-            "Ключевые понятия помогают удержать структуру",
-            "Как показано на картинке, воздух становится чище",
+            "Из презентации можно вынести следующее",
+            "Орбитальные станции работают за пределами атмосферы.",
+            "Телескопы помогают изучать далёкие галактики.",
+            "Ракеты доставляют аппараты на заданную орбиту.",
           ],
           blocks: [
             {
               type: "callout",
-              content: "На слайде показано, что несуществующая тема раскрывается через картинку.",
+              content: "Космические аппараты передают данные о других планетах.",
             },
           ],
           visual: {
@@ -940,26 +997,148 @@ describe("generatePresentation fallback behavior", () => {
         },
         {
           title: "Вывод",
-          thesis: "Городская экология требует понятных решений и ответственного поведения.",
+          thesis: "Морские течения определяют температуру глубоких океанов в разных климатических поясах.",
+        },
+      ],
+    }, bodies, {
+      slides: [
+        {
+          slideOrder: 2,
+          thesis: "Транспорт загрязняет городской воздух выхлопными газами.",
+          bullets: [
+            "Общественный транспорт снижает число машин на дорогах.",
+            "Зелёные зоны помогают удерживать пыль.",
+          ],
+          blocks: [
+            {
+              type: "callout",
+              content: "Качество воздуха зависит от транспорта и городского озеленения.",
+            },
+          ],
+          definition: null,
+          visual: {
+            title: "",
+            items: [],
+            rows: [],
+            leftLabel: "",
+            rightLabel: "",
+          },
+        },
+        {
+          slideOrder: 3,
+          thesis: "Чистый город требует совместных решений жителей и властей.",
+          bullets: [
+            "Экологичный транспорт уменьшает загрязнение воздуха.",
+            "Ответственное поведение жителей поддерживает чистоту города.",
+            "Озеленение делает городскую среду комфортнее.",
+          ],
+          blocks: [
+            {
+              type: "bullets",
+              items: [
+                "Экологичный транспорт уменьшает загрязнение воздуха.",
+                "Ответственное поведение жителей поддерживает чистоту города.",
+                "Озеленение делает городскую среду комфортнее.",
+              ],
+            },
+          ],
+          definition: null,
+          visual: {
+            title: "",
+            items: [],
+            rows: [],
+            leftLabel: "",
+            rightLabel: "",
+          },
         },
       ],
     });
 
     try {
-      await expect(
-        generatePresentation(
-          {
-            id: "project-1",
-            title: "Экология города",
-            prompt: "Сделай презентацию про экологию города",
-            scenario: "lesson",
-            level: "beginner",
-            mode: "with_sources",
-            slideCount: 3,
-          },
-          [],
-        ),
-      ).rejects.toThrow("template phrase detected");
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "Экология города",
+          prompt: "Сделай презентацию про экологию города",
+          scenario: "lesson",
+          level: "beginner",
+          mode: "with_sources",
+          slideCount: 3,
+        },
+        [],
+      );
+
+      expect(bodies).toHaveLength(4);
+      expect(bodies[3].messages[1].text).toContain('"slideOrder":2');
+      expect(bodies[3].messages[1].text).toContain('"slideOrder":3');
+      expectNoForbiddenSlideText(visiblePresentationText(presentation));
+      expect(visiblePresentationText(presentation)).not.toContain("Из презентации можно вынести следующее");
+      expect(presentation.slides[2].thesis).not.toContain("Морские течения");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("uses complete narration text when the editorial repair request fails", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const presentationText = narrationForSlides(["Городской транспорт", "Практический вывод"]);
+    const narrativePlan = narrativePlanForTitles(["Городской транспорт", "Практический вывод"]);
+    let callCount = 0;
+    const originalFetch = global.fetch;
+    global.fetch = async () => {
+      callCount += 1;
+      if (callCount === 1) return yandexTextResponse(JSON.stringify(narrativePlan));
+      if (callCount === 2) return yandexTextResponse(presentationText);
+      if (callCount === 3) {
+        return yandexTextResponse(
+          JSON.stringify({
+            title: "Городской транспорт",
+            generatedText: presentationText,
+            slides: [
+              {
+                title: "Городской транспорт",
+                thesis: "Городской транспорт влияет на повседневную жизнь жителей.",
+              },
+              {
+                title: "Практический вывод",
+                thesis: "Космические телескопы исследуют далёкие галактики за пределами Солнечной системы.",
+                bullets: [
+                  "Ответственный выбор транспорта уменьшает нагрузку на город",
+                  "Общественные маршруты помогают сократить число машин",
+                  "Пешеходная инфраструктура делает улицы удобнее",
+                ],
+              },
+            ],
+            speechScript: [],
+          }),
+        );
+      }
+      return new Response("editor unavailable", { status: 503 });
+    };
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-editor-fallback",
+          title: "Городской транспорт",
+          prompt: "Объясни влияние городского транспорта",
+          scenario: "lesson",
+          level: "beginner",
+          mode: "with_sources",
+          slideCount: 2,
+        },
+        [],
+      );
+
+      expect(callCount).toBe(4);
+      expect(presentation.slides[1].thesis).not.toContain("Космические телескопы");
+      expect(presentation.slides[1].thesis).toMatch(/[.!?]$/);
     } finally {
       global.fetch = originalFetch;
     }

@@ -38,6 +38,25 @@ type NarrationSection = {
   text: string;
 };
 
+type SlideTextIssue = {
+  slideOrder: number;
+  fields: string[];
+  reasons: string[];
+};
+
+type SlideTextRepair = {
+  slideOrder: number;
+  thesis?: unknown;
+  bullets?: unknown;
+  blocks?: unknown;
+  definition?: unknown;
+  visual?: unknown;
+};
+
+type SlideTextRepairResponse = {
+  slides?: SlideTextRepair[];
+};
+
 const NARRATION_SYSTEM_PROMPT = [
   "You write the full Russian oral narration for a study presentation.",
   "Return only plain text, not JSON and not markdown.",
@@ -135,6 +154,10 @@ const GENERIC_NARRATION_PHRASES = [
 ];
 
 const GENERIC_SCREEN_TEXT_PHRASES = [
+  "из презентации можно вынести следующее",
+  "из презентации можно сделать вывод",
+  "в презентации можно выделить",
+  "презентация показывает следующее",
   "финальный вывод раскрывается через контекст, причины и последствия",
   "главные факты лучше воспринимаются, когда между ними видна связь",
   "точная формулировка помогает перейти от факта к смыслу",
@@ -255,19 +278,23 @@ const STOP_WORDS = new Set([
   "with",
 ]);
 
-const REMOVED_SLIDE_LAYOUTS = new Set<SlideLayout>(["definition", "evidence", "explain-example"]);
+const REMOVED_SLIDE_LAYOUTS = new Set<SlideLayout>([
+  "comparison",
+  "definition",
+  "evidence",
+  "explain-example",
+  "myth-fact",
+  "problem-solution",
+]);
 const SLIDE_LAYOUTS = SLIDE_LAYOUT_DEFINITIONS.map((item) => item.id).filter((layout) => !REMOVED_SLIDE_LAYOUTS.has(layout));
 
 const CONTENT_LAYOUT_CYCLE = [
   "statement",
   "process",
-  "comparison",
   "question-answer",
   "case-study",
   "timeline",
-  "myth-fact",
   "metrics",
-  "problem-solution",
   "quote",
   "image-focus",
   "bullets",
@@ -446,7 +473,9 @@ async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
 
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   const parsed = typedResponse.output_parsed || parseJsonText(response.output_text || "");
-  return normalizePresentation(parsed, project, sources, "openai", narrationText, narrativePlan);
+  return finalizeGeneratedPresentation(parsed, project, sources, "openai", narrationText, narrativePlan, (presentation, issues) =>
+    repairSlideTextWithOpenAI(client, presentation, issues),
+  );
 }
 
 async function generateOpenAIPresentationFromNarration(project: ProjectInput, sources: Source[], narrationText: string) {
@@ -476,7 +505,9 @@ async function generateOpenAIPresentationFromNarration(project: ProjectInput, so
 
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   const parsed = typedResponse.output_parsed || parseJsonText(response.output_text || "");
-  return normalizePresentation(parsed, project, sources, "openai", narrationText, narrativePlan);
+  return finalizeGeneratedPresentation(parsed, project, sources, "openai", narrationText, narrativePlan, (presentation, issues) =>
+    repairSlideTextWithOpenAI(client, presentation, issues),
+  );
 }
 
 async function generateOpenAINarrativePlan(client: OpenAI, project: ProjectInput, sources: Source[]) {
@@ -543,7 +574,15 @@ async function generateWithYandex(project: ProjectInput, sources: Source[]) {
   const narrationText = await generateYandexNarration(apiKey, project, sources, narrativePlan);
   const outputText = await requestYandexText(apiKey, SYSTEM_PROMPT, buildGenerationPrompt(project, sources, narrationText, narrativePlan), true);
 
-  return normalizePresentation(parseJsonText(outputText), project, sources, "yandex", narrationText, narrativePlan);
+  return finalizeGeneratedPresentation(
+    parseJsonText(outputText),
+    project,
+    sources,
+    "yandex",
+    narrationText,
+    narrativePlan,
+    (presentation, issues) => repairSlideTextWithYandex(apiKey, presentation, issues),
+  );
 }
 
 async function generateYandexPresentationFromNarration(project: ProjectInput, sources: Source[], narrationText: string) {
@@ -556,7 +595,15 @@ async function generateYandexPresentationFromNarration(project: ProjectInput, so
   const narrativePlan = await generateYandexNarrativePlan(apiKey, project, sources);
   const outputText = await requestYandexText(apiKey, SYSTEM_PROMPT, buildGenerationPrompt(project, sources, narrationText, narrativePlan), true);
 
-  return normalizePresentation(parseJsonText(outputText), project, sources, "yandex", narrationText, narrativePlan);
+  return finalizeGeneratedPresentation(
+    parseJsonText(outputText),
+    project,
+    sources,
+    "yandex",
+    narrationText,
+    narrativePlan,
+    (presentation, issues) => repairSlideTextWithYandex(apiKey, presentation, issues),
+  );
 }
 
 async function generateYandexNarrativePlan(apiKey: string, project: ProjectInput, sources: Source[]) {
@@ -1097,19 +1144,16 @@ export function buildGenerationPrompt(
     "Required JSON fields: id, title, scenario, level, slideCount, generatedText, sources, outline, narrativePlan, speechScript, slides.",
     "Each slide must include: id, order, title, slideKind, layout, thesis, bullets, definition, keyConcepts, visual, highlights, blocks, speakerNotes, timingSeconds, sourceRefs.",
     "Layout rules:",
-    "- layout must be one of: hero, bullets, summary, statement, quote, timeline, comparison, process, image-focus, case-study, question-answer, myth-fact, metrics, problem-solution;",
+    "- layout must be one of: hero, bullets, summary, statement, quote, timeline, process, image-focus, case-study, question-answer, metrics;",
     "- do not use the same content layout more than twice in a row;",
     "- choose the layout from the slide's idea, not from a fixed template;",
     "- use statement for one strong claim with one short callout and no list;",
     "- use quote when a concise quote or author-like formulation is central;",
     "- use timeline only for chronology with 3-5 dated or named periods; each visual.items entry must have a period in label and the event plus its significance in text;",
     "- use process only for 3-5 ordered actions; each visual.items entry must have a short action in label and an explanation or result in text;",
-    "- use comparison only when two named subjects can be compared across 2-4 concrete criteria; put the criterion in visual.rows[].label and meaningful values in left and right;",
     "- use question-answer only for a real question; thesis is the direct answer and bullets contain 2-3 supporting parts such as explanation, reason, example, or consequence;",
-    "- use myth-fact only for a genuine misconception correction; visual.items[0] is the myth, visual.items[1] is the corrected fact, and bullets add why the myth seems plausible plus evidence or an example;",
     "- use image-focus for a concrete image and case-study for situation/action/result;",
     "- use metrics only for 2-4 explicit numbers, percentages, dates, durations, or measured quantities already supported by the material; never turn list order into a metric;",
-    "- use problem-solution for problem/cause/solution or problem/consequence/solution;",
     "- use bullets only when the slide is genuinely a list of takeaways.",
     "Content slide rules:",
     "- title: short, ideally 6-8 words or fewer;",
@@ -1122,6 +1166,7 @@ export function buildGenerationPrompt(
     "- highlights: return an empty array; do not create small highlighted word badges on slides;",
     "- blocks: keep a backward-compatible fallback using callout, quote, or bullets; mirror the chosen layout instead of always returning bullets.",
     "Slide-facing text style:",
+    "- every visible title, thesis, bullet, block, definition, and visual item must be a complete thought; never end visible text with an unfinished phrase such as 'the first thing to note is rich';",
     "- use the same clear study-report style as the narration, but much shorter;",
     "- do not write 'Главная идея связана с темой', 'Материал стоит разбирать по смысловым частям', or similar filler;",
     "- do not repeat the user's request as content. Answer the request instead.",
@@ -1226,6 +1271,7 @@ function normalizePresentation(
   generationMode: AiGenerationMode | FallbackGenerationMode,
   generatedText = "",
   narrativePlan: SlideNarrative[] = [],
+  validate = true,
 ): PresentationDocument {
   const input = raw && typeof raw === "object" ? (raw as Partial<PresentationDocument>) : {};
   assertRawGenerationQuality(input, project, generationMode);
@@ -1286,8 +1332,376 @@ function normalizePresentation(
     slides,
   });
 
+  if (validate) {
+    assertPresentationQuality(presentation, project, generationMode);
+  }
+  return presentation;
+}
+
+async function finalizeGeneratedPresentation(
+  raw: unknown,
+  project: ProjectInput,
+  sources: Source[],
+  generationMode: AiGenerationMode,
+  generatedText: string,
+  narrativePlan: SlideNarrative[],
+  repair: (presentation: PresentationDocument, issues: SlideTextIssue[]) => Promise<unknown>,
+) {
+  let presentation = normalizePresentation(raw, project, sources, generationMode, generatedText, narrativePlan, false);
+  let issues = findSlideTextIssues(presentation);
+
+  if (issues.length) {
+    try {
+      const repaired = await repair(presentation, issues);
+      presentation = applySlideTextRepairs(presentation, repaired, project);
+    } catch (error) {
+      console.warn(`${generationMode} slide text review failed, using narration fallback:`, error);
+    }
+
+    issues = findSlideTextIssues(presentation);
+    if (issues.length) {
+      presentation = applyNarrationFallbacks(presentation, issues, project);
+      issues = findSlideTextIssues(presentation);
+    }
+  }
+
+  if (issues.length) {
+    throw new Error(
+      `AI generation quality check failed: unresolved slide text issues: ${issues
+        .map((issue) => `slide ${issue.slideOrder} ${issue.reasons.join(", ")}`)
+        .join("; ")}`,
+    );
+  }
+
   assertPresentationQuality(presentation, project, generationMode);
   return presentation;
+}
+
+async function repairSlideTextWithOpenAI(client: OpenAI, presentation: PresentationDocument, issues: SlideTextIssue[]) {
+  const response = await client.responses.create({
+    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    input: [
+      {
+        role: "system",
+        content:
+          "Ты редактор текста учебных слайдов. Исправляй только видимый текст слайдов. Не изменяй заметки докладчика, не добавляй факты и возвращай только JSON.",
+      },
+      {
+        role: "user",
+        content: buildSlideTextRepairPrompt(presentation, issues),
+      },
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: "studydeck_slide_text_repair",
+        strict: false,
+        schema: slideTextRepairSchema,
+      },
+    },
+  });
+  const typedResponse = response as typeof response & { output_parsed?: unknown };
+  return typedResponse.output_parsed || parseJsonText(response.output_text || "");
+}
+
+async function repairSlideTextWithYandex(apiKey: string, presentation: PresentationDocument, issues: SlideTextIssue[]) {
+  const outputText = await requestYandexText(
+    apiKey,
+    "Ты редактор текста учебных слайдов. Исправляй только видимый текст слайдов. Не изменяй заметки докладчика, не добавляй факты и возвращай только JSON.",
+    buildSlideTextRepairPrompt(presentation, issues),
+    true,
+  );
+  return parseJsonText(outputText);
+}
+
+function buildSlideTextRepairPrompt(presentation: PresentationDocument, issues: SlideTextIssue[]) {
+  const slides = issues.map((issue) => {
+    const slide = presentation.slides.find((candidate) => candidate.order === issue.slideOrder);
+    return {
+      slideOrder: issue.slideOrder,
+      title: slide?.title,
+      speakerNotes: slide?.speakerNotes,
+      problems: issue.reasons,
+      fields: issue.fields,
+      current: slide
+        ? {
+            thesis: slide.thesis,
+            bullets: slide.bullets,
+            blocks: slide.blocks,
+            definition: slide.definition,
+            visual: {
+              title: slide.visual.title,
+              items: slide.visual.items,
+              rows: slide.visual.rows,
+              leftLabel: slide.visual.leftLabel,
+              rightLabel: slide.visual.rightLabel,
+            },
+          }
+        : null,
+    };
+  });
+
+  return [
+    "Перепиши только перечисленные проблемные слайды одним ответом.",
+    "Текст должен быть понятным без заметок докладчика: законченные формулировки, конкретный смысл, без обрывков и метатекста о презентации.",
+    "Сохрани факты и смысл speakerNotes. Не придумывай имена, даты, числа, причины или выводы, которых там нет.",
+    "Не меняй title, speakerNotes или speechScript.",
+    "Верни объект { slides: [...] }. Для каждого slideOrder верни полный набор thesis, bullets, blocks, definition и visual с исправленным видимым текстом.",
+    JSON.stringify({ slides }),
+  ].join("\n\n");
+}
+
+function applySlideTextRepairs(
+  presentation: PresentationDocument,
+  rawRepairs: unknown,
+  project: ProjectInput,
+): PresentationDocument {
+  const response = rawRepairs && typeof rawRepairs === "object" ? (rawRepairs as SlideTextRepairResponse) : {};
+  const repairs = Array.isArray(response.slides) ? response.slides : [];
+  if (!repairs.length) return presentation;
+
+  const narrationSections = parseNarrationSections(presentation.generatedText);
+  const slides = presentation.slides.map((slide, index) => {
+    const repair = repairs.find((candidate) => Number(candidate?.slideOrder) === slide.order);
+    if (!repair) return slide;
+    return normalizeSlide(
+      {
+        ...slide,
+        thesis: repair.thesis ?? slide.thesis,
+        bullets: repair.bullets ?? slide.bullets,
+        blocks: repair.blocks ?? slide.blocks,
+        definition: repair.definition ?? slide.definition,
+        visual: repair.visual ? { ...slide.visual, ...(repair.visual as Partial<SlideVisual>) } : slide.visual,
+        speakerNotes: slide.speakerNotes,
+      },
+      slide.order,
+      presentation.sources,
+      project,
+      narrationSections[index],
+    );
+  });
+
+  return presentationSchema.parse({ ...presentation, slides });
+}
+
+function applyNarrationFallbacks(
+  presentation: PresentationDocument,
+  issues: SlideTextIssue[],
+  project: ProjectInput,
+): PresentationDocument {
+  const issueMap = new Map(issues.map((issue) => [issue.slideOrder, issue]));
+  const narrationSections = parseNarrationSections(presentation.generatedText);
+  const slides = presentation.slides.map((slide, index) => {
+    const issue = issueMap.get(slide.order);
+    if (!issue) return slide;
+
+    const sentences = completeNarrationSentences(slide.speakerNotes);
+    const existingBullet = slide.bullets.find(
+      (item, itemIndex) =>
+        !issue.fields.includes(`bullets.${itemIndex}`) &&
+        !hasGenericOrMetaScreenText(item) &&
+        !looksLikeSentenceFragment(item),
+    );
+    const fallbackThesis = existingBullet
+      ? shortenCompleteSentence(`${slide.title}: ${sentenceFragment(existingBullet)}`, 18)
+      : sentences[0] || slide.thesis || fallbackSlideText(project, slide.order);
+    const thesis = issue.fields.includes("thesis") ? fallbackThesis : slide.thesis;
+    const bullets = uniqueShortItems(sentences.slice(1, 5)).filter((item) => !isDuplicateDisplayText(item, thesis));
+    const safeBullets = ensureRange(
+      bullets,
+      buildFallbackBulletItems(project, slide.order, slide.speakerNotes),
+      slide.slideKind === "summary" ? 3 : 2,
+      slide.slideKind === "summary" ? 5 : 3,
+    );
+    const repairedBullets = issue.fields.some((field) => field.startsWith("bullets.")) ? safeBullets : slide.bullets;
+    const repairedBlocks = issue.fields.some((field) => field.startsWith("blocks."))
+      ? [{ type: "bullets" as const, items: safeBullets }]
+      : slide.blocks;
+    const repairedDefinition = slide.definition
+      ? {
+          term: issue.fields.includes("definition.term") ? safeLabelFromSentence(fallbackThesis) : slide.definition.term,
+          text: issue.fields.includes("definition.text") ? fallbackThesis : slide.definition.text,
+        }
+      : null;
+
+    const repairedVisual = {
+      ...slide.visual,
+      title: issue.fields.includes("visual.title") ? "" : slide.visual.title,
+      items: slide.visual.items.map((item, itemIndex) => ({
+        label: issue.fields.includes(`visual.items.${itemIndex}.label`) ? safeLabelFromSentence(sentences[itemIndex + 1] || thesis) : item.label,
+        text: issue.fields.includes(`visual.items.${itemIndex}.text`) ? sentences[itemIndex + 1] || thesis : item.text,
+      })),
+      rows: slide.visual.rows.map((row, rowIndex) => ({
+        label: issue.fields.includes(`visual.rows.${rowIndex}.label`) ? safeLabelFromSentence(sentences[rowIndex + 1] || thesis) : row.label,
+        left: issue.fields.includes(`visual.rows.${rowIndex}.left`) ? sentences[rowIndex + 1] || thesis : row.left,
+        right: issue.fields.includes(`visual.rows.${rowIndex}.right`) ? sentences[rowIndex + 2] || sentences[0] || thesis : row.right,
+      })),
+    };
+
+    return normalizeSlide(
+      {
+        ...slide,
+        thesis,
+        bullets: repairedBullets,
+        blocks: repairedBlocks,
+        definition: repairedDefinition,
+        visual: repairedVisual,
+        speakerNotes: slide.speakerNotes,
+      },
+      slide.order,
+      presentation.sources,
+      project,
+      narrationSections[index],
+    );
+  });
+
+  return presentationSchema.parse({ ...presentation, slides });
+}
+
+export function findSlideTextIssues(presentation: PresentationDocument): SlideTextIssue[] {
+  return presentation.slides
+    .map((slide) => inspectSlideText(slide))
+    .filter((issue): issue is SlideTextIssue => Boolean(issue));
+}
+
+function inspectSlideText(slide: Slide): SlideTextIssue | null {
+  const entries = visibleSlideTextEntries(slide);
+  const fields = new Set<string>();
+  const reasons = new Set<string>();
+  const seen = new Map<string, string>();
+
+  for (const entry of entries) {
+    const text = cleanText(entry.text);
+    if (!text) continue;
+
+    if (hasGenericOrMetaScreenText(text)) {
+      fields.add(entry.field);
+      reasons.add("generic or meta text");
+    }
+
+    if (!entry.label && looksLikeSentenceFragment(text)) {
+      fields.add(entry.field);
+      reasons.add("sentence fragment");
+    }
+
+    if (!entry.label && isNarrativeScreenField(entry.field) && isWeaklyRelatedToNarration(text, slide)) {
+      fields.add(entry.field);
+      reasons.add("text is weakly related to speaker notes");
+    }
+
+    const normalizedText = normalizeForQuality(text);
+    const key = `${entry.group}:${normalizedText}`;
+    if (normalizedText && normalizedText === normalizeForQuality(slide.title) && entry.field !== "definition.term") {
+      fields.add(entry.field);
+      reasons.add("text duplicates the slide title");
+    } else if (key && seen.has(key)) {
+      fields.add(entry.field);
+      fields.add(seen.get(key)!);
+      reasons.add("visible text is duplicated");
+    } else if (key) {
+      seen.set(key, entry.field);
+    }
+  }
+
+  return fields.size
+    ? {
+        slideOrder: slide.order,
+        fields: [...fields],
+        reasons: [...reasons],
+      }
+    : null;
+}
+
+function isNarrativeScreenField(field: string) {
+  return field === "thesis" || field.startsWith("bullets.") || field.startsWith("blocks.") || field === "definition.text";
+}
+
+function visibleSlideTextEntries(slide: Slide) {
+  return [
+    { field: "thesis", text: slide.thesis, label: false, group: "thesis" },
+    ...slide.bullets.map((text, index) => ({ field: `bullets.${index}`, text, label: false, group: "bullets" })),
+    ...slide.blocks.flatMap((block, index) =>
+      block.type === "bullets"
+        ? block.items.map((text, itemIndex) => ({ field: `blocks.${index}.items.${itemIndex}`, text, label: false, group: `block-${index}` }))
+        : [{ field: `blocks.${index}.content`, text: block.content, label: false, group: `block-${index}` }],
+    ),
+    ...(slide.definition
+      ? [
+          { field: "definition.term", text: slide.definition.term, label: true, group: "definition" },
+          { field: "definition.text", text: slide.definition.text, label: false, group: "definition" },
+        ]
+      : []),
+    { field: "visual.title", text: slide.visual.title, label: true, group: "visual-title" },
+    ...slide.visual.items.flatMap((item, index) => [
+      { field: `visual.items.${index}.label`, text: item.label, label: true, group: "visual-item-labels" },
+      { field: `visual.items.${index}.text`, text: item.text, label: false, group: "visual-item-texts" },
+    ]),
+    ...slide.visual.rows.flatMap((row, index) => [
+      { field: `visual.rows.${index}.label`, text: row.label, label: true, group: "visual-row-labels" },
+      { field: `visual.rows.${index}.left`, text: row.left, label: false, group: "visual-row-left" },
+      { field: `visual.rows.${index}.right`, text: row.right, label: false, group: "visual-row-right" },
+    ]),
+    { field: "visual.leftLabel", text: slide.visual.leftLabel, label: true, group: "visual-columns" },
+    { field: "visual.rightLabel", text: slide.visual.rightLabel, label: true, group: "visual-columns" },
+  ];
+}
+
+function hasGenericOrMetaScreenText(value: string) {
+  const normalized = normalizeExactForQuality(value);
+  if (GENERIC_SCREEN_TEXT_PHRASES.some((phrase) => normalized.includes(normalizeExactForQuality(phrase)))) {
+    return true;
+  }
+  return /\b(презентаци|слайд|заметк|докладчик|текст на экран|можно вынести следующее)\w*/iu.test(value);
+}
+
+function looksLikeSentenceFragment(value: string) {
+  const text = cleanText(value);
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length < 2) return true;
+  if (/[,;:\-–—]$/.test(text)) return true;
+  if (hasDanglingPredicateModifier(text)) return true;
+  return /^(\u043a\u043e\u0442\u043e\u0440\u044b\u0439|\u043a\u043e\u0442\u043e\u0440\u0430\u044f|\u043a\u043e\u0442\u043e\u0440\u043e\u0435|\u043a\u043e\u0442\u043e\u0440\u044b\u0435|\u043f\u043e\u0442\u043e\u043c\u0443 \u0447\u0442\u043e)\b/iu.test(text);
+}
+
+function hasDanglingPredicateModifier(value: string) {
+  const text = cleanText(value).replace(/[.!?]+$/g, "").toLowerCase();
+  const words = text.split(/\s+/).filter(Boolean);
+  const last = words.at(-1) || "";
+  if (words.length < 4) return false;
+  const hasPredicateSetup = /(?:^|[^\p{L}])(\u044d\u0442\u043e|\u044d\u0442\u0430|\u044d\u0442\u043e\u0442|\u044d\u0442\u0438|\u044f\u0432\u043b\u044f\u0435\u0442\u0441\u044f|\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u0441\u044f|\u043e\u0441\u0442\u0430\u0435\u0442\u0441\u044f|\u043e\u0441\u0442\u0430\u0451\u0442\u0441\u044f|\u0431\u044b\u043b\u0430|\u0431\u044b\u043b|\u0431\u044b\u043b\u043e|\u0431\u0443\u0434\u0435\u0442|\u0441\u0442\u0430\u043b\u0430|\u0441\u0442\u0430\u043b|\u0441\u0442\u0430\u043b\u043e)(?=$|[^\p{L}])/iu.test(text);
+  return hasPredicateSetup && /(\u0430\u044f|\u044f\u044f|\u044b\u0439|\u0438\u0439|\u043e\u0439|\u043e\u0435|\u0435\u0435|\u044b\u0435|\u0438\u0435|\u0443\u044e|\u044e\u044e|\u043e\u0433\u043e|\u0435\u0433\u043e|\u043e\u043c\u0443|\u0435\u043c\u0443|\u044b\u043c|\u0438\u043c|\u044b\u0445|\u0438\u0445)$/.test(last);
+}
+
+function isWeaklyRelatedToNarration(value: string, slide: Slide) {
+  const valueTokens = new Set(significantTokens(value));
+  if (valueTokens.size < 6) return false;
+  const narrationTokens = new Set(significantTokens(`${slide.title} ${slide.speakerNotes}`));
+  if (!narrationTokens.size) return false;
+  const overlap = [...valueTokens].filter((token) => narrationTokens.has(token)).length;
+  return overlap === 0;
+}
+
+function completeNarrationSentences(value: string) {
+  return speechSentences(sanitizeSpeechText(value))
+    .filter(isCompleteScreenSentence)
+    .map((sentence) => shortenCompleteSentence(sentence, 18));
+}
+
+function isCompleteScreenSentence(value: string) {
+  const text = cleanText(value);
+  const words = text.split(/\s+/).filter(Boolean);
+  return words.length >= 4 && !/[,;:\-–—]$/.test(text) && !looksLikeSentenceFragment(text);
+}
+
+function shortenCompleteSentence(value: string, maxWords: number) {
+  const text = cleanText(value);
+  const words = text.replace(/[.!?]+$/g, "").split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return /[.!?]$/.test(text) ? text : `${text}.`;
+  return `${words.slice(0, maxWords).join(" ")}.`;
+}
+
+function safeLabelFromSentence(value: string) {
+  return shortenWords(cleanText(value).replace(/[.!?]+$/g, ""), 5);
 }
 
 function normalizePresentationNarrativePlan(
@@ -1410,7 +1824,10 @@ function normalizeThesis(value: unknown, blocks: SlideBlock[], project: ProjectI
 function normalizeBullets(value: unknown, blocks: SlideBlock[], project: ProjectInput, order: number, slideKind: SlideKind, title = "", fallbackSource = "") {
   const fromValue = Array.isArray(value) ? value.map(sanitizeScreenText).filter(Boolean) : [];
   const fromBlocks = blocks.flatMap((block) => (block.type === "bullets" ? block.items : splitIntoSentences("content" in block ? block.content : "")));
-  const items = uniqueShortItems([...fromValue, ...fromBlocks]).filter((item) => !isDuplicateDisplayText(item, title)).slice(0, 5);
+  const items = uniqueShortItems([...fromValue, ...fromBlocks])
+    .filter((item) => !looksLikeSentenceFragment(item))
+    .filter((item) => !isDuplicateDisplayText(item, title))
+    .slice(0, 5);
 
   if (slideKind === "title" || slideKind === "section") {
     return items.slice(0, 3);
@@ -1426,7 +1843,7 @@ function normalizeBullets(value: unknown, blocks: SlideBlock[], project: Project
 }
 
 function ensureSlideSentenceDensity(items: string[], thesis: string, project: ProjectInput, order: number, slideKind: SlideKind, fallbackSource = "") {
-  const existing = uniqueShortItems(items).slice(0, slideKind === "summary" ? 5 : 3);
+  const existing = uniqueShortItems(items).filter((item) => !looksLikeSentenceFragment(item)).slice(0, slideKind === "summary" ? 5 : 3);
   const visibleSentenceCount = splitIntoSentences([thesis, ...existing].join(" ")).length;
   const minimum = slideKind === "summary" ? 3 : 2;
 
@@ -1647,18 +2064,6 @@ function fallbackVisual(order: number, title: string, thesis: string, bullets: s
     return { ...emptyVisual(), type: "timeline", title: "", description, items };
   }
 
-  if (layout === "comparison" && bullets.length >= 2) {
-    return {
-      ...emptyVisual(),
-      type: "comparison_diagram",
-      title: "",
-      description,
-      leftLabel: defaultLeftLabel("comparison_diagram"),
-      rightLabel: defaultRightLabel("comparison_diagram"),
-      rows: [{ label: title, left: bullets[0], right: bullets[1] }],
-    };
-  }
-
   return { ...emptyVisual(), type: "image", title: "", description };
 }
 
@@ -1871,18 +2276,18 @@ function buildFallbackBulletItems(project: ProjectInput, order: number, sourceTe
   const focus = order > 1 ? fallbackTitle(project, order) : topic;
   const sourceItems = uniqueShortItems(
     splitIntoSentences(sourceText)
-      .flatMap((sentence) => sentence.split(/[,;:]\s+/))
-      .map((item) => shortenWords(item, 10)),
+      .filter(isCompleteScreenSentence)
+      .map((item) => shortenCompleteSentence(item, 18)),
   );
   if (sourceItems.length >= 3) {
     return sourceItems.slice(0, 5);
   }
   const base = [
     ...sourceItems,
-    shortenWords(cleanText(project.prompt), 10),
-    shortenWords(`Главный вывод: ${focus}`, 10),
-    shortenWords(`Важно запомнить: ${topic}`, 10),
-    shortenWords(`Итог по теме: ${topic}`, 10),
+    shortenCompleteSentence(cleanText(project.prompt), 16),
+    shortenCompleteSentence(`Главный вывод: ${focus}`, 16),
+    shortenCompleteSentence(`Важно запомнить: ${topic}`, 16),
+    shortenCompleteSentence(`Итог по теме: ${topic}`, 16),
   ];
   return uniqueShortItems(base).slice(0, 5);
 }
@@ -2079,8 +2484,7 @@ export function inferContentLayout(
   if (slide.blocks.some((block) => block.type === "quote")) return "quote";
   if (slide.visual.type === "timeline" && layoutHasEnoughContent("timeline", slide)) return "timeline";
   if (slide.visual.type === "process_diagram" && layoutHasEnoughContent("process", slide)) return "process";
-  if (slide.visual.type === "cause_effect_diagram" || hasProblemSolutionLanguage(slide)) return "problem-solution";
-  if (["comparison_diagram", "before_after_table", "pros_cons_table"].includes(slide.visual.type) && layoutHasEnoughContent("comparison", slide)) return "comparison";
+  if (slide.visual.type === "cause_effect_diagram" && layoutHasEnoughContent("process", slide)) return "process";
   if (/[?？]$/.test(cleanText(slide.title)) && layoutHasEnoughContent("question-answer", slide)) return "question-answer";
   if (hasMeasurableText(slide)) return "metrics";
 
@@ -2152,7 +2556,9 @@ function fallbackForSparseLayout(
   layout: SlideLayout,
   slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks"> & Partial<Pick<Slide, "sourceRefs">>,
 ): SlideLayout {
-  if (layout === "question-answer" || layout === "myth-fact") return slide.thesis ? "statement" : "bullets";
+  if (layout === "question-answer" || layout === "myth-fact" || layout === "comparison" || layout === "problem-solution") {
+    return slide.thesis ? "statement" : "bullets";
+  }
   return slide.bullets.length >= 2 ? "bullets" : "statement";
 }
 
@@ -2194,8 +2600,8 @@ function isDemoMode(mode: AiGenerationMode | FallbackGenerationMode) {
 function assertRawGenerationQuality(input: Partial<PresentationDocument>, project: ProjectInput, mode: AiGenerationMode | FallbackGenerationMode) {
   if (isDemoMode(mode)) return;
 
-  const text = collectRawPresentationText(input);
-  if (!text) {
+  const allText = collectRawPresentationText(input);
+  if (!allText) {
     throw new Error("AI generation quality check failed: response has no usable presentation text");
   }
 
@@ -2205,7 +2611,8 @@ function assertRawGenerationQuality(input: Partial<PresentationDocument>, projec
     throw new Error("AI generation quality check failed: response does not contain all requested slides");
   }
 
-  const issues = qualityIssuesForText(text, project);
+  const narrationText = collectRawNarrationText(input);
+  const issues = qualityIssuesForText(narrationText || allText, project);
   if (issues.length) {
     throw new Error(`AI generation quality check failed: ${issues.join("; ")}`);
   }
@@ -2256,6 +2663,20 @@ function assertPresentationQuality(presentation: PresentationDocument, project: 
   if (issues.length) {
     throw new Error(`AI generation quality check failed: ${uniqueIssues(issues).join("; ")}`);
   }
+}
+
+function collectRawNarrationText(input: Partial<PresentationDocument>) {
+  const slides = Array.isArray(input.slides) ? input.slides : [];
+  const speechScript = Array.isArray(input.speechScript) ? input.speechScript : [];
+  return cleanMultilineText(
+    [
+      input.generatedText,
+      ...slides.map((slide) => (slide as Partial<Slide>).speakerNotes),
+      ...speechScript.map((item) => item?.text),
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
 }
 
 function collectRawPresentationText(input: Partial<PresentationDocument>) {
@@ -2545,4 +2966,23 @@ const jsonSchema = {
   type: "object",
   additionalProperties: true,
   properties: {},
+};
+
+const slideTextRepairSchema = {
+  type: "object",
+  additionalProperties: true,
+  properties: {
+    slides: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          slideOrder: { type: "number" },
+        },
+        required: ["slideOrder"],
+      },
+    },
+  },
+  required: ["slides"],
 };

@@ -43,7 +43,11 @@ describe("shared contracts", () => {
     expect(layouts).not.toContain("definition");
     expect(layouts).not.toContain("evidence");
     expect(layouts).not.toContain("explain-example");
+    expect(layouts).not.toContain("comparison");
+    expect(layouts).not.toContain("myth-fact");
+    expect(layouts).not.toContain("problem-solution");
     expect(() => slideLayoutSchema.parse("definition")).not.toThrow();
+    expect(() => slideLayoutSchema.parse("comparison")).not.toThrow();
   });
 
   it("accepts two-step generation statuses and job kinds", () => {
@@ -308,6 +312,53 @@ describe("shared contracts", () => {
     expect(chips).toHaveLength(3);
   });
 
+  it("does not render unfinished sentence fragments in mini point chips", () => {
+    const theme = resolvePresentationTheme({ title: "Readable chips" });
+    const slide = presentationSchema.parse({
+      id: "presentation-1",
+      title: "Readable chips",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Readable chips"],
+      speechScript: [{ slideOrder: 1, slideTitle: "Readable chips", text: "Narration." }],
+      slides: [
+        {
+          id: "slide-1",
+          order: 1,
+          title: "Что стоит понять сначала",
+          slideKind: "title",
+          layout: "hero",
+          thesis: "РКСИ имеет богатую историю и традиции.",
+          bullets: ["Колледж прошел долгий путь развития", "Девиз РКСИ отражает ценности обучения", "Первое что стоит отметить это богатая"],
+          visual: {
+            type: "none",
+            image: {
+              url: "https://cdn.example.com/college.jpg",
+              objectKey: "projects/project-1/images/slide-1.jpg",
+              alt: "College",
+              query: "college",
+              provider: "tavily",
+              contentType: "image/jpeg",
+            },
+          },
+          blocks: [{ type: "callout", content: "Body." }],
+          speakerNotes: "Notes.",
+          timingSeconds: 45,
+          sourceRefs: [],
+        },
+      ],
+      presentationTheme: theme,
+    }).slides[0];
+
+    const canvas = buildSlideCanvas(slide, theme);
+    const chip = canvas.elements.find((element) => element.id === "slide-1-mini-2" && element.type === "text");
+
+    expect(chip).toMatchObject({ text: "РКСИ имеет богатую историю и традиции." });
+  });
+
   it("keeps generated canvas title and chip text boxes tall enough for web scaling", () => {
     const theme = resolvePresentationTheme({ title: "Readable canvas" });
     const titleSlide = presentationSchema.parse({
@@ -369,7 +420,7 @@ describe("shared contracts", () => {
     const miniChip = titleCanvas.elements.find((element) => element.id === "slide-title-mini-0");
     const miniChips = titleCanvas.elements
       .filter((element) => element.type === "shape" && /-mini-\d+-shape$/.test(element.id))
-      .sort((left, right) => left.x - right.x);
+      .sort((left, right) => left.y - right.y || left.x - right.x);
     const contentCanvas = buildSlideCanvas(contentSlide, theme);
     const contentTitle = contentCanvas.elements.find((element) => element.id === "slide-content-title");
 
@@ -383,9 +434,423 @@ describe("shared contracts", () => {
     expect(miniChip?.type === "text" ? miniChip.text.split(/\s+/).length : 0).toBeLessThanOrEqual(6);
     expect(miniChip?.type === "text" ? miniChip.text : "").not.toContain("...");
     expect(miniChip).toMatchObject({ align: "center", valign: "middle" });
-    miniChips.slice(1).forEach((shape, index) => {
-      expect(miniChips[index].x + miniChips[index].w).toBeLessThan(shape.x);
+    expect(miniChips[0].x + miniChips[0].w).toBeLessThan(miniChips[1].x);
+    expect(miniChips[2].y).toBeGreaterThan(miniChips[0].y + miniChips[0].h);
+    expect(miniChips[2].x).toBe(miniChips[0].x);
+    expect(miniChips[2].w).toBeGreaterThanOrEqual(538);
+  });
+
+  it("builds summary slides as one conclusion with supporting thoughts and a final takeaway", () => {
+    const theme = resolvePresentationTheme({ title: "Summary story" });
+    const slide = presentationSchema.parse({
+      id: "presentation-summary",
+      title: "Summary story",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Why the topic matters"],
+      speechScript: [{ slideOrder: 1, slideTitle: "Why the topic matters", text: "Narration." }],
+      slides: [
+        {
+          id: "slide-summary",
+          order: 1,
+          title: "Why the topic matters",
+          slideKind: "summary",
+          layout: "summary",
+          thesis: "The main conclusion should finish the presentation with one clear idea.",
+          bullets: [
+            "The first supporting thought explains the cause.",
+            "The second supporting thought shows the change.",
+            "The third supporting thought names the consequence.",
+            "The final thought gives the audience something to remember.",
+          ],
+          visual: {
+            type: "none",
+            image: {
+              url: "https://cdn.example.com/summary.jpg",
+              objectKey: "projects/project-1/images/summary.jpg",
+              alt: "Decorative summary",
+              query: "summary",
+              provider: "tavily",
+              contentType: "image/jpeg",
+            },
+          },
+          blocks: [],
+          speakerNotes: "Notes.",
+          timingSeconds: 45,
+          sourceRefs: [],
+        },
+      ],
+      presentationTheme: theme,
+    }).slides[0];
+
+    const canvas = buildSlideCanvas(slide, theme);
+    const supportItems = canvas.elements.filter((element) => /^slide-summary-summary-support-\d+$/.test(element.id));
+
+    expect(canvas.elements.find((element) => element.id === "slide-summary-summary-conclusion")).toMatchObject({
+      type: "text",
+      text: slide.thesis,
+      bold: true,
     });
+    expect(supportItems).toHaveLength(3);
+    expect(supportItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "text",
+        fontSize: 24,
+      }),
+    ]));
+    expect(canvas.elements.find((element) => element.id === "slide-summary-summary-support-0-backplate")).toMatchObject({
+      type: "shape",
+      h: expect.any(Number),
+    });
+    expect(canvas.elements.find((element) => element.id === "slide-summary-summary-final")).toMatchObject({
+      type: "text",
+      text: slide.bullets[3],
+      fontSize: 24,
+    });
+    expect(canvas.elements.find((element) => element.id === "slide-summary-summary-final-bg")).toMatchObject({
+      type: "shape",
+      h: 112,
+    });
+    expect(canvas.elements.some((element) => element.type === "image")).toBe(false);
+    expect(canvas.elements.some((element) => /summary-\d+-card$/.test(element.id))).toBe(false);
+  });
+
+  it("centers title content and stretches a single lower plaque to the upper row width", () => {
+    const theme = resolvePresentationTheme({ title: "Centered title" });
+    const slide = presentationSchema.parse({
+      id: "presentation-title-grid",
+      title: "Centered title",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Centered title"],
+      speechScript: [{ slideOrder: 1, slideTitle: "Centered title", text: "Narration." }],
+      slides: [
+        {
+          id: "slide-title",
+          order: 1,
+          title: "Centered title",
+          slideKind: "title",
+          layout: "hero",
+          thesis: "A centered introduction.",
+          bullets: ["First point", "Second point", "Third point"],
+          visual: { type: "none" },
+          blocks: [],
+          speakerNotes: "Notes.",
+          timingSeconds: 45,
+          sourceRefs: [],
+        },
+      ],
+      presentationTheme: theme,
+    }).slides[0];
+
+    const canvas = buildSlideCanvas(slide, theme);
+    const first = canvas.elements.find((element) => element.id === "slide-title-mini-0-shape");
+    const second = canvas.elements.find((element) => element.id === "slide-title-mini-1-shape");
+    const third = canvas.elements.find((element) => element.id === "slide-title-mini-2-shape");
+    const title = canvas.elements.find((element) => element.id === "slide-title-title");
+    const body = canvas.elements.find((element) => element.id === "slide-title-body");
+
+    expect(title).toMatchObject({ type: "text", align: "center", valign: "middle", y: 118 });
+    expect(body).toMatchObject({ type: "text", align: "center", valign: "middle", y: 282 });
+    expect(first).toMatchObject({ type: "shape", x: 351, w: 280 });
+    expect(second).toMatchObject({ type: "shape", x: 649, w: 280 });
+    expect(third).toMatchObject({ type: "shape", x: 351, w: 578 });
+    expect((third?.y || 0)).toBeGreaterThan(first?.y || 0);
+  });
+
+  it("upgrades the previous generated title row without replacing a marked custom title canvas", () => {
+    const theme = resolvePresentationTheme({ title: "Legacy title row" });
+    const parsed = presentationSchema.parse({
+      id: "presentation-legacy-title-row",
+      title: "Legacy title row",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Legacy title row"],
+      speechScript: [{ slideOrder: 1, slideTitle: "Legacy title row", text: "Narration." }],
+      slides: [
+        {
+          id: "slide-title",
+          order: 1,
+          title: "Legacy title row",
+          slideKind: "title",
+          layout: "hero",
+          thesis: "Old generated geometry.",
+          bullets: ["First point", "Second point", "Third point"],
+          visual: { type: "none" },
+          blocks: [],
+          speakerNotes: "Notes.",
+          timingSeconds: 45,
+          sourceRefs: [],
+        },
+      ],
+      presentationTheme: theme,
+    });
+    const current = buildSlideCanvas(parsed.slides[0], theme);
+    const legacyElements = current.elements.map((element) => {
+      if (element.id === "slide-title-title") return { ...element, y: 188 };
+      if (element.id === "slide-title-body") return { ...element, y: 356 };
+      if (/-mini-\d+-shape$/.test(element.id)) {
+        const index = Number(element.id.match(/-mini-(\d+)-shape$/)?.[1] || 0);
+        return { ...element, x: 296 + index * (element.w + 18), y: 512, w: 204 };
+      }
+      if (/-mini-\d+$/.test(element.id)) {
+        const index = Number(element.id.match(/-mini-(\d+)$/)?.[1] || 0);
+        return { ...element, x: 306 + index * 222, y: 519, w: 184 };
+      }
+      return element;
+    });
+    const legacySlide = {
+      ...parsed.slides[0],
+      canvas: { ...current, elements: legacyElements },
+    };
+
+    const upgraded = ensureEditableCanvas({ ...parsed, slides: [legacySlide] }).slides[0].canvas!;
+    expect(upgraded.elements.find((element) => element.id === "slide-title-title")).toMatchObject({ y: 118 });
+    expect(upgraded.elements.find((element) => element.id === "slide-title-mini-2-shape")).toMatchObject({ x: 351, w: 578 });
+
+    const marked = ensureEditableCanvas({
+      ...parsed,
+      slides: [{
+        ...legacySlide,
+        canvas: {
+          ...legacySlide.canvas,
+          elements: [
+            ...legacySlide.canvas.elements,
+            {
+              id: "slide-title-custom-canvas-marker",
+              type: "shape",
+              shape: "rect",
+              x: 0,
+              y: 0,
+              w: 1,
+              h: 1,
+              rotation: 0,
+              zIndex: 0,
+              opacity: 0,
+              locked: true,
+              fill: "#FFFFFF",
+              stroke: "#FFFFFF",
+              strokeWidth: 0,
+            },
+          ],
+        },
+      }],
+    }).slides[0].canvas!;
+    expect(marked.elements.find((element) => element.id === "slide-title-title")).toMatchObject({ y: 188 });
+  });
+
+  it("upgrades legacy generated summary cards while preserving explicitly edited summary canvases", () => {
+    const theme = resolvePresentationTheme({ title: "Legacy summary" });
+    const parsed = presentationSchema.parse({
+      id: "presentation-legacy-summary",
+      title: "Legacy summary",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["What matters"],
+      speechScript: [{ slideOrder: 1, slideTitle: "What matters", text: "Narration." }],
+      slides: [
+        {
+          id: "slide-summary",
+          order: 1,
+          title: "What matters",
+          slideKind: "summary",
+          layout: "summary",
+          thesis: "One conclusion.",
+          bullets: ["First support."],
+          blocks: [],
+          speakerNotes: "Notes.",
+          timingSeconds: 45,
+          sourceRefs: [],
+          canvas: {
+            version: 2,
+            width: 1280,
+            height: 720,
+            background: "#FFFFFF",
+            elements: [
+              {
+                id: "slide-summary-title",
+                type: "text",
+                x: 69,
+                y: 56,
+                w: 1142,
+                h: 104,
+                zIndex: 4,
+                opacity: 1,
+                text: "What matters",
+                fontSize: 40,
+                color: "#111111",
+              },
+              {
+                id: "slide-summary-summary-0-card",
+                type: "shape",
+                x: 470,
+                y: 176,
+                w: 340,
+                h: 118,
+                zIndex: 2,
+                opacity: 1,
+                shape: "roundRect",
+                fill: "#FFFFFF",
+              },
+              {
+                id: "slide-summary-summary-0-num",
+                type: "text",
+                x: 486,
+                y: 201,
+                w: 38,
+                h: 22,
+                zIndex: 4,
+                opacity: 1,
+                text: "1",
+                fontSize: 14,
+                color: "#FFFFFF",
+              },
+              {
+                id: "slide-summary-summary-0",
+                type: "text",
+                x: 536,
+                y: 194,
+                w: 254,
+                h: 78,
+                zIndex: 4,
+                opacity: 1,
+                text: "First support.",
+                fontSize: 18,
+                color: "#444444",
+              },
+            ],
+          },
+        },
+      ],
+      presentationTheme: theme,
+    });
+
+    const upgraded = ensureEditableCanvas(parsed).slides[0].canvas!;
+    expect(upgraded.elements.some((element) => element.id === "slide-summary-summary-conclusion")).toBe(true);
+    expect(upgraded.elements.some((element) => element.id === "slide-summary-summary-0-card")).toBe(false);
+
+    const custom = ensureEditableCanvas({
+      ...parsed,
+      slides: [
+        {
+          ...parsed.slides[0],
+          canvas: {
+            ...parsed.slides[0].canvas!,
+            elements: [
+              ...parsed.slides[0].canvas!.elements.map((element) =>
+                element.id === "slide-summary-summary-0-card" ? { ...element, x: element.x + 1 } : element,
+              ),
+              {
+                id: "slide-summary-custom-canvas-marker",
+                type: "shape",
+                x: 0,
+                y: 0,
+                w: 1,
+                h: 1,
+                zIndex: 0,
+                opacity: 0,
+                shape: "rect",
+                fill: "#FFFFFF",
+              },
+            ],
+          },
+        },
+      ],
+    }).slides[0].canvas!;
+    expect(custom.elements.some((element) => element.id === "slide-summary-summary-0-card")).toBe(true);
+  });
+
+  it("upgrades the previous generated summary-story geometry", () => {
+    const theme = resolvePresentationTheme({ title: "Previous summary story" });
+    const parsed = presentationSchema.parse({
+      id: "presentation-previous-summary-story",
+      title: "Previous summary story",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Summary"],
+      speechScript: [{ slideOrder: 1, slideTitle: "Summary", text: "Narration." }],
+      slides: [{
+        id: "slide-summary",
+        order: 1,
+        title: "Summary",
+        slideKind: "summary",
+        layout: "summary",
+        thesis: "Main conclusion.",
+        bullets: ["Support one.", "Support two.", "Support three.", "Final thought."],
+        visual: { type: "none" },
+        blocks: [],
+        speakerNotes: "Notes.",
+        timingSeconds: 45,
+        sourceRefs: [],
+      }],
+      presentationTheme: theme,
+    });
+    const current = buildSlideCanvas(parsed.slides[0], theme);
+    const previous = {
+      ...current,
+      elements: [
+        ...current.elements.map((element) => {
+          if (element.id === "slide-summary-summary-support-label" && element.type === "text") return { ...element, fontSize: 17 };
+          if (/slide-summary-summary-support-\d+$/.test(element.id) && element.type === "text") return { ...element, fontSize: 15, h: 62 };
+          if (element.id === "slide-summary-summary-final-label" && element.type === "text") return { ...element, x: 94, y: 576, w: 222, h: 28, fontSize: 15 };
+          if (element.id === "slide-summary-summary-final" && element.type === "text") return { ...element, x: 332, y: 568, w: 848, h: 48, fontSize: 14 };
+          if (element.id === "slide-summary-summary-final-bg" && element.type === "shape") return { ...element, y: 550, h: 92 };
+          return element;
+        }),
+        {
+          id: "slide-summary-custom-canvas-marker",
+          type: "shape" as const,
+          shape: "rect" as const,
+          x: 0,
+          y: 0,
+          w: 1,
+          h: 1,
+          rotation: 0,
+          zIndex: 0,
+          opacity: 0,
+          locked: true,
+          fill: "#FFFFFF",
+          stroke: "#FFFFFF",
+          strokeWidth: 0,
+        },
+      ],
+    };
+
+    const upgraded = ensureEditableCanvas({
+      ...parsed,
+      slides: [{ ...parsed.slides[0], canvas: previous }],
+    }).slides[0].canvas!;
+
+    expect(upgraded.elements.find((element) => element.id === "slide-summary-summary-support-0")).toMatchObject({ fontSize: 24, h: 72 });
+    expect(upgraded.elements.find((element) => element.id === "slide-summary-summary-final-label")).toMatchObject({ x: 94, y: 558, w: 270, h: 68, fontSize: 24 });
+    expect(upgraded.elements.find((element) => element.id === "slide-summary-summary-final-bg")).toMatchObject({ y: 536, h: 112 });
+
+    const currentMarked = ensureEditableCanvas({
+      ...parsed,
+      slides: [{
+        ...parsed.slides[0],
+        canvas: {
+          ...current,
+          elements: [...current.elements, previous.elements[previous.elements.length - 1]],
+        },
+      }],
+    }).slides[0].canvas!;
+    expect(currentMarked.elements.some((element) => element.id === "slide-summary-custom-canvas-marker")).toBe(true);
   });
 
   it("distinguishes generated canvases from user-edited canvases", () => {
