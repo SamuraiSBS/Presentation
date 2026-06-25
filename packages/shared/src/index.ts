@@ -390,6 +390,73 @@ export const slideNarrativeSchema = z.object({
 });
 export type SlideNarrative = z.infer<typeof slideNarrativeSchema>;
 
+export const researchBriefSchema = z.object({
+  topic: z.string(),
+  angle: z.string(),
+  facts: z
+    .array(
+      z.object({
+        text: z.string(),
+        sourceId: z.string().optional(),
+        confidence: z.enum(["high", "medium", "low"]).default("medium"),
+      }),
+    )
+    .default([]),
+  warnings: z.array(z.string()).default([]),
+  vocabulary: z
+    .array(
+      z.object({
+        term: z.string(),
+        explanation: z.string(),
+      }),
+    )
+    .default([]),
+});
+export type ResearchBrief = z.infer<typeof researchBriefSchema>;
+
+export const designBriefSchema = z.object({
+  themePreset: presentationThemePresetSchema,
+  mood: presentationThemeMoodSchema,
+  visualDirection: z.string(),
+  layoutPrinciples: z.array(z.string()).default([]),
+  imageStrategy: z.string().default(""),
+});
+export type DesignBrief = z.infer<typeof designBriefSchema>;
+
+export const slideBlueprintSchema = z.object({
+  slideOrder: z.number().int().positive(),
+  purpose: z.string(),
+  title: z.string(),
+  visualStrategy: z.string(),
+  layoutCandidate: slideLayoutSchema,
+  textDensity: z.enum(["low", "medium", "high"]).default("medium"),
+});
+export type SlideBlueprint = z.infer<typeof slideBlueprintSchema>;
+
+export const qualityCritiqueSchema = z.object({
+  passed: z.boolean(),
+  issues: z
+    .array(
+      z.object({
+        slideOrder: z.number().int().positive().optional(),
+        severity: z.enum(["info", "warning", "error"]).default("warning"),
+        message: z.string(),
+        repairInstruction: z.string().optional(),
+      }),
+    )
+    .default([]),
+});
+export type QualityCritique = z.infer<typeof qualityCritiqueSchema>;
+
+export const generationPipelineArtifactsSchema = z.object({
+  researchBrief: researchBriefSchema,
+  narrativePlan: z.array(slideNarrativeSchema),
+  designBrief: designBriefSchema,
+  slideBlueprints: z.array(slideBlueprintSchema).default([]),
+  qualityCritique: qualityCritiqueSchema.optional(),
+});
+export type GenerationPipelineArtifacts = z.infer<typeof generationPipelineArtifactsSchema>;
+
 export const presentationSchema = z.object({
   id: z.string(),
   title: z.string(),

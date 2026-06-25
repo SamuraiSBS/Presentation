@@ -4,13 +4,17 @@ import {
   createProjectInputSchema,
   ensureEditableCanvas,
   generatePresentationInputSchema,
+  generationPipelineArtifactsSchema,
   generationJobKindSchema,
   hasCustomSlideCanvas,
   planLimits,
   presentationSchema,
   projectStatusSchema,
+  qualityCritiqueSchema,
+  researchBriefSchema,
   resolvePresentationTheme,
   slideCanvasSchema,
+  slideBlueprintSchema,
   slideLayoutSchema,
   slideLayoutOptions,
   updateNarrationInputSchema,
@@ -63,6 +67,53 @@ describe("shared contracts", () => {
     expect(updateNarrationInputSchema.parse({ speechDraft }).speechDraft).toBe(speechDraft);
     expect(generatePresentationInputSchema.parse({ speechDraft }).speechDraft).toBe(speechDraft);
     expect(generatePresentationInputSchema.parse({})).toEqual({});
+  });
+
+  it("validates generation pipeline artifacts as small composable contracts", () => {
+    const researchBrief = researchBriefSchema.parse({
+      topic: "AI in education",
+      angle: "Explain how AI helps students prepare reports.",
+      facts: [{ text: "AI can summarize source material.", confidence: "high" }],
+    });
+    const slideBlueprint = slideBlueprintSchema.parse({
+      slideOrder: 1,
+      purpose: "Open the topic.",
+      title: "AI helps prepare reports",
+      visualStrategy: "Simple hero slide with one clear claim.",
+      layoutCandidate: "hero",
+    });
+    const qualityCritique = qualityCritiqueSchema.parse({ passed: true });
+
+    expect(researchBrief.warnings).toEqual([]);
+    expect(slideBlueprint.textDensity).toBe("medium");
+    expect(qualityCritique.issues).toEqual([]);
+    expect(() =>
+      generationPipelineArtifactsSchema.parse({
+        researchBrief,
+        narrativePlan: [
+          {
+            slideOrder: 1,
+            slideTitle: "AI helps prepare reports",
+            slidePurpose: "Open the topic.",
+            keyMessage: "AI can make preparation easier.",
+            audienceQuestion: "How does AI help students?",
+            transitionToNext: "",
+          },
+        ],
+        designBrief: {
+          themePreset: "minimal",
+          mood: "neutral",
+          visualDirection: "Clean study deck.",
+        },
+        slideBlueprints: [slideBlueprint],
+        qualityCritique,
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects incomplete generation pipeline artifacts", () => {
+    expect(() => researchBriefSchema.parse({ topic: "Only topic" })).toThrow();
+    expect(() => slideBlueprintSchema.parse({ slideOrder: 1, title: "Missing fields" })).toThrow();
   });
 
   it("requires a structured presentation document", () => {

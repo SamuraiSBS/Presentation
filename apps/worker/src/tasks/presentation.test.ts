@@ -610,10 +610,62 @@ describe("generatePresentation fallback behavior", () => {
       expect(bodies[2].messages[1].text).toContain(presentationText);
       expect(bodies[2].messages[1].text).toContain("only source of truth");
       expect(bodies[2].messages[1].text).toContain("narrativePlan");
+      expect(bodies[2].messages[1].text).toContain("researchBrief");
+      expect(bodies[2].messages[1].text).toContain("designBrief");
+      expect(bodies[2].messages[1].text).toContain("slideBlueprints");
       expect(presentation.generatedText).toBe(presentationText);
       expect(presentation.slides[0].thesis).toContain("Внешний успех");
       expect(presentation.slides[1].bullets).toContain("Нужны принципы");
       expectNoForbiddenNarration(visiblePresentationText(presentation));
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("accepts numbered Yandex narration sections and normalizes them for review", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const numberedNarration = [
+      "### 1. Главная волна девяностых",
+      "Русские песни девяностых часто звучали как дневник времени, в котором смешивались свобода, тревога и надежда. После распада СССР музыкальный рынок быстро менялся, и новые группы получили возможность говорить с аудиторией напрямую. Популярная музыка стала ближе к повседневной жизни, потому что в ней слышались дворы, кассеты, телепередачи и первые коммерческие радиостанции. Для слушателей эти песни были не только развлечением, но и способом узнать собственные переживания. Поэтому разговор о девяностых начинается с ощущения резкой перемены, которая вошла в музыку.",
+      "",
+      "**2) Память и вывод**",
+      "Сегодня песни девяностых воспринимаются как культурная память о сложном десятилетии. Одни композиции напоминают о романтике свободы, другие сохраняют чувство неустойчивости и поиска. Важным стало то, что разные жанры существовали рядом: рок, поп, танцевальная музыка и авторская интонация спорили за внимание слушателя. Такое разнообразие показывает, что эпоха не сводилась к одному настроению или одному стилю. В итоге музыка девяностых осталась узнаваемой, потому что передала голос людей на переломе истории.",
+    ].join("\n");
+    const originalFetch = global.fetch;
+    let callCount = 0;
+    global.fetch = async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return yandexTextResponse(
+          JSON.stringify(narrativePlanForTitles(["Главная волна девяностых", "Память и вывод"])),
+        );
+      }
+      return yandexTextResponse(numberedNarration);
+    };
+
+    try {
+      const draft = await generateNarrationDraft(
+        {
+          id: "project-1",
+          title: "Русские песни 90 х",
+          prompt: "Сделай презентацию про русские песни 90 х",
+          scenario: "school_report",
+          level: "8 класс",
+          mode: "with_sources",
+          slideCount: 2,
+        },
+        [{ id: "src-1", label: "Prompt", type: "PROMPT", size: 0, excerpt: "Русская музыка девяностых отражала перемены общества." }],
+      );
+
+      expect(draft.text.match(/Слайд\s+\d+\s*:/g)).toHaveLength(2);
+      expect(draft.text).toContain("Слайд 1: Главная волна девяностых");
+      expect(draft.text).toContain("Слайд 2: Память и вывод");
     } finally {
       global.fetch = originalFetch;
     }
