@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
+import { presentationSchema } from "@studydeck/shared";
 import {
   buildGenerationPrompt,
   findSlideTextIssues,
   generateNarrationDraft,
   generatePresentation,
   generatePresentationFromNarration,
+  generateStructuredWithProvider,
   inferContentLayout,
   normalizeLayout,
   normalizeNarrativePlan,
@@ -84,6 +87,30 @@ function narrativePlanForTitles(titles: string[]) {
   }));
 }
 
+function designBriefForTitles(titles: string[]) {
+  return {
+    themeId: "editorialMagazine",
+    mood: "serious",
+    audienceFit: "A clear editorial study deck for the requested audience.",
+    visualMetaphor: "A guided sequence of evidence and conclusions.",
+    colorIntent: "High contrast with one restrained accent.",
+    typographyIntent: "Editorial headings with readable supporting text.",
+    rhythm: {
+      titleStyle: "editorial",
+      density: "medium",
+      imageFrequency: "balanced",
+      sectionBreaks: true,
+    },
+    slideDirections: titles.map((title, index) => ({
+      slideOrder: index + 1,
+      visualRole: index === 0 ? "hero" : index === titles.length - 1 ? "summary" : "explain",
+      layoutIntent: index === 0 ? "full_bleed_image" : index === titles.length - 1 ? "summary" : "cards",
+      imageStrategy: index === 0 ? "real_photo" : "diagram",
+      visualPrompt: `Editorial visual for ${title}`,
+    })),
+  };
+}
+
 function mockYandexTwoStep(narrationText: string, json: unknown, bodies?: unknown[], repairJson?: unknown) {
   let callCount = 0;
   const titles = narrationText
@@ -96,7 +123,8 @@ function mockYandexTwoStep(narrationText: string, json: unknown, bodies?: unknow
     callCount += 1;
     if (callCount === 1) return yandexTextResponse(JSON.stringify(narrativePlan));
     if (callCount === 2) return yandexTextResponse(narrationText);
-    return yandexTextResponse(JSON.stringify(callCount === 3 || repairJson === undefined ? json : repairJson));
+    if (callCount === 3) return yandexTextResponse(JSON.stringify(designBriefForTitles(narrativePlan.map((item) => item.slideTitle))));
+    return yandexTextResponse(JSON.stringify(callCount === 4 || repairJson === undefined ? json : repairJson));
   };
 }
 
@@ -203,6 +231,111 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("Visual theme rules");
     expect(prompt).toContain("preset=");
     expect(prompt).toContain("do not invent CSS");
+  });
+});
+
+describe("structured generation helper", () => {
+  it("uses strict OpenAI json schema for small structured artifacts", async () => {
+    const calls: any[] = [];
+    const client = {
+      responses: {
+        create: async (body: any) => {
+          calls.push(body);
+          return { output_parsed: { title: "РџР»Р°РЅ", summary: "РљРѕСЂРѕС‚РєРёР№ СЂСѓСЃСЃРєРёР№ РІС‹РІРѕРґ." } };
+        },
+      },
+    };
+
+    const result = await generateStructuredWithProvider({
+      provider: "openai",
+      system: "Return JSON only.",
+      prompt: "Create a short brief.",
+      schemaName: "studydeck_test_brief",
+      schema: z.object({ title: z.string(), summary: z.string() }),
+      jsonSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          title: { type: "string" },
+          summary: { type: "string" },
+        },
+        required: ["title", "summary"],
+      },
+      openAIClient: client as any,
+    });
+
+    expect(result.title).toBe("РџР»Р°РЅ");
+    expect(calls[0].text.format).toMatchObject({
+      type: "json_schema",
+      name: "studydeck_test_brief",
+      strict: true,
+    });
+    expect(calls[0].input[1].content).toContain("Return only JSON");
+  });
+
+  it("repairs invalid JSON once and keeps Zod as the final validation gate", async () => {
+    const calls: any[] = [];
+    const client = {
+      responses: {
+        create: async (body: any) => {
+          calls.push(body);
+          return calls.length === 1
+            ? { output_text: "{ bad json" }
+            : { output_text: JSON.stringify({ title: "РџР»Р°РЅ", summary: "РСЃРїСЂР°РІР»РµРЅРЅС‹Р№ РІС‹РІРѕРґ." }) };
+        },
+      },
+    };
+
+    const result = await generateStructuredWithProvider({
+      provider: "openai",
+      system: "Return JSON only.",
+      prompt: "Create a short brief.",
+      schemaName: "studydeck_test_brief",
+      schema: z.object({ title: z.string(), summary: z.string() }),
+      parse: (value) => (typeof value === "string" ? JSON.parse(value) : value),
+      jsonSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          title: { type: "string" },
+          summary: { type: "string" },
+        },
+        required: ["title", "summary"],
+      },
+      openAIClient: client as any,
+    });
+
+    expect(result.summary).toContain("РСЃРїСЂР°РІ");
+    expect(calls).toHaveLength(2);
+    expect(calls[1].input[1].content).toContain("previous response was not valid JSON");
+  });
+
+  it("uses generic Yandex json_object when no JSON schema is provided", async () => {
+    const bodies: any[] = [];
+    const originalFetch = global.fetch;
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    global.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body || "{}")));
+      return yandexTextResponse(JSON.stringify({ title: "РџР»Р°РЅ" }));
+    };
+
+    try {
+      await generateStructuredWithProvider({
+        provider: "yandex",
+        system: "Return JSON only.",
+        prompt: "Create a short object.",
+        schemaName: "studydeck_generic_json",
+        schema: z.object({ title: z.string() }),
+        parse: (value) => (typeof value === "string" ? JSON.parse(value) : value),
+        yandexApiKey: "yandex-key",
+      });
+
+      expect(bodies[0].json_object).toBe(true);
+      expect(bodies[0].json_schema).toBeUndefined();
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 });
 
@@ -460,6 +593,8 @@ describe("generatePresentation fallback behavior", () => {
       expect(presentation.narrativePlan).toHaveLength(3);
       expect(presentation.narrativePlan[2].transitionToNext).toBe("");
       expect(presentation.slides).toHaveLength(3);
+      expect(presentation.designBrief?.slideDirections).toHaveLength(3);
+      expect(presentation.slides[1].layout).toBe("bullets");
       expect(presentation.slides.every((slide) => slide.speakerNotes)).toBe(true);
       expect(presentation.speechScript).toHaveLength(3);
       expect(presentation.slides.map((slide) => slide.title)).toEqual([
@@ -468,6 +603,7 @@ describe("generatePresentation fallback behavior", () => {
         "Главные уроки книги",
       ]);
       expect(presentation.speechScript[2].text).toContain("не пример для повторения");
+      expect(() => presentationSchema.parse(presentation)).not.toThrow();
       expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
@@ -600,20 +736,27 @@ describe("generatePresentation fallback behavior", () => {
         [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "A story about success and responsibility." }],
       );
 
-      expect(bodies).toHaveLength(3);
-      expect(bodies[0].jsonObject).toBe(true);
+      expect(bodies).toHaveLength(4);
+      expect(bodies[0].json_schema?.schema).toBeTruthy();
       expect(bodies[0].messages[1].text).toContain("narrativePlan");
-      expect(bodies[1].jsonObject).toBe(false);
+      expect(bodies[1].json_object).toBeUndefined();
       expect(bodies[1].messages[1].text).toContain("Narrative plan to follow exactly");
       expect(bodies[1].messages[1].text).toContain("exactly 5-6 complete sentences");
-      expect(bodies[2].jsonObject).toBe(true);
-      expect(bodies[2].messages[1].text).toContain(presentationText);
-      expect(bodies[2].messages[1].text).toContain("only source of truth");
-      expect(bodies[2].messages[1].text).toContain("narrativePlan");
-      expect(bodies[2].messages[1].text).toContain("researchBrief");
-      expect(bodies[2].messages[1].text).toContain("designBrief");
-      expect(bodies[2].messages[1].text).toContain("slideBlueprints");
+      expect(bodies[2].json_schema?.schema).toBeTruthy();
+      expect(bodies[2].messages[1].text).toContain("Deck story");
+      expect(bodies[2].messages[1].text).toContain("Slide text plans");
+      expect(bodies[2].messages[1].text).toContain("Do not output raw CSS");
+      expect(bodies[3].json_schema?.schema).toBeTruthy();
+      expect(bodies[3].messages[1].text).toContain(presentationText);
+      expect(bodies[3].messages[1].text).toContain("only source of truth");
+      expect(bodies[3].messages[1].text).toContain("narrativePlan");
+      expect(bodies[3].messages[1].text).toContain("researchBrief");
+      expect(bodies[3].messages[1].text).toContain("designBrief");
+      expect(bodies[3].messages[1].text).toContain("slideBlueprints");
       expect(presentation.generatedText).toBe(presentationText);
+      expect(presentation.designBrief?.slideDirections).toHaveLength(2);
+      expect(presentation.designBrief?.slideDirections[0].imageStrategy).toBe("real_photo");
+      expect(presentation.presentationTheme?.themeId).toBe("editorialMagazine");
       expect(presentation.slides[0].thesis).toContain("Внешний успех");
       expect(presentation.slides[1].bullets).toContain("Нужны принципы");
       expectNoForbiddenNarration(visiblePresentationText(presentation));
@@ -741,11 +884,12 @@ describe("generatePresentation fallback behavior", () => {
         [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "A story about success and responsibility." }],
       );
 
-      expect(bodies).toHaveLength(3);
-      expect(bodies[0].jsonObject).toBe(true);
-      expect(bodies[1].jsonObject).toBe(false);
-      expect(bodies[2].jsonObject).toBe(true);
-      expect(bodies[2].messages[1].text).toContain("only source of truth");
+      expect(bodies).toHaveLength(4);
+      expect(bodies[0].json_schema?.schema).toBeTruthy();
+      expect(bodies[1].json_object).toBeUndefined();
+      expect(bodies[2].json_schema?.schema).toBeTruthy();
+      expect(bodies[3].json_schema?.schema).toBeTruthy();
+      expect(bodies[3].messages[1].text).toContain("only source of truth");
       expect(presentation.generatedText).not.toBe(shortText);
       expect(sentenceCount(presentation.speechScript[0].text)).toBe(5);
       expect(sentenceCount(presentation.speechScript[1].text)).toBe(5);
@@ -1120,9 +1264,9 @@ describe("generatePresentation fallback behavior", () => {
         [],
       );
 
-      expect(bodies).toHaveLength(4);
-      expect(bodies[3].messages[1].text).toContain('"slideOrder":2');
-      expect(bodies[3].messages[1].text).toContain('"slideOrder":3');
+      expect(bodies).toHaveLength(5);
+      expect(bodies[4].messages[1].text).toContain('"slideOrder":2');
+      expect(bodies[4].messages[1].text).toContain('"slideOrder":3');
       expectNoForbiddenSlideText(visiblePresentationText(presentation));
       expect(visiblePresentationText(presentation)).not.toContain("Из презентации можно вынести следующее");
       expect(presentation.slides[2].thesis).not.toContain("Морские течения");
@@ -1148,6 +1292,9 @@ describe("generatePresentation fallback behavior", () => {
       if (callCount === 1) return yandexTextResponse(JSON.stringify(narrativePlan));
       if (callCount === 2) return yandexTextResponse(presentationText);
       if (callCount === 3) {
+        return yandexTextResponse(JSON.stringify(designBriefForTitles(narrativePlan.map((item) => item.slideTitle))));
+      }
+      if (callCount === 4) {
         return yandexTextResponse(
           JSON.stringify({
             title: "Городской транспорт",
@@ -1188,7 +1335,7 @@ describe("generatePresentation fallback behavior", () => {
         [],
       );
 
-      expect(callCount).toBe(4);
+      expect(callCount).toBe(5);
       expect(presentation.slides[1].thesis).not.toContain("Космические телескопы");
       expect(presentation.slides[1].thesis).toMatch(/[.!?]$/);
     } finally {

@@ -194,6 +194,7 @@ export const presentationThemeColorSchema = z
 
 export const presentationThemeSchema = z.object({
   preset: presentationThemePresetSchema,
+  themeId: z.string().optional(),
   mood: presentationThemeMoodSchema,
   colors: z.object({
     background: presentationThemeColorSchema,
@@ -390,6 +391,32 @@ export const slideNarrativeSchema = z.object({
 });
 export type SlideNarrative = z.infer<typeof slideNarrativeSchema>;
 
+export const deckStorySchema = z.object({
+  mainIdea: z.string(),
+  audienceQuestion: z.string(),
+  tone: z.enum(["school_report", "college_report", "exam_explanation", "teacher_explainer"]),
+  chapters: z.array(z.object({
+    title: z.string(),
+    purpose: z.string(),
+    slideOrders: z.array(z.number().int().positive()),
+  })),
+  conclusion: z.string(),
+});
+export type DeckStory = z.infer<typeof deckStorySchema>;
+
+export const slideTextPlanSchema = z.object({
+  slideOrder: z.number().int().positive(),
+  slideQuestion: z.string(),
+  coreClaim: z.string(),
+  evidenceOrExample: z.string().default(""),
+  listenerTakeaway: z.string(),
+  title: z.string(),
+  thesis: z.string(),
+  bullets: z.array(z.string()).max(3),
+  speakerNotes: z.string(),
+});
+export type SlideTextPlan = z.infer<typeof slideTextPlanSchema>;
+
 export const researchBriefSchema = z.object({
   topic: z.string(),
   angle: z.string(),
@@ -414,13 +441,76 @@ export const researchBriefSchema = z.object({
 });
 export type ResearchBrief = z.infer<typeof researchBriefSchema>;
 
-export const designBriefSchema = z.object({
-  themePreset: presentationThemePresetSchema,
-  mood: presentationThemeMoodSchema,
-  visualDirection: z.string(),
+const legacyThemeToPremiumThemeId: Record<PresentationThemePreset, string> = {
+  moody: "darkLecture",
+  bright: "softClassroom",
+  academic: "academicClean",
+  tech: "darkLecture",
+  nature: "scienceBoard",
+  history: "timelineDocumentary",
+  minimal: "academicClean",
+};
+
+export const designBriefSlideDirectionSchema = z.object({
+  slideOrder: z.number().int().positive(),
+  visualRole: z.enum(["hero", "explain", "compare", "sequence", "evidence", "reflect", "summary"]),
+  layoutIntent: z.enum(["full_bleed_image", "split_image_text", "statement", "cards", "timeline", "diagram", "metric", "summary"]),
+  imageStrategy: z.enum(["real_photo", "generated_illustration", "diagram", "none"]),
+  visualPrompt: z.string().default(""),
+});
+export type DesignBriefSlideDirection = z.infer<typeof designBriefSlideDirectionSchema>;
+
+const designBriefObjectSchema = z.object({
+  themeId: z.string(),
+  themePreset: presentationThemePresetSchema.optional(),
+  mood: z.enum(["dark", "light", "playful", "serious", "neutral"]),
+  audienceFit: z.string(),
+  visualMetaphor: z.string(),
+  colorIntent: z.string(),
+  typographyIntent: z.string(),
+  rhythm: z.object({
+    titleStyle: z.enum(["bold", "quiet", "editorial", "academic"]),
+    density: z.enum(["low", "medium", "high"]),
+    imageFrequency: z.enum(["rare", "balanced", "frequent"]),
+    sectionBreaks: z.boolean(),
+  }),
+  slideDirections: z.array(designBriefSlideDirectionSchema).default([]),
+  visualDirection: z.string().optional(),
   layoutPrinciples: z.array(z.string()).default([]),
   imageStrategy: z.string().default(""),
 });
+
+export const designBriefSchema = z.preprocess((value) => {
+  if (!value || typeof value !== "object") return value;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.themeId && candidate.rhythm && candidate.slideDirections) return candidate;
+  const themePreset = presentationThemePresetSchema.safeParse(candidate.themePreset);
+  const mood = presentationThemeMoodSchema.safeParse(candidate.mood);
+  const visualDirection = String(candidate.visualDirection || "");
+  const imageStrategy = String(candidate.imageStrategy || "");
+  const layoutPrinciples = Array.isArray(candidate.layoutPrinciples)
+    ? candidate.layoutPrinciples.map((item) => String(item)).filter(Boolean)
+    : [];
+  return {
+    themeId: String(candidate.themeId || (themePreset.success ? legacyThemeToPremiumThemeId[themePreset.data] : "academicClean")),
+    themePreset: themePreset.success ? themePreset.data : undefined,
+    mood: mood.success ? mood.data : "neutral",
+    audienceFit: String(candidate.audienceFit || "Clear study presentation for the requested audience."),
+    visualMetaphor: String(candidate.visualMetaphor || visualDirection || "Structured study path."),
+    colorIntent: String(candidate.colorIntent || "Use a readable palette with one clear accent."),
+    typographyIntent: String(candidate.typographyIntent || "Use legible study-report typography."),
+    rhythm: candidate.rhythm || {
+      titleStyle: "academic",
+      density: "medium",
+      imageFrequency: imageStrategy.toLowerCase().includes("image") ? "balanced" : "rare",
+      sectionBreaks: true,
+    },
+    slideDirections: Array.isArray(candidate.slideDirections) ? candidate.slideDirections : [],
+    visualDirection,
+    layoutPrinciples,
+    imageStrategy,
+  };
+}, designBriefObjectSchema);
 export type DesignBrief = z.infer<typeof designBriefSchema>;
 
 export const slideBlueprintSchema = z.object({
@@ -433,26 +523,45 @@ export const slideBlueprintSchema = z.object({
 });
 export type SlideBlueprint = z.infer<typeof slideBlueprintSchema>;
 
-export const qualityCritiqueSchema = z.object({
-  passed: z.boolean(),
-  issues: z
-    .array(
-      z.object({
-        slideOrder: z.number().int().positive().optional(),
-        severity: z.enum(["info", "warning", "error"]).default("warning"),
-        message: z.string(),
-        repairInstruction: z.string().optional(),
-      }),
-    )
-    .default([]),
+export const qualityIssueSchema = z.object({
+  slideId: z.string().optional(),
+  severity: z.enum(["blocker", "major", "minor"]),
+  category: z.enum([
+    "generic_text",
+    "off_topic",
+    "too_long",
+    "duplicate",
+    "bad_narration",
+    "bad_visual",
+    "factual_risk",
+    "schema_risk",
+  ]),
+  field: z.string().optional(),
+  message: z.string(),
+  repairInstruction: z.string().optional(),
 });
+export type QualityIssue = z.infer<typeof qualityIssueSchema>;
+
+export const qualityCritiqueSchema = z
+  .object({
+    score: z.number().min(0).max(100).default(100),
+    summary: z.string().default("No quality issues found."),
+    issues: z.array(qualityIssueSchema).default([]),
+    passed: z.boolean().optional(),
+  })
+  .transform((value) => ({
+    ...value,
+    passed: value.passed ?? (value.score >= 80 && !value.issues.some((issue) => issue.severity === "blocker")),
+  }));
 export type QualityCritique = z.infer<typeof qualityCritiqueSchema>;
 
 export const generationPipelineArtifactsSchema = z.object({
   researchBrief: researchBriefSchema,
   narrativePlan: z.array(slideNarrativeSchema),
+  deckStory: deckStorySchema.optional(),
   designBrief: designBriefSchema,
   slideBlueprints: z.array(slideBlueprintSchema).default([]),
+  slideTextPlans: z.array(slideTextPlanSchema).default([]),
   qualityCritique: qualityCritiqueSchema.optional(),
 });
 export type GenerationPipelineArtifacts = z.infer<typeof generationPipelineArtifactsSchema>;
@@ -469,6 +578,7 @@ export const presentationSchema = z.object({
   outline: z.array(z.string()),
   narrativePlan: z.array(slideNarrativeSchema).default([]),
   presentationTheme: presentationThemeSchema.optional(),
+  designBrief: designBriefSchema.optional(),
   speechScript: z.array(speechScriptItemSchema),
   slides: z.array(slideSchema),
 });
@@ -610,8 +720,167 @@ const PRESENTATION_THEME_PRESETS = {
   },
 } satisfies Record<PresentationThemePreset, PresentationTheme>;
 
+export const PREMIUM_PRESENTATION_THEMES = {
+  editorialMagazine: {
+    preset: "history",
+    themeId: "editorialMagazine",
+    mood: "serious",
+    colors: {
+      background: "#F7F3EC",
+      surface: "#FFFFFF",
+      surfaceAlt: "#EFE7DA",
+      text: "#171412",
+      muted: "#6E6258",
+      accent: "#C24E2C",
+      accentAlt: "#1F5B68",
+      line: "#DED2C4",
+    },
+    fonts: {
+      heading: "Georgia",
+      body: "Arial",
+      tone: "bookish",
+    },
+  },
+  academicClean: {
+    preset: "academic",
+    themeId: "academicClean",
+    mood: "serious",
+    colors: {
+      background: "#F6F8FB",
+      surface: "#FFFFFF",
+      surfaceAlt: "#EAF0F6",
+      text: "#172033",
+      muted: "#667085",
+      accent: "#2F6BFF",
+      accentAlt: "#1B9A77",
+      line: "#D9E2EC",
+    },
+    fonts: {
+      heading: "Arial",
+      body: "Arial",
+      tone: "strict",
+    },
+  },
+  darkLecture: {
+    preset: "moody",
+    themeId: "darkLecture",
+    mood: "dark",
+    colors: {
+      background: "#101318",
+      surface: "#181D24",
+      surfaceAlt: "#202733",
+      text: "#F3F6FA",
+      muted: "#9AA7B7",
+      accent: "#FFB020",
+      accentAlt: "#4DA3FF",
+      line: "#303846",
+    },
+    fonts: {
+      heading: "Aptos Display",
+      body: "Aptos",
+      tone: "technical",
+    },
+  },
+  timelineDocumentary: {
+    preset: "history",
+    themeId: "timelineDocumentary",
+    mood: "serious",
+    colors: {
+      background: "#F4EFE6",
+      surface: "#FFFDF8",
+      surfaceAlt: "#E7DDCC",
+      text: "#1F1A14",
+      muted: "#756B5D",
+      accent: "#8D3B2F",
+      accentAlt: "#2E5E73",
+      line: "#D5C7B3",
+    },
+    fonts: {
+      heading: "Georgia",
+      body: "Arial",
+      tone: "bookish",
+    },
+  },
+  scienceBoard: {
+    preset: "nature",
+    themeId: "scienceBoard",
+    mood: "light",
+    colors: {
+      background: "#F3FAF8",
+      surface: "#FFFFFF",
+      surfaceAlt: "#E4F2EF",
+      text: "#10201D",
+      muted: "#58706B",
+      accent: "#0E9F87",
+      accentAlt: "#4C6FFF",
+      line: "#CFE2DE",
+    },
+    fonts: {
+      heading: "Aptos Display",
+      body: "Aptos",
+      tone: "technical",
+    },
+  },
+  startupPitch: {
+    preset: "minimal",
+    themeId: "startupPitch",
+    mood: "neutral",
+    colors: {
+      background: "#F8FAFC",
+      surface: "#FFFFFF",
+      surfaceAlt: "#EEF2FF",
+      text: "#111827",
+      muted: "#64748B",
+      accent: "#2563EB",
+      accentAlt: "#F97316",
+      line: "#D8DEE9",
+    },
+    fonts: {
+      heading: "Arial",
+      body: "Arial",
+      tone: "strict",
+    },
+  },
+  softClassroom: {
+    preset: "bright",
+    themeId: "softClassroom",
+    mood: "playful",
+    colors: {
+      background: "#FFF8EF",
+      surface: "#FFFFFF",
+      surfaceAlt: "#FCEBD8",
+      text: "#241A12",
+      muted: "#7C6858",
+      accent: "#F28C38",
+      accentAlt: "#5B8DEF",
+      line: "#EAD8C3",
+    },
+    fonts: {
+      heading: "Trebuchet MS",
+      body: "Arial",
+      tone: "rounded",
+    },
+  },
+} satisfies Record<string, PresentationTheme>;
+
+export type PremiumPresentationThemeId = keyof typeof PREMIUM_PRESENTATION_THEMES;
+
+export const PREMIUM_PRESENTATION_THEME_IDS = Object.keys(PREMIUM_PRESENTATION_THEMES) as PremiumPresentationThemeId[];
+
+export function resolvePremiumPresentationTheme(themeId: string | undefined, fallback: PresentationTheme): PresentationTheme {
+  if (!themeId) return fallback;
+  return PREMIUM_PRESENTATION_THEMES[themeId as PremiumPresentationThemeId] || fallback;
+}
+
+export function resolveThemeFromDesignBrief(brief: DesignBrief, fallback: PresentationTheme = PREMIUM_PRESENTATION_THEMES.academicClean): PresentationTheme {
+  return resolvePremiumPresentationTheme(brief.themeId, fallback);
+}
+
 const DARK_THEME_WORDS = [
   "war",
+  "Р’РѕР№РЅ",
+  "РІРѕР№РЅ",
+  "РєСЂРёР·Рё",
   "death",
   "tragedy",
   "crisis",
@@ -705,7 +974,80 @@ const HISTORY_THEME_WORDS = [
   "поэт",
 ];
 
-const NEUTRAL_THEME_PRESETS: PresentationThemePreset[] = ["academic", "nature", "history", "minimal"];
+const SCIENCE_PREMIUM_THEME_WORDS = [
+  "biology",
+  "chemistry",
+  "physics",
+  "medicine",
+  "ecology",
+  "climate",
+  "science",
+  "biotech",
+  "cell",
+  "molecule",
+];
+
+const BUSINESS_PREMIUM_THEME_WORDS = [
+  "business",
+  "startup",
+  "product",
+  "economics",
+  "market",
+  "marketing",
+  "finance",
+  "metrics",
+  "revenue",
+  "project defense",
+];
+
+const TIMELINE_PREMIUM_THEME_WORDS = [
+  "history",
+  "timeline",
+  "chronology",
+  "biography",
+  "politics",
+  "revolution",
+  "empire",
+  "century",
+  "documentary",
+];
+
+const CULTURE_PREMIUM_THEME_WORDS = [
+  "literature",
+  "culture",
+  "art",
+  "poetry",
+  "writer",
+  "author",
+  "biography",
+  "society",
+  "essay",
+  "novel",
+];
+
+const FRIENDLY_PREMIUM_THEME_WORDS = [
+  "children",
+  "younger",
+  "simple",
+  "friendly",
+  "beginner",
+  "school",
+  "lesson",
+  "explain simpler",
+];
+
+const SERIOUS_TECH_PREMIUM_THEME_WORDS = [
+  "technology",
+  "programming",
+  "ai",
+  "data",
+  "engineering",
+  "analysis",
+  "cyber",
+  "algorithm",
+];
+
+const NEUTRAL_PREMIUM_THEME_IDS: PremiumPresentationThemeId[] = ["academicClean", "editorialMagazine", "scienceBoard", "softClassroom"];
 
 export function resolvePresentationTheme(input: {
   title?: string;
@@ -713,21 +1055,33 @@ export function resolvePresentationTheme(input: {
   scenario?: string;
   level?: string;
   presentationTheme?: unknown;
+  designBrief?: unknown;
 }): PresentationTheme {
   const existing = presentationThemeSchema.safeParse(input.presentationTheme);
   if (existing.success) {
-    return existing.data;
+    return resolvePremiumPresentationTheme(existing.data.themeId, existing.data);
+  }
+
+  const designBrief = designBriefSchema.safeParse(input.designBrief);
+  if (designBrief.success) {
+    return resolveThemeFromDesignBrief(designBrief.data);
   }
 
   const text = normalizeThemeText([input.title, input.prompt, input.scenario, input.level].filter(Boolean).join(" "));
-  if (matchesThemeWords(text, DARK_THEME_WORDS)) return PRESENTATION_THEME_PRESETS.moody;
-  if (matchesThemeWords(text, BRIGHT_THEME_WORDS)) return PRESENTATION_THEME_PRESETS.bright;
-  if (matchesThemeWords(text, TECH_THEME_WORDS)) return PRESENTATION_THEME_PRESETS.tech;
-  if (matchesThemeWords(text, NATURE_THEME_WORDS)) return PRESENTATION_THEME_PRESETS.nature;
-  if (matchesThemeWords(text, HISTORY_THEME_WORDS)) return PRESENTATION_THEME_PRESETS.history;
+  if (matchesThemeWords(text, SCIENCE_PREMIUM_THEME_WORDS) || matchesThemeWords(text, NATURE_THEME_WORDS)) return PREMIUM_PRESENTATION_THEMES.scienceBoard;
+  if (matchesThemeWords(text, BUSINESS_PREMIUM_THEME_WORDS)) return PREMIUM_PRESENTATION_THEMES.startupPitch;
+  if (matchesThemeWords(text, TIMELINE_PREMIUM_THEME_WORDS)) return PREMIUM_PRESENTATION_THEMES.timelineDocumentary;
+  if (matchesThemeWords(text, DARK_THEME_WORDS)) {
+    return PREMIUM_PRESENTATION_THEMES.darkLecture;
+  }
+  if (matchesThemeWords(text, SERIOUS_TECH_PREMIUM_THEME_WORDS) || matchesThemeWords(text, TECH_THEME_WORDS)) {
+    return { ...PREMIUM_PRESENTATION_THEMES.darkLecture, preset: "tech" };
+  }
+  if (matchesThemeWords(text, CULTURE_PREMIUM_THEME_WORDS) || matchesThemeWords(text, HISTORY_THEME_WORDS)) return PREMIUM_PRESENTATION_THEMES.editorialMagazine;
+  if (matchesThemeWords(text, FRIENDLY_PREMIUM_THEME_WORDS) || matchesThemeWords(text, BRIGHT_THEME_WORDS)) return PREMIUM_PRESENTATION_THEMES.softClassroom;
 
-  const preset = NEUTRAL_THEME_PRESETS[stableThemeHash(text || "studydeck") % NEUTRAL_THEME_PRESETS.length];
-  return PRESENTATION_THEME_PRESETS[preset];
+  const themeId = NEUTRAL_PREMIUM_THEME_IDS[stableThemeHash(text || "studydeck") % NEUTRAL_PREMIUM_THEME_IDS.length];
+  return PREMIUM_PRESENTATION_THEMES[themeId];
 }
 
 function normalizeThemeText(value: string) {
@@ -735,7 +1089,7 @@ function normalizeThemeText(value: string) {
 }
 
 function matchesThemeWords(text: string, words: string[]) {
-  return words.some((word) => text.includes(word));
+  return words.some((word) => text.includes(normalizeThemeText(word)));
 }
 
 function stableThemeHash(value: string) {
@@ -808,13 +1162,15 @@ export function ensureEditableCanvas(document: PresentationDocument): Presentati
     scenario: document.scenario,
     level: document.level,
     presentationTheme: document.presentationTheme,
+    designBrief: document.designBrief,
   });
 
   return {
     ...document,
     presentationTheme: theme,
     slides: document.slides.map((slide) => {
-      const generatedCanvas = buildSlideCanvas(slide, theme);
+      const designDirection = document.designBrief?.slideDirections.find((direction) => direction.slideOrder === slide.order);
+      const generatedCanvas = buildSlideCanvas(slide, theme, { designDirection });
       return {
         ...slide,
         canvas: hasCustomSlideCanvas(slide, theme, generatedCanvas)
@@ -825,15 +1181,26 @@ export function ensureEditableCanvas(document: PresentationDocument): Presentati
   };
 }
 
-export function buildSlideCanvas(slide: Slide, theme: PresentationTheme): SlideCanvas {
+type BuildSlideCanvasOptions = {
+  designDirection?: DesignBriefSlideDirection;
+};
+
+export function buildSlideCanvas(slide: Slide, theme: PresentationTheme, options: BuildSlideCanvasOptions = {}): SlideCanvas {
   const visual = slide.visual || { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] };
   const background = theme.colors.background;
   const backgroundStyle = slideBackgroundStyle(slide, theme);
   const text = theme.colors.text;
   const muted = theme.colors.muted;
   const elements: CanvasElement[] = backgroundElements(slide, theme);
+  const designDirection = options.designDirection;
+  const premium = Boolean(designDirection);
 
   if (slide.slideKind === "title" || slide.slideKind === "section") {
+    if (premium) {
+      addPremiumHeroCanvas(slide, theme, elements, designDirection);
+      return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: finalizeGeneratedElements(elements, theme) };
+    }
+
     const isTitleSlide = slide.slideKind === "title";
     if (visual.image) {
       elements.push(imageElement(`${slide.id}-image-bg`, visual.image, 0, 0, 1280, 720, 1, 0.1, "cover"));
@@ -865,6 +1232,12 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme): SlideC
     return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: finalizeGeneratedElements(elements, theme) };
   }
 
+  const directed = premium ? addPremiumDirectedCanvas(slide, theme, elements, designDirection) : false;
+  if (directed) {
+    addFallbackImageCanvas(slide, elements);
+    return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: finalizeGeneratedElements(elements, theme) };
+  }
+
   if (slide.slideKind === "summary") addSummaryCanvas(slide, theme, elements);
   else if (slide.layout === "statement") addStatementCanvas(slide, theme, elements);
   else if (slide.layout === "quote") addQuoteCanvas(slide, theme, elements);
@@ -884,6 +1257,140 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme): SlideC
   addFallbackImageCanvas(slide, elements);
 
   return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: finalizeGeneratedElements(elements, theme) };
+}
+
+function addPremiumHeroCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], direction?: DesignBriefSlideDirection) {
+  const image = slide.visual?.image;
+  const editorial = theme.themeId === "editorialMagazine" || direction?.layoutIntent === "full_bleed_image";
+  if (image) {
+    elements.push(imageElement(`${slide.id}-premium-image-bg`, image, editorial ? 0 : 710, 0, editorial ? 1280 : 570, 720, 1, editorial ? 0.24 : 0.82, "cover"));
+    elements.push(shapeElement(`${slide.id}-premium-image-wash`, "rect", 0, 0, editorial ? 1280 : 760, 720, 2, theme.colors.background, theme.colors.background, 0, editorial ? 0.68 : 0.92));
+  }
+
+  const leftAligned = editorial || direction?.layoutIntent === "split_image_text";
+  const titleX = leftAligned ? 86 : 156;
+  const titleW = leftAligned ? 720 : 968;
+  elements.push(
+    shapeElement(`${slide.id}-premium-accent`, "rect", titleX, leftAligned ? 126 : 108, 138, 6, 3, theme.colors.accent, theme.colors.accent, 0, 1),
+    textElement(`${slide.id}-title`, slide.title, titleX, leftAligned ? 162 : 156, titleW, 172, 5, {
+      role: "title",
+      fontSize: fittedFontSize(slide.title, leftAligned ? 62 : 64, 36, 172),
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.text,
+      bold: true,
+      align: leftAligned ? "left" : "center",
+      valign: "middle",
+    }),
+    textElement(`${slide.id}-body`, slide.thesis || slideBodyText(slide), titleX, leftAligned ? 372 : 364, titleW, 112, 5, {
+      role: "body",
+      fontSize: fittedFontSize(slide.thesis || slideBodyText(slide), 30, 19, 112),
+      fontFamily: theme.fonts.body,
+      color: theme.colors.muted,
+      align: leftAligned ? "left" : "center",
+      valign: "middle",
+    }),
+  );
+
+  if (slide.slideKind === "title") addTitleMiniPointGrid(slide, theme, elements);
+  else addMiniPointRow(slide, theme, elements, leftAligned ? 86 : 296, 544);
+}
+
+function addPremiumDirectedCanvas(
+  slide: Slide,
+  theme: PresentationTheme,
+  elements: CanvasElement[],
+  direction?: DesignBriefSlideDirection,
+) {
+  if (slide.slideKind === "summary" || direction?.layoutIntent === "summary") {
+    addSummaryCanvas(slide, theme, elements);
+    return true;
+  }
+
+  const intent = direction?.layoutIntent;
+  if ((intent === "full_bleed_image" || intent === "split_image_text") && slide.visual?.image) {
+    addPremiumSplitImageCanvas(slide, theme, elements, intent === "full_bleed_image");
+    return true;
+  }
+  if (intent === "cards" || (theme.themeId === "startupPitch" && slide.layout === "bullets")) {
+    addPremiumCardsCanvas(slide, theme, elements);
+    return true;
+  }
+  if (intent === "timeline") {
+    addSequenceCanvas(slide, theme, elements);
+    return true;
+  }
+  if (intent === "diagram" || direction?.imageStrategy === "diagram") {
+    addPanelGridCanvas(slide, theme, elements, ["РџСЂРёС‡РёРЅР°", "Р”РµС‚Р°Р»СЊ", "РС‚РѕРі"]);
+    return true;
+  }
+  if (intent === "metric") {
+    addMetricsCanvas(slide, theme, elements);
+    return true;
+  }
+  if (intent === "statement") {
+    addStatementCanvas(slide, theme, elements);
+    return true;
+  }
+  return false;
+}
+
+function addPremiumSplitImageCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], fullBleed: boolean) {
+  const image = slide.visual?.image;
+  if (image) {
+    elements.push(imageElement(`${slide.id}-premium-image`, image, fullBleed ? 0 : 700, 0, fullBleed ? 1280 : 580, 720, 1, fullBleed ? 0.34 : 0.9, "cover"));
+    elements.push(shapeElement(`${slide.id}-premium-copy-wash`, "rect", 0, 0, fullBleed ? 740 : 710, 720, 2, theme.colors.background, theme.colors.background, 0, fullBleed ? 0.84 : 0.96));
+  }
+  elements.push(
+    shapeElement(`${slide.id}-premium-rule`, "rect", 84, 122, 92, 5, 3, theme.colors.accent, theme.colors.accent, 0, 1),
+    textElement(`${slide.id}-title`, slide.title, 84, 154, 560, 118, 5, {
+      role: "title",
+      fontSize: fittedFontSize(slide.title, 44, 28, 118),
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.text,
+      bold: true,
+    }),
+    textElement(`${slide.id}-body`, slide.thesis || slideBodyText(slide), 84, 310, 548, 148, 5, {
+      role: "body",
+      fontSize: fittedFontSize(slide.thesis || slideBodyText(slide), READABLE_BODY_FONT_SIZE, 18, 148),
+      fontFamily: theme.fonts.body,
+      color: theme.colors.muted,
+    }),
+  );
+  addMiniPointRow(slide, theme, elements, 84, 548);
+}
+
+function addPremiumCardsCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  addSlideTitle(slide, theme, elements);
+  const items = sequenceItems(slide).slice(0, 4);
+  const columns = Math.max(2, Math.min(4, items.length || 3));
+  const cardWidth = (1096 - (columns - 1) * 22) / columns;
+  const startX = 92;
+  elements.push(textElement(`${slide.id}-premium-kicker`, slide.thesis || slide.visual?.title || "", 92, 138, 1096, 52, 4, {
+    role: "body",
+    fontSize: 20,
+    fontFamily: theme.fonts.body,
+    color: theme.colors.muted,
+    align: "center",
+  }));
+  Array.from({ length: columns }, (_, index) => items[index] || slide.bullets[index] || slide.thesis || slideBodyText(slide)).forEach((item, index) => {
+    const x = startX + index * (cardWidth + 22);
+    elements.push(
+      shapeElement(`${slide.id}-premium-card-${index}`, "roundRect", x, 236, cardWidth, 248, 2, index % 2 ? theme.colors.surface : theme.colors.surfaceAlt, theme.colors.line, 1, 1),
+      textElement(`${slide.id}-premium-card-${index}-label`, String(index + 1).padStart(2, "0"), x + 22, 260, cardWidth - 44, 36, 4, {
+        role: "caption",
+        fontSize: 24,
+        fontFamily: theme.fonts.heading,
+        color: theme.colors.accent,
+        bold: true,
+      }),
+      textElement(`${slide.id}-premium-card-${index}-text`, item, x + 22, 322, cardWidth - 44, 112, 4, {
+        role: "body",
+        fontSize: 18,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.muted,
+      }),
+    );
+  });
 }
 
 function finalizeGeneratedElements(elements: CanvasElement[], theme: PresentationTheme) {
@@ -1248,6 +1755,7 @@ function isKnownGeneratedCanvasElementId(slideId: string, elementId: string) {
     elementId.startsWith(`${slideId}-summary-`) ||
     elementId.startsWith(`${slideId}-mini-`) ||
     elementId.startsWith(`${slideId}-card-`) ||
+    elementId.startsWith(`${slideId}-premium-`) ||
     elementId.startsWith(`${slideId}-visual-`)
   );
 }
@@ -1803,7 +2311,7 @@ function addSourceRefsCanvas(slide: Slide, theme: PresentationTheme, elements: C
 }
 
 function addFallbackImageCanvas(slide: Slide, elements: CanvasElement[]) {
-  if (slide.slideKind === "summary") return;
+  if (slide.slideKind === "summary" && slide.visual?.type !== "image") return;
   const image = slide.visual?.image;
   if (!image) return;
   if (elements.some((element) => element.type === "image")) return;

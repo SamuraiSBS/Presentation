@@ -3,11 +3,13 @@ import OpenAI from "openai";
 import { z } from "zod";
 import {
   type DesignBrief,
+  type DeckStory,
   type GenerationPipelineArtifacts,
   type Highlight,
   type KeyConcept,
   type PresentationDocument,
   type QualityCritique,
+  type QualityIssue,
   type ResearchBrief,
   type Slide,
   type SlideBlock,
@@ -16,9 +18,12 @@ import {
   type SlideKind,
   type SlideLayout,
   type SlideNarrative,
+  type SlideTextPlan,
   type SlideVisual,
   type Source,
+  PREMIUM_PRESENTATION_THEME_IDS,
   SLIDE_LAYOUT_DEFINITIONS,
+  deckStorySchema,
   designBriefSchema,
   generationPipelineArtifactsSchema,
   hasMeasurableValue,
@@ -28,7 +33,12 @@ import {
   resolvePresentationTheme,
   slideBlueprintSchema,
   slideNarrativeSchema,
+  slideTextPlanSchema,
 } from "@studydeck/shared";
+import {
+  improvePresentationQuality,
+  type QualityRepairResponse,
+} from "./presentation-quality.js";
 
 type ProjectInput = {
   id: string;
@@ -69,19 +79,53 @@ type SlideTextRepairResponse = {
   slides?: SlideTextRepair[];
 };
 
+type QualityModelCallbacks = {
+  critique?: (presentation: PresentationDocument, deterministic: QualityCritique) => Promise<unknown>;
+  repair?: (presentation: PresentationDocument, issues: QualityIssue[], attempt: number) => Promise<unknown>;
+};
+
 type GenerateStructuredOptions<T> = {
   provider: AiGenerationMode;
   system: string;
   prompt: string;
-  schema: z.ZodType<T>;
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>;
   schemaName: string;
   parse?: (value: unknown) => T;
   openAIClient?: OpenAI;
   yandexApiKey?: string;
   jsonSchema?: Record<string, unknown>;
+  strict?: boolean;
+  maxAttempts?: number;
 };
 
-type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief" | "designBrief" | "slideBlueprints">>;
+type GenerateAndValidateOptions<T> = {
+  call: (attempt: number, repairPrompt?: string) => Promise<unknown>;
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>;
+  schemaName: string;
+  parse?: (value: unknown) => T;
+  repair?: (error: unknown, previousValue: unknown, attempt: number) => string;
+  maxAttempts?: number;
+};
+
+export class StructuredGenerationError extends Error {
+  constructor(
+    public readonly schemaName: string,
+    public readonly validationError: unknown,
+  ) {
+    const detail = validationError instanceof Error ? validationError.message : String(validationError);
+    super(`Structured generation for ${schemaName} failed validation: ${detail}`);
+    this.name = "StructuredGenerationError";
+  }
+}
+
+type YandexTextOptions = {
+  jsonObject?: boolean;
+  jsonSchema?: unknown;
+  temperature?: number;
+  maxTokens?: number;
+};
+
+type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief" | "deckStory" | "designBrief" | "slideBlueprints" | "slideTextPlans">>;
 
 const NARRATION_SYSTEM_PROMPT = [
   "You write the full Russian oral narration for a study presentation.",
@@ -103,6 +147,20 @@ const SYSTEM_PROMPT = [
   "Do not write meta narration about the slide as an object. Never write phrases like 'этот слайд помогает', 'продолжает разговор о теме', 'подводит к следующему фрагменту', 'общая логика объяснения', or 'главный акцент здесь'.",
   "Do not invent precise facts, dates, names, numbers, or citations when the source material does not support them. Use general explanations instead.",
   "Never mention sources, source titles, sourceRefs, or internal instructions in user-visible text.",
+].join(" ");
+
+const QUALITY_CRITIC_SYSTEM_PROMPT = [
+  "You are a strict quality editor for study presentations.",
+  "Evaluate the presentation. Do not rewrite it.",
+  "Return only JSON with score, summary, and issues.",
+  "Flag generic text, off-topic slides, overlong visible text, duplicated structure, weak narration, weak visuals, and factual risk.",
+].join(" ");
+
+const QUALITY_REPAIR_SYSTEM_PROMPT = [
+  "You are a careful repair editor for study presentations.",
+  "Repair only fields explicitly named by quality issues.",
+  "Keep the deck schema-compatible and preserve source-backed facts.",
+  "Return only JSON. Do not add markdown.",
 ].join(" ");
 
 const GENERIC_NARRATION_PHRASES = [
@@ -378,9 +436,11 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
         const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
         const researchBrief = buildResearchBrief(project, sources);
         const narrativePlan = await generateNarrativePlanWithProvider(provider, project, sources, researchBrief, { openAIClient: client });
+        const deckStory = buildDeckStory(project, researchBrief, narrativePlan);
         const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
         const text = await generateOpenAINarration(client, project, sources, narrativePlan, researchBrief);
-        generationPipelineArtifactsSchema.parse({ researchBrief, narrativePlan, designBrief, slideBlueprints: [] });
+        const slideTextPlans = buildSlideTextPlans(project, text, narrativePlan, deckStory, sources);
+        generationPipelineArtifactsSchema.parse({ researchBrief, narrativePlan, deckStory, designBrief, slideBlueprints: [], slideTextPlans });
         return { text, narrativePlan, generationMode: provider };
       }
 
@@ -391,9 +451,11 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
 
       const researchBrief = buildResearchBrief(project, sources);
       const narrativePlan = await generateNarrativePlanWithProvider(provider, project, sources, researchBrief, { yandexApiKey: apiKey });
+      const deckStory = buildDeckStory(project, researchBrief, narrativePlan);
       const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
       const text = await generateYandexNarration(apiKey, project, sources, narrativePlan, researchBrief);
-      generationPipelineArtifactsSchema.parse({ researchBrief, narrativePlan, designBrief, slideBlueprints: [] });
+      const slideTextPlans = buildSlideTextPlans(project, text, narrativePlan, deckStory, sources);
+      generationPipelineArtifactsSchema.parse({ researchBrief, narrativePlan, deckStory, designBrief, slideBlueprints: [], slideTextPlans });
       return { text, narrativePlan, generationMode: provider };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -479,73 +541,71 @@ async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const researchBrief = buildResearchBrief(project, sources);
   const narrativePlan = await generateNarrativePlanWithProvider("openai", project, sources, researchBrief, { openAIClient: client });
-  const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
+  const deckStory = buildDeckStory(project, researchBrief, narrativePlan);
   const narrationText = await generateOpenAINarration(client, project, sources, narrativePlan, researchBrief);
+  const slideTextPlans = buildSlideTextPlans(project, narrationText, narrativePlan, deckStory, sources);
+  const designBrief = await generateDesignBriefWithProvider(
+    "openai",
+    project,
+    sources,
+    researchBrief,
+    narrativePlan,
+    deckStory,
+    slideTextPlans,
+    { openAIClient: client },
+  );
   const slideBlueprints = buildSlideBlueprints(project, narrationText, narrativePlan, designBrief);
-  const response = await client.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-    input: [
-      {
-        role: "system",
-        /* legacyContent:
-          "Ты создаешь учебные презентации на русском языке. На каждом слайде нужен короткий текст для экрана: заголовок и 1-2 содержательные фразы без маркеров. Подробный связный текст для чтения пиши только в speakerNotes и speechScript. Не упоминай источники в тексте для пользователя, не пиши инструкции, заглушки или просьбы что-то проверить. Верни только валидный JSON.",
-        */ content: SYSTEM_PROMPT,
-      },
-      {
-        role: "user",
-        content: buildGenerationPrompt(project, sources, narrationText, narrativePlan, { researchBrief, designBrief, slideBlueprints }),
-      },
-    ],
-    text: {
-      format: {
-        type: "json_schema",
-        name: "studydeck_presentation",
-        strict: false,
-        schema: jsonSchema,
-      },
-    },
+  const parsed = await generatePresentationDocumentWithProvider("openai", project, sources, narrationText, narrativePlan, {
+    researchBrief,
+    deckStory,
+    designBrief,
+    slideBlueprints,
+    slideTextPlans,
+    openAIClient: client,
   });
 
-  const typedResponse = response as typeof response & { output_parsed?: unknown };
-  const parsed = typedResponse.output_parsed || parseJsonText(response.output_text || "");
   return finalizeGeneratedPresentation(parsed, project, sources, "openai", narrationText, narrativePlan, (presentation, issues) =>
     repairSlideTextWithOpenAI(client, presentation, issues),
-  );
+  {
+    critique: (presentation, deterministic) => critiquePresentationQualityWithOpenAI(client, presentation, deterministic),
+    repair: (presentation, issues, attempt) => repairPresentationQualityWithOpenAI(client, presentation, issues, attempt),
+  },
+  designBrief);
 }
 
 async function generateOpenAIPresentationFromNarration(project: ProjectInput, sources: Source[], narrationText: string) {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const researchBrief = buildResearchBrief(project, sources);
   const narrativePlan = await generateNarrativePlanWithProvider("openai", project, sources, researchBrief, { openAIClient: client });
-  const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
+  const deckStory = buildDeckStory(project, researchBrief, narrativePlan);
+  const slideTextPlans = buildSlideTextPlans(project, narrationText, narrativePlan, deckStory, sources);
+  const designBrief = await generateDesignBriefWithProvider(
+    "openai",
+    project,
+    sources,
+    researchBrief,
+    narrativePlan,
+    deckStory,
+    slideTextPlans,
+    { openAIClient: client },
+  );
   const slideBlueprints = buildSlideBlueprints(project, narrationText, narrativePlan, designBrief);
-  const response = await client.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-    input: [
-      {
-        role: "system",
-        content: SYSTEM_PROMPT,
-      },
-      {
-        role: "user",
-        content: buildGenerationPrompt(project, sources, narrationText, narrativePlan, { researchBrief, designBrief, slideBlueprints }),
-      },
-    ],
-    text: {
-      format: {
-        type: "json_schema",
-        name: "studydeck_presentation",
-        strict: false,
-        schema: jsonSchema,
-      },
-    },
+  const parsed = await generatePresentationDocumentWithProvider("openai", project, sources, narrationText, narrativePlan, {
+    researchBrief,
+    deckStory,
+    designBrief,
+    slideBlueprints,
+    slideTextPlans,
+    openAIClient: client,
   });
 
-  const typedResponse = response as typeof response & { output_parsed?: unknown };
-  const parsed = typedResponse.output_parsed || parseJsonText(response.output_text || "");
   return finalizeGeneratedPresentation(parsed, project, sources, "openai", narrationText, narrativePlan, (presentation, issues) =>
     repairSlideTextWithOpenAI(client, presentation, issues),
-  );
+  {
+    critique: (presentation, deterministic) => critiquePresentationQualityWithOpenAI(client, presentation, deterministic),
+    repair: (presentation, issues, attempt) => repairPresentationQualityWithOpenAI(client, presentation, issues, attempt),
+  },
+  designBrief);
 }
 
 async function generateOpenAINarrativePlan(client: OpenAI, project: ProjectInput, sources: Source[]) {
@@ -597,24 +657,41 @@ async function generateWithYandex(project: ProjectInput, sources: Source[]) {
 
   const researchBrief = buildResearchBrief(project, sources);
   const narrativePlan = await generateNarrativePlanWithProvider("yandex", project, sources, researchBrief, { yandexApiKey: apiKey });
-  const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
+  const deckStory = buildDeckStory(project, researchBrief, narrativePlan);
   const narrationText = await generateYandexNarration(apiKey, project, sources, narrativePlan, researchBrief);
-  const slideBlueprints = buildSlideBlueprints(project, narrationText, narrativePlan, designBrief);
-  const outputText = await requestYandexText(
-    apiKey,
-    SYSTEM_PROMPT,
-    buildGenerationPrompt(project, sources, narrationText, narrativePlan, { researchBrief, designBrief, slideBlueprints }),
-    true,
+  const slideTextPlans = buildSlideTextPlans(project, narrationText, narrativePlan, deckStory, sources);
+  const designBrief = await generateDesignBriefWithProvider(
+    "yandex",
+    project,
+    sources,
+    researchBrief,
+    narrativePlan,
+    deckStory,
+    slideTextPlans,
+    { yandexApiKey: apiKey },
   );
-
+  const slideBlueprints = buildSlideBlueprints(project, narrationText, narrativePlan, designBrief);
+  const parsed = await generatePresentationDocumentWithProvider("yandex", project, sources, narrationText, narrativePlan, {
+    researchBrief,
+    deckStory,
+    designBrief,
+    slideBlueprints,
+    slideTextPlans,
+    yandexApiKey: apiKey,
+  });
   return finalizeGeneratedPresentation(
-    parseJsonText(outputText),
+    parsed,
     project,
     sources,
     "yandex",
     narrationText,
     narrativePlan,
     (presentation, issues) => repairSlideTextWithYandex(apiKey, presentation, issues),
+    {
+      critique: (presentation, deterministic) => critiquePresentationQualityWithYandex(apiKey, presentation, deterministic),
+      repair: (presentation, issues, attempt) => repairPresentationQualityWithYandex(apiKey, presentation, issues, attempt),
+    },
+    designBrief,
   );
 }
 
@@ -627,23 +704,40 @@ async function generateYandexPresentationFromNarration(project: ProjectInput, so
 
   const researchBrief = buildResearchBrief(project, sources);
   const narrativePlan = await generateNarrativePlanWithProvider("yandex", project, sources, researchBrief, { yandexApiKey: apiKey });
-  const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
-  const slideBlueprints = buildSlideBlueprints(project, narrationText, narrativePlan, designBrief);
-  const outputText = await requestYandexText(
-    apiKey,
-    SYSTEM_PROMPT,
-    buildGenerationPrompt(project, sources, narrationText, narrativePlan, { researchBrief, designBrief, slideBlueprints }),
-    true,
+  const deckStory = buildDeckStory(project, researchBrief, narrativePlan);
+  const slideTextPlans = buildSlideTextPlans(project, narrationText, narrativePlan, deckStory, sources);
+  const designBrief = await generateDesignBriefWithProvider(
+    "yandex",
+    project,
+    sources,
+    researchBrief,
+    narrativePlan,
+    deckStory,
+    slideTextPlans,
+    { yandexApiKey: apiKey },
   );
-
+  const slideBlueprints = buildSlideBlueprints(project, narrationText, narrativePlan, designBrief);
+  const parsed = await generatePresentationDocumentWithProvider("yandex", project, sources, narrationText, narrativePlan, {
+    researchBrief,
+    deckStory,
+    designBrief,
+    slideBlueprints,
+    slideTextPlans,
+    yandexApiKey: apiKey,
+  });
   return finalizeGeneratedPresentation(
-    parseJsonText(outputText),
+    parsed,
     project,
     sources,
     "yandex",
     narrationText,
     narrativePlan,
     (presentation, issues) => repairSlideTextWithYandex(apiKey, presentation, issues),
+    {
+      critique: (presentation, deterministic) => critiquePresentationQualityWithYandex(apiKey, presentation, deterministic),
+      repair: (presentation, issues, attempt) => repairPresentationQualityWithYandex(apiKey, presentation, issues, attempt),
+    },
+    designBrief,
   );
 }
 
@@ -659,7 +753,7 @@ async function generateYandexNarration(apiKey: string, project: ProjectInput, so
   for (let attempt = 0; attempt < 3; attempt += 1) {
     let outputText = "";
     try {
-      outputText = await requestYandexText(apiKey, NARRATION_SYSTEM_PROMPT, prompt, false);
+      outputText = await requestYandexText(apiKey, NARRATION_SYSTEM_PROMPT, prompt, { jsonObject: false });
       return normalizeNarrationText(outputText, project);
     } catch (error) {
       lastError = error;
@@ -680,8 +774,8 @@ async function generateNarrativePlanWithProvider(
   sources: Source[],
   researchBrief: ResearchBrief,
   options: Pick<GenerateStructuredOptions<SlideNarrative[]>, "openAIClient" | "yandexApiKey">,
-) {
-  return generateStructuredWithProvider({
+): Promise<SlideNarrative[]> {
+  return generateStructuredWithProvider<SlideNarrative[]>({
     provider,
     system: "You are the story planner for StudyDeck. Create only a concise Russian slide-by-slide narrative plan. Return JSON only.",
     prompt: buildNarrativePlanPrompt(project, sources, researchBrief),
@@ -691,6 +785,34 @@ async function generateNarrativePlanWithProvider(
     jsonSchema: narrativePlanJsonSchema,
     ...options,
   });
+}
+
+async function generateDesignBriefWithProvider(
+  provider: AiGenerationMode,
+  project: ProjectInput,
+  sources: Source[],
+  researchBrief: ResearchBrief,
+  narrativePlan: SlideNarrative[],
+  deckStory: DeckStory,
+  slideTextPlans: SlideTextPlan[],
+  options: Pick<GenerateStructuredOptions<DesignBrief>, "openAIClient" | "yandexApiKey">,
+): Promise<DesignBrief> {
+  try {
+    return await generateStructuredWithProvider<DesignBrief>({
+      provider,
+      system: "You are an art director for StudyDeck. Create a design brief only; never output CSS, HTML, or exact coordinates.",
+      prompt: buildDesignBriefPrompt(project, sources, researchBrief, narrativePlan, deckStory, slideTextPlans),
+      schema: designBriefSchema as z.ZodType<DesignBrief>,
+      schemaName: "studydeck_design_brief",
+      parse: (value): DesignBrief => ensureDesignBriefDirections(designBriefSchema.parse(parseJsonOutput(value)), project, narrativePlan),
+      jsonSchema: designBriefJsonSchema,
+      maxAttempts: 1,
+      ...options,
+    });
+  } catch (error) {
+    console.warn(`${provider} design brief generation failed, using deterministic art direction:`, error);
+    return buildDesignBrief(project, researchBrief, narrativePlan);
+  }
 }
 
 async function generatePresentationDocumentWithProvider(
@@ -707,14 +829,15 @@ async function generatePresentationDocumentWithProvider(
     prompt: buildGenerationPrompt(project, sources, narrationText, narrativePlan, options),
     schema: z.unknown(),
     schemaName: "studydeck_presentation",
-    parse: (value) => parseJsonText(String(value || "")),
+    parse: parseJsonOutput,
     jsonSchema,
+    strict: false,
     openAIClient: options.openAIClient,
     yandexApiKey: options.yandexApiKey,
   });
 }
 
-async function generateStructuredWithProvider<T>({
+export async function generateStructuredWithProvider<T>({
   provider,
   system,
   prompt,
@@ -724,30 +847,39 @@ async function generateStructuredWithProvider<T>({
   openAIClient,
   yandexApiKey,
   jsonSchema: schemaJson,
+  strict = true,
+  maxAttempts = 2,
 }: GenerateStructuredOptions<T>): Promise<T> {
-  const parseValue = (value: unknown) => schema.parse(parse ? parse(value) : value);
-
   if (provider === "openai") {
     const client = openAIClient || new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const response = await client.responses.create({
-      model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-      input: [
-        { role: "system", content: system },
-        { role: "user", content: prompt },
-      ],
-      text: schemaJson
-        ? {
-            format: {
-              type: "json_schema",
-              name: schemaName,
-              strict: false,
-              schema: schemaJson,
-            },
-          }
-        : undefined,
+    return generateAndValidate({
+      schema,
+      schemaName,
+      parse,
+      maxAttempts,
+      call: async (_attempt, repairPrompt) => {
+        const response = await client.responses.create({
+          model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+          input: [
+            { role: "system", content: system },
+            { role: "user", content: repairPrompt || withJsonPromptRules(prompt) },
+          ],
+          text: schemaJson
+            ? {
+                format: {
+                  type: "json_schema",
+                  name: schemaName,
+                  strict,
+                  schema: schemaJson,
+                },
+              }
+            : undefined,
+        });
+        const typedResponse = response as typeof response & { output_parsed?: unknown };
+        return typedResponse.output_parsed || response.output_text || "";
+      },
+      repair: (error, previousValue) => buildStructuredRepairPrompt(prompt, schemaName, error, previousValue),
     });
-    const typedResponse = response as typeof response & { output_parsed?: unknown };
-    return parseValue(typedResponse.output_parsed || parseJsonText(response.output_text || ""));
   }
 
   const apiKey = yandexApiKey?.trim();
@@ -755,23 +887,72 @@ async function generateStructuredWithProvider<T>({
     throw new Error("YANDEX_API_KEY is required");
   }
 
-  let outputText = "";
-  try {
-    outputText = await requestYandexText(apiKey, system, prompt, true);
-    return parseValue(parse ? outputText : parseJsonText(outputText));
-  } catch (error) {
-    const repairPrompt = [
-      prompt,
-      "",
-      "The previous response was not valid JSON for the required schema.",
-      `Schema name: ${schemaName}`,
-      `Validation error: ${error instanceof Error ? error.message : String(error)}`,
-      outputText ? `Previous invalid response:\n${outputText.slice(0, 12000)}` : "",
-      "Return only corrected JSON. Do not add markdown.",
-    ].filter(Boolean).join("\n");
-    const repairedText = await requestYandexText(apiKey, system, repairPrompt, true);
-    return parseValue(parse ? repairedText : parseJsonText(repairedText));
+  return generateAndValidate({
+    schema,
+    schemaName,
+    parse,
+    maxAttempts,
+    call: (_attempt, repairPrompt) =>
+      requestYandexText(apiKey, system, repairPrompt || withJsonPromptRules(prompt), schemaJson ? { jsonSchema: schemaJson } : { jsonObject: true }),
+    repair: (error, previousValue) => buildStructuredRepairPrompt(prompt, schemaName, error, previousValue),
+  });
+}
+
+async function generateAndValidate<T>({
+  call,
+  schema,
+  schemaName,
+  parse,
+  repair,
+  maxAttempts = 2,
+}: GenerateAndValidateOptions<T>): Promise<T> {
+  let previousValue: unknown;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const repairPrompt = attempt > 0 && repair ? repair(lastError, previousValue, attempt) : undefined;
+    previousValue = await call(attempt, repairPrompt);
+    try {
+      return schema.parse(parse ? parse(previousValue) : previousValue);
+    } catch (error) {
+      lastError = error;
+      if (attempt === maxAttempts - 1) {
+        throw new StructuredGenerationError(schemaName, error);
+      }
+    }
   }
+
+  throw new StructuredGenerationError(schemaName, lastError);
+}
+
+function withJsonPromptRules(prompt: string) {
+  return [
+    prompt,
+    "",
+    "JSON output rules:",
+    "- Return only JSON.",
+    "- Do not use Markdown.",
+    "- Do not add comments.",
+    "- Use schema keys exactly.",
+    "- Put all user-facing educational text in Russian.",
+  ].join("\n");
+}
+
+function buildStructuredRepairPrompt(prompt: string, schemaName: string, error: unknown, previousValue: unknown) {
+  const previousText = typeof previousValue === "string" ? previousValue : JSON.stringify(previousValue);
+  return [
+    withJsonPromptRules(prompt),
+    "",
+    "The previous response was not valid JSON for the required schema.",
+    `Schema name: ${schemaName}`,
+    `Validation error: ${error instanceof Error ? error.message : String(error)}`,
+    previousText ? `Previous invalid response:\n${previousText.slice(0, 12000)}` : "",
+    "Return only corrected JSON. Do not add markdown.",
+  ].filter(Boolean).join("\n");
+}
+
+function parseJsonOutput(value: unknown) {
+  return typeof value === "string" ? parseJsonText(value) : value;
 }
 
 function buildResearchBrief(project: ProjectInput, sources: Source[]): ResearchBrief {
@@ -805,9 +986,52 @@ function buildResearchVocabulary(project: ProjectInput, sources: Source[]) {
 
 function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, narrativePlan: SlideNarrative[]): DesignBrief {
   const theme = resolvePresentationTheme(project);
+  const themeId = theme.themeId || "academicClean";
+  const directions = Array.from({ length: project.slideCount }, (_, index) => {
+    const order = index + 1;
+    const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, order);
+    const visualRole =
+      order === 1 ? "hero" :
+      order === project.slideCount ? "summary" :
+      /сравн|compare|versus|vs/i.test(plan.keyMessage) ? "compare" :
+      /этап|шаг|chron|хрон|дата|год|period|timeline/i.test(plan.keyMessage) ? "sequence" :
+      /доказ|fact|source|пример|evidence/i.test(plan.keyMessage) ? "evidence" :
+      "explain";
+    const layoutIntent =
+      visualRole === "hero" ? "full_bleed_image" :
+      visualRole === "summary" ? "summary" :
+      visualRole === "compare" ? "diagram" :
+      visualRole === "sequence" ? "timeline" :
+      visualRole === "evidence" ? "cards" :
+      order % 4 === 0 ? "statement" :
+      order % 3 === 0 ? "split_image_text" :
+      "cards";
+    const imageStrategy =
+      layoutIntent === "timeline" || layoutIntent === "diagram" ? "diagram" :
+      layoutIntent === "full_bleed_image" || layoutIntent === "split_image_text" ? "real_photo" :
+      "none";
+    return {
+      slideOrder: order,
+      visualRole,
+      layoutIntent,
+      imageStrategy,
+      visualPrompt: `${project.title}: ${plan.keyMessage}`,
+    };
+  });
   return designBriefSchema.parse({
     themePreset: theme.preset,
+    themeId,
     mood: theme.mood,
+    audienceFit: `Designed for ${project.level} in a ${project.scenario} scenario.`,
+    visualMetaphor: `${researchBrief.topic}: ${researchBrief.angle}`,
+    colorIntent: `Use ${themeId} colors with strong readability and one clear accent.`,
+    typographyIntent: `Use ${theme.fonts.tone} typography: ${theme.fonts.heading} for headings and ${theme.fonts.body} for body text.`,
+    rhythm: {
+      titleStyle: theme.fonts.tone === "bookish" ? "editorial" : theme.fonts.tone === "strict" ? "academic" : "bold",
+      density: project.slideCount >= 10 ? "medium" : "low",
+      imageFrequency: project.mode === "with_sources" ? "balanced" : "rare",
+      sectionBreaks: project.slideCount >= 6,
+    },
     visualDirection: `${researchBrief.topic}: ${researchBrief.angle}`,
     layoutPrinciples: [
       "Use a title opener, varied content layouts, and a clear summary slide.",
@@ -815,7 +1039,42 @@ function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, n
       `Support ${Math.max(1, narrativePlan.length)} planned story beats with distinct visual rhythm.`,
     ],
     imageStrategy: "Use concrete visual descriptions only when they are grounded in the topic or source excerpts.",
+    slideDirections: directions,
   });
+}
+
+function buildDeckStory(project: ProjectInput, researchBrief: ResearchBrief, narrativePlan: SlideNarrative[]): DeckStory {
+  const topic = cleanText(project.title || project.prompt);
+  const plans = narrativePlan.length
+    ? narrativePlan
+    : Array.from({ length: project.slideCount }, (_, index) => buildFallbackNarrativeItem(project, index + 1));
+  const chapterSize = Math.max(1, Math.ceil(plans.length / 3));
+  const chapters = Array.from({ length: Math.ceil(plans.length / chapterSize) }, (_, index) => {
+    const items = plans.slice(index * chapterSize, (index + 1) * chapterSize);
+    const first = items[0] || plans[0];
+    return {
+      title: first?.slideTitle || `${topic} chapter ${index + 1}`,
+      purpose: first?.slidePurpose || `Explain part ${index + 1} of ${topic}.`,
+      slideOrders: items.map((item) => item.slideOrder),
+    };
+  });
+  const finalPlan = plans[plans.length - 1];
+
+  return deckStorySchema.parse({
+    mainIdea: finalPlan?.keyMessage || researchBrief.angle || topic,
+    audienceQuestion: plans[0]?.audienceQuestion || `What should the audience understand about ${topic}?`,
+    tone: deckStoryTone(project),
+    chapters,
+    conclusion: finalPlan?.keyMessage || `The conclusion should stay focused on ${topic}.`,
+  });
+}
+
+function deckStoryTone(project: ProjectInput): DeckStory["tone"] {
+  const text = `${project.scenario} ${project.level} ${project.prompt}`.toLowerCase();
+  if (text.includes("exam") || text.includes("экзам") || text.includes("егэ") || text.includes("огэ")) return "exam_explanation";
+  if (text.includes("teacher") || text.includes("lesson") || text.includes("учител") || text.includes("урок")) return "teacher_explainer";
+  if (text.includes("college") || text.includes("универс") || text.includes("студент")) return "college_report";
+  return "school_report";
 }
 
 function buildSlideBlueprints(
@@ -842,14 +1101,82 @@ function buildSlideBlueprints(
   });
 }
 
+function buildSlideTextPlans(
+  project: ProjectInput,
+  narrationText: string,
+  narrativePlan: SlideNarrative[],
+  deckStory: DeckStory,
+  sources: Source[],
+): SlideTextPlan[] {
+  const sections = parseNarrationSections(normalizeNarrationText(narrationText, project));
+  return Array.from({ length: project.slideCount }, (_, index) => {
+    const order = index + 1;
+    const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, order);
+    const section = sections[index];
+    const notes = completeNarrationSentences(section?.text || plan.keyMessage || deckStory.mainIdea).slice(0, 6).join(" ");
+    const sourceHint = sourceEvidenceForSlide(sources, order);
+    const coreClaim = shortenSentence(firstSentence(notes) || plan.keyMessage || deckStory.mainIdea, 180);
+    const evidenceOrExample = sourceHint || shortenSentence(secondSentence(notes), 160);
+    const listenerTakeaway = shortenSentence(lastSentence(notes) || plan.keyMessage || deckStory.conclusion, 180);
+    const title = shortenVisibleTitle(section?.title || plan.slideTitle || fallbackTitle(project, order));
+    const thesis = ensureSentence(shortenSentence(coreClaim, 170));
+    const bullets = compressVisibleSlideText([evidenceOrExample, listenerTakeaway, plan.audienceQuestion])
+      .filter((item) => item && normalizeTitleKey(item) !== normalizeTitleKey(title))
+      .slice(0, order === project.slideCount ? 3 : 2);
+
+    return slideTextPlanSchema.parse({
+      slideOrder: order,
+      slideQuestion: plan.audienceQuestion,
+      coreClaim,
+      evidenceOrExample,
+      listenerTakeaway,
+      title,
+      thesis,
+      bullets,
+      speakerNotes: notes,
+    });
+  });
+}
+
+function compressVisibleSlideText(values: string[]) {
+  return values
+    .map((value) => shortenSentence(cleanText(value), 92))
+    .map((value) => value.replace(/[.!?]+$/g, ""))
+    .filter((value) => wordCount(value) >= 2 && wordCount(value) <= 14);
+}
+
+function sourceEvidenceForSlide(sources: Source[], order: number) {
+  if (!sources.length) return "";
+  const source = sources[(order - 1) % sources.length];
+  return shortenSentence(cleanText(source.excerpt || source.label), 160);
+}
+
+function shortenVisibleTitle(value: string) {
+  const title = cleanText(value).replace(/[.!?]+$/g, "");
+  const words = title.split(/\s+/).filter(Boolean);
+  return words.length > 8 ? words.slice(0, 8).join(" ") : title;
+}
+
+function ensureSentence(value: string) {
+  const text = cleanText(value);
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+function secondSentence(value: string) {
+  return value.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean)[1] || "";
+}
+
 function buildQualityCritique(presentation: PresentationDocument, issues: SlideTextIssue[]): QualityCritique {
   return qualityCritiqueSchema.parse({
-    passed: issues.length === 0,
+    score: issues.length ? Math.max(0, 100 - issues.length * 20) : 100,
+    summary: issues.length ? `${issues.length} slide text issue(s) found.` : "No slide text issues found.",
     issues: issues.flatMap((issue) =>
       issue.reasons.map((reason) => ({
-        slideOrder: issue.slideOrder,
-        severity: "error",
+        slideId: presentation.slides.find((slide) => slide.order === issue.slideOrder)?.id,
+        severity: "major",
+        category: reason.includes("duplicated") ? "duplicate" : "generic_text",
         message: reason,
+        field: issue.fields.join(", "),
         repairInstruction: `Repair fields: ${issue.fields.join(", ")}`,
       })),
     ),
@@ -870,7 +1197,12 @@ function shouldRetryNarration(error: unknown) {
   );
 }
 
-async function requestYandexText(apiKey: string, systemText: string, userText: string, jsonObject: boolean) {
+async function requestYandexText(apiKey: string, systemText: string, userText: string, options: YandexTextOptions = {}) {
+  const responseFormat = options.jsonSchema
+    ? { json_schema: { schema: options.jsonSchema } }
+    : options.jsonObject
+      ? { json_object: true }
+      : {};
   const response = await fetch("https://llm.api.cloud.yandex.net/foundationModels/v1/completion", {
     method: "POST",
     headers: {
@@ -881,10 +1213,10 @@ async function requestYandexText(apiKey: string, systemText: string, userText: s
       modelUri: getYandexModelUri(),
       completionOptions: {
         stream: false,
-        temperature: 0.25,
-        maxTokens: "8000",
+        temperature: options.temperature ?? 0.25,
+        maxTokens: String(options.maxTokens ?? 8000),
       },
-      jsonObject,
+      ...responseFormat,
       messages: [
         {
           role: "system",
@@ -1155,6 +1487,76 @@ export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[
   ].join("\n\n");
 }
 
+function buildDesignBriefPrompt(
+  project: ProjectInput,
+  sources: Source[],
+  researchBrief: ResearchBrief,
+  narrativePlan: SlideNarrative[],
+  deckStory: DeckStory,
+  slideTextPlans: SlideTextPlan[],
+) {
+  const themeIds = [
+    "editorialMagazine",
+    "academicClean",
+    "darkLecture",
+    "timelineDocumentary",
+    "scienceBoard",
+    "startupPitch",
+    "softClassroom",
+  ].join(", ");
+  return [
+    "Create a StudyDeck DesignBrief JSON. You are choosing art direction, not drawing the slides.",
+    `User topic and request: ${project.prompt}`,
+    `Project title: ${project.title}`,
+    `Scenario: ${project.scenario}`,
+    `Audience level: ${project.level}`,
+    `Exact slide count: ${project.slideCount}`,
+    `Allowed themeId values: ${themeIds}.`,
+    "Choose one stable themeId. Do not invent custom theme IDs.",
+    "Theme selection guide:",
+    "- history/date-heavy topic -> timelineDocumentary;",
+    "- biology/chemistry/physics/medicine/ecology -> scienceBoard;",
+    "- business/product/economics/project defense -> startupPitch;",
+    "- serious tech/analysis/dark topics -> darkLecture;",
+    "- school report with no special domain -> academicClean;",
+    "- creative/culture/literature/biography -> editorialMagazine;",
+    "- younger or friendly explanation -> softClassroom.",
+    "Return exactly one slideDirections item for every slide order.",
+    "Do not output raw CSS, HTML, coordinates, pixel sizes, or layout code.",
+    "Use imageStrategy=real_photo only when a grounded image search could help. Use diagram for timelines, comparisons, processes, and conceptual schemas.",
+    "Use visualPrompt as a concise image/search/art-direction prompt for the real slide topic.",
+    "Required JSON shape:",
+    JSON.stringify({
+      themeId: "academicClean",
+      mood: "serious",
+      audienceFit: "...",
+      visualMetaphor: "...",
+      colorIntent: "...",
+      typographyIntent: "...",
+      rhythm: {
+        titleStyle: "academic",
+        density: "medium",
+        imageFrequency: "balanced",
+        sectionBreaks: true,
+      },
+      slideDirections: [
+        {
+          slideOrder: 1,
+          visualRole: "hero",
+          layoutIntent: "full_bleed_image",
+          imageStrategy: "real_photo",
+          visualPrompt: "...",
+        },
+      ],
+    }, null, 2),
+    `Narrative plan:\n${formatNarrativePlanForPrompt(narrativePlan)}`,
+    `Deck story:\n${JSON.stringify(deckStory, null, 2)}`,
+    `Slide text plans:\n${JSON.stringify(slideTextPlans, null, 2)}`,
+    `Research brief:\n${JSON.stringify(researchBrief, null, 2)}`,
+    `Source excerpts for grounding:\n${formatSourceText(sources)}`,
+  ].join("\n\n");
+}
+
 export function buildNarrationPrompt(project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[] = [], researchBrief?: ResearchBrief) {
   const planText = formatNarrativePlanForPrompt(narrativePlan);
   return [
@@ -1357,9 +1759,12 @@ export function buildGenerationPrompt(
   const fixedNarration = cleanMultilineText(narrationText);
   const planText = formatNarrativePlanForPrompt(narrativePlan);
   const theme = resolvePresentationTheme(project);
+  const supportedThemeIds = PREMIUM_PRESENTATION_THEME_IDS.join(", ");
   const researchText = artifacts.researchBrief ? JSON.stringify(artifacts.researchBrief, null, 2) : "";
+  const storyText = artifacts.deckStory ? JSON.stringify(artifacts.deckStory, null, 2) : "";
   const designText = artifacts.designBrief ? JSON.stringify(artifacts.designBrief, null, 2) : "";
   const blueprintText = artifacts.slideBlueprints?.length ? JSON.stringify(artifacts.slideBlueprints, null, 2) : "";
+  const textPlanText = artifacts.slideTextPlans?.length ? JSON.stringify(artifacts.slideTextPlans, null, 2) : "";
   return [
     "Create a complete StudyDeck PresentationDocument as JSON.",
     `User topic and request: ${project.prompt}`,
@@ -1371,16 +1776,21 @@ export function buildGenerationPrompt(
     "All slide-facing text must be in Russian.",
     researchText ? `Use this researchBrief as factual guardrails. Do not invent facts outside it or the source excerpts:\n${researchText}` : "",
     planText ? `Use this fixed narrativePlan and copy it into the final PresentationDocument:\n${planText}` : "",
+    storyText ? `Use this deckStory as the deck-level content spine. Do not show it as a separate UI field:\n${storyText}` : "",
     designText ? `Use this designBrief for deck-level visual direction:\n${designText}` : "",
     blueprintText ? `Use these slideBlueprints as per-slide intent. Match slide order, purpose, layout candidate, visual strategy, and text density where possible:\n${blueprintText}` : "",
+    textPlanText ? `Use these slideTextPlans as per-slide text structure. Build each slide from slideQuestion, coreClaim, evidenceOrExample, listenerTakeaway, title, thesis, bullets, and speakerNotes:\n${textPlanText}` : "",
     fixedNarration
       ? `Use this fixed speech narration as the only source of truth. Copy it exactly into generatedText and do not rewrite its meaning:\n${fixedNarration}`
       : "Use generatedText as the single source of truth for the deck, divided exactly as `Слайд 1: ...` through the requested slide count.",
     "Build title, thesis, bullets, blocks, visual.description, speakerNotes, and speechScript from the matching generatedText section and the matching narrativePlan item.",
+    "Treat the slideTextPlans as the compression layer: visible text comes from title, thesis, and bullets; speakerNotes remain the richer 5-6 sentence report text.",
     "Do not generate a separate second story outside generatedText or narrativePlan.",
     "Do not put slidePurpose or transitionToNext on the slide as visible text.",
     "Visual theme rules:",
-    `- use this fixed visual theme for the deck: preset=${theme.preset}, mood=${theme.mood}, font tone=${theme.fonts.tone};`,
+    `- use this fixed visual theme for the deck: themeId=${theme.themeId || "legacy"}, preset=${theme.preset}, mood=${theme.mood}, font tone=${theme.fonts.tone};`,
+    `- supported premium theme IDs are: ${supportedThemeIds}; if presentationTheme.themeId is present, it must be exactly one of these values;`,
+    "- do not invent arbitrary theme IDs; keep the fixed themeId from the designBrief or omit themeId for legacy themes;",
     "- do not invent CSS, HTML, font files, or color tokens in the JSON;",
     "- match image descriptions and visual choices to the theme mood: darker and stricter for serious material, lighter and softer for cheerful material;",
     "- vary block presentation from slide to slide through layout and visual.type; do not make every content slide feel like the same card/list template.",
@@ -1395,7 +1805,8 @@ export function buildGenerationPrompt(
     "- the final slide must have slideKind summary and contain a human conclusion plus 3-5 key takeaways in bullets;",
     "- include slideKind section divider slides between major chapters when the deck has enough slides;",
     "- all other study slides must have slideKind content.",
-    "Required JSON fields: id, title, scenario, level, slideCount, generatedText, sources, outline, narrativePlan, speechScript, slides.",
+    "Required JSON fields: id, title, scenario, level, slideCount, generatedText, sources, outline, narrativePlan, designBrief, speechScript, slides.",
+    "Copy the provided designBrief into the final document exactly unless schema repair requires filling a missing slideDirections item.",
     "Each slide must include: id, order, title, slideKind, layout, thesis, bullets, definition, keyConcepts, visual, highlights, blocks, speakerNotes, timingSeconds, sourceRefs.",
     "Layout rules:",
     "- layout must be one of: hero, bullets, summary, statement, quote, timeline, process, image-focus, case-study, question-answer, metrics;",
@@ -1526,6 +1937,7 @@ function normalizePresentation(
   generatedText = "",
   narrativePlan: SlideNarrative[] = [],
   validate = true,
+  designBrief?: DesignBrief,
 ): PresentationDocument {
   const input = raw && typeof raw === "object" ? (raw as Partial<PresentationDocument>) : {};
   assertRawGenerationQuality(input, project, generationMode);
@@ -1538,6 +1950,7 @@ function normalizePresentation(
   const narrationOutline = narrationSections.map((section) => section.title);
   const outline = narrationOutline.length === project.slideCount ? narrationOutline : normalizeOutline(input.outline);
   const rawSlides = Array.isArray(input.slides) ? input.slides : [];
+  const normalizedDesignBrief = normalizeDesignBrief(input.designBrief || designBrief, project, publicSources, narrativePlan);
   const slides = rawSlides
     .slice(0, project.slideCount)
     .map((slide, index) => normalizeSlide(slide, index + 1, publicSources, project, narrationSections[index]));
@@ -1547,7 +1960,7 @@ function normalizePresentation(
   }
 
   repairRepeatedSlideTitles(slides, outline, project);
-  diversifySlideLayouts(slides);
+  diversifySlideLayouts(slides, normalizedDesignBrief);
   const normalizedNarrativePlan = normalizePresentationNarrativePlan(input.narrativePlan, narrativePlan, project, narrationSections, slides);
 
   const rawSpeechScript = Array.isArray(input.speechScript) ? input.speechScript : [];
@@ -1581,7 +1994,9 @@ function normalizePresentation(
       scenario: cleanText(input.scenario) || project.scenario,
       level: cleanText(input.level) || project.level,
       presentationTheme: input.presentationTheme,
+      designBrief: normalizedDesignBrief,
     }),
+    designBrief: normalizedDesignBrief,
     speechScript,
     slides,
   });
@@ -1600,8 +2015,10 @@ async function finalizeGeneratedPresentation(
   generatedText: string,
   narrativePlan: SlideNarrative[],
   repair: (presentation: PresentationDocument, issues: SlideTextIssue[]) => Promise<unknown>,
+  qualityCallbacks: QualityModelCallbacks = {},
+  designBrief?: DesignBrief,
 ) {
-  let presentation = normalizePresentation(raw, project, sources, generationMode, generatedText, narrativePlan, false);
+  let presentation = normalizePresentation(raw, project, sources, generationMode, generatedText, narrativePlan, false, designBrief);
   let issues = findSlideTextIssues(presentation);
   let qualityCritique = buildQualityCritique(presentation, issues);
 
@@ -1635,7 +2052,7 @@ async function finalizeGeneratedPresentation(
   }
 
   assertPresentationQuality(presentation, project, generationMode);
-  return presentation;
+  return improvePresentationQuality(presentation, project, sources, generationMode, qualityCallbacks);
 }
 
 async function repairSlideTextWithOpenAI(client: OpenAI, presentation: PresentationDocument, issues: SlideTextIssue[]) {
@@ -1670,9 +2087,87 @@ async function repairSlideTextWithYandex(apiKey: string, presentation: Presentat
     apiKey,
     "Ты редактор текста учебных слайдов. Исправляй только видимый текст слайдов. Не изменяй заметки докладчика, не добавляй факты и возвращай только JSON.",
     buildSlideTextRepairPrompt(presentation, issues),
-    true,
+    { jsonSchema: slideTextRepairSchema },
   );
   return parseJsonText(outputText);
+}
+
+async function critiquePresentationQualityWithOpenAI(
+  client: OpenAI,
+  presentation: PresentationDocument,
+  deterministic: QualityCritique,
+) {
+  const response = await client.responses.create({
+    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    input: [
+      { role: "system", content: QUALITY_CRITIC_SYSTEM_PROMPT },
+      { role: "user", content: buildQualityCriticPrompt(presentation, deterministic) },
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: "studydeck_quality_critique",
+        strict: true,
+        schema: qualityCritiqueJsonSchema,
+      },
+    },
+  });
+  const typedResponse = response as typeof response & { output_parsed?: unknown };
+  return typedResponse.output_parsed || parseJsonText(response.output_text || "");
+}
+
+async function critiquePresentationQualityWithYandex(
+  apiKey: string,
+  presentation: PresentationDocument,
+  deterministic: QualityCritique,
+) {
+  const outputText = await requestYandexText(
+    apiKey,
+    QUALITY_CRITIC_SYSTEM_PROMPT,
+    buildQualityCriticPrompt(presentation, deterministic),
+    { jsonSchema: qualityCritiqueJsonSchema },
+  );
+  return qualityCritiqueSchema.parse(parseJsonText(outputText));
+}
+
+async function repairPresentationQualityWithOpenAI(
+  client: OpenAI,
+  presentation: PresentationDocument,
+  issues: QualityIssue[],
+  attempt: number,
+): Promise<QualityRepairResponse> {
+  const response = await client.responses.create({
+    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    input: [
+      { role: "system", content: QUALITY_REPAIR_SYSTEM_PROMPT },
+      { role: "user", content: buildQualityRepairPrompt(presentation, issues, attempt) },
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: "studydeck_quality_repair",
+        strict: false,
+        schema: qualityRepairJsonSchema,
+      },
+    },
+  });
+  const typedResponse = response as typeof response & { output_parsed?: unknown };
+  return (typedResponse.output_parsed || parseJsonText(response.output_text || "")) as QualityRepairResponse;
+}
+
+async function repairPresentationQualityWithYandex(
+  apiKey: string,
+  presentation: PresentationDocument,
+  issues: QualityIssue[],
+  attempt: number,
+): Promise<QualityRepairResponse> {
+  const outputText = await requestYandexText(
+    apiKey,
+    QUALITY_REPAIR_SYSTEM_PROMPT,
+    buildQualityRepairPrompt(presentation, issues, attempt),
+    { jsonSchema: qualityRepairJsonSchema },
+  );
+  return parseJsonText(outputText) as QualityRepairResponse;
 }
 
 function buildSlideTextRepairPrompt(presentation: PresentationDocument, issues: SlideTextIssue[]) {
@@ -1709,6 +2204,78 @@ function buildSlideTextRepairPrompt(presentation: PresentationDocument, issues: 
     "Не меняй title, speakerNotes или speechScript.",
     "Верни объект { slides: [...] }. Для каждого slideOrder верни полный набор thesis, bullets, blocks, definition и visual с исправленным видимым текстом.",
     JSON.stringify({ slides }),
+  ].join("\n\n");
+}
+
+function buildQualityCriticPrompt(presentation: PresentationDocument, deterministic: QualityCritique) {
+  const slides = presentation.slides.map((slide) => ({
+    id: slide.id,
+    order: slide.order,
+    title: slide.title,
+    slideKind: slide.slideKind,
+    layout: slide.layout,
+    thesis: slide.thesis,
+    bullets: slide.bullets,
+    visual: {
+      type: slide.visual.type,
+      description: slide.visual.description,
+    },
+    speakerNotes: slide.speakerNotes,
+    sourceRefs: slide.sourceRefs.map((ref) => ({ sourceId: ref.sourceId, label: ref.label })),
+  }));
+
+  return [
+    "Evaluate the presentation. Do not rewrite it. Return only JSON with score, summary and issues.",
+    "Use severity blocker, major or minor. Use category generic_text, off_topic, too_long, duplicate, bad_narration, bad_visual, factual_risk or schema_risk.",
+    "Prefer field-level issues with slideId when a single slide can be repaired.",
+    "Do not quote or repeat full source text.",
+    JSON.stringify({
+      deterministic,
+      deck: {
+        title: presentation.title,
+        scenario: presentation.scenario,
+        level: presentation.level,
+        slideCount: presentation.slideCount,
+        outline: presentation.outline,
+        slides,
+      },
+    }),
+  ].join("\n\n");
+}
+
+function buildQualityRepairPrompt(presentation: PresentationDocument, issues: QualityIssue[], attempt: number) {
+  const affectedSlideIds = new Set(issues.map((issue) => issue.slideId).filter(Boolean));
+  const slides = presentation.slides
+    .filter((slide) => affectedSlideIds.has(slide.id))
+    .map((slide) => ({
+      slideId: slide.id,
+      slideOrder: slide.order,
+      title: slide.title,
+      slideKind: slide.slideKind,
+      layout: slide.layout,
+      thesis: slide.thesis,
+      bullets: slide.bullets,
+      blocks: slide.blocks,
+      visual: {
+        type: slide.visual.type,
+        title: slide.visual.title,
+        description: slide.visual.description,
+        leftLabel: slide.visual.leftLabel,
+        rightLabel: slide.visual.rightLabel,
+        items: slide.visual.items,
+        rows: slide.visual.rows,
+      },
+      speakerNotes: slide.speakerNotes,
+      sourceRefs: slide.sourceRefs.map((ref) => ({ sourceId: ref.sourceId, label: ref.label })),
+    }));
+
+  return [
+    `Repair attempt ${attempt}. Repair only the listed broken fields and slides.`,
+    "Return JSON { slides: [...] }. Each slide item must include slideId or slideOrder plus changed fields only.",
+    "You may change title, thesis, bullets, blocks, visual.description and speakerNotes when the issue explicitly requires it.",
+    "Do not invent precise facts, dates, names, numbers, or citations. Preserve existing sourceRefs.",
+    "Keep slide text compact: title <= 12 words, thesis one sentence, bullets <= 18 words.",
+    JSON.stringify({ issues, slides }),
   ].join("\n\n");
 }
 
@@ -1994,6 +2561,32 @@ function normalizePresentationNarrativePlan(
       keyMessage: cleanNarrativeField(slide?.thesis || firstSentence(section?.text), "message") || fallback.keyMessage,
       transitionToNext: order === project.slideCount ? "" : fallback.transitionToNext,
     };
+  });
+}
+
+function normalizeDesignBrief(raw: unknown, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[]) {
+  const parsed = designBriefSchema.safeParse(raw);
+  if (parsed.success) {
+    return ensureDesignBriefDirections(parsed.data, project, narrativePlan);
+  }
+  return buildDesignBrief(project, buildResearchBrief(project, sources), narrativePlan);
+}
+
+function ensureDesignBriefDirections(brief: DesignBrief, project: ProjectInput, narrativePlan: SlideNarrative[]) {
+  if (brief.slideDirections.length === project.slideCount) {
+    return brief;
+  }
+  const fallback = buildDesignBrief(project, {
+    topic: cleanText(project.title || project.prompt),
+    angle: cleanText(project.prompt),
+    facts: [],
+    warnings: [],
+    vocabulary: [],
+  }, narrativePlan);
+  const byOrder = new Map(brief.slideDirections.map((direction) => [direction.slideOrder, direction]));
+  return designBriefSchema.parse({
+    ...brief,
+    slideDirections: fallback.slideDirections.map((direction) => byOrder.get(direction.slideOrder) || direction),
   });
 }
 
@@ -2583,6 +3176,15 @@ function firstSentence(value: unknown) {
   return splitIntoSentences(value)[0] || "";
 }
 
+function lastSentence(value: unknown) {
+  const sentences = splitIntoSentences(value);
+  return sentences[sentences.length - 1] || "";
+}
+
+function wordCount(value: unknown) {
+  return cleanText(value).split(/\s+/).filter(Boolean).length;
+}
+
 function defaultLeftLabel(type: SlideVisual["type"]) {
   if (type === "before_after_table") return "До";
   if (type === "pros_cons_table") return "Плюсы";
@@ -2752,17 +3354,19 @@ export function inferContentLayout(
   return CONTENT_LAYOUT_CYCLE[(order - 2 + CONTENT_LAYOUT_CYCLE.length) % CONTENT_LAYOUT_CYCLE.length];
 }
 
-function diversifySlideLayouts(slides: Slide[]) {
+function diversifySlideLayouts(slides: Slide[], designBrief?: DesignBrief) {
   const contentSlides = slides.filter((slide) => slide.slideKind === "content");
   const contentCount = contentSlides.length;
-  if (contentCount <= 1) return;
+  if (!contentCount) return;
+  const directions = new Map((designBrief?.slideDirections || []).map((direction) => [direction.slideOrder, direction]));
 
   let previous: SlideLayout[] = [];
   contentSlides.forEach((slide, index) => {
+    const directed = layoutFromDesignDirection(directions.get(slide.order), slide);
     const semantic = inferContentLayout(slide, slide.order);
-    let next = semantic;
+    let next = directed || semantic;
 
-    if (previous.length >= 2 && previous.at(-1) === next && previous.at(-2) === next) {
+    if (!directed && previous.length >= 2 && previous.at(-1) === next && previous.at(-2) === next) {
       next = nextDiverseLayout(index, previous, slide);
     }
 
@@ -2773,6 +3377,24 @@ function diversifySlideLayouts(slides: Slide[]) {
     slide.layout = next;
     previous = [...previous.slice(-1), next];
   });
+}
+
+function layoutFromDesignDirection(
+  direction: DesignBrief["slideDirections"][number] | undefined,
+  slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks"> & Partial<Pick<Slide, "sourceRefs">>,
+): SlideLayout | null {
+  if (!direction) return null;
+  const candidates: SlideLayout[] =
+    direction.layoutIntent === "full_bleed_image" || direction.layoutIntent === "split_image_text" ? ["image-focus", "statement"] :
+    direction.layoutIntent === "statement" ? ["statement", "quote"] :
+    direction.layoutIntent === "cards" ? ["bullets", "case-study"] :
+    direction.layoutIntent === "timeline" ? ["timeline", "process"] :
+    direction.layoutIntent === "diagram" ? ["process", "case-study", "bullets"] :
+    direction.layoutIntent === "metric" ? ["metrics", "statement"] :
+    direction.layoutIntent === "summary" ? ["summary"] :
+    [];
+
+  return candidates.find((candidate) => candidate !== "summary" && layoutHasEnoughContent(candidate, slide)) || null;
 }
 
 function nextDiverseLayout(index: number, previous: SlideLayout[], slide: Slide): SlideLayout {
@@ -3246,6 +3868,57 @@ const narrativePlanJsonSchema = {
   },
 };
 
+const designBriefJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    themeId: {
+      type: "string",
+      enum: [
+        "editorialMagazine",
+        "academicClean",
+        "darkLecture",
+        "timelineDocumentary",
+        "scienceBoard",
+        "startupPitch",
+        "softClassroom",
+      ],
+    },
+    mood: { type: "string", enum: ["dark", "light", "playful", "serious", "neutral"] },
+    audienceFit: { type: "string" },
+    visualMetaphor: { type: "string" },
+    colorIntent: { type: "string" },
+    typographyIntent: { type: "string" },
+    rhythm: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        titleStyle: { type: "string", enum: ["bold", "quiet", "editorial", "academic"] },
+        density: { type: "string", enum: ["low", "medium", "high"] },
+        imageFrequency: { type: "string", enum: ["rare", "balanced", "frequent"] },
+        sectionBreaks: { type: "boolean" },
+      },
+      required: ["titleStyle", "density", "imageFrequency", "sectionBreaks"],
+    },
+    slideDirections: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          slideOrder: { type: "number" },
+          visualRole: { type: "string", enum: ["hero", "explain", "compare", "sequence", "evidence", "reflect", "summary"] },
+          layoutIntent: { type: "string", enum: ["full_bleed_image", "split_image_text", "statement", "cards", "timeline", "diagram", "metric", "summary"] },
+          imageStrategy: { type: "string", enum: ["real_photo", "generated_illustration", "diagram", "none"] },
+          visualPrompt: { type: "string" },
+        },
+        required: ["slideOrder", "visualRole", "layoutIntent", "imageStrategy", "visualPrompt"],
+      },
+    },
+  },
+  required: ["themeId", "mood", "audienceFit", "visualMetaphor", "colorIntent", "typographyIntent", "rhythm", "slideDirections"],
+};
+
 const slideTextRepairSchema = {
   type: "object",
   additionalProperties: true,
@@ -3259,6 +3932,81 @@ const slideTextRepairSchema = {
           slideOrder: { type: "number" },
         },
         required: ["slideOrder"],
+      },
+    },
+  },
+  required: ["slides"],
+};
+
+const qualityCritiqueJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    score: { type: "number" },
+    summary: { type: "string" },
+    issues: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          slideId: { type: "string" },
+          severity: { type: "string", enum: ["blocker", "major", "minor"] },
+          category: {
+            type: "string",
+            enum: [
+              "generic_text",
+              "off_topic",
+              "too_long",
+              "duplicate",
+              "bad_narration",
+              "bad_visual",
+              "factual_risk",
+              "schema_risk",
+            ],
+          },
+          field: { type: "string" },
+          message: { type: "string" },
+          repairInstruction: { type: "string" },
+        },
+        required: ["severity", "category", "message"],
+      },
+    },
+  },
+  required: ["score", "summary", "issues"],
+};
+
+const qualityRepairJsonSchema = {
+  type: "object",
+  additionalProperties: true,
+  properties: {
+    generatedText: { type: "string" },
+    outline: { type: "array", items: { type: "string" } },
+    speechScript: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          slideOrder: { type: "number" },
+          slideTitle: { type: "string" },
+          text: { type: "string" },
+        },
+      },
+    },
+    slides: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          slideId: { type: "string" },
+          slideOrder: { type: "number" },
+          title: { type: "string" },
+          thesis: { type: "string" },
+          bullets: { type: "array", items: { type: "string" } },
+          speakerNotes: { type: "string" },
+        },
       },
     },
   },

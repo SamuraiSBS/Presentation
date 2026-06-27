@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import JSZip from "jszip";
+import { PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS } from "@studydeck/shared";
 import { describe, expect, it } from "vitest";
 import { createPdf, createPptx } from "./export.js";
 
@@ -185,6 +186,20 @@ describe("createPptx", () => {
     expect(slideXml).toContain("The claim is supported");
     expect(slideXml).toContain("Research notes");
     expect(slideXml).toContain("p. 4");
+  });
+
+  it("exports every premium presentation theme", async () => {
+    for (const themeId of PREMIUM_PRESENTATION_THEME_IDS) {
+      const theme = PREMIUM_PRESENTATION_THEMES[themeId];
+      const source = canvasDeck();
+      const slides = source.slides.map(({ canvas: _canvas, ...slide }) => slide);
+      const buffer = await createPptx({ ...source, presentationTheme: theme, slides });
+      const zip = await JSZip.loadAsync(buffer);
+      const slideXml = await zip.file("ppt/slides/slide1.xml")?.async("string");
+
+      expect(slideXml, themeId).toContain(theme.colors.background.slice(1));
+      expect(slideXml, themeId).toContain(theme.colors.text.slice(1));
+    }
   });
 
   it.skipIf(!hasChromium())("renders editable canvas to a real pdf", async () => {

@@ -1159,6 +1159,7 @@ function exportTheme(presentation: ReturnType<typeof presentationSchema.parse>):
     scenario: presentation.scenario,
     level: presentation.level,
     presentationTheme: presentation.presentationTheme,
+    designBrief: presentation.designBrief,
   });
 
   return {

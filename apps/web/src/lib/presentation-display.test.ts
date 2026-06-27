@@ -128,6 +128,54 @@ describe("sanitizePresentationForDisplay", () => {
     expect(document.presentationTheme?.colors.accent).toBe("#38BDF8");
   });
 
+  it("renders premium theme and canvas direction from a design brief", () => {
+    const document = sanitizePresentationForDisplay({
+      id: "presentation-premium",
+      title: "Scientific systems",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "yandex",
+      sources: [],
+      outline: ["Scientific systems"],
+      designBrief: {
+        themeId: "scienceBoard",
+        mood: "serious",
+        audienceFit: "Students",
+        visualMetaphor: "A laboratory board",
+        colorIntent: "Cool and precise",
+        typographyIntent: "Academic and readable",
+        rhythm: {
+          titleStyle: "academic",
+          density: "medium",
+          imageFrequency: "balanced",
+          sectionBreaks: true,
+        },
+        slideDirections: [{
+          slideOrder: 1,
+          visualRole: "hero",
+          layoutIntent: "diagram",
+          imageStrategy: "diagram",
+          visualPrompt: "A clean scientific system diagram",
+        }],
+      },
+      speechScript: [{ slideOrder: 1, slideTitle: "Scientific systems", text: "Narration." }],
+      slides: [{
+        id: "slide-premium",
+        order: 1,
+        title: "Scientific systems",
+        layout: "hero",
+        blocks: [{ type: "callout", content: "A system connects several interacting parts." }],
+        speakerNotes: "Narration.",
+        timingSeconds: 45,
+        sourceRefs: [],
+      }],
+    } as any);
+
+    expect(document.presentationTheme?.themeId).toBe("scienceBoard");
+    expect(document.slides[0].canvas?.elements.some((element) => element.id.includes("premium"))).toBe(true);
+  });
+
   it("hides weak saved visual blocks but keeps useful visuals and images", () => {
     const document = sanitizePresentationForDisplay({
       id: "presentation-1",

@@ -107,6 +107,9 @@ export function useStoredImageUrls(document: PresentationDocument, projectId: st
             },
           },
           document.presentationTheme || resolvePresentationTheme(document),
+          {
+            designDirection: document.designBrief?.slideDirections.find((direction) => direction.slideOrder === slide.order),
+          },
         );
         canvas = {
           ...canvas,
@@ -193,6 +196,7 @@ export function sanitizePresentationForDisplay(document: DisplayPresentationInpu
       scenario: document.scenario,
       level: document.level,
       presentationTheme: document.presentationTheme,
+      designBrief: document.designBrief,
     }),
     slides,
     speechScript: slides.map((slide, index) => {

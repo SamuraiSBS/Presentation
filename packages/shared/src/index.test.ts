@@ -2,21 +2,29 @@ import { describe, expect, it } from "vitest";
 import {
   buildSlideCanvas,
   createProjectInputSchema,
+  deckStorySchema,
+  designBriefSchema,
   ensureEditableCanvas,
   generatePresentationInputSchema,
   generationPipelineArtifactsSchema,
   generationJobKindSchema,
   hasCustomSlideCanvas,
   planLimits,
+  PREMIUM_PRESENTATION_THEMES,
+  PREMIUM_PRESENTATION_THEME_IDS,
   presentationSchema,
+  presentationThemeSchema,
   projectStatusSchema,
   qualityCritiqueSchema,
   researchBriefSchema,
+  resolvePremiumPresentationTheme,
   resolvePresentationTheme,
+  resolveThemeFromDesignBrief,
   slideCanvasSchema,
   slideBlueprintSchema,
   slideLayoutSchema,
   slideLayoutOptions,
+  slideTextPlanSchema,
   updateNarrationInputSchema,
 } from "./index";
 
@@ -82,10 +90,29 @@ describe("shared contracts", () => {
       visualStrategy: "Simple hero slide with one clear claim.",
       layoutCandidate: "hero",
     });
+    const deckStory = deckStorySchema.parse({
+      mainIdea: "AI can make report preparation clearer.",
+      audienceQuestion: "How does AI help students prepare reports?",
+      tone: "school_report",
+      chapters: [{ title: "AI helps prepare reports", purpose: "Open the topic.", slideOrders: [1] }],
+      conclusion: "Students should use AI as support, not as a replacement for thinking.",
+    });
+    const slideTextPlan = slideTextPlanSchema.parse({
+      slideOrder: 1,
+      slideQuestion: "How does AI help students prepare reports?",
+      coreClaim: "AI can make preparation clearer when students control the final argument.",
+      listenerTakeaway: "AI is useful when it helps structure real understanding.",
+      title: "AI helps prepare reports",
+      thesis: "AI can make preparation clearer.",
+      bullets: ["Summaries need checking", "The student keeps the argument"],
+      speakerNotes: "AI can make report preparation clearer. It helps collect material into a first structure. The student still needs to check sources. The strongest work comes from editing and explaining the result. This makes AI a support tool, not a replacement.",
+    });
     const qualityCritique = qualityCritiqueSchema.parse({ passed: true });
 
     expect(researchBrief.warnings).toEqual([]);
     expect(slideBlueprint.textDensity).toBe("medium");
+    expect(deckStory.chapters[0].slideOrders).toEqual([1]);
+    expect(slideTextPlan.evidenceOrExample).toBe("");
     expect(qualityCritique.issues).toEqual([]);
     expect(() =>
       generationPipelineArtifactsSchema.parse({
@@ -100,12 +127,14 @@ describe("shared contracts", () => {
             transitionToNext: "",
           },
         ],
+        deckStory,
         designBrief: {
           themePreset: "minimal",
           mood: "neutral",
           visualDirection: "Clean study deck.",
         },
         slideBlueprints: [slideBlueprint],
+        slideTextPlans: [slideTextPlan],
         qualityCritique,
       }),
     ).not.toThrow();
@@ -1144,8 +1173,103 @@ describe("shared contracts", () => {
       ],
     });
 
-    expect(parsed.presentationTheme?.preset).toBe("moody");
+    expect(parsed.presentationTheme?.themeId).toBe("darkLecture");
     expect(parsed.presentationTheme?.colors.background).toMatch(/^#[0-9A-F]{6}$/);
+  });
+
+  it("accepts all premium presentation themes", () => {
+    expect(PREMIUM_PRESENTATION_THEME_IDS).toHaveLength(7);
+
+    for (const themeId of PREMIUM_PRESENTATION_THEME_IDS) {
+      const theme = presentationThemeSchema.parse(PREMIUM_PRESENTATION_THEMES[themeId]);
+
+      expect(theme.themeId).toBe(themeId);
+      for (const color of Object.values(theme.colors)) {
+        expect(color).toMatch(/^#[0-9A-F]{6}$/);
+      }
+    }
+  });
+
+  it("resolves premium themes from themeId and falls back for unknown IDs", () => {
+    const fallback = resolvePresentationTheme({
+      presentationTheme: {
+        preset: "minimal",
+        mood: "neutral",
+        colors: {
+          background: "#F7F8FA",
+          surface: "#FFFFFF",
+          surfaceAlt: "#ECEFF3",
+          text: "#161A1F",
+          muted: "#59616B",
+          accent: "#5B5BD6",
+          accentAlt: "#14866D",
+          line: "#DDE1E7",
+        },
+        fonts: {
+          heading: "Arial",
+          body: "Arial",
+          tone: "neutral",
+        },
+      },
+    });
+
+    expect(resolvePremiumPresentationTheme("startupPitch", fallback).themeId).toBe("startupPitch");
+    expect(resolvePremiumPresentationTheme("unknownTheme", fallback)).toEqual(fallback);
+  });
+
+  it("resolves a stable premium theme from a design brief", () => {
+    const brief = designBriefSchema.parse({
+      themeId: "scienceBoard",
+      mood: "serious",
+      audienceFit: "Students studying a scientific process.",
+      visualMetaphor: "A laboratory board that reveals one layer at a time.",
+      colorIntent: "Cool surfaces with a precise high-contrast accent.",
+      typographyIntent: "Compact academic headings and readable body text.",
+      rhythm: {
+        titleStyle: "academic",
+        density: "medium",
+        imageFrequency: "balanced",
+        sectionBreaks: true,
+      },
+      slideDirections: [
+        {
+          slideOrder: 1,
+          visualRole: "hero",
+          layoutIntent: "diagram",
+          imageStrategy: "diagram",
+          visualPrompt: "A clean scientific system diagram.",
+        },
+      ],
+    });
+
+    const theme = resolveThemeFromDesignBrief(brief);
+    expect(theme.themeId).toBe("scienceBoard");
+    expect(theme.colors.accent).toMatch(/^#[0-9A-F]{6}$/);
+  });
+
+  it("keeps old presentations without themeId valid", () => {
+    const parsed = presentationThemeSchema.parse({
+      preset: "academic",
+      mood: "serious",
+      colors: {
+        background: "#F5F7FB",
+        surface: "#FFFFFF",
+        surfaceAlt: "#E8EEF8",
+        text: "#172033",
+        muted: "#536074",
+        accent: "#315D9B",
+        accentAlt: "#8C5D2B",
+        line: "#D7DEEA",
+      },
+      fonts: {
+        heading: "Georgia",
+        body: "Arial",
+        tone: "bookish",
+      },
+    });
+
+    expect(parsed.themeId).toBeUndefined();
+    expect(parsed.preset).toBe("academic");
   });
 
   it("resolves topic-sensitive and stable fallback themes", () => {
