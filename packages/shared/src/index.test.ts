@@ -79,6 +79,8 @@ describe("shared contracts", () => {
   it("validates editable speech drafts for final generation", () => {
     const speechDraft = "Слайд 1: Введение\nЭто достаточно длинный текст выступления для проверки сохранения.";
     expect(updateNarrationInputSchema.parse({ speechDraft }).speechDraft).toBe(speechDraft);
+    expect(updateNarrationInputSchema.parse({ speechDraft }).accept).toBe(false);
+    expect(updateNarrationInputSchema.parse({ speechDraft, accept: true }).accept).toBe(true);
     expect(generatePresentationInputSchema.parse({ speechDraft }).speechDraft).toBe(speechDraft);
     expect(generatePresentationInputSchema.parse({})).toEqual({});
   });

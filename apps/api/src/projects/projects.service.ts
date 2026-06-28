@@ -20,6 +20,8 @@ import {
 } from "@studydeck/shared";
 import { PrismaService } from "../prisma/prisma.service.js";
 
+const activePresentationJobStatuses = ["queued", "active"] as const;
+
 @Injectable()
 export class ProjectsService {
   private s3Client?: S3Client;
@@ -90,7 +92,7 @@ export class ProjectsService {
     const project = await this.getOwned(userId, id);
     const nextStatus = project.status === "ready" ? project.status : "script_ready";
 
-    return this.prisma.project.update({
+    const updated = await this.prisma.project.update({
       where: { id: project.id },
       data: {
         speechDraft: input.speechDraft,
@@ -100,16 +102,47 @@ export class ProjectsService {
       },
       include: { sources: true, presentation: true, jobs: { orderBy: { createdAt: "desc" }, take: 1 }, exports: true },
     });
+
+    if (!input.accept) {
+      return updated;
+    }
+
+    await this.enqueueGeneration(userId, id);
+    return this.getOwned(userId, id);
   }
 
   async enqueueGeneration(userId: string, id: string, input: GeneratePresentationInput = {}) {
     let project = await this.getOwned(userId, id);
     if (input.speechDraft !== undefined) {
-      project = await this.updateNarrationDraft(userId, id, { speechDraft: input.speechDraft });
+      project = await this.updateNarrationDraft(userId, id, { speechDraft: input.speechDraft, accept: false });
     }
 
     if (!project.speechDraft?.trim()) {
       throw new BadRequestException("Accept or save the speech text before generating the presentation");
+    }
+
+    if (project.presentation || project.status === "ready") {
+      if (project.status !== "ready") {
+        await this.prisma.project.update({ where: { id: project.id }, data: { status: "ready", error: null } });
+      }
+      return { projectId: project.id, status: "ready" };
+    }
+
+    const activeJob = await this.prisma.generationJob.findFirst({
+      where: {
+        projectId: project.id,
+        kind: "presentation",
+        status: { in: [...activePresentationJobStatuses] },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (activeJob) {
+      const status = project.status === "generating" ? "generating" : "queued";
+      if (project.status !== status) {
+        await this.prisma.project.update({ where: { id: project.id }, data: { status, error: null } });
+      }
+      return { projectId: project.id, jobId: activeJob.id, queueJobId: activeJob.queueJobId, status };
     }
 
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });

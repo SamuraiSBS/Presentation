@@ -1126,6 +1126,7 @@ export type UpdateSlideInput = z.infer<typeof updateSlideInputSchema>;
 
 export const updateNarrationInputSchema = z.object({
   speechDraft: z.string().min(50).max(60000),
+  accept: z.boolean().default(false),
 });
 export type UpdateNarrationInput = z.infer<typeof updateNarrationInputSchema>;
 

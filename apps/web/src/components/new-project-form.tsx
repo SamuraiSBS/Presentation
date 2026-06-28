@@ -11,6 +11,8 @@ const slideOptions = [
   { count: 14, label: "Защита проекта", description: "15+ минут" },
 ];
 
+const projectTitleLimit = 140;
+
 export function NewProjectForm() {
   const router = useRouter();
   const [step, setStep] = useState(0);
@@ -51,7 +53,7 @@ export function NewProjectForm() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          title: normalizedTopic,
+          title: projectTitleFromTopic(normalizedTopic),
           prompt: `Сделай понятную учебную презентацию на ${slideCount} слайдов по теме: ${normalizedTopic}. Сначала подготовь подробный связный текст выступления, а на слайды вынеси только короткие тезисы.`,
           scenario: "school_report",
           level: "8-11 класс",
@@ -242,4 +244,10 @@ export function NewProjectForm() {
       </aside>
     </section>
   );
+}
+
+function projectTitleFromTopic(topic: string) {
+  const normalized = topic.replace(/\s+/g, " ").trim();
+  if (normalized.length <= projectTitleLimit) return normalized;
+  return `${normalized.slice(0, projectTitleLimit - 3).trimEnd()}...`;
 }

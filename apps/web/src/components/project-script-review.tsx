@@ -113,14 +113,16 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
     setBusy(true);
     setActionError("");
     try {
-      const response = await fetch(`/api/projects/${project.id}/generate`, {
-        method: "POST",
+      const response = await fetch(`/api/projects/${project.id}/narration`, {
+        method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ speechDraft: draft.trim() }),
+        body: JSON.stringify({ speechDraft: draft.trim(), accept: true }),
       });
       if (!response.ok) throw new Error(await response.text());
+      const next = (await response.json()) as ProjectPayload;
+      setProject(next);
+      setDraft(next.speechDraft || draft.trim());
       setDirty(false);
-      await refresh();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Не удалось создать презентацию");
     } finally {
