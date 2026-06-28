@@ -124,6 +124,7 @@ export const SLIDE_LAYOUT_DEFINITIONS: SlideLayoutDefinition[] = [
 ];
 
 const HIDDEN_SLIDE_LAYOUTS = new Set<SlideLayout>([
+  "case-study",
   "comparison",
   "definition",
   "evidence",
@@ -279,6 +280,7 @@ export const canvasTextElementSchema = canvasElementBaseSchema.extend({
   text: z.string().default(""),
   runs: z.array(canvasTextRunSchema).default([]),
   fontSize: z.number().int().min(8).max(160).default(28),
+  autoFit: z.boolean().optional(),
   fontFamily: z.string().min(1).default("Arial"),
   color: presentationThemeColorSchema.default("#161A1F"),
   bold: z.boolean().default(false),
@@ -1206,6 +1208,11 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme, options
       elements.push(imageElement(`${slide.id}-image-bg`, visual.image, 0, 0, 1280, 720, 1, 0.1, "cover"));
     }
 
+    const bodyText = slide.thesis || slideBodyText(slide);
+    const bodyY = isTitleSlide ? 306 : 376;
+    const bodyFontSize = isTitleSlide ? READABLE_BODY_FONT_SIZE : fittedFontSize(bodyText, 28, 20, 110);
+    const bodyHeight = isTitleSlide ? Math.max(112, estimatedTextHeight(bodyText, bodyFontSize, 860)) : 112;
+
     elements.push(
       textElement(`${slide.id}-title`, slide.title, 178, isTitleSlide ? 118 : 188, 924, 148, 5, {
         role: "title",
@@ -1216,9 +1223,10 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme, options
         align: "center",
         valign: "middle",
       }),
-      textElement(`${slide.id}-body`, slide.thesis || slideBodyText(slide), 210, isTitleSlide ? 282 : 356, 860, 112, 5, {
+      textElement(`${slide.id}-body`, bodyText, 210, bodyY, 860, bodyHeight, 5, {
         role: "body",
-        fontSize: fittedFontSize(slide.thesis || slideBodyText(slide), 28, 20, 110),
+        fontSize: bodyFontSize,
+        autoFit: !isTitleSlide,
         fontFamily: theme.fonts.body,
         color: muted,
         align: "center",
@@ -1226,7 +1234,7 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme, options
       }),
     );
 
-    if (isTitleSlide) addTitleMiniPointGrid(slide, theme, elements);
+    if (isTitleSlide) addTitleMiniPointGrid(slide, theme, elements, Math.max(430, bodyY + bodyHeight + 36));
     else addMiniPointRow(slide, theme, elements, 296, 512);
 
     return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: finalizeGeneratedElements(elements, theme) };
@@ -1270,6 +1278,11 @@ function addPremiumHeroCanvas(slide: Slide, theme: PresentationTheme, elements: 
   const leftAligned = editorial || direction?.layoutIntent === "split_image_text";
   const titleX = leftAligned ? 86 : 156;
   const titleW = leftAligned ? 720 : 968;
+  const bodyText = slide.thesis || slideBodyText(slide);
+  const bodyY = leftAligned ? 372 : 364;
+  const isTitleSlide = slide.slideKind === "title";
+  const bodyFontSize = isTitleSlide ? READABLE_BODY_FONT_SIZE : fittedFontSize(bodyText, 30, 19, 112);
+  const bodyHeight = isTitleSlide ? Math.max(112, estimatedTextHeight(bodyText, bodyFontSize, titleW)) : 112;
   elements.push(
     shapeElement(`${slide.id}-premium-accent`, "rect", titleX, leftAligned ? 126 : 108, 138, 6, 3, theme.colors.accent, theme.colors.accent, 0, 1),
     textElement(`${slide.id}-title`, slide.title, titleX, leftAligned ? 162 : 156, titleW, 172, 5, {
@@ -1281,9 +1294,10 @@ function addPremiumHeroCanvas(slide: Slide, theme: PresentationTheme, elements: 
       align: leftAligned ? "left" : "center",
       valign: "middle",
     }),
-    textElement(`${slide.id}-body`, slide.thesis || slideBodyText(slide), titleX, leftAligned ? 372 : 364, titleW, 112, 5, {
+    textElement(`${slide.id}-body`, bodyText, titleX, bodyY, titleW, bodyHeight, 5, {
       role: "body",
-      fontSize: fittedFontSize(slide.thesis || slideBodyText(slide), 30, 19, 112),
+      fontSize: bodyFontSize,
+      autoFit: !isTitleSlide,
       fontFamily: theme.fonts.body,
       color: theme.colors.muted,
       align: leftAligned ? "left" : "center",
@@ -1291,7 +1305,7 @@ function addPremiumHeroCanvas(slide: Slide, theme: PresentationTheme, elements: 
     }),
   );
 
-  if (slide.slideKind === "title") addTitleMiniPointGrid(slide, theme, elements);
+  if (isTitleSlide) addTitleMiniPointGrid(slide, theme, elements, Math.max(512, bodyY + bodyHeight + 36));
   else addMiniPointRow(slide, theme, elements, leftAligned ? 86 : 296, 544);
 }
 
@@ -1336,6 +1350,9 @@ function addPremiumDirectedCanvas(
 
 function addPremiumSplitImageCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], fullBleed: boolean) {
   const image = slide.visual?.image;
+  const bodyText = slide.thesis || slideBodyText(slide);
+  const bodyY = 310;
+  const bodyHeight = Math.max(148, estimatedTextHeight(bodyText, READABLE_BODY_FONT_SIZE, 548));
   if (image) {
     elements.push(imageElement(`${slide.id}-premium-image`, image, fullBleed ? 0 : 700, 0, fullBleed ? 1280 : 580, 720, 1, fullBleed ? 0.34 : 0.9, "cover"));
     elements.push(shapeElement(`${slide.id}-premium-copy-wash`, "rect", 0, 0, fullBleed ? 740 : 710, 720, 2, theme.colors.background, theme.colors.background, 0, fullBleed ? 0.84 : 0.96));
@@ -1349,14 +1366,15 @@ function addPremiumSplitImageCanvas(slide: Slide, theme: PresentationTheme, elem
       color: theme.colors.text,
       bold: true,
     }),
-    textElement(`${slide.id}-body`, slide.thesis || slideBodyText(slide), 84, 310, 548, 148, 5, {
+    textElement(`${slide.id}-body`, bodyText, 84, bodyY, 548, bodyHeight, 5, {
       role: "body",
-      fontSize: fittedFontSize(slide.thesis || slideBodyText(slide), READABLE_BODY_FONT_SIZE, 18, 148),
+      fontSize: READABLE_BODY_FONT_SIZE,
+      autoFit: false,
       fontFamily: theme.fonts.body,
       color: theme.colors.muted,
     }),
   );
-  addMiniPointRow(slide, theme, elements, 84, 548);
+  addMiniPointRow(slide, theme, elements, 84, Math.max(548, bodyY + bodyHeight + 36), { rightBoundary: 672, maxBottom: 680 });
 }
 
 function addPremiumCardsCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
@@ -1529,11 +1547,12 @@ export function sortCanvasElements(elements: CanvasElement[]) {
 
 export function hasCustomSlideCanvas(slide: Slide, theme: PresentationTheme, generatedCanvas = buildSlideCanvas(slide, theme)) {
   if (!slide.canvas) return false;
-  if (isLegacySummaryStoryCanvas(slide)) return false;
   if (slide.canvas.elements.some((element) => element.id === `${slide.id}-custom-canvas-marker`)) return true;
+  if (isLegacySummaryStoryCanvas(slide)) return false;
   if (isLegacySummaryCanvas(slide)) return false;
   if (isLegacyFullscreenImageCanvas(slide)) return false;
   if (isLegacyTitleMiniRowCanvas(slide)) return false;
+  if (isPreviousGeneratedTextLayoutCanvas(slide)) return false;
   if (sameCanvas(slide.canvas, generatedCanvas) || sameCanvasStructure(slide.canvas, generatedCanvas)) return false;
   if (sameCanvasStructure(slide.canvas, legacyGeneratedCanvas(generatedCanvas))) return false;
   if (isLegacyLeanTitleCanvas(slide)) return false;
@@ -1557,6 +1576,7 @@ function upgradeCustomCanvas(canvas: SlideCanvas, generatedCanvas: SlideCanvas, 
       return {
         ...element,
         fontSize,
+        autoFit: element.autoFit ?? false,
         h: Math.max(element.h, estimatedTextHeight(element.text, fontSize, element.w)),
         valign: element.valign || "top",
       };
@@ -1717,6 +1737,38 @@ function isLegacySummaryStoryCanvas(slide: Slide) {
     (supportLabel?.type === "text" && supportLabel.fontSize < READABLE_PLAQUE_FONT_SIZE) ||
     (finalLabel?.type === "text" && finalLabel.fontSize < READABLE_PLAQUE_FONT_SIZE)
   );
+}
+
+function isPreviousGeneratedTextLayoutCanvas(slide: Slide) {
+  if (!slide.canvas) return false;
+  if (!slide.canvas.elements.every((element) => isKnownGeneratedCanvasElementId(slide.id, element.id))) return false;
+
+  const title = slide.canvas.elements.find((element) => element.id === `${slide.id}-title`);
+  if (title?.type !== "text" || title.text !== slide.title) return false;
+
+  if (slide.slideKind === "summary") {
+    const conclusion = slide.canvas.elements.find((element) => element.id === `${slide.id}-summary-conclusion`);
+    return conclusion?.type === "text" && conclusion.y === 184 && conclusion.w === 640 && conclusion.h === 270;
+  }
+
+  const body = slide.canvas.elements.find((element) => element.id === `${slide.id}-body`);
+  const bodyText = slide.thesis || slideBodyText(slide);
+  if (body?.type !== "text" || body.text !== bodyText || body.autoFit !== undefined) return false;
+
+  const previousTitleGrid = slide.slideKind === "title"
+    && title.x === 178 && title.y === 118 && title.w === 924 && title.h === 148
+    && body.x === 210 && body.y === 282 && body.w === 860 && body.h >= 112;
+  const previousPremiumHero = slide.slideKind === "title"
+    && slide.canvas.elements.some((element) => element.id.startsWith(`${slide.id}-premium-`))
+    && ((body.x === 156 && body.y === 364 && body.w === 968) || (body.x === 86 && body.y === 372 && body.w === 720));
+  const previousImageFocus = slide.layout === "image-focus"
+    && body.x === 79 && body.y === 192 && body.w === 504 && body.h >= 230;
+  const previousPremiumImageFocus = slide.layout === "image-focus"
+    && slide.canvas.elements.some((element) => element.id.startsWith(`${slide.id}-premium-`))
+    && title.x === 84 && title.y === 154 && title.w === 560
+    && body.x === 84 && body.y === 310 && body.w === 548 && body.h >= 148;
+
+  return previousTitleGrid || previousPremiumHero || previousImageFocus || previousPremiumImageFocus;
 }
 
 function escapeRegExp(value: string) {
@@ -2019,28 +2071,35 @@ function addComparisonCanvas(slide: Slide, theme: PresentationTheme, elements: C
 
 function addImageFocusCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
   const image = slide.visual?.image;
+  const bodyText = slide.thesis || slideBodyText(slide);
+  const bodyY = 200;
+  const bodyHeight = Math.max(230, estimatedTextHeight(bodyText, READABLE_BODY_FONT_SIZE, 504));
   addSlideTitle(slide, theme, elements, { width: 528, fontSize: 38 });
-  elements.push(textElement(`${slide.id}-body`, slide.thesis || slideBodyText(slide), 79, 192, 504, 230, 4, {
+  elements.push(textElement(`${slide.id}-body`, bodyText, 79, bodyY, 504, bodyHeight, 4, {
     role: "body",
     fontSize: READABLE_BODY_FONT_SIZE,
+    autoFit: false,
     fontFamily: theme.fonts.body,
     color: theme.colors.muted,
   }));
   if (image) elements.push(imageElement(`${slide.id}-image`, image, 638, 69, 571, 552, 3, 1, "cover"));
-  addMiniPointRow(slide, theme, elements, 79, 520);
+  addMiniPointRow(slide, theme, elements, 79, Math.max(520, bodyY + bodyHeight + 36), { rightBoundary: 610, maxBottom: 680 });
 }
 
 function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
   addSlideTitle(slide, theme, elements);
   const items = sequenceItems(slide).slice(0, 5);
   const mainConclusion = slide.thesis || items[0] || slideBodyText(slide);
-  const supportingItems = items.filter((item) => item !== mainConclusion).slice(0, 3);
-  const finalThought = items.filter((item) => item !== mainConclusion).slice(3, 4)[0];
+  const supportingItems = items.filter((item) => item !== mainConclusion).slice(0, 3).map((item) => compactSummaryPoint(item, 7));
+  const finalThoughtSource = items.filter((item) => item !== mainConclusion).slice(3, 4)[0];
+  const finalThought = finalThoughtSource ? compactSummaryPoint(finalThoughtSource, 14) : "";
+  const conclusionFontSize = fittedFontSize(mainConclusion, 44, 25, 230);
+  const conclusionHeight = Math.min(230, Math.max(150, estimatedTextHeight(mainConclusion, conclusionFontSize, 640)));
 
   elements.push(
-    textElement(`${slide.id}-summary-conclusion`, mainConclusion, 70, 184, 640, 270, 4, {
+    textElement(`${slide.id}-summary-conclusion`, mainConclusion, 70, 196, 640, conclusionHeight, 4, {
       role: "body",
-      fontSize: fittedFontSize(mainConclusion, 44, 25, 270),
+      fontSize: conclusionFontSize,
       fontFamily: theme.fonts.heading,
       color: theme.colors.text,
       bold: true,
@@ -2050,9 +2109,10 @@ function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: Canv
 
   if (supportingItems.length) {
     elements.push(
-      textElement(`${slide.id}-summary-support-label`, "Ключевые мысли", 790, 190, 398, 34, 4, {
+      textElement(`${slide.id}-summary-support-label`, "Ключевые мысли", 790, 200, 398, 34, 4, {
         role: "caption",
         fontSize: READABLE_PLAQUE_FONT_SIZE,
+        autoFit: false,
         fontFamily: theme.fonts.heading,
         color: theme.colors.text,
         bold: true,
@@ -2060,17 +2120,21 @@ function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: Canv
     );
   }
 
+  let supportY = 264;
   supportingItems.forEach((item, index) => {
-    const y = 250 + index * 82;
+    const itemHeight = Math.max(55, estimatedTextHeight(item, READABLE_PLAQUE_FONT_SIZE, 362));
+    const y = supportY;
     elements.push(
       shapeElement(`${slide.id}-summary-support-${index}-dot`, "ellipse", 792, y + 8, 12, 12, 3, theme.colors.accentAlt, theme.colors.accentAlt, 0, 1),
-      textElement(`${slide.id}-summary-support-${index}`, item, 826, y, 362, 72, 4, {
+      textElement(`${slide.id}-summary-support-${index}`, item, 826, y, 362, itemHeight, 4, {
         role: "body",
         fontSize: READABLE_PLAQUE_FONT_SIZE,
+        autoFit: false,
         fontFamily: theme.fonts.body,
         color: theme.colors.muted,
       }),
     );
+    supportY += itemHeight + 34;
   });
 
   if (finalThought) {
@@ -2079,6 +2143,7 @@ function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: Canv
       textElement(`${slide.id}-summary-final-label`, "Что стоит запомнить", 94, 558, 270, 68, 4, {
         role: "caption",
         fontSize: READABLE_PLAQUE_FONT_SIZE,
+        autoFit: false,
         fontFamily: theme.fonts.heading,
         color: theme.colors.text,
         bold: true,
@@ -2087,6 +2152,7 @@ function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: Canv
       textElement(`${slide.id}-summary-final`, finalThought, 390, 554, 790, 76, 4, {
         role: "body",
         fontSize: READABLE_PLAQUE_FONT_SIZE,
+        autoFit: false,
         fontFamily: theme.fonts.body,
         color: theme.colors.muted,
         valign: "middle",
@@ -2122,6 +2188,7 @@ function addQuestionAnswerCanvas(slide: Slide, theme: PresentationTheme, element
     textElement(`${slide.id}-answer-text`, slide.thesis || slideBodyText(slide), 187, 283, 902, 82, 4, {
       role: "body",
       fontSize: READABLE_BODY_FONT_SIZE,
+      autoFit: false,
       fontFamily: theme.fonts.body,
       color: theme.colors.muted,
     }),
@@ -2334,22 +2401,38 @@ function addSlideTitle(
   }));
 }
 
-function addMiniPointRow(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], x: number, y: number) {
+function addMiniPointRow(
+  slide: Slide,
+  theme: PresentationTheme,
+  elements: CanvasElement[],
+  x: number,
+  y: number,
+  options: { rightBoundary?: number; maxBottom?: number } = {},
+) {
   const labels = (slide.bullets || []).slice(0, 3).map((item, index) => miniChipText(item, slide, index));
+  if (!labels.length) return;
   const gap = 18;
-  const widths = labels.map((label) => plaqueWidth(label, READABLE_PLAQUE_FONT_SIZE));
-  const totalWidth = widths.reduce((total, width) => total + width, 0) + gap * Math.max(0, widths.length - 1);
-  let chipX = Math.min(x, 1280 - totalWidth - 48);
+  const rightBoundary = options.rightBoundary || 1232;
+  const desiredWidths = labels.map((label) => plaqueWidth(label, READABLE_PLAQUE_FONT_SIZE));
+  const desiredWidth = desiredWidths.reduce((total, width) => total + width, 0) + gap * Math.max(0, desiredWidths.length - 1);
+  const availableWidth = rightBoundary - x;
+  const fittedWidth = desiredWidth > availableWidth
+    ? Math.max(150, Math.floor((availableWidth - gap * Math.max(0, labels.length - 1)) / labels.length))
+    : 0;
+  const widths = desiredWidths.map((width) => fittedWidth || width);
+  const rowHeight = Math.max(...labels.map((label, index) => plaqueHeight(label, READABLE_PLAQUE_FONT_SIZE, widths[index] - PLAQUE_PADDING_X * 2)));
+  if (y + rowHeight > (options.maxBottom || 680)) return;
+  let chipX = x;
 
   labels.forEach((label, index) => {
     const chipWidth = widths[index];
     const textWidth = chipWidth - PLAQUE_PADDING_X * 2;
-    const chipHeight = plaqueHeight(label, READABLE_PLAQUE_FONT_SIZE, textWidth);
     elements.push(
-      shapeElement(`${slide.id}-mini-${index}-shape`, "roundRect", chipX, y, chipWidth, chipHeight, 3, theme.colors.surface, theme.colors.accent, 1, 1),
-      textElement(`${slide.id}-mini-${index}`, label, chipX + PLAQUE_PADDING_X, y + PLAQUE_PADDING_Y, textWidth, chipHeight - PLAQUE_PADDING_Y * 2, 4, {
+      shapeElement(`${slide.id}-mini-${index}-shape`, "roundRect", chipX, y, chipWidth, rowHeight, 3, theme.colors.surface, theme.colors.accent, 1, 1),
+      textElement(`${slide.id}-mini-${index}`, label, chipX + PLAQUE_PADDING_X, y + PLAQUE_PADDING_Y, textWidth, rowHeight - PLAQUE_PADDING_Y * 2, 4, {
         role: "caption",
         fontSize: READABLE_PLAQUE_FONT_SIZE,
+        autoFit: false,
         fontFamily: theme.fonts.body,
         color: theme.colors.text,
         bold: true,
@@ -2360,30 +2443,41 @@ function addMiniPointRow(slide: Slide, theme: PresentationTheme, elements: Canva
   });
 }
 
-function addTitleMiniPointGrid(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+function addTitleMiniPointGrid(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], topY = 430) {
   const labels = (slide.bullets || []).slice(0, 3).map((item, index) => miniChipText(item, slide, index));
   if (!labels.length) return;
 
   const gap = 18;
   const columnWidth = 280;
   const rowWidth = labels.length === 1 ? 538 : columnWidth * 2 + gap;
-  const startX = (1280 - rowWidth) / 2;
-  const topY = 430;
   const topHeights = labels.slice(0, 2).map((label) => plaqueHeight(label, READABLE_PLAQUE_FONT_SIZE, columnWidth - PLAQUE_PADDING_X * 2));
   const topHeight = Math.max(...topHeights);
+  const bottomHeight = labels.length === 3
+    ? plaqueHeight(labels[2], READABLE_PLAQUE_FONT_SIZE, rowWidth - PLAQUE_PADDING_X * 2)
+    : 0;
+  const gridBottom = topY + topHeight + (labels.length === 3 ? gap + bottomHeight : 0);
+  const useSingleRow = labels.length === 3 && gridBottom > 680;
+  const singleRowWidth = 280;
+  const singleRowHeight = useSingleRow
+    ? Math.max(...labels.map((label) => plaqueHeight(label, READABLE_PLAQUE_FONT_SIZE, singleRowWidth - PLAQUE_PADDING_X * 2)))
+    : 0;
+  if (useSingleRow && topY + singleRowHeight > 680) return;
+  const effectiveRowWidth = useSingleRow ? labels.length * singleRowWidth + gap * (labels.length - 1) : rowWidth;
+  const startX = (1280 - effectiveRowWidth) / 2;
 
   labels.forEach((label, index) => {
-    const isSingleBottom = labels.length === 3 && index === 2;
+    const isSingleBottom = !useSingleRow && labels.length === 3 && index === 2;
     const chipWidth = isSingleBottom || labels.length === 1 ? rowWidth : columnWidth;
-    const chipX = isSingleBottom || labels.length === 1 ? startX : startX + index * (columnWidth + gap);
+    const chipX = isSingleBottom || labels.length === 1 ? startX : startX + index * ((useSingleRow ? singleRowWidth : columnWidth) + gap);
     const chipY = isSingleBottom ? topY + topHeight + gap : topY;
     const textWidth = chipWidth - PLAQUE_PADDING_X * 2;
-    const chipHeight = plaqueHeight(label, READABLE_PLAQUE_FONT_SIZE, textWidth);
+    const chipHeight = useSingleRow ? singleRowHeight : plaqueHeight(label, READABLE_PLAQUE_FONT_SIZE, textWidth);
     elements.push(
       shapeElement(`${slide.id}-mini-${index}-shape`, "roundRect", chipX, chipY, chipWidth, chipHeight, 3, theme.colors.surface, theme.colors.accent, 1, 1),
       textElement(`${slide.id}-mini-${index}`, label, chipX + PLAQUE_PADDING_X, chipY + PLAQUE_PADDING_Y, textWidth, chipHeight - PLAQUE_PADDING_Y * 2, 4, {
         role: "caption",
         fontSize: READABLE_PLAQUE_FONT_SIZE,
+        autoFit: false,
         fontFamily: theme.fonts.body,
         color: theme.colors.text,
         bold: true,
@@ -2492,6 +2586,7 @@ function textElement(
     text,
     runs: [{ text }],
     fontSize: options.fontSize || 28,
+    autoFit: options.autoFit,
     fontFamily: options.fontFamily || "Arial",
     color: options.color || "#161A1F",
     bold: Boolean(options.bold),
@@ -2504,7 +2599,7 @@ function textElement(
 }
 
 function fitCanvasTextElement(element: CanvasTextElement): CanvasTextElement {
-  if (element.fontSize === READABLE_BODY_FONT_SIZE || element.fontSize === READABLE_PLAQUE_FONT_SIZE) {
+  if (element.autoFit === false) {
     return {
       ...element,
       h: Math.max(element.h, estimatedTextHeight(element.text, element.fontSize, element.w)),
@@ -2748,6 +2843,33 @@ function miniChipText(value: string, slide: Slide, index: number) {
   const words = phraseWords(source);
   const fallback = words.join(" ");
   return fallback && words.length <= 12 && !looksLikeChipFragment(fallback) ? `${fallback}.` : compactChipSentence(slide.title, 12);
+}
+
+function compactSummaryPoint(value: string, maxWords: number) {
+  const text = cleanCanvasText(value);
+  if (!text) return "";
+  const sentences = text.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean);
+  const complete = sentences.find((sentence) => {
+    const count = phraseWords(sentence).length;
+    return count >= 3 && count <= maxWords && !looksLikeChipFragment(sentence);
+  });
+  if (complete) return /[.!?]$/.test(complete) ? complete : `${complete}.`;
+
+  const source = sentences[0] || text;
+  const clause = source
+    .split(/[,;:–—]\s*/)
+    .map((part) => part.trim())
+    .find((part) => {
+      const count = phraseWords(part).length;
+      return count >= 3 && count <= maxWords && !looksLikeChipFragment(part);
+    });
+  if (clause) return /[.!?]$/.test(clause) ? clause : `${clause}.`;
+
+  const words = phraseWords(source).slice(0, maxWords);
+  while (words.length > 3 && /^(и|или|но|а|что|чтобы|когда|если|and|or|but|that)$/iu.test(words.at(-1) || "")) {
+    words.pop();
+  }
+  return words.length ? `${words.join(" ")}.` : "";
 }
 
 function compactChipSentence(value: string, maxWords: number) {

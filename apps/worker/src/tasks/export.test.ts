@@ -158,6 +158,45 @@ describe("createPptx", () => {
     expect(slideXml).toContain("The slide remains exportable");
   });
 
+  it("keeps legacy case-study slides readable in pptx exports", async () => {
+    const buffer = await createPptx({
+      id: "presentation-legacy-case",
+      title: "Legacy case deck",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      generatedText: "Slide 1: Legacy case\nThe saved case remains readable.",
+      sources: [],
+      outline: ["Legacy case"],
+      narrativePlan: [],
+      speechScript: [{ slideOrder: 1, slideTitle: "Legacy case", text: "Narration." }],
+      slides: [{
+        id: "slide-legacy-case",
+        order: 1,
+        title: "Legacy case",
+        slideKind: "content",
+        layout: "case-study",
+        thesis: "The saved case remains readable.",
+        bullets: ["Legacy situation", "Legacy action", "Legacy result"],
+        definition: null,
+        keyConcepts: [],
+        visual: { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] },
+        highlights: [],
+        blocks: [{ type: "bullets", items: ["Legacy situation", "Legacy action", "Legacy result"] }],
+        speakerNotes: "Narration.",
+        timingSeconds: 45,
+        sourceRefs: [],
+      }],
+    });
+
+    const zip = await JSZip.loadAsync(buffer);
+    const slideXml = await zip.file("ppt/slides/slide1.xml")?.async("string");
+    expect(slideXml).toContain("Legacy situation");
+    expect(slideXml).toContain("Legacy action");
+    expect(slideXml).toContain("Legacy result");
+  });
+
   it("renders editable canvas text and shapes to pptx", async () => {
     const buffer = await createPptx(canvasDeck());
     const zip = await JSZip.loadAsync(buffer);

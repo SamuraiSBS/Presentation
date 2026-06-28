@@ -53,12 +53,14 @@ describe("shared contracts", () => {
   it("hides removed layouts from new selections while keeping legacy schema support", () => {
     const layouts = slideLayoutOptions("content").map((layout) => layout.id);
     expect(layouts).not.toContain("definition");
+    expect(layouts).not.toContain("case-study");
     expect(layouts).not.toContain("evidence");
     expect(layouts).not.toContain("explain-example");
     expect(layouts).not.toContain("comparison");
     expect(layouts).not.toContain("myth-fact");
     expect(layouts).not.toContain("problem-solution");
     expect(() => slideLayoutSchema.parse("definition")).not.toThrow();
+    expect(() => slideLayoutSchema.parse("case-study")).not.toThrow();
     expect(() => slideLayoutSchema.parse("comparison")).not.toThrow();
   });
 
@@ -520,6 +522,152 @@ describe("shared contracts", () => {
     expect(miniChips[2].w).toBeGreaterThanOrEqual(538);
   });
 
+  it("keeps title and image-focus body text at 30px without colliding with lower plaques", () => {
+    const theme = resolvePresentationTheme({ title: "Safe fixed body text" });
+    const longThesis = "A detailed supporting explanation stays readable at the requested size while the layout measures every wrapped line and moves optional supporting plaques below the complete paragraph without allowing either region to cover the other.";
+    const base = {
+      scenario: "lesson",
+      level: "beginner",
+      generationMode: "demo",
+      sources: [],
+      outline: ["Safe layout"],
+      speechScript: [{ slideOrder: 1, slideTitle: "Safe layout", text: "Narration." }],
+      presentationTheme: theme,
+    } as const;
+    const titleSlide = presentationSchema.parse({
+      ...base,
+      id: "presentation-safe-title",
+      title: "Safe title",
+      slideCount: 1,
+      slides: [{
+        id: "slide-safe-title",
+        order: 1,
+        title: "Safe title",
+        slideKind: "title",
+        layout: "hero",
+        thesis: longThesis,
+        bullets: ["First supporting point stays complete.", "Second supporting point stays complete.", "Third supporting point stays complete."],
+        visual: { type: "none" },
+        blocks: [],
+        speakerNotes: "Narration.",
+        timingSeconds: 45,
+        sourceRefs: [],
+      }],
+    }).slides[0];
+    const imageSlide = presentationSchema.parse({
+      ...base,
+      id: "presentation-safe-image",
+      title: "Safe image",
+      slideCount: 1,
+      slides: [{
+        id: "slide-safe-image",
+        order: 1,
+        title: "Safe image",
+        slideKind: "content",
+        layout: "image-focus",
+        thesis: longThesis,
+        bullets: ["First image point.", "Second image point.", "Third image point."],
+        visual: { type: "image", image: { url: "https://cdn.example.com/image.jpg", alt: "Example" } },
+        blocks: [],
+        speakerNotes: "Narration.",
+        timingSeconds: 45,
+        sourceRefs: [],
+      }],
+    }).slides[0];
+
+    for (const slide of [titleSlide, imageSlide]) {
+      const canvas = buildSlideCanvas(slide, theme);
+      const body = canvas.elements.find((element) => element.id === `${slide.id}-body`);
+      const bodyBackplate = canvas.elements.find((element) => element.id === `${slide.id}-body-backplate`);
+      const plaques = canvas.elements.filter((element) => element.type === "shape" && /-mini-\d+-shape$/.test(element.id));
+      expect(body).toMatchObject({ type: "text", fontSize: 30, autoFit: false });
+      expect(plaques).toHaveLength(3);
+      expect(bodyBackplate?.y).toBeGreaterThanOrEqual(0);
+      expect((bodyBackplate?.y || 0) + (bodyBackplate?.h || 0)).toBeLessThanOrEqual(Math.min(...plaques.map((plaque) => plaque.y)));
+      expect(canvas.elements.every((element) => element.x >= 0 && element.y >= 0 && element.x + element.w <= 1280 && element.y + element.h <= 720)).toBe(true);
+    }
+  });
+
+  it("uses the fixed 30px body in premium image layouts and upgrades only unmarked generated canvases", () => {
+    const theme = resolvePresentationTheme({ title: "Premium image layout" });
+    const parsed = presentationSchema.parse({
+      id: "presentation-premium-image",
+      title: "Premium image layout",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Premium image"],
+      speechScript: [{ slideOrder: 1, slideTitle: "Premium image", text: "Narration." }],
+      slides: [{
+        id: "slide-premium-image",
+        order: 1,
+        title: "Premium image",
+        slideKind: "content",
+        layout: "image-focus",
+        thesis: "A premium split-image explanation remains readable at one stable body size across previews and exports.",
+        bullets: ["First image point.", "Second image point.", "Third image point."],
+        visual: { type: "image", image: { url: "https://cdn.example.com/premium.jpg", alt: "Premium example" } },
+        blocks: [],
+        speakerNotes: "Narration.",
+        timingSeconds: 45,
+        sourceRefs: [],
+      }],
+      presentationTheme: theme,
+    });
+    const direction = {
+      slideOrder: 1,
+      visualRole: "explain",
+      layoutIntent: "split_image_text",
+      imageStrategy: "real_photo",
+      visualPrompt: "Premium example",
+    } as const;
+    const current = buildSlideCanvas(parsed.slides[0], theme, { designDirection: direction });
+    const currentBody = current.elements.find((element) => element.id === "slide-premium-image-body");
+    expect(currentBody).toMatchObject({ type: "text", fontSize: 30, autoFit: false, x: 84, y: 310, w: 548 });
+
+    const previous = {
+      ...parsed.slides[0],
+      canvas: {
+        ...current,
+        elements: current.elements.map((element) => element.id === "slide-premium-image-body"
+          ? { ...element, fontSize: 18, autoFit: undefined, h: 148 }
+          : element),
+      },
+    };
+    const document = presentationSchema.parse({ ...parsed, designBrief: { themePreset: "tech", mood: "neutral", visualDirection: "Premium", slideDirections: [direction] }, slides: [previous] });
+    const upgraded = ensureEditableCanvas(document).slides[0].canvas!;
+    expect(upgraded.elements.find((element) => element.id === "slide-premium-image-body")).toMatchObject({ fontSize: 30, autoFit: false });
+
+    const marked = ensureEditableCanvas({
+      ...document,
+      slides: [{
+        ...previous,
+        canvas: {
+          ...previous.canvas,
+          elements: [...previous.canvas.elements, {
+            id: "slide-premium-image-custom-canvas-marker",
+            type: "shape" as const,
+            shape: "rect" as const,
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1,
+            rotation: 0,
+            zIndex: 0,
+            opacity: 0,
+            locked: true,
+            fill: "#FFFFFF",
+            stroke: "#FFFFFF",
+            strokeWidth: 0,
+          }],
+        },
+      }],
+    }).slides[0].canvas!;
+    expect(marked.elements.find((element) => element.id === "slide-premium-image-body")).toMatchObject({ fontSize: 18, autoFit: false });
+  });
+
   it("builds summary slides as one conclusion with supporting thoughts and a final takeaway", () => {
     const theme = resolvePresentationTheme({ title: "Summary story" });
     const slide = presentationSchema.parse({
@@ -598,6 +746,59 @@ describe("shared contracts", () => {
     expect(canvas.elements.some((element) => /summary-\d+-card$/.test(element.id))).toBe(false);
   });
 
+  it("compacts long summary support text and keeps every summary region separate", () => {
+    const theme = resolvePresentationTheme({ title: "Safe summary" });
+    const slide = presentationSchema.parse({
+      id: "presentation-safe-summary",
+      title: "Safe summary",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["What matters"],
+      speechScript: [{ slideOrder: 1, slideTitle: "What matters", text: "Narration." }],
+      slides: [{
+        id: "slide-safe-summary",
+        order: 1,
+        title: "What matters",
+        slideKind: "summary",
+        layout: "summary",
+        thesis: "The central conclusion remains complete and readable even when it needs several wrapped lines to explain the final meaning of the presentation.",
+        bullets: [
+          "The first supporting thought explains the most important cause in enough detail to overflow a fixed short row.",
+          "The second supporting thought describes the practical change that follows from the material and its evidence.",
+          "The third supporting thought names the consequence that the audience should connect with the central conclusion.",
+          "The final thought gives the audience one memorable idea that remains useful after the presentation ends.",
+        ],
+        visual: { type: "none" },
+        blocks: [],
+        speakerNotes: "Narration.",
+        timingSeconds: 45,
+        sourceRefs: [],
+      }],
+      presentationTheme: theme,
+    }).slides[0];
+
+    const canvas = buildSlideCanvas(slide, theme);
+    const conclusionBackplate = canvas.elements.find((element) => element.id === "slide-safe-summary-summary-conclusion-backplate");
+    const accent = canvas.elements.find((element) => element.id === "slide-safe-summary-summary-accent");
+    const supportText = canvas.elements.filter((element) => element.type === "text" && /^slide-safe-summary-summary-support-\d+$/.test(element.id));
+    const supportBackplates = canvas.elements
+      .filter((element) => element.type === "shape" && /^slide-safe-summary-summary-support-\d+-backplate$/.test(element.id))
+      .sort((left, right) => left.y - right.y);
+    const finalBackground = canvas.elements.find((element) => element.id === "slide-safe-summary-summary-final-bg");
+
+    expect(supportText).toHaveLength(3);
+    expect(supportText.every((element) => !element.text.includes("...") && element.text.split(/\s+/).length <= 7)).toBe(true);
+    expect((conclusionBackplate?.y || 0) + (conclusionBackplate?.h || 0)).toBeLessThanOrEqual(accent?.y || 0);
+    supportBackplates.slice(1).forEach((backplate, index) => {
+      expect(supportBackplates[index].y + supportBackplates[index].h).toBeLessThanOrEqual(backplate.y);
+    });
+    expect(supportBackplates.at(-1)!.y + supportBackplates.at(-1)!.h).toBeLessThanOrEqual(finalBackground?.y || 0);
+    expect(canvas.elements.every((element) => element.x >= 0 && element.y >= 0 && element.x + element.w <= 1280 && element.y + element.h <= 720)).toBe(true);
+  });
+
   it("centers title content and stretches a single lower plaque to the upper row width", () => {
     const theme = resolvePresentationTheme({ title: "Centered title" });
     const slide = presentationSchema.parse({
@@ -637,7 +838,7 @@ describe("shared contracts", () => {
     const body = canvas.elements.find((element) => element.id === "slide-title-body");
 
     expect(title).toMatchObject({ type: "text", align: "center", valign: "middle", y: 118 });
-    expect(body).toMatchObject({ type: "text", align: "center", valign: "middle", y: 282 });
+    expect(body).toMatchObject({ type: "text", align: "center", valign: "middle", y: 306, fontSize: 30, autoFit: false });
     expect(first).toMatchObject({ type: "shape", x: 351, w: 280 });
     expect(second).toMatchObject({ type: "shape", x: 649, w: 280 });
     expect(third).toMatchObject({ type: "shape", x: 351, w: 578 });
@@ -881,10 +1082,25 @@ describe("shared contracts", () => {
       presentationTheme: theme,
     });
     const current = buildSlideCanvas(parsed.slides[0], theme);
+    const customMarker = {
+      id: "slide-summary-custom-canvas-marker",
+      type: "shape" as const,
+      shape: "rect" as const,
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 1,
+      rotation: 0,
+      zIndex: 0,
+      opacity: 0,
+      locked: true,
+      fill: "#FFFFFF",
+      stroke: "#FFFFFF",
+      strokeWidth: 0,
+    };
     const previous = {
       ...current,
-      elements: [
-        ...current.elements.map((element) => {
+      elements: current.elements.map((element) => {
           if (element.id === "slide-summary-summary-support-label" && element.type === "text") return { ...element, fontSize: 17 };
           if (/slide-summary-summary-support-\d+$/.test(element.id) && element.type === "text") return { ...element, fontSize: 15, h: 62 };
           if (element.id === "slide-summary-summary-final-label" && element.type === "text") return { ...element, x: 94, y: 576, w: 222, h: 28, fontSize: 15 };
@@ -892,23 +1108,6 @@ describe("shared contracts", () => {
           if (element.id === "slide-summary-summary-final-bg" && element.type === "shape") return { ...element, y: 550, h: 92 };
           return element;
         }),
-        {
-          id: "slide-summary-custom-canvas-marker",
-          type: "shape" as const,
-          shape: "rect" as const,
-          x: 0,
-          y: 0,
-          w: 1,
-          h: 1,
-          rotation: 0,
-          zIndex: 0,
-          opacity: 0,
-          locked: true,
-          fill: "#FFFFFF",
-          stroke: "#FFFFFF",
-          strokeWidth: 0,
-        },
-      ],
     };
 
     const upgraded = ensureEditableCanvas({
@@ -916,7 +1115,7 @@ describe("shared contracts", () => {
       slides: [{ ...parsed.slides[0], canvas: previous }],
     }).slides[0].canvas!;
 
-    expect(upgraded.elements.find((element) => element.id === "slide-summary-summary-support-0")).toMatchObject({ fontSize: 24, h: 72 });
+    expect(upgraded.elements.find((element) => element.id === "slide-summary-summary-support-0")).toMatchObject({ fontSize: 24, h: 55 });
     expect(upgraded.elements.find((element) => element.id === "slide-summary-summary-final-label")).toMatchObject({ x: 94, y: 558, w: 270, h: 68, fontSize: 24 });
     expect(upgraded.elements.find((element) => element.id === "slide-summary-summary-final-bg")).toMatchObject({ y: 536, h: 112 });
 
@@ -926,7 +1125,7 @@ describe("shared contracts", () => {
         ...parsed.slides[0],
         canvas: {
           ...current,
-          elements: [...current.elements, previous.elements[previous.elements.length - 1]],
+          elements: [...current.elements, customMarker],
         },
       }],
     }).slides[0].canvas!;

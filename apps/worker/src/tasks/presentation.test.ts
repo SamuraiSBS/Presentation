@@ -199,6 +199,7 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("slideKind summary");
     expect(prompt).toContain("layout must be one of");
     expect(prompt).toContain("question-answer");
+    expect(prompt).not.toContain("case-study");
     expect(prompt).not.toContain("myth-fact");
     expect(prompt).not.toContain("two-column");
     expect(prompt).toContain("3-5 dated or named periods");
@@ -412,6 +413,7 @@ describe("layout normalization", () => {
 
   it("selects supported layouts without returning removed templates", () => {
     expect(inferContentLayout(base, 2)).not.toBe("problem-solution");
+    expect(Array.from({ length: 12 }, (_, index) => inferContentLayout(base, index + 2))).not.toContain("case-study");
     expect(inferContentLayout({ ...base, thesis: "Тезис подтверждают несколько фактов.", bullets: ["Факт один", "Факт два"], sourceRefs: [{ sourceId: "s", label: "Источник", excerpt: "Факт", page: null }] }, 3)).not.toBe("evidence");
     expect(inferContentLayout({ ...base, title: "Что такое фотосинтез", thesis: "Это процесс преобразования света.", bullets: ["Например, растение использует солнечный свет"], definition: { term: "Фотосинтез", text: "Преобразование энергии света." } }, 4)).not.toBe("explain-example");
   });
@@ -437,6 +439,7 @@ describe("layout normalization", () => {
 
     expect(normalizeLayout("two-column", 2, 5, "content", comparison)).not.toBe("comparison");
     expect(normalizeLayout("comparison", 2, 5, "content", base)).not.toBe("comparison");
+    expect(normalizeLayout("case-study", 2, 5, "content", base)).not.toBe("case-study");
   });
 
   it("rejects sparse sequence, question-answer, and myth-fact layouts", () => {
@@ -643,7 +646,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("rejects the repeated template text from the bad neural output", async () => {
+  it("repairs the repeated template text from the bad neural output", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -665,20 +668,20 @@ describe("generatePresentation fallback behavior", () => {
     global.fetch = async () => yandexTextResponse(badText);
 
     try {
-      await expect(
-        generatePresentation(
-          {
-            id: "project-1",
-            title: "Телефоны Samsung",
-            prompt: "Сделай презентацию про телефоны Samsung",
-            scenario: "school_report",
-            level: "8 класс",
-            mode: "with_sources",
-            slideCount: 3,
-          },
-          [{ id: "src-1", label: "Samsung", type: "WEB", size: 0, excerpt: "Материал о линейке Samsung Galaxy." }],
-        ),
-      ).rejects.toThrow("template phrase detected");
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "Телефоны Samsung",
+          prompt: "Сделай презентацию про телефоны Samsung",
+          scenario: "school_report",
+          level: "8 класс",
+          mode: "with_sources",
+          slideCount: 3,
+        },
+        [{ id: "src-1", label: "Samsung", type: "WEB", size: 0, excerpt: "Материал о линейке Samsung Galaxy." }],
+      );
+      expect(() => presentationSchema.parse(presentation)).not.toThrow();
+      expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
     }
@@ -934,7 +937,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("rejects narration when neighboring slides repeat the same closing sentence", async () => {
+  it("repairs narration when neighboring slides repeat the same closing sentence", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -953,26 +956,26 @@ describe("generatePresentation fallback behavior", () => {
     global.fetch = async () => yandexTextResponse(repeatedText);
 
     try {
-      await expect(
-        generatePresentation(
-          {
-            id: "project-1",
-            title: "История",
-            prompt: "Сделай презентацию про развитие конфликта",
-            scenario: "school_report",
-            level: "8 класс",
-            mode: "with_sources",
-            slideCount: 2,
-          },
-          [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Conflict story excerpt." }],
-        ),
-      ).rejects.toThrow("adjacent narration sections repeat closing sentence");
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "История",
+          prompt: "Сделай презентацию про развитие конфликта",
+          scenario: "school_report",
+          level: "8 класс",
+          mode: "with_sources",
+          slideCount: 2,
+        },
+        [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Conflict story excerpt." }],
+      );
+      expect(() => presentationSchema.parse(presentation)).not.toThrow();
+      expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
     }
   });
 
-  it("rejects narration when many slides repeat the same opening phrase", async () => {
+  it("repairs narration when many slides repeat the same opening phrase", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -995,20 +998,20 @@ describe("generatePresentation fallback behavior", () => {
     global.fetch = async () => yandexTextResponse(repeatedText);
 
     try {
-      await expect(
-        generatePresentation(
-          {
-            id: "project-1",
-            title: "Русское кино",
-            prompt: "Сделай презентацию про русское кино",
-            scenario: "school_report",
-            level: "8-11 класс",
-            mode: "with_sources",
-            slideCount: 3,
-          },
-          [],
-        ),
-      ).rejects.toThrow("narration sections repeat opening phrase");
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "Русское кино",
+          prompt: "Сделай презентацию про русское кино",
+          scenario: "school_report",
+          level: "8-11 класс",
+          mode: "with_sources",
+          slideCount: 3,
+        },
+        [],
+      );
+      expect(() => presentationSchema.parse(presentation)).not.toThrow();
+      expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
     }
@@ -1180,6 +1183,7 @@ describe("generatePresentation fallback behavior", () => {
     expect(presentation.slides.every((slide) => slide.keyConcepts.length === 0)).toBe(true);
     expect(presentation.slides.every((slide) => slide.highlights.length === 0)).toBe(true);
     expect(new Set(presentation.slides.map((slide) => slide.layout)).size).toBeGreaterThan(2);
+    expect(presentation.slides.map((slide) => slide.layout)).not.toContain("case-study");
     expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 5 && sentenceCount(item.text) <= 6)).toBe(true);
     expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 5 && sentenceCount(slide.speakerNotes) <= 6)).toBe(true);
     expect(presentation.slides.every((slide) => slide.speakerNotes.length > slide.thesis.length)).toBe(true);
@@ -1378,7 +1382,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("rejects template-like AI narration instead of replacing it with fallback text", async () => {
+  it("repairs template-like AI narration with fallback text", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1393,26 +1397,26 @@ describe("generatePresentation fallback behavior", () => {
     global.fetch = async () => yandexTextResponse(templateNarration);
 
     try {
-      await expect(
-        generatePresentation(
-          {
-            id: "project-1",
-            title: "Русское кино",
-            prompt: "Сделай презентацию про русское кино",
-            scenario: "school_report",
-            level: "8-11 класс",
-            mode: "with_sources",
-            slideCount: 1,
-          },
-          [],
-        ),
-      ).rejects.toThrow("template phrase detected");
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "Русское кино",
+          prompt: "Сделай презентацию про русское кино",
+          scenario: "school_report",
+          level: "8-11 класс",
+          mode: "with_sources",
+          slideCount: 1,
+        },
+        [],
+      );
+      expect(() => presentationSchema.parse(presentation)).not.toThrow();
+      expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
     }
   });
 
-  it("rejects complaint-style universal narration endings", async () => {
+  it("repairs complaint-style universal narration endings", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1429,26 +1433,26 @@ describe("generatePresentation fallback behavior", () => {
     global.fetch = async () => yandexTextResponse(badNarration);
 
     try {
-      await expect(
-        generatePresentation(
-          {
-            id: "project-1",
-            title: "Русское кино",
-            prompt: "Сделай презентацию про русское кино",
-            scenario: "school_report",
-            level: "8-11 класс",
-            mode: "with_sources",
-            slideCount: 1,
-          },
-          [],
-        ),
-      ).rejects.toThrow("template phrase detected");
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "Русское кино",
+          prompt: "Сделай презентацию про русское кино",
+          scenario: "school_report",
+          level: "8-11 класс",
+          mode: "with_sources",
+          slideCount: 1,
+        },
+        [],
+      );
+      expect(() => presentationSchema.parse(presentation)).not.toThrow();
+      expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
     }
   });
 
-  it("rejects direct slide-structure narration phrases", async () => {
+  it("repairs direct slide-structure narration phrases", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1465,26 +1469,26 @@ describe("generatePresentation fallback behavior", () => {
     global.fetch = async () => yandexTextResponse(badNarration);
 
     try {
-      await expect(
-        generatePresentation(
-          {
-            id: "project-1",
-            title: "Русское кино",
-            prompt: "Сделай презентацию про русское кино",
-            scenario: "school_report",
-            level: "8-11 класс",
-            mode: "with_sources",
-            slideCount: 1,
-          },
-          [],
-        ),
-      ).rejects.toThrow("template phrase detected");
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "Русское кино",
+          prompt: "Сделай презентацию про русское кино",
+          scenario: "school_report",
+          level: "8-11 класс",
+          mode: "with_sources",
+          slideCount: 1,
+        },
+        [],
+      );
+      expect(() => presentationSchema.parse(presentation)).not.toThrow();
+      expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
     }
   });
 
-  it("rejects repeated fallback-like sentence formulas in narration", async () => {
+  it("repairs repeated fallback-like sentence formulas in narration", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1501,20 +1505,20 @@ describe("generatePresentation fallback behavior", () => {
     global.fetch = async () => yandexTextResponse(badNarration);
 
     try {
-      await expect(
-        generatePresentation(
-          {
-            id: "project-1",
-            title: "Русское кино",
-            prompt: "Сделай презентацию про русское кино",
-            scenario: "school_report",
-            level: "8-11 класс",
-            mode: "with_sources",
-            slideCount: 1,
-          },
-          [],
-        ),
-      ).rejects.toThrow("template phrase detected");
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "Русское кино",
+          prompt: "Сделай презентацию про русское кино",
+          scenario: "school_report",
+          level: "8-11 класс",
+          mode: "with_sources",
+          slideCount: 1,
+        },
+        [],
+      );
+      expect(() => presentationSchema.parse(presentation)).not.toThrow();
+      expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
     }
@@ -1570,6 +1574,66 @@ describe("generatePresentation fallback behavior", () => {
       expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(5);
       expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(6);
       expect(presentation.speechScript[0].text.toLowerCase()).toContain("a real generated point");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("allows user-provided topical titles that contain рассказ про", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const presentationText = [
+      "Слайд 1: Рассказ про машины Audi quattro",
+      "Audi quattro появился как инженерный ответ на задачу уверенного сцепления в сложных дорожных условиях. Полный привод помог автомобилю лучше распределять тягу между осями и сохранять устойчивость на мокрой или скользкой поверхности. В автоспорте эта технология быстро стала заметным преимуществом, потому что позволяла раньше разгоняться после поворотов. Для серийных автомобилей quattro стал способом объединить безопасность, управляемость и спортивный характер. Поэтому история Audi quattro показывает, как техническое решение из гонок изменило ожидания водителей от повседневных машин.",
+    ].join("\n");
+    const originalFetch = global.fetch;
+    mockYandexTwoStep(presentationText, {
+      title: "Рассказ про машины Audi quattro",
+      generatedText: presentationText,
+      slides: [
+        {
+          title: "Рассказ про машины Audi quattro",
+          blocks: [
+            {
+              type: "callout",
+              content:
+                "Audi quattro сделал полный привод частью спортивного и повседневного образа марки.",
+            },
+          ],
+        },
+      ],
+      speechScript: [],
+    });
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-audi",
+          title: "Рассказ про машины Audi quattro",
+          prompt: "Рассказ про машины Audi quattro",
+          scenario: "school_report",
+          level: "8 класс",
+          mode: "with_sources",
+          slideCount: 1,
+        },
+        [
+          {
+            id: "web-audi",
+            label: "Audi quattro",
+            type: "WEB",
+            size: 0,
+            excerpt: "Audi quattro известен системой полного привода и спортивной историей.",
+          },
+        ],
+      );
+
+      expect(presentation.title).toContain("Audi quattro");
+      expect(presentation.generationMode).toBe("yandex");
     } finally {
       global.fetch = originalFetch;
     }

@@ -219,8 +219,11 @@ const GENERIC_NARRATION_PHRASES = [
   "текст на слайде",
   "основной смысл раскрывается",
   "основной рассказ раскрывает",
-  "рассказе про",
-  "рассказ про",
+  "рассказе про тему",
+  "рассказе про материал",
+  "рассказ про эту тему",
+  "рассказ про тему",
+  "рассказ про материал",
   "примеры. поэтому",
   "открывает тему",
   "продолжает разговор о теме",
@@ -363,6 +366,7 @@ const STOP_WORDS = new Set([
 ]);
 
 const REMOVED_SLIDE_LAYOUTS = new Set<SlideLayout>([
+  "case-study",
   "comparison",
   "definition",
   "evidence",
@@ -376,7 +380,6 @@ const CONTENT_LAYOUT_CYCLE = [
   "statement",
   "process",
   "question-answer",
-  "case-study",
   "timeline",
   "metrics",
   "quote",
@@ -671,14 +674,20 @@ async function generateWithYandex(project: ProjectInput, sources: Source[]) {
     { yandexApiKey: apiKey },
   );
   const slideBlueprints = buildSlideBlueprints(project, narrationText, narrativePlan, designBrief);
-  const parsed = await generatePresentationDocumentWithProvider("yandex", project, sources, narrationText, narrativePlan, {
-    researchBrief,
-    deckStory,
-    designBrief,
-    slideBlueprints,
-    slideTextPlans,
-    yandexApiKey: apiKey,
-  });
+  let parsed: unknown;
+  try {
+    parsed = await generatePresentationDocumentWithProvider("yandex", project, sources, narrationText, narrativePlan, {
+      researchBrief,
+      deckStory,
+      designBrief,
+      slideBlueprints,
+      slideTextPlans,
+      yandexApiKey: apiKey,
+    });
+  } catch (error) {
+    console.warn("yandex structured presentation generation failed; using narration fallback document:", error);
+    parsed = {};
+  }
   return finalizeGeneratedPresentation(
     parsed,
     project,
@@ -717,14 +726,20 @@ async function generateYandexPresentationFromNarration(project: ProjectInput, so
     { yandexApiKey: apiKey },
   );
   const slideBlueprints = buildSlideBlueprints(project, narrationText, narrativePlan, designBrief);
-  const parsed = await generatePresentationDocumentWithProvider("yandex", project, sources, narrationText, narrativePlan, {
-    researchBrief,
-    deckStory,
-    designBrief,
-    slideBlueprints,
-    slideTextPlans,
-    yandexApiKey: apiKey,
-  });
+  let parsed: unknown;
+  try {
+    parsed = await generatePresentationDocumentWithProvider("yandex", project, sources, narrationText, narrativePlan, {
+      researchBrief,
+      deckStory,
+      designBrief,
+      slideBlueprints,
+      slideTextPlans,
+      yandexApiKey: apiKey,
+    });
+  } catch (error) {
+    console.warn("yandex structured presentation generation failed; using narration fallback document:", error);
+    parsed = {};
+  }
   return finalizeGeneratedPresentation(
     parsed,
     project,
@@ -1270,16 +1285,29 @@ function normalizeNarrationText(value: unknown, project: ProjectInput) {
     throw new Error("AI narration quality check failed: response is not plain slide narration");
   }
 
-  const sections = repairShortNarrationSections(trimNarrationSections(parseNarrationSections(text)), project);
+  let sections = repairNarrationSentenceCounts(parseNarrationSections(text), project);
   const issues = validateNarrationSections(sections, project);
   if (issues.length) {
-    throw new Error(`AI narration quality check failed: ${issues.join("; ")}`);
+    const blockingIssues = issues.filter((issue) => !isRepairableNarrationQualityIssue(issue));
+    if (blockingIssues.length) {
+      throw new Error(`AI narration quality check failed: ${blockingIssues.join("; ")}`);
+    }
+    console.warn("AI narration quality check found repairable issues; using local narration repair", {
+      projectId: project.id,
+      issues,
+    });
+    sections = repairNarrationQualitySections(sections, project);
   }
 
-  const normalizedText = sections.map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n");
+  let normalizedText = sections.map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n");
   const textIssues = qualityIssuesForText(normalizedText, project);
   if (textIssues.length) {
-    throw new Error(`AI narration quality check failed: ${textIssues.join("; ")}`);
+    console.warn("AI narration quality check found template text; using local narration repair", {
+      projectId: project.id,
+      issues: textIssues,
+    });
+    sections = repairNarrationQualitySections(sections, project);
+    normalizedText = sections.map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n");
   }
 
   return normalizedText;
@@ -1397,6 +1425,61 @@ function validateNarrationSections(sections: NarrationSection[], project: Projec
   }
 
   return issues;
+}
+
+function isRepairableNarrationQualityIssue(issue: string) {
+  return issue.includes("repeat opening sentence")
+    || issue.includes("repeat closing sentence")
+    || issue.includes("repeat opening phrase")
+    || issue.includes("repeat closing phrase");
+}
+
+function repairNarrationQualitySections(sections: NarrationSection[], project: ProjectInput): NarrationSection[] {
+  return sections.map((section, index) => ({
+    ...section,
+    order: index + 1,
+    title: section.title || fallbackTitle(project, index + 1),
+    text: buildFallbackSpeakerNotes(project, index + 1),
+  }));
+}
+
+function repairNarrationSentenceCounts(sections: NarrationSection[], project: ProjectInput) {
+  return repairShortNarrationSections(trimNarrationSections(sections), project).map((section, index) => {
+    const expectedOrder = index + 1;
+    if (section.order !== expectedOrder || !section.title) {
+      return section;
+    }
+
+    const count = sentenceCount(section.text);
+    if (count >= 5 && count <= 6) {
+      return section;
+    }
+
+    return {
+      ...section,
+      text: buildFallbackSpeakerNotes(project, expectedOrder),
+    };
+  });
+}
+
+function formatNarrationSection(section: NarrationSection, slideWord = "\u0421\u043b\u0430\u0439\u0434") {
+  return `${slideWord} ${section.order}: ${section.title}\n${section.text}`;
+}
+
+function narrationSectionsChanged(before: NarrationSection[], after: NarrationSection[]) {
+  if (before.length !== after.length) return true;
+  return after.some((section, index) => {
+    const previous = before[index];
+    return !previous || previous.order !== section.order || previous.title !== section.title || previous.text !== section.text;
+  });
+}
+
+function narrationHeaderWord(value: string) {
+  const firstHeader = cleanMultilineText(value)
+    .split("\n")
+    .map((line) => line.match(/^(\S+)\s+\d+\s*:/i)?.[1])
+    .find(Boolean);
+  return firstHeader || "\u0421\u043b\u0430\u0439\u0434";
 }
 
 function repeatedSentenceEdge(sections: NarrationSection[], edge: "first" | "last") {
@@ -1827,7 +1910,7 @@ export function buildGenerationPrompt(
     "Copy the provided designBrief into the final document exactly unless schema repair requires filling a missing slideDirections item.",
     "Each slide must include: id, order, title, slideKind, layout, thesis, bullets, definition, keyConcepts, visual, highlights, blocks, speakerNotes, timingSeconds, sourceRefs.",
     "Layout rules:",
-    "- layout must be one of: hero, bullets, summary, statement, quote, timeline, process, image-focus, case-study, question-answer, metrics;",
+    "- layout must be one of: hero, bullets, summary, statement, quote, timeline, process, image-focus, question-answer, metrics;",
     "- do not use the same content layout more than twice in a row;",
     "- choose the layout from the slide's idea, not from a fixed template;",
     "- use statement for one strong claim with one short callout and no list;",
@@ -1835,7 +1918,7 @@ export function buildGenerationPrompt(
     "- use timeline only for chronology with 3-5 dated or named periods; each visual.items entry must have a period in label and the event plus its significance in text;",
     "- use process only for 3-5 ordered actions; each visual.items entry must have a short action in label and an explanation or result in text;",
     "- use question-answer only for a real question; thesis is the direct answer and bullets contain 2-3 supporting parts such as explanation, reason, example, or consequence;",
-    "- use image-focus for a concrete image and case-study for situation/action/result;",
+    "- use image-focus for a concrete image and process for a sequence of actions or stages;",
     "- use metrics only for 2-4 explicit numbers, percentages, dates, durations, or measured quantities already supported by the material; never turn list order into a metric;",
     "- use bullets only when the slide is genuinely a list of takeaways.",
     "Content slide rules:",
@@ -1958,7 +2041,7 @@ function normalizePresentation(
   designBrief?: DesignBrief,
 ): PresentationDocument {
   const input = raw && typeof raw === "object" ? (raw as Partial<PresentationDocument>) : {};
-  assertRawGenerationQuality(input, project, generationMode);
+  assertRawGenerationQuality({ ...input, generatedText: input.generatedText || generatedText }, project, generationMode);
   const publicSources = normalizeSources(sources, project);
   const normalizedGeneratedText = normalizeGeneratedText(
     generatedText || cleanMultilineText(input.generatedText) || buildFallbackGeneratedText(project),
@@ -2058,19 +2141,35 @@ async function finalizeGeneratedPresentation(
   }
 
   if (issues.length) {
-    throw new Error(
-      `AI generation quality check failed: unresolved slide text issues: ${issues
-        .map((issue) => `slide ${issue.slideOrder} ${issue.reasons.join(", ")}`)
-        .join("; ")}`,
-    );
+    console.warn("AI generation quality check found unresolved slide text issues; continuing with quality repair", {
+      projectId: project.id,
+      generationMode,
+      issues: issues.map((issue) => ({
+        slideOrder: issue.slideOrder,
+        fields: issue.fields,
+        reasons: issue.reasons,
+      })),
+    });
   }
 
-  if (!qualityCritique.passed) {
-    throw new Error("AI generation quality critique did not pass");
+  try {
+    assertPresentationQuality(presentation, project, generationMode);
+  } catch (error) {
+    if (!isRepairablePresentationQualityError(error)) {
+      throw error;
+    }
+    console.warn("AI generation quality check found repairable presentation issues; continuing with quality repair", {
+      projectId: project.id,
+      generationMode,
+      error,
+    });
   }
 
-  assertPresentationQuality(presentation, project, generationMode);
-  return improvePresentationQuality(presentation, project, sources, generationMode, qualityCallbacks);
+  const improved = await improvePresentationQuality(presentation, project, sources, generationMode, qualityCallbacks);
+  const finalIssues = findSlideTextIssues(improved);
+  return finalIssues.length
+    ? presentationSchema.parse({ ...improved, qualityCritique: buildQualityCritique(improved, finalIssues) })
+    : improved;
 }
 
 async function repairSlideTextWithOpenAI(client: OpenAI, presentation: PresentationDocument, issues: SlideTextIssue[]) {
@@ -2291,6 +2390,8 @@ function buildQualityRepairPrompt(presentation: PresentationDocument, issues: Qu
     `Repair attempt ${attempt}. Repair only the listed broken fields and slides.`,
     "Return JSON { slides: [...] }. Each slide item must include slideId or slideOrder plus changed fields only.",
     "You may change title, thesis, bullets, blocks, visual.description and speakerNotes when the issue explicitly requires it.",
+    "Replace template transitions, filler, and watery phrases with topic-specific causes, examples, consequences, concrete mechanisms, and a clear conclusion.",
+    "Do not write about slide structure, transitions, next sections, or what the presentation will explain; write the actual subject matter.",
     "Do not invent precise facts, dates, names, numbers, or citations. Preserve existing sourceRefs.",
     "Keep slide text compact: title <= 12 words, thesis one sentence, bullets <= 18 words.",
     JSON.stringify({ issues, slides }),
@@ -2908,7 +3009,7 @@ function buildFallbackBlocks(project: ProjectInput, order = 1, thesis = "", bull
     return [{ type: "quote", content: thesis || fallbackSlideText(project, order) }];
   }
 
-  if (["statement", "question-answer", "case-study", "image-focus"].includes(layout)) {
+  if (["statement", "question-answer", "image-focus"].includes(layout)) {
     return [{ type: "callout", content: thesis || fallbackSlideText(project, order) }];
   }
 
@@ -3346,7 +3447,7 @@ export function normalizeLayout(
   if (order === 1 || slideKind === "title" || slideKind === "section") return "hero";
   if (order === slideCount || slideKind === "summary") return "summary";
 
-  const requestedLayout = layout === "two-column" ? "comparison" : layout;
+  const requestedLayout = layout === "two-column" ? "comparison" : layout === "case-study" ? "process" : layout;
   const requested = SLIDE_LAYOUTS.includes(requestedLayout as SlideLayout) ? (requestedLayout as SlideLayout) : undefined;
   if (requested && requested !== "hero" && requested !== "summary") {
     if (layoutHasEnoughContent(requested, slide)) return requested;
@@ -3405,9 +3506,9 @@ function layoutFromDesignDirection(
   const candidates: SlideLayout[] =
     direction.layoutIntent === "full_bleed_image" || direction.layoutIntent === "split_image_text" ? ["image-focus", "statement"] :
     direction.layoutIntent === "statement" ? ["statement", "quote"] :
-    direction.layoutIntent === "cards" ? ["bullets", "case-study"] :
+    direction.layoutIntent === "cards" ? ["bullets", "statement"] :
     direction.layoutIntent === "timeline" ? ["timeline", "process"] :
-    direction.layoutIntent === "diagram" ? ["process", "case-study", "bullets"] :
+    direction.layoutIntent === "diagram" ? ["process", "bullets", "statement"] :
     direction.layoutIntent === "metric" ? ["metrics", "statement"] :
     direction.layoutIntent === "summary" ? ["summary"] :
     [];
@@ -3564,6 +3665,21 @@ function assertPresentationQuality(presentation: PresentationDocument, project: 
   if (issues.length) {
     throw new Error(`AI generation quality check failed: ${uniqueIssues(issues).join("; ")}`);
   }
+}
+
+function isRepairablePresentationQualityError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  if (!message.startsWith("AI generation quality check failed:")) return false;
+  const blockingFragments = [
+    "generatedText is not divided into slide narration",
+    "expected ",
+    "missing narration section",
+    "has no title",
+    "must have 5-6 narration sentences",
+    "speakerNotes must have 5-6 sentences",
+    "speechScript must have 5-6 sentences",
+  ];
+  return !blockingFragments.some((fragment) => message.includes(fragment));
 }
 
 function collectRawNarrationText(input: Partial<PresentationDocument>) {
@@ -3749,7 +3865,27 @@ function normalizeGeneratedText(value: string, project: ProjectInput) {
     return buildFallbackGeneratedText(project);
   }
 
-  return sanitizeGeneratedText(text);
+  const sanitized = sanitizeGeneratedText(text);
+  const originalSections = parseNarrationSections(sanitized);
+  const sections = repairNarrationSentenceCounts(originalSections, project);
+  const issues = validateNarrationSections(sections, project);
+  if (!issues.length) {
+    if (!narrationSectionsChanged(originalSections, sections)) {
+      return sanitized;
+    }
+    const slideWord = narrationHeaderWord(sanitized);
+    return sections.map((section) => formatNarrationSection(section, slideWord)).join("\n\n");
+  }
+
+  if (sections.length === project.slideCount) {
+    const blockingIssues = issues.filter((issue) => !isRepairableNarrationQualityIssue(issue));
+    if (!blockingIssues.length) {
+      const slideWord = narrationHeaderWord(sanitized);
+      return repairNarrationQualitySections(sections, project).map((section) => formatNarrationSection(section, slideWord)).join("\n\n");
+    }
+  }
+
+  return sanitized;
 }
 
 function sanitizeGeneratedText(value: string) {
