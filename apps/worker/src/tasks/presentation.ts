@@ -366,6 +366,7 @@ const STOP_WORDS = new Set([
 ]);
 
 const REMOVED_SLIDE_LAYOUTS = new Set<SlideLayout>([
+  "bullets",
   "case-study",
   "comparison",
   "definition",
@@ -373,18 +374,17 @@ const REMOVED_SLIDE_LAYOUTS = new Set<SlideLayout>([
   "explain-example",
   "myth-fact",
   "problem-solution",
+  "question-answer",
 ]);
 const SLIDE_LAYOUTS = SLIDE_LAYOUT_DEFINITIONS.map((item) => item.id).filter((layout) => !REMOVED_SLIDE_LAYOUTS.has(layout));
 
 const CONTENT_LAYOUT_CYCLE = [
   "statement",
   "process",
-  "question-answer",
   "timeline",
   "metrics",
   "quote",
   "image-focus",
-  "bullets",
 ] satisfies SlideLayout[];
 
 type YandexCompletionResponse = {
@@ -1910,17 +1910,15 @@ export function buildGenerationPrompt(
     "Copy the provided designBrief into the final document exactly unless schema repair requires filling a missing slideDirections item.",
     "Each slide must include: id, order, title, slideKind, layout, thesis, bullets, definition, keyConcepts, visual, highlights, blocks, speakerNotes, timingSeconds, sourceRefs.",
     "Layout rules:",
-    "- layout must be one of: hero, bullets, summary, statement, quote, timeline, process, image-focus, question-answer, metrics;",
+    "- layout must be one of: hero, summary, statement, quote, timeline, process, image-focus, metrics;",
     "- do not use the same content layout more than twice in a row;",
     "- choose the layout from the slide's idea, not from a fixed template;",
     "- use statement for one strong claim with one short callout and no list;",
     "- use quote when a concise quote or author-like formulation is central;",
     "- use timeline only for chronology with 3-5 dated or named periods; each visual.items entry must have a period in label and the event plus its significance in text;",
     "- use process only for 3-5 ordered actions; each visual.items entry must have a short action in label and an explanation or result in text;",
-    "- use question-answer only for a real question; thesis is the direct answer and bullets contain 2-3 supporting parts such as explanation, reason, example, or consequence;",
     "- use image-focus for a concrete image and process for a sequence of actions or stages;",
     "- use metrics only for 2-4 explicit numbers, percentages, dates, durations, or measured quantities already supported by the material; never turn list order into a metric;",
-    "- use bullets only when the slide is genuinely a list of takeaways.",
     "Content slide rules:",
     "- title: short, ideally 6-8 words or fewer;",
     "- title: semantic and memorable. Avoid generic titles such as 'Контекст', 'Ключевые факты', 'Примеры', 'Выводы', and 'Итоги' unless there is only one such title in the whole deck;",
@@ -2002,7 +2000,7 @@ function legacyBuildGenerationPrompt(project: ProjectInput, sources: Source[]) {
     "- не используй фразы: 'тезис нужно объяснить', 'проверьте тезис', 'добавьте источник', 'ключевой вывод нужно связать', 'основная мысль слайда'.",
     "Обязательный JSON: id, title, scenario, level, slideCount, outline, speechScript, slides.",
     "Для каждого slide: id, order, title, layout, blocks, speakerNotes, timingSeconds, sourceRefs.",
-    "layout: hero, bullets, statement или summary. blocks лучше возвращать как один callout; bullets допустимы только если это 1-2 короткие фразы.",
+    "layout: hero, statement или summary. blocks лучше возвращать как один callout; bullets допустимы только если это 1-2 короткие фразы.",
     `Материалы для внутренней фактологии, не показывать пользователю:\n${formatSourceText(sources)}`,
   ].join("\n\n");
 }
@@ -3467,7 +3465,6 @@ export function inferContentLayout(
   if (slide.visual.type === "timeline" && layoutHasEnoughContent("timeline", slide)) return "timeline";
   if (slide.visual.type === "process_diagram" && layoutHasEnoughContent("process", slide)) return "process";
   if (slide.visual.type === "cause_effect_diagram" && layoutHasEnoughContent("process", slide)) return "process";
-  if (/[?？]$/.test(cleanText(slide.title)) && layoutHasEnoughContent("question-answer", slide)) return "question-answer";
   if (hasMeasurableText(slide)) return "metrics";
 
   return CONTENT_LAYOUT_CYCLE[(order - 2 + CONTENT_LAYOUT_CYCLE.length) % CONTENT_LAYOUT_CYCLE.length];
@@ -3489,10 +3486,6 @@ function diversifySlideLayouts(slides: Slide[], designBrief?: DesignBrief) {
       next = nextDiverseLayout(index, previous, slide);
     }
 
-    if (next === "bullets" && contentCount >= 3 && slide.visual.type !== "none") {
-      next = inferContentLayout(slide, slide.order);
-    }
-
     slide.layout = next;
     previous = [...previous.slice(-1), next];
   });
@@ -3506,9 +3499,9 @@ function layoutFromDesignDirection(
   const candidates: SlideLayout[] =
     direction.layoutIntent === "full_bleed_image" || direction.layoutIntent === "split_image_text" ? ["image-focus", "statement"] :
     direction.layoutIntent === "statement" ? ["statement", "quote"] :
-    direction.layoutIntent === "cards" ? ["bullets", "statement"] :
+    direction.layoutIntent === "cards" ? ["statement", "quote"] :
     direction.layoutIntent === "timeline" ? ["timeline", "process"] :
-    direction.layoutIntent === "diagram" ? ["process", "bullets", "statement"] :
+    direction.layoutIntent === "diagram" ? ["process", "statement"] :
     direction.layoutIntent === "metric" ? ["metrics", "statement"] :
     direction.layoutIntent === "summary" ? ["summary"] :
     [];
@@ -3524,7 +3517,7 @@ function nextDiverseLayout(index: number, previous: SlideLayout[], slide: Slide)
     }
   }
 
-  return previous.at(-1) === "bullets" ? "statement" : "bullets";
+  return previous.at(-1) === "statement" ? "quote" : "statement";
 }
 
 function layoutHasEnoughContent(layout: SlideLayout, slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks"> & Partial<Pick<Slide, "sourceRefs">>) {
@@ -3559,9 +3552,9 @@ function fallbackForSparseLayout(
   slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks"> & Partial<Pick<Slide, "sourceRefs">>,
 ): SlideLayout {
   if (layout === "question-answer" || layout === "myth-fact" || layout === "comparison" || layout === "problem-solution") {
-    return slide.thesis ? "statement" : "bullets";
+    return "statement";
   }
-  return slide.bullets.length >= 2 ? "bullets" : "statement";
+  return "statement";
 }
 
 function hasMeasurableText(slide: Pick<Slide, "title" | "thesis" | "bullets" | "blocks">) {

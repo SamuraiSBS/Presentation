@@ -124,6 +124,7 @@ export const SLIDE_LAYOUT_DEFINITIONS: SlideLayoutDefinition[] = [
 ];
 
 const HIDDEN_SLIDE_LAYOUTS = new Set<SlideLayout>([
+  "bullets",
   "case-study",
   "comparison",
   "definition",
@@ -131,6 +132,7 @@ const HIDDEN_SLIDE_LAYOUTS = new Set<SlideLayout>([
   "explain-example",
   "myth-fact",
   "problem-solution",
+  "question-answer",
 ]);
 
 export function slideLayoutDefinition(layout: SlideLayout) {
@@ -1115,6 +1117,7 @@ export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
 export const updateSlideInputSchema = z.object({
   title: z.string().min(1).max(160).optional(),
   layout: slideLayoutSchema.optional(),
+  visual: slideVisualSchema.optional(),
   blocks: z.array(slideBlockSchema).optional(),
   canvas: slideCanvasSchema.optional(),
   speakerNotes: z.string().max(5000).optional(),
@@ -2378,7 +2381,7 @@ function addSourceRefsCanvas(slide: Slide, theme: PresentationTheme, elements: C
 }
 
 function addFallbackImageCanvas(slide: Slide, elements: CanvasElement[]) {
-  if (slide.slideKind === "summary" && slide.visual?.type !== "image") return;
+  if (slide.slideKind === "summary") return;
   const image = slide.visual?.image;
   if (!image) return;
   if (elements.some((element) => element.type === "image")) return;

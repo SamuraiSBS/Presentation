@@ -198,15 +198,16 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("slideKind title");
     expect(prompt).toContain("slideKind summary");
     expect(prompt).toContain("layout must be one of");
-    expect(prompt).toContain("question-answer");
+    expect(prompt).not.toContain("question-answer");
     expect(prompt).not.toContain("case-study");
     expect(prompt).not.toContain("myth-fact");
     expect(prompt).not.toContain("two-column");
     expect(prompt).toContain("3-5 dated or named periods");
     expect(prompt).not.toContain("criterion in visual.rows[].label");
-    expect(prompt).toContain("bullets contain 2-3 supporting parts");
+    expect(prompt).not.toContain("bullets contain 2-3 supporting parts");
     expect(prompt).not.toContain("problem-solution");
     expect(prompt).not.toContain("layout must be one of: hero, bullets, summary, statement, quote, definition");
+    expect(prompt).not.toContain("layout must be one of: hero, bullets");
     expect(prompt).not.toContain("use evidence for");
     expect(prompt).not.toContain("use explain-example for");
     expect(prompt).toContain("never turn list order into a metric");
@@ -630,7 +631,7 @@ describe("generatePresentation fallback behavior", () => {
       expect(presentation.narrativePlan[2].transitionToNext).toBe("");
       expect(presentation.slides).toHaveLength(3);
       expect(presentation.designBrief?.slideDirections).toHaveLength(3);
-      expect(presentation.slides[1].layout).toBe("bullets");
+      expect(presentation.slides[1].layout).toBe("statement");
       expect(presentation.slides.every((slide) => slide.speakerNotes)).toBe(true);
       expect(presentation.speechScript).toHaveLength(3);
       expect(presentation.slides.map((slide) => slide.title)).toEqual([

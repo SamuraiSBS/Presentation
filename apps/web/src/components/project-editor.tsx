@@ -12,6 +12,7 @@ import type {
   Slide,
   SlideCanvas,
   SlideLayout,
+  SlideVisual,
 } from "@studydeck/shared";
 import {
   buildSlideCanvas,
@@ -148,7 +149,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     }
   }
 
-  async function saveSlide(next: { title?: string; layout?: SlideLayout; canvas?: SlideCanvas; speakerNotes?: string }) {
+  async function saveSlide(next: { title?: string; layout?: SlideLayout; visual?: SlideVisual; canvas?: SlideCanvas; speakerNotes?: string }) {
     if (!slide) return;
     const response = await fetch(`/api/projects/${project.id}/slides/${slide.id}`, {
       method: "PATCH",
@@ -191,7 +192,8 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
 
   function applySlideLayout(layout: SlideLayout) {
     if (!slide || !theme || layout === slide.layout) return;
-    const nextSlide = { ...slide, layout, canvas: undefined };
+    const nextVisual = layoutKeepsVisualImage(layout) ? slide.visual : visualWithoutImage(slide.visual);
+    const nextSlide = { ...slide, layout, visual: nextVisual, canvas: undefined };
     const nextCanvas = buildSlideCanvas(nextSlide, theme);
     setProject((current) => {
       const document = current.presentation?.document;
@@ -208,7 +210,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     setSelectedId("");
     setUndoStack([]);
     setRedoStack([]);
-    void saveSlide({ layout, title: slide.title, canvas: nextCanvas });
+    void saveSlide({ layout, title: slide.title, visual: nextVisual, canvas: nextCanvas });
   }
 
   function updateSelected(patch: ElementPatch) {
@@ -1209,6 +1211,18 @@ function layoutCanRender(layout: SlideLayout, slide: Slide) {
   if (layout === "case-study" || layout === "problem-solution") return sequenceCount >= 3;
   if (layout === "evidence") return Boolean(slide.thesis && slide.bullets.length >= 2);
   return true;
+}
+
+function layoutKeepsVisualImage(layout: SlideLayout) {
+  return layout === "image-focus";
+}
+
+function visualWithoutImage(visual: SlideVisual): SlideVisual {
+  const { image: _image, ...rest } = visual;
+  return {
+    ...rest,
+    type: visual.type === "image" ? "none" : visual.type,
+  };
 }
 
 function TextContentProperties({ selected, onUpdate }: { selected: CanvasTextElement; onUpdate: (patch: ElementPatch) => void }) {

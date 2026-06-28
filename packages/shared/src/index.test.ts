@@ -52,6 +52,7 @@ describe("shared contracts", () => {
 
   it("hides removed layouts from new selections while keeping legacy schema support", () => {
     const layouts = slideLayoutOptions("content").map((layout) => layout.id);
+    expect(layouts).not.toContain("bullets");
     expect(layouts).not.toContain("definition");
     expect(layouts).not.toContain("case-study");
     expect(layouts).not.toContain("evidence");
@@ -59,9 +60,12 @@ describe("shared contracts", () => {
     expect(layouts).not.toContain("comparison");
     expect(layouts).not.toContain("myth-fact");
     expect(layouts).not.toContain("problem-solution");
+    expect(layouts).not.toContain("question-answer");
+    expect(() => slideLayoutSchema.parse("bullets")).not.toThrow();
     expect(() => slideLayoutSchema.parse("definition")).not.toThrow();
     expect(() => slideLayoutSchema.parse("case-study")).not.toThrow();
     expect(() => slideLayoutSchema.parse("comparison")).not.toThrow();
+    expect(() => slideLayoutSchema.parse("question-answer")).not.toThrow();
   });
 
   it("accepts two-step generation statuses and job kinds", () => {
@@ -416,7 +420,7 @@ describe("shared contracts", () => {
           thesis: "РКСИ имеет богатую историю и традиции.",
           bullets: ["Колледж прошел долгий путь развития", "Девиз РКСИ отражает ценности обучения", "Первое что стоит отметить это богатая"],
           visual: {
-            type: "none",
+            type: "image",
             image: {
               url: "https://cdn.example.com/college.jpg",
               objectKey: "projects/project-1/images/slide-1.jpg",
