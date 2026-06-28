@@ -1198,9 +1198,10 @@ function shouldRetryNarration(error: unknown) {
 }
 
 async function requestYandexText(apiKey: string, systemText: string, userText: string, options: YandexTextOptions = {}) {
-  const responseFormat = options.jsonSchema
+  const useJsonSchema = options.jsonSchema && isYandexJsonSchemaCompatible(options.jsonSchema);
+  const responseFormat = useJsonSchema
     ? { json_schema: { schema: options.jsonSchema } }
-    : options.jsonObject
+    : options.jsonSchema || options.jsonObject
       ? { json_object: true }
       : {};
   const response = await fetch("https://llm.api.cloud.yandex.net/foundationModels/v1/completion", {
@@ -1244,6 +1245,23 @@ async function requestYandexText(apiKey: string, systemText: string, userText: s
   }
 
   return outputText;
+}
+
+function isYandexJsonSchemaCompatible(schema: unknown): boolean {
+  if (Array.isArray(schema)) {
+    return schema.every(isYandexJsonSchemaCompatible);
+  }
+
+  if (!schema || typeof schema !== "object") {
+    return true;
+  }
+
+  const node = schema as Record<string, unknown>;
+  if (node.type === "object" && node.additionalProperties !== false) {
+    return false;
+  }
+
+  return Object.values(node).every(isYandexJsonSchemaCompatible);
 }
 
 function normalizeNarrationText(value: unknown, project: ProjectInput) {

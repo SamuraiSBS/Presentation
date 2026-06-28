@@ -337,6 +337,39 @@ describe("structured generation helper", () => {
       global.fetch = originalFetch;
     }
   });
+
+  it("falls back to Yandex json_object when a schema allows additional properties", async () => {
+    const bodies: any[] = [];
+    const originalFetch = global.fetch;
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    global.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body || "{}")));
+      return yandexTextResponse(JSON.stringify({ title: "Plan", extra: "allowed" }));
+    };
+
+    try {
+      await generateStructuredWithProvider({
+        provider: "yandex",
+        system: "Return JSON only.",
+        prompt: "Create a short object.",
+        schemaName: "studydeck_open_json",
+        schema: z.object({ title: z.string() }).passthrough(),
+        parse: (value) => (typeof value === "string" ? JSON.parse(value) : value),
+        jsonSchema: {
+          type: "object",
+          additionalProperties: true,
+          properties: { title: { type: "string" } },
+        },
+        yandexApiKey: "yandex-key",
+      });
+
+      expect(bodies[0].json_object).toBe(true);
+      expect(bodies[0].json_schema).toBeUndefined();
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });
 
 describe("slide-facing text quality", () => {
@@ -746,7 +779,8 @@ describe("generatePresentation fallback behavior", () => {
       expect(bodies[2].messages[1].text).toContain("Deck story");
       expect(bodies[2].messages[1].text).toContain("Slide text plans");
       expect(bodies[2].messages[1].text).toContain("Do not output raw CSS");
-      expect(bodies[3].json_schema?.schema).toBeTruthy();
+      expect(bodies[3].json_object).toBe(true);
+      expect(bodies[3].json_schema).toBeUndefined();
       expect(bodies[3].messages[1].text).toContain(presentationText);
       expect(bodies[3].messages[1].text).toContain("only source of truth");
       expect(bodies[3].messages[1].text).toContain("narrativePlan");
@@ -888,7 +922,8 @@ describe("generatePresentation fallback behavior", () => {
       expect(bodies[0].json_schema?.schema).toBeTruthy();
       expect(bodies[1].json_object).toBeUndefined();
       expect(bodies[2].json_schema?.schema).toBeTruthy();
-      expect(bodies[3].json_schema?.schema).toBeTruthy();
+      expect(bodies[3].json_object).toBe(true);
+      expect(bodies[3].json_schema).toBeUndefined();
       expect(bodies[3].messages[1].text).toContain("only source of truth");
       expect(presentation.generatedText).not.toBe(shortText);
       expect(sentenceCount(presentation.speechScript[0].text)).toBe(5);
