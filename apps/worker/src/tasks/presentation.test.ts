@@ -44,6 +44,14 @@ const forbiddenNarrationFragments = [
   "Последствия заметны там, где",
   "поэтому итог звучит так",
   "становится главным итогом выступления",
+  "Главная мысль",
+  "общая мысль",
+  "Пример нужен",
+  "вся история темы",
+  "текст на слайде",
+  "следующий раздел",
+  "следующая часть",
+  "переход к следующему",
 ];
 const forbiddenSlideTextFragments = [
   "Главная идея связана с темой",
@@ -152,6 +160,49 @@ function narrationForSlides(titles: string[]) {
         `Слайд ${index + 1}: ${title}`,
         `${title} раскрывает ${first}, который задает направление всему объяснению. Затем появляется ${second}, потому что без него слушателю трудно увидеть развитие мысли. Конкретный ${third} показывает, чем эта часть отличается по смыслу. Важная деталь делает название "${title}" частью реального содержания. ${endings[index % endings.length]}`,
       ].join("\n");
+    })
+    .join("\n\n");
+}
+
+function overlongNarrationForSlides(titles: string[]) {
+  return titles
+    .map((title, index) => {
+      const order = index + 1;
+      const body = [
+        "This slide repeats the same weak opening formula before the real content starts.",
+        `${title} has a concrete first point for the study report number ${order}.`,
+        `${title} gives the listener a useful example that belongs to this exact topic.`,
+        `${title} explains one cause without copying the original user request.`,
+        `${title} adds a consequence that makes the section more specific.`,
+        `${title} names a practical detail that can become short screen text.`,
+        `${title} keeps the narration focused on the subject instead of the deck structure.`,
+        `${title} includes another useful fact so the repair has enough material.`,
+        `${title} shows why the topic matters for the final explanation.`,
+        "The main takeaway of the topic is repeated as a generic ending.",
+        "This slide repeats the same weak opening formula before the real content starts.",
+        "The main takeaway of the topic is repeated as a generic ending.",
+      ];
+      return `\u0421\u043b\u0430\u0439\u0434 ${order}: ${title}\n${body.join(" ")}`;
+    })
+    .join("\n\n");
+}
+
+function weakOverlongNarrationForSlides(titles: string[]) {
+  return titles
+    .map((title, index) => {
+      const order = index + 1;
+      const body = [
+        "This slide repeats the same weak opening formula before the real content starts.",
+        `${title} has one concrete point for the study report number ${order}.`,
+        `${title} gives one useful example that belongs to this exact topic.`,
+        `${title} explains one cause without copying the original user request.`,
+        `${title} adds one consequence that makes the section more specific.`,
+        "Create a presentation about narration repair.",
+        "The main takeaway of the topic is repeated as a generic ending.",
+        "This slide repeats the same weak opening formula before the real content starts.",
+        "The main takeaway of the topic is repeated as a generic ending.",
+      ];
+      return `\u0421\u043b\u0430\u0439\u0434 ${order}: ${title}\n${body.join(" ")}`;
     })
     .join("\n\n");
 }
@@ -1018,6 +1069,114 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
+  it("compresses overlong complete Yandex narration before final assembly", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const titles = Array.from({ length: 14 }, (_, index) => `Repair topic ${index + 1}`);
+    const overlongText = overlongNarrationForSlides(titles);
+    const originalFetch = global.fetch;
+    mockYandexTwoStep(overlongText, {
+      title: "Narration repair",
+      generatedText: overlongText,
+      outline: titles,
+      slides: titles.map((title) => ({
+        title,
+        thesis: `${title} has a concrete first point for the study report.`,
+        bullets: [`${title} useful example`, `${title} specific consequence`],
+        speakerNotes: overlongText,
+      })),
+      speechScript: titles.map((title, index) => ({
+        slideOrder: index + 1,
+        slideTitle: title,
+        text: overlongText,
+      })),
+    });
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "Narration repair",
+          prompt: "Create a presentation about narration repair",
+          scenario: "school_report",
+          level: "8 class",
+          mode: "with_sources",
+          slideCount: 14,
+        },
+        [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Narration repair keeps each section concise and specific." }],
+      );
+
+      const generatedSections = presentation.generatedText
+        .split(/\n\n+/)
+        .filter((section) => section.trim());
+      expect(generatedSections).toHaveLength(14);
+      for (const section of generatedSections) {
+        const body = section.split("\n").slice(1).join(" ");
+        expect(sentenceCount(body)).toBeGreaterThanOrEqual(5);
+        expect(sentenceCount(body)).toBeLessThanOrEqual(6);
+        expect(body).not.toContain("main takeaway of the topic");
+      }
+
+      expect(presentation.slides).toHaveLength(14);
+      expect(presentation.speechScript).toHaveLength(14);
+      expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 5 && sentenceCount(slide.speakerNotes) <= 6)).toBe(true);
+      expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 5 && sentenceCount(item.text) <= 6)).toBe(true);
+
+      const noteStarts = presentation.slides.map((slide) => sentenceStartKey(firstSentence(slide.speakerNotes)));
+      const noteEndings = presentation.slides.map((slide) => sentenceStartKey(lastSentence(slide.speakerNotes)));
+      for (let index = 1; index < noteStarts.length; index += 1) {
+        expect(noteStarts[index]).not.toBe(noteStarts[index - 1]);
+        expect(noteEndings[index]).not.toBe(noteEndings[index - 1]);
+      }
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("refuses overlong narration when fewer than five usable sentences remain", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const titles = ["Repair topic 1", "Repair topic 2"];
+    const weakText = weakOverlongNarrationForSlides(titles);
+    const originalFetch = global.fetch;
+    let callCount = 0;
+    global.fetch = async () => {
+      callCount += 1;
+      return callCount === 1
+        ? yandexTextResponse(JSON.stringify(narrativePlanForTitles(titles)))
+        : yandexTextResponse(weakText);
+    };
+
+    try {
+      await expect(
+        generatePresentation(
+          {
+            id: "project-1",
+            title: "Narration repair",
+            prompt: "Create a presentation about narration repair",
+            scenario: "school_report",
+            level: "8 class",
+            mode: "with_sources",
+            slideCount: 2,
+          },
+          [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Narration repair keeps each section concise and specific." }],
+        ),
+      ).rejects.toThrow("must have 5-6 narration sentences");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it("rejects incomplete AI output instead of filling production slides with fallback", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
@@ -1800,6 +1959,7 @@ describe("generatePresentation fallback behavior", () => {
     );
 
     const visibleText = visiblePresentationText(presentation);
+    expect(presentation.generationMode).toBe("demo");
     expect(visibleText).not.toContain("Тезис нужно объяснить");
     expect(visibleText).not.toContain("Проверьте");
     expect(visibleText).not.toContain("Добавьте источник");

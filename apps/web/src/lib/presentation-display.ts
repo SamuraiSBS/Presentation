@@ -2,6 +2,7 @@ import {
   buildSlideCanvas,
   ensureEditableCanvas,
   resolvePresentationTheme,
+  type CanvasImageElement,
   type Highlight,
   type KeyConcept,
   type PresentationDocument,
@@ -50,6 +51,13 @@ const GENERIC_NARRATION_PHRASES = [
   "рассказ про тему",
   "рассказ про материал",
   "примеры. поэтому",
+  "главная мысль",
+  "общая мысль",
+  "пример нужен",
+  "вся история темы",
+  "следующий раздел",
+  "следующая часть",
+  "переход к следующему",
 ];
 
 const GENERIC_SCREEN_TEXT_PHRASES = [
@@ -74,6 +82,21 @@ const GENERIC_SCREEN_TEXT_PHRASES = [
   "как показано на изображении",
   "нужно раскрыть через конкретные факты",
   "раскрыть через конкретные факты",
+  "главная мысль",
+  "общая мысль",
+  "пример нужен",
+  "вся история темы",
+  "текст на слайде",
+];
+
+const TEMPLATE_TEXT_PATTERNS = [
+  { label: "главная мысль", pattern: /(?:^|[^\p{L}])главн(?:ая|ую|ой)\s+мысл/iu },
+  { label: "общая мысль", pattern: /(?:^|[^\p{L}])общ(?:ая|ую|ей)\s+мысл/iu },
+  { label: "пример нужен", pattern: /(?:^|[^\p{L}])пример\s+нужен/iu },
+  { label: "вся история темы", pattern: /(?:^|[^\p{L}])вс[яю]\s+истори[яю]\s+темы/iu },
+  { label: "meta slide text", pattern: /(?:на|в)\s+этом\s+слайде|этот\s+слайд|текст\s+на\s+слайде|заметк[аи]\s+докладчика/iu },
+  { label: "meta section text", pattern: /(?:этот|следующий|данный)\s+раздел|следующ(?:ая|ий)\s+(?:часть|фрагмент)/iu },
+  { label: "meta transition text", pattern: /переход\s+(?:к|дальше)|готовит\s+переход|подводит\s+(?:рассказ\s+)?к\s+следующ/iu },
 ];
 
 export function sanitizeProjectForDisplay<T extends ProjectWithPresentation>(project: T): T {
@@ -189,7 +212,7 @@ export function sanitizePresentationForDisplay(document: DisplayPresentationInpu
     };
   });
 
-  return ensureEditableCanvas({
+  return ensureDisplayCanvasImages(ensureEditableCanvas({
     ...document,
     generatedText: sanitizeGeneratedTextForDisplay(document.generatedText),
     sources: [],
@@ -214,7 +237,51 @@ export function sanitizePresentationForDisplay(document: DisplayPresentationInpu
         text: isGenericSpeechText(rawText) || shouldReplaceSpeechText(text, fallbackText) ? fallbackText : text || fallbackText,
       };
     }),
-  });
+  }));
+}
+
+function ensureDisplayCanvasImages(document: PresentationDocument): PresentationDocument {
+  return {
+    ...document,
+    slides: document.slides.map((slide) => {
+      const image = slide.visual?.image;
+      if (!image || !slide.canvas || slide.canvas.elements.some((element) => element.type === "image")) {
+        return slide;
+      }
+
+      return {
+        ...slide,
+        canvas: {
+          ...slide.canvas,
+          elements: [displayCanvasImageElement(slide, image), ...slide.canvas.elements],
+        },
+      };
+    }),
+  };
+}
+
+function displayCanvasImageElement(
+  slide: PresentationDocument["slides"][number],
+  image: NonNullable<SlideVisual["image"]>,
+): CanvasImageElement {
+  const isSummary = slide.slideKind === "summary";
+  return {
+    id: `${slide.id}-display-image`,
+    type: "image",
+    x: isSummary ? 0 : 840,
+    y: isSummary ? 0 : 132,
+    w: isSummary ? 1280 : 340,
+    h: isSummary ? 720 : 410,
+    rotation: 0,
+    zIndex: isSummary ? 1 : 3,
+    opacity: isSummary ? 0.11 : 0.94,
+    locked: false,
+    url: image.url,
+    objectKey: image.objectKey || "",
+    alt: image.alt || "",
+    contentType: image.contentType || "",
+    fit: isSummary ? "cover" : "contain",
+  };
 }
 
 export function slideBodyTextForDisplay(blocks: SlideBlock[], fallback = "") {
@@ -244,7 +311,7 @@ function normalizeThesis(value: unknown, blocks: SlideBlock[], fallback: string)
   if (candidate && !isDuplicateDisplayText(candidate, fallback)) return candidate;
   const fromBlocks = slideBodyTextForDisplay(blocks, fallback);
   if (fromBlocks && !isDuplicateDisplayText(fromBlocks, fallback)) return fromBlocks;
-  return fallback ? sentencePreview(`Главное здесь - ${fallback.replace(/[.!?]+$/g, "")}.`) : "";
+  return fallback ? sentencePreview(`${fallback.replace(/[.!?]+$/g, "")}.`) : "";
 }
 
 function normalizeBullets(value: unknown, blocks: SlideBlock[], fallback: string, slideKind: SlideKind) {
@@ -363,7 +430,7 @@ export function sanitizeDisplayText(value: unknown) {
   return parts
     .filter((part) => {
       const lower = part.toLowerCase();
-      return !banned.some((phrase) => lower.includes(phrase));
+      return !banned.some((phrase) => lower.includes(phrase)) && !hasForbiddenTemplateText(part);
     })
     .join(" ")
     .trim();
@@ -398,7 +465,7 @@ function normalizeBlocksForDisplay(blocks: SlideBlock[], fallback: string): Slid
 
   return normalized.length
     ? normalized
-    : [{ type: "callout", content: slideBodyTextForDisplay([], `${fallback}: главное сказать коротко и понятно.`) }];
+    : [{ type: "callout", content: slideBodyTextForDisplay([], `${fallback}: коротко и по существу.`) }];
 }
 
 function repairSlideTitle(title: string, index: number, outline: string[], outlineTitleCounts: Map<string, number>, blocks: SlideBlock[]) {
@@ -431,26 +498,34 @@ function narrationFromSlide(slide: PresentationDocument["slides"][number]) {
 }
 
 function narrationFromParts(title: string, thesis: string, bullets: string[], body: string) {
-  const points = bullets.length ? bullets : splitSentences(body);
-  const main = thesis || body || title;
+  const points = uniqueShortItems(bullets.length ? bullets : splitSentences(body)).filter((item) => !hasForbiddenTemplateText(item));
+  const main = sanitizeDisplayText(thesis || body || title) || title;
   const firstPoint = points[0] || main;
   const secondPoint = points[1] || firstPoint;
   const thirdPoint = points[2] || secondPoint;
+  const candidates = [
+    `${title}: ${sentenceFragment(main)}.`,
+    completeSentence(firstPoint),
+    `${title} связан с тем, что ${sentenceFragment(secondPoint)}.`,
+    `${completeSentenceStart(thirdPoint)} добавляет конкретную деталь к объяснению.`,
+    `"${title}" соединяет два факта: ${sentenceFragment(firstPoint)} и ${sentenceFragment(secondPoint)}.`,
+  ];
+  const selected: string[] = [];
+  const seen = new Set<string>();
 
-  return sanitizeDisplayText(
-    [
-      `Тема "${title}" становится понятнее через главный тезис: ${sentenceFragment(main)}.`,
-      `На первый план выходит ${sentenceFragment(firstPoint)}, потому что эта деталь помогает увидеть практический смысл вопроса.`,
-      `Другая сторона темы связана с тем, что ${sentenceFragment(secondPoint)}.`,
-      `Так объяснение становится конкретнее, а ${sentenceFragment(thirdPoint)} добавляет нужную деталь без перегрузки фактами.`,
-      "В результате материал воспринимается не как набор формулировок, а как последовательное объяснение с понятным выводом.",
-    ].join(" "),
-  );
+  for (const sentence of candidates.flatMap((candidate) => splitSentences(sanitizeDisplayText(candidate)))) {
+    const key = normalizeComparableText(sentence);
+    if (!key || seen.has(key) || hasForbiddenTemplateText(sentence)) continue;
+    selected.push(completeSentence(sentence));
+    seen.add(key);
+    if (selected.length >= 5) break;
+  }
+
+  return selected.join(" ");
 }
 
 function isGenericSpeechText(text: string) {
-  const lower = cleanText(text).toLowerCase();
-  return GENERIC_NARRATION_PHRASES.some((phrase) => lower.includes(phrase));
+  return hasForbiddenTemplateText(text);
 }
 
 function countTitles(titles: string[]) {
@@ -499,6 +574,25 @@ function splitSentences(value: unknown) {
 function sentenceFragment(value: string) {
   const text = cleanText(value).replace(/[.!?]+$/g, "");
   return text ? `${text.charAt(0).toLowerCase()}${text.slice(1)}` : "";
+}
+
+function completeSentence(value: string) {
+  const text = cleanText(value);
+  if (!text) return "";
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+function completeSentenceStart(value: string) {
+  const fragment = sentenceFragment(value);
+  return fragment ? `${fragment.charAt(0).toUpperCase()}${fragment.slice(1)}` : "";
+}
+
+function hasForbiddenTemplateText(value: string) {
+  const lower = cleanText(value).toLowerCase().replace(/ё/g, "е");
+  if ([...GENERIC_NARRATION_PHRASES, ...GENERIC_SCREEN_TEXT_PHRASES].some((phrase) => lower.includes(cleanText(phrase).toLowerCase().replace(/ё/g, "е")))) {
+    return true;
+  }
+  return TEMPLATE_TEXT_PATTERNS.some(({ pattern }) => pattern.test(lower));
 }
 
 function uniqueShortItems(items: string[]) {

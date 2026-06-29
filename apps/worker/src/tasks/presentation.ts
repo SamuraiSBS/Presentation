@@ -132,9 +132,12 @@ const NARRATION_SYSTEM_PROMPT = [
   "Return only plain text, not JSON and not markdown.",
   "The output must be divided into slide sections exactly as `Слайд 1: Заголовок`.",
   "Every slide section must contain exactly 5 or 6 complete Russian sentences after the title line.",
+  "Write exactly one narration section for each requested slide, in strict order, with no extra sections.",
   "Write like a student report: simple, concrete, human, calm, and close to the topic.",
+  "Answer the user's request; do not copy or paraphrase the request itself as slide content.",
   "Each next slide must continue the previous thought by content, not by repeated transition formulas.",
   "Do not reuse the same opening or closing sentence in neighboring sections.",
+  "Avoid generic placeholders such as 'рассказ про', 'что стоит понять сначала', 'главный вывод по теме', and similar formulas.",
   "Do not write meta phrases about slides, screen text, source material, or internal instructions.",
 ].join(" ");
 
@@ -238,6 +241,13 @@ const GENERIC_NARRATION_PHRASES = [
   "складывается в понятный вывод",
   "важны не отдельные формулировки",
   "общий смысл",
+  "главная мысль",
+  "общая мысль",
+  "пример нужен",
+  "вся история темы",
+  "следующий раздел",
+  "следующая часть",
+  "переход к следующему",
 ];
 
 const GENERIC_SCREEN_TEXT_PHRASES = [
@@ -277,6 +287,21 @@ const GENERIC_SCREEN_TEXT_PHRASES = [
   "раскрыть через конкретные факты",
   "понятнее через факты, примеры и последствия",
   "смысл темы понятнее, когда видны причины и последствия",
+  "главная мысль",
+  "общая мысль",
+  "пример нужен",
+  "вся история темы",
+  "текст на слайде",
+];
+
+const TEMPLATE_TEXT_PATTERNS = [
+  { label: "главная мысль", pattern: /(?:^|[^\p{L}])главн(?:ая|ую|ой)\s+мысл/iu },
+  { label: "общая мысль", pattern: /(?:^|[^\p{L}])общ(?:ая|ую|ей)\s+мысл/iu },
+  { label: "пример нужен", pattern: /(?:^|[^\p{L}])пример\s+нужен/iu },
+  { label: "вся история темы", pattern: /(?:^|[^\p{L}])вс[яю]\s+истори[яю]\s+темы/iu },
+  { label: "meta slide text", pattern: /(?:на|в)\s+этом\s+слайде|этот\s+слайд|текст\s+на\s+слайде|заметк[аи]\s+докладчика/iu },
+  { label: "meta section text", pattern: /(?:этот|следующий|данный)\s+раздел|следующ(?:ая|ий)\s+(?:часть|фрагмент)/iu },
+  { label: "meta transition text", pattern: /переход\s+(?:к|дальше)|готовит\s+переход|подводит\s+(?:рассказ\s+)?к\s+следующ/iu },
 ];
 
 const GENERIC_TITLES = [
@@ -1308,6 +1333,10 @@ function normalizeNarrationText(value: unknown, project: ProjectInput) {
     });
     sections = repairNarrationQualitySections(sections, project);
     normalizedText = sections.map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n");
+    const repairedIssues = qualityIssuesForText(normalizedText, project);
+    if (repairedIssues.length) {
+      throw new Error(`AI narration quality check failed: ${repairedIssues.join("; ")}`);
+    }
   }
 
   return normalizedText;
@@ -1435,16 +1464,23 @@ function isRepairableNarrationQualityIssue(issue: string) {
 }
 
 function repairNarrationQualitySections(sections: NarrationSection[], project: ProjectInput): NarrationSection[] {
-  return sections.map((section, index) => ({
-    ...section,
-    order: index + 1,
-    title: section.title || fallbackTitle(project, index + 1),
-    text: buildFallbackSpeakerNotes(project, index + 1),
-  }));
+  return sections.map((section, index) => {
+    const order = index + 1;
+    const title = cleanText(section.title) || fallbackTitle(project, order);
+    const sentences = speechSentences(sanitizeSpeechText(section.text))
+      .filter((sentence) => !isGenericNarrationSentence(sentence) && !isPromptEchoSentence(sentence, project));
+    const thesis = sentences[0] || fallbackSlideText(project, order);
+    return {
+      ...section,
+      order,
+      title,
+      text: buildNarrationFromContent(title, thesis, sentences.slice(1), project, order),
+    };
+  });
 }
 
 function repairNarrationSentenceCounts(sections: NarrationSection[], project: ProjectInput) {
-  return repairShortNarrationSections(trimNarrationSections(sections), project).map((section, index) => {
+  return repairShortNarrationSections(compressOverlongNarrationSections(sections, project), project).map((section, index) => {
     const expectedOrder = index + 1;
     if (section.order !== expectedOrder || !section.title) {
       return section;
@@ -1454,12 +1490,119 @@ function repairNarrationSentenceCounts(sections: NarrationSection[], project: Pr
     if (count >= 5 && count <= 6) {
       return section;
     }
+    if (count > 6) {
+      return section;
+    }
 
     return {
       ...section,
       text: buildFallbackSpeakerNotes(project, expectedOrder),
     };
   });
+}
+
+function compressOverlongNarrationSections(sections: NarrationSection[], project: ProjectInput) {
+  const repaired: NarrationSection[] = [];
+  for (const section of sections) {
+    const compressed = compressOverlongNarrationSection(section, project, repaired[repaired.length - 1]);
+    repaired.push(compressed);
+  }
+  return repaired;
+}
+
+function compressOverlongNarrationSection(section: NarrationSection, project: ProjectInput, previous?: NarrationSection): NarrationSection {
+  const sentences = speechSentences(sanitizeSpeechText(section.text));
+  if (sentences.length <= 6) {
+    return section;
+  }
+
+  const selected: string[] = [];
+  const seen = new Set<string>();
+  const previousFirst = firstNarrationEdge(previous?.text || "");
+  const previousLast = lastNarrationEdge(previous?.text || "");
+  const useful = sentences.filter((sentence) => isUsableNarrationSentence(sentence, section, project));
+  if (useful.length < 5) {
+    return section;
+  }
+
+  for (const sentence of useful) {
+    const key = normalizeForQuality(sentence);
+    if (!key || seen.has(key)) continue;
+    if (!selected.length && previousFirst && sentenceEdgeKey(sentence) === previousFirst) continue;
+    selected.push(sentence);
+    seen.add(key);
+    if (selected.length >= 6) break;
+  }
+
+  if (selected.length > 5 && previousLast && sentenceEdgeKey(selected[selected.length - 1]) === previousLast) {
+    const replacement = useful.find((sentence) => {
+      const key = normalizeForQuality(sentence);
+      return key && !seen.has(key) && sentenceEdgeKey(sentence) !== previousLast;
+    });
+    if (replacement) {
+      selected[selected.length - 1] = replacement;
+    }
+  }
+
+  if (selected.length < 5) {
+    return section;
+  }
+
+  return { ...section, text: selected.slice(0, 6).join(" ") };
+}
+
+function isUsableNarrationSentence(sentence: string, section: NarrationSection, project: ProjectInput) {
+  const text = cleanText(sentence);
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length < 5) return false;
+  if (looksLikeSentenceFragment(text)) return false;
+  if (isGenericNarrationSentence(text)) return false;
+  if (isPromptEchoSentence(text, project)) return false;
+
+  const sectionTokens = new Set(significantTokens(`${section.title} ${project.title}`));
+  const sentenceTokens = significantTokens(text);
+  if (sectionTokens.size && sentenceTokens.length >= 6) {
+    return sentenceTokens.some((token) => sectionTokens.has(token)) || textSimilarity(text, `${section.title} ${project.title} ${project.prompt}`) >= 0.12;
+  }
+
+  return true;
+}
+
+function isGenericNarrationSentence(sentence: string) {
+  const normalized = normalizeExactForQuality(sentence);
+  const genericFragments = [
+    "\u0440\u0430\u0441\u0441\u043a\u0430\u0437 \u043f\u0440\u043e",
+    "\u0447\u0442\u043e \u0441\u0442\u043e\u0438\u0442 \u043f\u043e\u043d\u044f\u0442\u044c \u0441\u043d\u0430\u0447\u0430\u043b\u0430",
+    "\u0433\u043b\u0430\u0432\u043d\u044b\u0439 \u0432\u044b\u0432\u043e\u0434 \u043f\u043e \u0442\u0435\u043c\u0435",
+    "\u043d\u0430 \u044d\u0442\u043e\u043c \u0441\u043b\u0430\u0439\u0434\u0435",
+    "\u044d\u0442\u043e\u0442 \u0441\u043b\u0430\u0439\u0434",
+    "\u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0430\u044f \u0447\u0430\u0441\u0442\u044c",
+    "\u043f\u0435\u0440\u0435\u0445\u043e\u0434 \u043a",
+    "\u043d\u043e\u0432\u044b\u0439 \u0448\u0430\u0433",
+    "this slide",
+    "next section",
+    "main takeaway of the topic",
+  ];
+  return hasForbiddenTemplateText(sentence)
+    || genericFragments.some((phrase) => normalized.includes(normalizeExactForQuality(phrase)));
+}
+
+function isPromptEchoSentence(sentence: string, project: ProjectInput) {
+  const prompt = cleanText(project.prompt);
+  if (!prompt) return false;
+  const normalizedSentence = normalizeForQuality(sentence);
+  const normalizedPrompt = normalizeForQuality(prompt);
+  if (normalizedPrompt && normalizedSentence.includes(normalizedPrompt)) return true;
+  return textSimilarity(sentence, prompt) >= 0.7;
+}
+
+function firstNarrationEdge(text: string) {
+  return sentenceEdgeKey(speechSentences(text)[0] || "");
+}
+
+function lastNarrationEdge(text: string) {
+  const sentences = speechSentences(text);
+  return sentenceEdgeKey(sentences[sentences.length - 1] || "");
 }
 
 function formatNarrationSection(section: NarrationSection, slideWord = "\u0421\u043b\u0430\u0439\u0434") {
@@ -1494,16 +1637,6 @@ function repeatedSentenceEdge(sections: NarrationSection[], edge: "first" | "las
   }
 
   return [...counts.entries()].find(([, count]) => count >= 3)?.[0] || "";
-}
-
-function trimNarrationSections(sections: NarrationSection[]) {
-  return sections.map((section) => {
-    const sentences = speechSentences(section.text);
-    if (sentences.length > 6) {
-      return { ...section, text: sentences.slice(0, 6).join(" ") };
-    }
-    return section;
-  });
 }
 
 function repairShortNarrationSections(sections: NarrationSection[], project: ProjectInput) {
@@ -2153,21 +2286,90 @@ async function finalizeGeneratedPresentation(
   try {
     assertPresentationQuality(presentation, project, generationMode);
   } catch (error) {
-    if (!isRepairablePresentationQualityError(error)) {
+    const locallyRepaired = repairPresentationNarrationLocally(presentation, project, generationMode);
+    if (locallyRepaired) {
+      presentation = locallyRepaired;
+    } else if (!isRepairablePresentationQualityError(error)) {
       throw error;
+    } else {
+      console.warn("AI generation quality check found repairable presentation issues; continuing with quality repair", {
+        projectId: project.id,
+        generationMode,
+        error,
+      });
     }
-    console.warn("AI generation quality check found repairable presentation issues; continuing with quality repair", {
-      projectId: project.id,
-      generationMode,
-      error,
-    });
   }
 
   const improved = await improvePresentationQuality(presentation, project, sources, generationMode, qualityCallbacks);
+  assertNoForbiddenTemplateText(improved);
   const finalIssues = findSlideTextIssues(improved);
   return finalIssues.length
     ? presentationSchema.parse({ ...improved, qualityCritique: buildQualityCritique(improved, finalIssues) })
     : improved;
+}
+
+function repairPresentationNarrationLocally(
+  presentation: PresentationDocument,
+  project: ProjectInput,
+  generationMode: AiGenerationMode | FallbackGenerationMode,
+) {
+  const sections = parseNarrationSections(presentation.generatedText);
+  if (!canLocallyRepairNarrationSections(sections, project)) {
+    return null;
+  }
+
+  let repairedSections = repairNarrationSentenceCounts(sections, project);
+  const repairedText = repairedSections.map((section) => formatNarrationSection(section)).join("\n\n");
+  if (qualityIssuesForText(repairedText, project, false).length) {
+    repairedSections = repairNarrationQualitySections(repairedSections, project);
+  }
+  if (validateNarrationSections(repairedSections, project).length) {
+    return null;
+  }
+
+  const generatedText = repairedSections.map((section) => formatNarrationSection(section)).join("\n\n");
+  const raw: PresentationDocument = {
+    ...presentation,
+    generatedText,
+    slides: presentation.slides.map((slide, index) => ({
+      ...slide,
+      speakerNotes: repairedSections[index]?.text || slide.speakerNotes,
+    })),
+    speechScript: presentation.speechScript.map((item, index) => ({
+      ...item,
+      slideTitle: repairedSections[index]?.title || item.slideTitle,
+      text: repairedSections[index]?.text || item.text,
+    })),
+  };
+
+  const repaired = normalizePresentation(
+    raw,
+    project,
+    presentation.sources,
+    generationMode,
+    generatedText,
+    presentation.narrativePlan,
+    false,
+    presentation.designBrief,
+  );
+
+  try {
+    assertPresentationQuality(repaired, project, generationMode);
+    return repaired;
+  } catch {
+    return null;
+  }
+}
+
+function canLocallyRepairNarrationSections(sections: NarrationSection[], project: ProjectInput) {
+  if (sections.length !== project.slideCount) return false;
+  return sections.every((section, index) => {
+    if (!section || section.order !== index + 1 || !section.title) return false;
+    const sentences = speechSentences(section.text);
+    if (sentences.length < 5) return false;
+    if (sentences.length <= 6) return true;
+    return sentences.filter((sentence) => isUsableNarrationSentence(sentence, section, project)).length >= 5;
+  });
 }
 
 async function repairSlideTextWithOpenAI(client: OpenAI, presentation: PresentationDocument, issues: SlideTextIssue[]) {
@@ -2593,6 +2795,9 @@ function visibleSlideTextEntries(slide: Slide) {
 
 function hasGenericOrMetaScreenText(value: string) {
   const normalized = normalizeExactForQuality(value);
+  if (hasForbiddenTemplateText(value)) {
+    return true;
+  }
   if (GENERIC_SCREEN_TEXT_PHRASES.some((phrase) => normalized.includes(normalizeExactForQuality(phrase)))) {
     return true;
   }
@@ -3047,19 +3252,20 @@ function imageConcept(project: ProjectInput, order: number, title: string, thesi
 }
 
 function fallbackTitle(project: ProjectInput, order: number) {
+  const topic = cleanText(project.title || project.prompt) || "Материал";
   const titles = [
-    project.title,
-    "Что стоит понять сначала",
-    "Факты за общей темой",
-    "Как меняется ситуация",
-    "Пример для понимания",
-    "Смысл простыми словами",
-    "Что остается в памяти",
-    "К чему это приводит",
-    "Главная мысль",
-    "Что можно вынести",
+    topic,
+    `Контекст: ${topic}`,
+    `Причины: ${topic}`,
+    `Изменения: ${topic}`,
+    `Конкретный случай: ${topic}`,
+    `Последствия: ${topic}`,
+    `Связи: ${topic}`,
+    `Практический вывод: ${topic}`,
+    `Итог: ${topic}`,
+    `Значение: ${topic}`,
   ];
-  return titles[order - 1] || `${order}. ${project.title}`;
+  return shortenWords(titles[order - 1] || `${order}. ${topic}`, 12);
 }
 
 function normalizeSlideBlocks(
@@ -3117,92 +3323,70 @@ function normalizeSpeechScriptText(value: unknown, slide: Slide, project: Projec
 }
 
 function buildSlideNarration(slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual">, project: ProjectInput, order: number) {
-  const topic = cleanText(project.title || project.prompt);
-  const title = cleanText(slide.title) || fallbackTitle(project, order);
-  const thesis = cleanText(slide.thesis) || fallbackSlideText(project, order);
+  return buildNarrationFromContent(
+    cleanText(slide.title) || fallbackTitle(project, order),
+    cleanText(slide.thesis) || fallbackSlideText(project, order),
+    [
+      ...slide.bullets.map(cleanText).filter(Boolean),
+      slide.definition?.text || "",
+      visualNarrationText(slide.visual),
+    ],
+    project,
+    order,
+  );
+}
+
+function buildNarrationFromContent(titleInput: string, thesisInput: string, pointInputs: string[], project: ProjectInput, order: number) {
+  const topic = cleanText(project.title || project.prompt) || "Материал";
+  const title = cleanText(titleInput) || fallbackTitle(project, order);
+  const thesis = cleanText(thesisInput) || fallbackSlideText(project, order);
   const points = uniqueShortItems([
-    ...slide.bullets.map(cleanText).filter(Boolean),
-    slide.definition?.text || "",
-    visualNarrationText(slide.visual),
+    ...pointInputs,
+    thesis,
     fallbackSlideText(project, order + 1),
     fallbackSlideText(project, order + 2),
-  ]).filter((item) => normalizeForQuality(item) !== normalizeForQuality(thesis));
+  ])
+    .filter((item) => !isDuplicateDisplayText(item, title))
+    .filter((item) => !hasForbiddenTemplateText(item));
   const firstPoint = points[0] || thesis;
-  const secondPoint = points[1] || fallbackSlideText(project, order + 1);
-  const thirdPoint = points[2] || fallbackSlideText(project, order + 2);
-  const leadOptions = [
-    `Я расскажу о теме «${topic}»: ${sentenceFragment(thesis)}.`,
+  const secondPoint = points[1] || firstPoint;
+  const thirdPoint = points[2] || secondPoint;
+  const fourthPoint = points[3] || thirdPoint;
+  const candidates = [
     `${title}: ${sentenceFragment(thesis)}.`,
-    `Для темы «${topic}» важно то, что ${sentenceFragment(thesis)}.`,
-    `${topic} становится понятнее, когда видно, что ${sentenceFragment(thesis)}.`,
-    `Главная мысль здесь простая: ${sentenceFragment(thesis)}.`,
-    `Смысл темы в том, что ${sentenceFragment(thesis)}.`,
-    `${title} показывает важную сторону темы «${topic}»: ${sentenceFragment(thesis)}.`,
-    `В рассказе о теме «${topic}» особенно заметно, что ${sentenceFragment(thesis)}.`,
-    `Ключевая идея звучит так: ${sentenceFragment(thesis)}.`,
-    `Финальный вывод по теме «${topic}» такой: ${sentenceFragment(thesis)}.`,
+    completeNarrationSentence(firstPoint),
+    `${topic} связан с тем, что ${sentenceFragment(secondPoint)}.`,
+    `${completeNarrationFragment(thirdPoint)} влияет на объяснение "${topic}".`,
+    `"${title}" соединяет два факта: ${sentenceFragment(firstPoint)} и ${sentenceFragment(secondPoint)}.`,
+    `${completeNarrationFragment(fourthPoint)} помогает сделать вывод по материалу.`,
+    `${title} сохраняет связь с "${topic}" через конкретные детали.`,
   ];
-  const firstPointOptions = [
-    `На практике ${sentenceFragment(firstPoint)}.`,
-    `Важный факт связан с тем, что ${sentenceFragment(firstPoint)}.`,
-    `Для понимания темы важно учитывать, что ${sentenceFragment(firstPoint)}.`,
-    `Такой взгляд объясняет, почему ${sentenceFragment(firstPoint)}.`,
-    `В реальной ситуации это означает, что ${sentenceFragment(firstPoint)}.`,
-    `С этой стороны особенно заметно, что ${sentenceFragment(firstPoint)}.`,
-    `Главная деталь здесь такая: ${sentenceFragment(firstPoint)}.`,
-    `По содержанию это связано с тем, что ${sentenceFragment(firstPoint)}.`,
-    `Внутри этой темы важно увидеть, что ${sentenceFragment(firstPoint)}.`,
-    `Именно поэтому ${sentenceFragment(firstPoint)}.`,
-  ];
-  const secondPointOptions = [
-    `Дополнительно важно, что ${sentenceFragment(secondPoint)}.`,
-    `Еще одна причина заключается в том, что ${sentenceFragment(secondPoint)}.`,
-    `Эту мысль усиливает то, что ${sentenceFragment(secondPoint)}.`,
-    `Ситуация становится сложнее, потому что ${sentenceFragment(secondPoint)}.`,
-    `Важную роль играет и то, что ${sentenceFragment(secondPoint)}.`,
-    `Без этого трудно понять, почему ${sentenceFragment(secondPoint)}.`,
-    `Отдельно стоит отметить, что ${sentenceFragment(secondPoint)}.`,
-    `Этот смысл раскрывается через факт: ${sentenceFragment(secondPoint)}.`,
-    `Объяснение становится точнее, если учесть, что ${sentenceFragment(secondPoint)}.`,
-    `В результате становится заметно, что ${sentenceFragment(secondPoint)}.`,
-  ];
-  const thirdPointOptions = [
-    `Из-за этого ${sentenceFragment(thirdPoint)}.`,
-    `Так появляется важное последствие: ${sentenceFragment(thirdPoint)}.`,
-    `В итоге становится видно, что ${sentenceFragment(thirdPoint)}.`,
-    `На этом фоне особенно важно, что ${sentenceFragment(thirdPoint)}.`,
-    `Поэтому ситуация приводит к тому, что ${sentenceFragment(thirdPoint)}.`,
-    `Эта сторона темы показывает, что ${sentenceFragment(thirdPoint)}.`,
-    `Смысл не сводится к одному факту, потому что ${sentenceFragment(thirdPoint)}.`,
-    `Такой результат объясняет, почему ${sentenceFragment(thirdPoint)}.`,
-    `Для слушателя здесь важен вывод: ${sentenceFragment(thirdPoint)}.`,
-    `К концу этой мысли ясно, что ${sentenceFragment(thirdPoint)}.`,
-  ];
-  const endingOptions = [
-    `Поэтому ${sentenceFragment(firstPoint)} помогает понять главную проблему темы «${topic}».`,
-    `Так ${sentenceFragment(secondPoint)} становится важной частью общего вывода.`,
-    `В результате ${sentenceFragment(thirdPoint)} показывает смысл всей ситуации.`,
-    `Поэтому ${sentenceFragment(thesis)} звучит не как отдельный факт, а как понятный вывод.`,
-    `Главное здесь в том, что ${sentenceFragment(firstPoint)} меняет отношение к теме.`,
-    `Такой вывод помогает увидеть, почему ${sentenceFragment(secondPoint)} важно для всей истории.`,
-    `Из этого следует, что ${sentenceFragment(thirdPoint)} нельзя считать случайной деталью.`,
-    `Поэтому ${sentenceFragment(thesis)} остается основной мыслью здесь.`,
-    `В конце важно запомнить, что ${sentenceFragment(firstPoint)} связано с главным смыслом темы.`,
-    `Итог можно сформулировать просто: ${sentenceFragment(thesis)}.`,
-  ];
-  const optionIndex = Math.max(0, Math.min(order - 1, leadOptions.length - 1));
-  const lead = leadOptions[order === project.slideCount ? leadOptions.length - 1 : optionIndex];
-  const ending = endingOptions[order === project.slideCount ? endingOptions.length - 1 : optionIndex];
+  const selected: string[] = [];
+  const seen = new Set<string>();
 
-  return sanitizeSpeechText(
-    [
-      lead,
-      firstPointOptions[optionIndex],
-      secondPointOptions[optionIndex],
-      thirdPointOptions[optionIndex],
-      ending,
-    ].join(" "),
-  );
+  for (const sentence of candidates.flatMap((candidate) => speechSentences(sanitizeSpeechText(candidate)))) {
+    const clean = cleanText(sentence);
+    const key = normalizeForQuality(clean);
+    if (!key || seen.has(key)) continue;
+    if (clean.split(/\s+/).filter(Boolean).length < 4) continue;
+    if (looksLikeSentenceFragment(clean) || hasForbiddenTemplateText(clean)) continue;
+    selected.push(clean);
+    seen.add(key);
+    if (selected.length >= 5) break;
+  }
+
+  return selected.slice(0, 5).join(" ");
+}
+
+function completeNarrationSentence(value: string) {
+  const text = cleanText(value);
+  if (!text) return "";
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+function completeNarrationFragment(value: string) {
+  const fragment = sentenceFragment(value);
+  return fragment ? `${fragment.charAt(0).toUpperCase()}${fragment.slice(1)}` : "";
 }
 
 function visualNarrationText(visual: SlideVisual) {
@@ -3216,8 +3400,7 @@ function isCompleteNarration(text: string) {
   const count = sentenceCount(text);
   if (count < 5 || count > 6) return false;
   if (text.length < 80) return false;
-  const lower = text.toLowerCase();
-  return !GENERIC_NARRATION_PHRASES.some((phrase) => lower.includes(phrase));
+  return !hasForbiddenTemplateText(text);
 }
 
 function sentenceCount(text: string) {
@@ -3255,10 +3438,10 @@ function buildFallbackBulletItems(project: ProjectInput, order: number, sourceTe
   }
   const base = [
     ...sourceItems,
-    shortenCompleteSentence(cleanText(project.prompt), 16),
-    shortenCompleteSentence(`Главный вывод: ${focus}`, 16),
-    shortenCompleteSentence(`Важно запомнить: ${topic}`, 16),
-    shortenCompleteSentence(`Итог по теме: ${topic}`, 16),
+    shortenCompleteSentence(cleanText(project.prompt || topic), 16),
+    shortenCompleteSentence(`${focus}: ${topic}`, 16),
+    shortenCompleteSentence(`${topic} связан с конкретным контекстом`, 16),
+    shortenCompleteSentence(`${topic} меняется через причины и последствия`, 16),
   ];
   return uniqueShortItems(base).slice(0, 5);
 }
@@ -3405,20 +3588,21 @@ function isGenericSlideTitle(titleKey: string) {
 }
 
 function fallbackSlideText(project: ProjectInput, order: number) {
-  const topic = project.title || project.prompt;
+  const topic = cleanText(project.title || project.prompt) || "Материал";
+  const focus = fallbackTitle(project, order);
   const texts = [
-    `${topic}: главное, что нужно понять перед деталями.`,
-    `${topic} стоит объяснять через понятную проблему и конкретный контекст.`,
-    `Факты по теме должны показывать, что меняется и почему это важно.`,
-    `Главная перемена заметна там, где появляются новые причины и последствия.`,
-    `Пример нужен для того, чтобы общая мысль стала ближе к реальной жизни.`,
-    `Сложную часть темы лучше передать простыми словами и одним точным примером.`,
-    `Слушателю важно запомнить не набор фраз, а связь между фактами.`,
-    `Перед финалом нужно оставить только самые сильные выводы из рассказа.`,
-    `Главная мысль показывает, к чему приводит вся история темы.`,
-    `Финальный вывод должен кратко собрать главные факты и их значение.`,
+    `${topic}: ${sentenceFragment(focus)}.`,
+    `${focus} связан с конкретным контекстом "${topic}".`,
+    `${topic} стоит раскрывать через причины, изменения и последствия.`,
+    `${focus} показывает, что в "${topic}" меняется и почему это важно.`,
+    `Конкретный случай помогает объяснить "${topic}" через понятный опыт.`,
+    `Сложную часть "${topic}" лучше передать коротко и по существу.`,
+    `Связь между фактами делает "${topic}" понятнее для слушателя.`,
+    `Перед финалом остаются самые сильные факты про "${topic}".`,
+    `${focus} помогает собрать причины и последствия в понятный вывод.`,
+    `${topic} получает смысл, когда факты связаны с реальной ситуацией.`,
   ];
-  return shortenSentence(texts[order - 1] || `${topic}: главное объяснить суть темы коротко и понятно.`, 230);
+  return shortenSentence(texts[order - 1] || `${topic}: суть лучше объяснить коротко и по существу.`, 230);
 }
 
 function buildFallbackSpeakerNotes(project: ProjectInput, order: number) {
@@ -3660,6 +3844,13 @@ function assertPresentationQuality(presentation: PresentationDocument, project: 
   }
 }
 
+function assertNoForbiddenTemplateText(presentation: PresentationDocument) {
+  const bannedPhrase = findForbiddenTemplatePhrase(visiblePresentationText(presentation));
+  if (bannedPhrase) {
+    throw new Error(`AI generation quality check failed: template phrase detected: ${bannedPhrase}`);
+  }
+}
+
 function isRepairablePresentationQualityError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "");
   if (!message.startsWith("AI generation quality check failed:")) return false;
@@ -3750,10 +3941,7 @@ function qualityIssuesForText(value: string, project: ProjectInput, checkPromptR
   if (!text) return ["empty presentation text"];
   if (text.startsWith("{")) issues.push("model returned JSON text instead of presentation prose");
 
-  const bannedPhrase = [...GENERIC_NARRATION_PHRASES, ...GENERIC_SCREEN_TEXT_PHRASES].find((phrase) => {
-    const candidate = cleanText(phrase).toLowerCase().replace(/ё/g, "е");
-    return candidate.length >= 8 && lowerText.includes(candidate);
-  });
+  const bannedPhrase = findForbiddenTemplatePhrase(value);
   if (bannedPhrase) {
     issues.push(`template phrase detected: ${bannedPhrase}`);
   }
@@ -3826,6 +4014,21 @@ function normalizeForQuality(value: string) {
 
 function normalizeExactForQuality(value: string) {
   return cleanText(value).toLowerCase().replace(/ё/g, "е");
+}
+
+function findForbiddenTemplatePhrase(value: string) {
+  const lowerText = normalizeExactForQuality(value);
+  const bannedPhrase = [...GENERIC_NARRATION_PHRASES, ...GENERIC_SCREEN_TEXT_PHRASES].find((phrase) => {
+    const candidate = normalizeExactForQuality(phrase);
+    return candidate.length >= 8 && lowerText.includes(candidate);
+  });
+  if (bannedPhrase) return bannedPhrase;
+
+  return TEMPLATE_TEXT_PATTERNS.find(({ pattern }) => pattern.test(lowerText))?.label || "";
+}
+
+function hasForbiddenTemplateText(value: string) {
+  return Boolean(findForbiddenTemplatePhrase(value));
 }
 
 function countOccurrences(text: string, needle: string) {
@@ -3964,7 +4167,8 @@ function removeBannedSentences(value: string) {
     .filter(Boolean);
   const filtered = parts.filter((part) => {
     const lower = part.toLowerCase();
-    return !banned.some((phrase) => lower.includes(phrase.toLowerCase()));
+    return !banned.some((phrase) => lower.includes(phrase.toLowerCase()))
+      && !hasForbiddenTemplateText(part);
   });
 
   return filtered.join(" ").trim();

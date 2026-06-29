@@ -10,6 +10,14 @@ const forbiddenNarrationFragments = [
   "основной смысл раскрывается",
   "рассказе про",
   "Примеры. Поэтому",
+  "главная мысль",
+  "общая мысль",
+  "пример нужен",
+  "вся история темы",
+  "текст на слайде",
+  "следующий раздел",
+  "следующая часть",
+  "переход к следующему",
 ];
 const forbiddenSlideTextFragments = [
   "Главная идея связана с темой",
@@ -597,7 +605,7 @@ describe("sanitizePresentationForDisplay", () => {
 
     expect(document.slides[0].speakerNotes).not.toBe(templateNarration);
     expect(document.speechScript[0].text).toBe(document.slides[0].speakerNotes);
-    expect(document.slides[0].speakerNotes).toContain("Тема");
+    expect(document.slides[0].speakerNotes.toLowerCase()).toContain("кино стало разнообразнее");
     expectNoForbiddenNarration([document.slides[0].speakerNotes, document.speechScript[0].text].join("\n"));
   });
 });

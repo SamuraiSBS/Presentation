@@ -54,6 +54,11 @@ export const BANNED_QUALITY_PHRASES = [
   "\u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u0439 \u0440\u0430\u0437\u0434\u0435\u043b",
   "\u043f\u0435\u0440\u0435\u0445\u043e\u0434",
   "\u043e\u043f\u043e\u0440\u043d\u044b\u0435 \u043f\u0443\u043d\u043a\u0442\u044b",
+  "\u0433\u043b\u0430\u0432\u043d\u0430\u044f \u043c\u044b\u0441\u043b\u044c",
+  "\u043e\u0431\u0449\u0430\u044f \u043c\u044b\u0441\u043b\u044c",
+  "\u043f\u0440\u0438\u043c\u0435\u0440 \u043d\u0443\u0436\u0435\u043d",
+  "\u0432\u0441\u044f \u0438\u0441\u0442\u043e\u0440\u0438\u044f \u0442\u0435\u043c\u044b",
+  "\u0442\u0435\u043a\u0441\u0442 \u043d\u0430 \u0441\u043b\u0430\u0439\u0434\u0435",
 ];
 
 const GENERIC_TITLE_PHRASES = [
@@ -76,6 +81,13 @@ export function isGenericTitle(title: string) {
 export function hasMetaSlideLanguage(text: string) {
   const normalized = normalizeQualityText(text);
   return BANNED_QUALITY_PHRASES.some((phrase) => normalized.includes(normalizeQualityText(phrase)))
+    || /(?:^|[^\p{L}])главн(?:ая|ую|ой)\s+мысл/iu.test(text)
+    || /(?:^|[^\p{L}])общ(?:ая|ую|ей)\s+мысл/iu.test(text)
+    || /(?:^|[^\p{L}])пример\s+нужен/iu.test(text)
+    || /(?:^|[^\p{L}])вс[яю]\s+истори[яю]\s+темы/iu.test(text)
+    || /(?:на|в)\s+этом\s+слайде|этот\s+слайд|текст\s+на\s+слайде|заметк[аи]\s+докладчика/iu.test(text)
+    || /(?:этот|следующий|данный)\s+раздел|следующ(?:ая|ий)\s+(?:часть|фрагмент)/iu.test(text)
+    || /переход\s+(?:к|дальше)|готовит\s+переход|подводит\s+(?:рассказ\s+)?к\s+следующ/iu.test(text)
     || /\b(?:slide|section|next section|on this slide)\b/i.test(text);
 }
 

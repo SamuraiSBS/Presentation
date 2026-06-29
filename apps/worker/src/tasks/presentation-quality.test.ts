@@ -100,6 +100,8 @@ describe("presentation quality checks", () => {
 
     expect(isGenericTitle("\u0412\u0432\u0435\u0434\u0435\u043d\u0438\u0435")).toBe(true);
     expect(hasMetaSlideLanguage("\u041d\u0430 \u044d\u0442\u043e\u043c \u0441\u043b\u0430\u0439\u0434\u0435 \u0432\u0438\u0434\u043d\u0430 \u043c\u044b\u0441\u043b\u044c.")).toBe(true);
+    expect(hasMetaSlideLanguage("Пример нужен для того, чтобы общая мысль стала ближе к реальной жизни.")).toBe(true);
+    expect(hasMetaSlideLanguage("Главная мысль показывает, к чему приводит вся история темы.")).toBe(true);
     expect(hasRepeatedSentenceStart([
       "The topic begins with context. The topic begins with a concrete example.",
       "The topic begins with a human conclusion.",
