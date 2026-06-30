@@ -6,6 +6,7 @@ import {
   designBriefSchema,
   ensureEditableCanvas,
   generatePresentationInputSchema,
+  generationBriefSchema,
   generationPipelineArtifactsSchema,
   generationJobKindSchema,
   hasCustomSlideCanvas,
@@ -146,6 +147,36 @@ describe("shared contracts", () => {
         qualityCritique,
       }),
     ).not.toThrow();
+  });
+
+  it("accepts the university student creation brief while keeping old inputs readable", () => {
+    const parsed = createProjectInputSchema.parse({
+      title: "AI in higher education",
+      prompt: "Create a concise university presentation about artificial intelligence in higher education.",
+      scenario: "university_report",
+      level: "university_student",
+      mode: "with_sources",
+      slideCount: 10,
+      generationBrief: {
+        audience: "university_student",
+        speechStyle: "easy_professional",
+        slideDensity: "brief_slides_full_speech",
+        visualStrategy: "images_and_diagrams",
+        exportTarget: "web_and_pptx_pdf",
+      },
+    });
+
+    expect(parsed.scenario).toBe("university_report");
+    expect(parsed.level).toBe("university_student");
+    expect(parsed.generationBrief).toEqual(generationBriefSchema.parse({}));
+    expect(createProjectInputSchema.parse({
+      title: "Legacy input",
+      prompt: "Create a regular legacy presentation request with enough detail.",
+      scenario: "school_report",
+      level: "8-11 класс",
+      mode: "with_sources",
+      slideCount: 8,
+    }).generationBrief).toBeUndefined();
   });
 
   it("rejects incomplete generation pipeline artifacts", () => {
@@ -1450,6 +1481,43 @@ describe("shared contracts", () => {
     const theme = resolveThemeFromDesignBrief(brief);
     expect(theme.themeId).toBe("scienceBoard");
     expect(theme.colors.accent).toMatch(/^#[0-9A-F]{6}$/);
+  });
+
+  it("renders visual director scene variants on the shared canvas", () => {
+    const presentation = presentationSchema.parse({
+      id: "visual-director", title: "Visual story", scenario: "university_report", level: "university_student",
+      slideCount: 1, generationMode: "demo", generatedText: "Slide 1: Visual story\nA supported comparison.",
+      sources: [], outline: ["Visual story"], narrativePlan: [],
+      speechScript: [{ slideOrder: 1, slideTitle: "Visual story", text: "Narration." }],
+      slides: [{
+        id: "slide-scene", order: 1, title: "Visual story", slideKind: "content", layout: "statement",
+        thesis: "A supported comparison explains the central claim.",
+        bullets: ["Evidence one", "Evidence two", "A memorable quotation"], definition: null, keyConcepts: [],
+        visual: {
+          type: "comparison_diagram", title: "Two approaches", description: "", leftLabel: "Before", rightLabel: "After",
+          items: [{ label: "Evidence one", text: "Evidence one" }, { label: "Evidence two", text: "Evidence two" }],
+          rows: [{ label: "Result", left: "Limited", right: "Improved" }, { label: "Reach", left: "Local", right: "Broad" }],
+        },
+        highlights: [], blocks: [{ type: "quote", content: "A memorable quotation" }], speakerNotes: "Narration.",
+        timingSeconds: 45, sourceRefs: [{ sourceId: "source-1", label: "Research", excerpt: "Supporting evidence", page: null }],
+      }],
+      presentationTheme: PREMIUM_PRESENTATION_THEMES.academicClean,
+    });
+
+    const intents = ["comparison", "evidence_board", "quote_spread"] as const;
+    const markers = ["comparison-left-label", "evidence-thesis", "quote-mark"];
+    intents.forEach((layoutIntent, index) => {
+      const canvas = buildSlideCanvas(presentation.slides[0], presentation.presentationTheme!, {
+        designDirection: {
+          slideOrder: 1,
+          visualRole: layoutIntent === "comparison" ? "compare" : layoutIntent === "quote_spread" ? "quote" : "evidence",
+          layoutIntent,
+          imageStrategy: layoutIntent === "comparison" ? "diagram" : "none",
+          visualPrompt: "Directed scene",
+        },
+      });
+      expect(canvas.elements.some((element) => element.id.includes(markers[index]))).toBe(true);
+    });
   });
 
   it("keeps old presentations without themeId valid", () => {

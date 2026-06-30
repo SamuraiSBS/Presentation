@@ -55,7 +55,7 @@ export class ProjectsService {
       data: {
         userId,
         title: input.title,
-        prompt: input.prompt,
+        prompt: promptWithGenerationBrief(input.prompt, input.generationBrief),
         scenario: input.scenario,
         level: input.level,
         mode: input.mode,
@@ -313,4 +313,19 @@ function safeFileName(value: string) {
 
 function cleanText(value: unknown) {
   return String(value || "").replace(/\u0000/g, "").replace(/\s+/g, " ").trim();
+}
+
+function promptWithGenerationBrief(prompt: string, brief?: CreateProjectInput["generationBrief"]) {
+  if (!brief) return prompt;
+
+  const briefText = [
+    "Creation brief:",
+    `- audience: ${brief.audience}`,
+    `- speechStyle: ${brief.speechStyle}`,
+    `- slideDensity: ${brief.slideDensity}`,
+    `- visualStrategy: ${brief.visualStrategy}`,
+    `- exportTarget: ${brief.exportTarget}`,
+  ].join("\n");
+
+  return `${prompt.trim()}\n\n${briefText}`.slice(0, 12000);
 }

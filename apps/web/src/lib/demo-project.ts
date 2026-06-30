@@ -113,8 +113,8 @@ const slides: any[] = [
 export const demoPresentation: PresentationDocument = ensureEditableCanvas({
   id: "presentation-demo",
   title: "Временный сценарий презентации",
-  scenario: "Школьный доклад",
-  level: "8-11 класс",
+  scenario: "university_report",
+  level: "university_student",
   slideCount: slides.length,
   generationMode: "demo",
   generatedText: slides

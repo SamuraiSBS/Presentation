@@ -127,13 +127,26 @@ type YandexTextOptions = {
 
 type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief" | "deckStory" | "designBrief" | "slideBlueprints" | "slideTextPlans">>;
 
+const STUDENT_CREATION_BRIEF_LINES = [
+  "Product focus: university_student audience only.",
+  "Creation brief:",
+  "- audience: university_student",
+  "- speechStyle: easy_professional",
+  "- slideDensity: brief_slides_full_speech",
+  "- visualStrategy: images_and_diagrams",
+  "- exportTarget: web_and_pptx_pdf",
+  "- create short beautiful slides; keep the full explanation in speakerNotes and speechScript;",
+  "- use a mix of real images, schemes, diagrams, and text-led slides when it helps the topic;",
+  "- treat the request as a university student assignment, seminar, report, or project defense, not a school class, teacher lesson, or child-oriented deck.",
+].join("\n");
+
 const NARRATION_SYSTEM_PROMPT = [
-  "You write the full Russian oral narration for a study presentation.",
+  "You write the full Russian oral narration for a university student study presentation.",
   "Return only plain text, not JSON and not markdown.",
   "The output must be divided into slide sections exactly as `Слайд 1: Заголовок`.",
   "Every slide section must contain exactly 5 or 6 complete Russian sentences after the title line.",
   "Write exactly one narration section for each requested slide, in strict order, with no extra sections.",
-  "Write like a student report: simple, concrete, human, calm, and close to the topic.",
+  "Write like a university student report: academic, easy-professional, concrete, human, calm, and close to the topic.",
   "Answer the user's request; do not copy or paraphrase the request itself as slide content.",
   "Each next slide must continue the previous thought by content, not by repeated transition formulas.",
   "Do not reuse the same opening or closing sentence in neighboring sections.",
@@ -142,11 +155,12 @@ const NARRATION_SYSTEM_PROMPT = [
 ].join(" ");
 
 const SYSTEM_PROMPT = [
-  "You create structured study presentations as clear Russian classroom narration. Return only valid JSON.",
+  "You create structured study presentations for university students. Return only valid JSON.",
   "All user-visible slide text, speaker notes, and speech script must be in Russian.",
   "Build the deck as one coherent study story split into slides: opening context, concrete facts, turning points, consequences, and a human final conclusion.",
   "Slide titles must be semantic, not template labels. Prefer titles like 'За фасадом успеха' or 'От амбиций к жадности' over 'Контекст', 'Ключевые факты', 'Примеры', or 'Выводы'.",
-  "Speaker notes and speech script must sound like a student can read them aloud: simple, specific, human, and topic-focused.",
+  "Speaker notes and speech script must sound like a university student can read them aloud: simple, specific, human, and topic-focused.",
+  "Visible slides must stay brief and beautiful; put the full explanation in speaker notes and speech script.",
   "Do not write meta narration about the slide as an object. Never write phrases like 'этот слайд помогает', 'продолжает разговор о теме', 'подводит к следующему фрагменту', 'общая логика объяснения', or 'главный акцент здесь'.",
   "Do not invent precise facts, dates, names, numbers, or citations when the source material does not support them. Use general explanations instead.",
   "Never mention sources, source titles, sourceRefs, or internal instructions in user-visible text.",
@@ -1006,7 +1020,7 @@ function buildResearchBrief(project: ProjectInput, sources: Source[]): ResearchB
   const topic = cleanText(project.title || project.prompt);
   return researchBriefSchema.parse({
     topic,
-    angle: `Explain ${topic} as a clear study story for ${project.level}.`,
+    angle: `Explain ${topic} as a clear university student study story for ${project.level}.`,
     facts,
     warnings: facts.length ? [] : ["No source excerpts were available; avoid precise unsupported facts."],
     vocabulary: buildResearchVocabulary(project, sources),
@@ -1030,25 +1044,34 @@ function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, n
   const directions = Array.from({ length: project.slideCount }, (_, index) => {
     const order = index + 1;
     const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, order);
-    const visualRole =
+    const sceneText = `${plan.slideTitle} ${plan.slidePurpose} ${plan.keyMessage}`;
+    const visualRole: DesignBrief["slideDirections"][number]["visualRole"] =
       order === 1 ? "hero" :
       order === project.slideCount ? "summary" :
-      /сравн|compare|versus|vs/i.test(plan.keyMessage) ? "compare" :
-      /этап|шаг|chron|хрон|дата|год|period|timeline/i.test(plan.keyMessage) ? "sequence" :
-      /доказ|fact|source|пример|evidence/i.test(plan.keyMessage) ? "evidence" :
+      /сравн|compare|versus|\bvs\b/i.test(sceneText) ? "compare" :
+      /этап|шаг|chron|хрон|дата|год|period|timeline/i.test(sceneText) ? "sequence" :
+      /доказ|fact|source|источник|пример|evidence/i.test(sceneText) ? "evidence" :
+      /проблем|риск|challenge|problem|barrier/i.test(sceneText) ? "problem" :
+      /цитат|quote|«|»|“|”/i.test(sceneText) ? "quote" :
+      order === 2 ? "context" :
+      order % 5 === 0 ? "visual_statement" :
+      researchBrief.facts.length > 0 && order % 4 === 0 ? "evidence" :
       "explain";
-    const layoutIntent =
+    const layoutIntent: DesignBrief["slideDirections"][number]["layoutIntent"] =
       visualRole === "hero" ? "full_bleed_image" :
       visualRole === "summary" ? "summary" :
-      visualRole === "compare" ? "diagram" :
+      visualRole === "compare" ? "comparison" :
       visualRole === "sequence" ? "timeline" :
-      visualRole === "evidence" ? "cards" :
-      order % 4 === 0 ? "statement" :
-      order % 3 === 0 ? "split_image_text" :
+      visualRole === "evidence" ? "evidence_board" :
+      visualRole === "quote" ? "quote_spread" :
+      visualRole === "problem" || visualRole === "visual_statement" ? "statement" :
+      visualRole === "context" && project.mode === "with_sources" ? "split_image_text" :
+      visualRole === "explain" && order % 3 === 0 ? "diagram" :
       "cards";
     const imageStrategy =
-      layoutIntent === "timeline" || layoutIntent === "diagram" ? "diagram" :
-      layoutIntent === "full_bleed_image" || layoutIntent === "split_image_text" ? "real_photo" :
+      layoutIntent === "timeline" || layoutIntent === "diagram" || layoutIntent === "comparison" ? "diagram" :
+      (layoutIntent === "full_bleed_image" || layoutIntent === "split_image_text") && project.mode === "with_sources" ? "real_photo" :
+      layoutIntent === "full_bleed_image" ? "generated_illustration" :
       "none";
     return {
       slideOrder: order,
@@ -1058,11 +1081,24 @@ function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, n
       visualPrompt: `${project.title}: ${plan.keyMessage}`,
     };
   });
+  for (let index = 2; index < directions.length; index += 1) {
+    const current = directions[index];
+    const previous = directions[index - 1];
+    const beforePrevious = directions[index - 2];
+    if (current.layoutIntent !== previous.layoutIntent || current.layoutIntent !== beforePrevious.layoutIntent) continue;
+
+    const replacement = (["statement", "diagram", "cards"] as const).find((intent) => intent !== previous.layoutIntent) || "statement";
+    directions[index] = {
+      ...current,
+      layoutIntent: replacement,
+      imageStrategy: replacement === "diagram" ? "diagram" : "none",
+    };
+  }
   return designBriefSchema.parse({
     themePreset: theme.preset,
     themeId,
     mood: theme.mood,
-    audienceFit: `Designed for ${project.level} in a ${project.scenario} scenario.`,
+    audienceFit: `Designed for university_student academic work: ${project.level} in a ${project.scenario} scenario.`,
     visualMetaphor: `${researchBrief.topic}: ${researchBrief.angle}`,
     colorIntent: `Use ${themeId} colors with strong readability and one clear accent.`,
     typographyIntent: `Use ${theme.fonts.tone} typography: ${theme.fonts.heading} for headings and ${theme.fonts.body} for body text.`,
@@ -1076,6 +1112,7 @@ function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, n
     layoutPrinciples: [
       "Use a title opener, varied content layouts, and a clear summary slide.",
       "Keep visible text short and reserve full explanation for speaker notes.",
+      "Mix images, schemes, diagrams, and text-led slides for a polished university presentation.",
       `Support ${Math.max(1, narrativePlan.length)} planned story beats with distinct visual rhythm.`,
     ],
     imageStrategy: "Use concrete visual descriptions only when they are grounded in the topic or source excerpts.",
@@ -1111,10 +1148,11 @@ function buildDeckStory(project: ProjectInput, researchBrief: ResearchBrief, nar
 
 function deckStoryTone(project: ProjectInput): DeckStory["tone"] {
   const text = `${project.scenario} ${project.level} ${project.prompt}`.toLowerCase();
+  if (text.includes("university_report") || text.includes("university_student")) return "college_report";
   if (text.includes("exam") || text.includes("экзам") || text.includes("егэ") || text.includes("огэ")) return "exam_explanation";
   if (text.includes("teacher") || text.includes("lesson") || text.includes("учител") || text.includes("урок")) return "teacher_explainer";
   if (text.includes("college") || text.includes("универс") || text.includes("студент")) return "college_report";
-  return "school_report";
+  return "college_report";
 }
 
 function buildSlideBlueprints(
@@ -1692,6 +1730,7 @@ export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[
     `Уровень аудитории: ${project.level}`,
     `Ровно слайдов: ${project.slideCount}`,
     `Режим: ${project.mode}`,
+    STUDENT_CREATION_BRIEF_LINES,
     `Верни ровно ${project.slideCount} элементов, без markdown и без пояснений.`,
     "Каждый элемент должен иметь строго такой вид:",
     JSON.stringify(
@@ -1746,18 +1785,24 @@ function buildDesignBriefPrompt(
     `Audience level: ${project.level}`,
     `Exact slide count: ${project.slideCount}`,
     `Allowed themeId values: ${themeIds}.`,
+    STUDENT_CREATION_BRIEF_LINES,
     "Choose one stable themeId. Do not invent custom theme IDs.",
     "Theme selection guide:",
     "- history/date-heavy topic -> timelineDocumentary;",
     "- biology/chemistry/physics/medicine/ecology -> scienceBoard;",
     "- business/product/economics/project defense -> startupPitch;",
     "- serious tech/analysis/dark topics -> darkLecture;",
-    "- school report with no special domain -> academicClean;",
+    "- university report with no special domain -> academicClean;",
     "- creative/culture/literature/biography -> editorialMagazine;",
     "- younger or friendly explanation -> softClassroom.",
     "Return exactly one slideDirections item for every slide order.",
     "Do not output raw CSS, HTML, coordinates, pixel sizes, or layout code.",
-    "Use imageStrategy=real_photo only when a grounded image search could help. Use diagram for timelines, comparisons, processes, and conceptual schemas.",
+    "Choose visualRole as a scene role: hero, problem, context, explain, compare, sequence, evidence, quote, visual_statement, or summary.",
+    "Choose layoutIntent as an art-direction intent: full_bleed_image, split_image_text, statement, cards, timeline, diagram, comparison, evidence_board, quote_spread, or summary.",
+    "Build Gamma-like visual rhythm while preserving university clarity: strong cover, short text-led moments, image-led scenes only when grounded, diagrams for explanation, evidence support, and a strong final takeaway.",
+    "Do not repeat the same layoutIntent three times in a row. Do not make every slide a card grid.",
+    "Use imageStrategy=real_photo only when a grounded image search could help. Use diagram for timelines, comparisons, processes, causes, concepts, and structures.",
+    "Keep density low or medium: brief visible slides, richer speaker notes, and a balanced images_and_diagrams rhythm.",
     "Use visualPrompt as a concise image/search/art-direction prompt for the real slide topic.",
     "Required JSON shape:",
     JSON.stringify({
@@ -1801,6 +1846,7 @@ export function buildNarrationPrompt(project: ProjectInput, sources: Source[], n
     `Audience level: ${project.level}`,
     `Exact slide count: ${project.slideCount}`,
     `Mode: ${project.mode}`,
+    STUDENT_CREATION_BRIEF_LINES,
     researchBrief ? `Research brief to use for factual grounding:\n${JSON.stringify(researchBrief, null, 2)}` : "",
     planText ? `Narrative plan to follow exactly:\n${planText}` : "",
     "Output format:",
@@ -1810,6 +1856,13 @@ export function buildNarrationPrompt(project: ProjectInput, sources: Source[], n
     "- N must run from 1 through the exact slide count without gaps;",
     "- after each title line, write exactly 5-6 complete sentences for that slide;",
     "- do not use bullet lists, markdown, JSON, citations, source names, or comments.",
+    "University speech rules:",
+    "- write as a prepared university student: natural, confident, easy to read aloud, and professional without bureaucratic wording;",
+    "- every section must explain the real topic, not the slide object;",
+    "- every section must include at least one concrete detail, example, reason, consequence, contrast, or definition;",
+    "- keep the full explanation in narration; visible slide text will be compressed later;",
+    "- make neighboring openings and endings different in wording and rhythm;",
+    "- make the final section a human university-level conclusion tied to the topic.",
     "Narrative plan rules:",
     "- every generatedText section must correspond to one narrativePlan element;",
     "- the section title must match or closely follow slideTitle;",
@@ -1817,7 +1870,7 @@ export function buildNarrationPrompt(project: ProjectInput, sources: Source[], n
     "- each section must develop keyMessage;",
     "- follow transitionToNext by meaning, but never write mechanical phrases like `перейдем к следующему слайду`.",
     "Style model:",
-    "- close to a school report like: `Слайд 1: За фасадом успеха` followed by a direct paragraph beginning `Я расскажу о...`;",
+    "- close to a university student report: direct, academic without stiffness, and easy to read aloud;",
     "- build one continuous report by meaning only: never explain that one slide, section, or paragraph connects to another;",
     "- each paragraph should explain the real topic, not the slide as an object;",
     "- start and finish neighboring paragraphs differently; do not reuse the same sentence pattern across slides;",
@@ -1853,7 +1906,7 @@ function buildNarrationRepairPrompt(
     buildNarrationPrompt(project, sources, narrativePlan, researchBrief),
     "The previous narration answer failed validation.",
     `Validation error: ${message}`,
-    "Rewrite the full narration from scratch as one coherent student report and fix every listed issue.",
+    "Rewrite the full narration from scratch as one coherent university student report and fix every listed issue.",
     "Do not patch short sections with generic endings or transition phrases. Replace weak paragraphs with real topic content.",
     "Never explain how slides, sections, neighboring paragraphs, or next parts connect; write the connected content itself.",
     "Every slide section must contain 5 or 6 complete sentences after its title line, and sections must not share the same opening or closing phrase.",
@@ -2007,6 +2060,7 @@ export function buildGenerationPrompt(
     `Audience level: ${project.level}`,
     `Exact slide count: ${project.slideCount}`,
     `Mode: ${project.mode}`,
+    STUDENT_CREATION_BRIEF_LINES,
     "All slide-facing text must be in Russian.",
     researchText ? `Use this researchBrief as factual guardrails. Do not invent facts outside it or the source excerpts:\n${researchText}` : "",
     planText ? `Use this fixed narrativePlan and copy it into the final PresentationDocument:\n${planText}` : "",
@@ -2029,7 +2083,7 @@ export function buildGenerationPrompt(
     "- match image descriptions and visual choices to the theme mood: darker and stricter for serious material, lighter and softer for cheerful material;",
     "- vary block presentation from slide to slide through layout and visual.type; do not make every content slide feel like the same card/list template.",
     "Voice model:",
-    "- use the style of a school or college study report: clear, concrete, calm, and human;",
+    "- use the style of a university student academic study report: clear, concrete, calm, human, and professional enough to present aloud;",
     "- give the audience a path through the subject: what it is, why it matters, what changes, where the conflict or key tension is, and what conclusion follows;",
     "- use concrete details from the material: names, products, organizations, events, causes, consequences, comparisons, or examples;",
     "- when a personal or evaluative conclusion fits the scenario, write it plainly, for example 'Для меня эта история - предупреждение', but only if it suits the topic;",
@@ -2125,6 +2179,7 @@ function legacyBuildGenerationPrompt(project: ProjectInput, sources: Source[]) {
     `Уровень аудитории: ${project.level}`,
     `Количество слайдов: ${project.slideCount}`,
     `Режим: ${project.mode}`,
+    STUDENT_CREATION_BRIEF_LINES,
     "Требования к слайдам:",
     "- каждый слайд выглядит как 16:9 учебный кадр: короткий заголовок и один блок текста на 1-2 фразы;",
     "- текст на слайде должен быть кратким, без маркированных списков, markdown-заголовков и длинных абзацев;",
@@ -3666,7 +3721,7 @@ function diversifySlideLayouts(slides: Slide[], designBrief?: DesignBrief) {
     const semantic = inferContentLayout(slide, slide.order);
     let next = directed || semantic;
 
-    if (!directed && previous.length >= 2 && previous.at(-1) === next && previous.at(-2) === next) {
+    if (previous.length >= 2 && previous.at(-1) === next && previous.at(-2) === next) {
       next = nextDiverseLayout(index, previous, slide);
     }
 
@@ -3686,6 +3741,9 @@ function layoutFromDesignDirection(
     direction.layoutIntent === "cards" ? ["statement", "quote"] :
     direction.layoutIntent === "timeline" ? ["timeline", "process"] :
     direction.layoutIntent === "diagram" ? ["process", "statement"] :
+    direction.layoutIntent === "comparison" ? ["comparison", "statement"] :
+    direction.layoutIntent === "evidence_board" ? ["metrics", "statement"] :
+    direction.layoutIntent === "quote_spread" ? ["quote", "statement"] :
     direction.layoutIntent === "metric" ? ["metrics", "statement"] :
     direction.layoutIntent === "summary" ? ["summary"] :
     [];
@@ -4258,8 +4316,8 @@ const designBriefJsonSchema = {
         additionalProperties: false,
         properties: {
           slideOrder: { type: "number" },
-          visualRole: { type: "string", enum: ["hero", "explain", "compare", "sequence", "evidence", "reflect", "summary"] },
-          layoutIntent: { type: "string", enum: ["full_bleed_image", "split_image_text", "statement", "cards", "timeline", "diagram", "metric", "summary"] },
+          visualRole: { type: "string", enum: ["hero", "problem", "context", "explain", "compare", "sequence", "evidence", "quote", "visual_statement", "reflect", "summary"] },
+          layoutIntent: { type: "string", enum: ["full_bleed_image", "split_image_text", "statement", "cards", "timeline", "diagram", "comparison", "evidence_board", "quote_spread", "metric", "summary"] },
           imageStrategy: { type: "string", enum: ["real_photo", "generated_illustration", "diagram", "none"] },
           visualPrompt: { type: "string" },
         },

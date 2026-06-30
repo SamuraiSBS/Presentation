@@ -285,6 +285,27 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("preset=");
     expect(prompt).toContain("do not invent CSS");
   });
+
+  it("carries the student-only creation brief into the generation prompt", () => {
+    const project = {
+      id: "project-student",
+      title: "AI in higher education",
+      prompt: "Create a university seminar presentation about AI in higher education.",
+      scenario: "university_report",
+      level: "university_student",
+      mode: "with_sources",
+      slideCount: 8,
+    };
+    const prompt = buildGenerationPrompt(project, []);
+
+    expect(prompt).toContain("university_student");
+    expect(prompt).toContain("easy_professional");
+    expect(prompt).toContain("brief_slides_full_speech");
+    expect(prompt).toContain("images_and_diagrams");
+    expect(prompt).toContain("web_and_pptx_pdf");
+    expect(prompt).toContain("short beautiful slides");
+    expect(prompt).toContain("full explanation in speakerNotes and speechScript");
+  });
 });
 
 describe("structured generation helper", () => {
@@ -618,6 +639,34 @@ describe("generatePresentation fallback behavior", () => {
 
     expect(presentation.presentationTheme?.preset).toBe("moody");
     expect(presentation.presentationTheme?.mood).toBe("dark");
+  });
+
+  it("builds one directed scene per slide without triple layout repetition", async () => {
+    process.env.AI_PROVIDER = "";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "";
+    process.env.ALLOW_DEMO_GENERATION = "true";
+
+    const presentation = await generatePresentation(
+      {
+        id: "project-visual-rhythm",
+        title: "Artificial intelligence in universities",
+        prompt: "Explain the context, evidence, risks, comparison, and practical conclusion for university students.",
+        scenario: "university_report",
+        level: "university_student",
+        mode: "with_sources",
+        slideCount: 7,
+      },
+      [{ id: "source-1", label: "Research", type: "WEB", excerpt: "Evidence about adoption, risks, and outcomes." }],
+    );
+
+    const directions = presentation.designBrief?.slideDirections || [];
+    expect(directions).toHaveLength(7);
+    expect(directions[0]?.visualRole).toBe("hero");
+    expect(directions.at(-1)?.visualRole).toBe("summary");
+    for (let index = 2; index < directions.length; index += 1) {
+      expect(new Set(directions.slice(index - 2, index + 1).map((item) => item.layoutIntent)).size).toBeGreaterThan(1);
+    }
   });
 
   it("accepts a human study-story deck with semantic titles and concrete details", async () => {

@@ -245,16 +245,19 @@ function renderCanvasShape(
           ? pptx.ShapeType.roundRect
           : pptx.ShapeType.rect;
 
-  slide.addShape(shapeType, {
+  const options: Record<string, unknown> = {
     ...canvasBox(element),
     rotate: element.rotation,
-    fill: element.shape === "line" ? { transparency: 100 } : { color: pptxColor(element.fill), transparency: opacityToTransparency(element.opacity) },
     line: {
       color: pptxColor(element.stroke),
       width: element.strokeWidth,
       transparency: opacityToTransparency(element.opacity),
     },
-  });
+  };
+  if (element.shape !== "line") {
+    options.fill = { color: pptxColor(element.fill), transparency: opacityToTransparency(element.opacity) };
+  }
+  slide.addShape(shapeType, options);
 }
 
 async function renderCanvasImage(slide: any, element: CanvasImageElement) {

@@ -4,14 +4,21 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 const slideOptions = [
-  { count: 6, label: "Короткий ответ", description: "5-7 минут" },
+  { count: 6, label: "Короткий семинар", description: "5-7 минут" },
   { count: 8, label: "Быстрый доклад", description: "7-9 минут" },
-  { count: 10, label: "Стандарт", description: "10-12 минут" },
-  { count: 12, label: "Подробно", description: "12-15 минут" },
-  { count: 14, label: "Защита проекта", description: "15+ минут" },
+  { count: 10, label: "Учебная презентация", description: "10-12 минут" },
+  { count: 12, label: "Развернутый доклад", description: "12-15 минут" },
+  { count: 14, label: "Защита работы", description: "15+ минут" },
 ];
 
 const projectTitleLimit = 140;
+const studentGenerationBrief = {
+  audience: "university_student",
+  speechStyle: "easy_professional",
+  slideDensity: "brief_slides_full_speech",
+  visualStrategy: "images_and_diagrams",
+  exportTarget: "web_and_pptx_pdf",
+} as const;
 
 export function NewProjectForm() {
   const router = useRouter();
@@ -54,11 +61,12 @@ export function NewProjectForm() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           title: projectTitleFromTopic(normalizedTopic),
-          prompt: `Сделай понятную учебную презентацию на ${slideCount} слайдов по теме: ${normalizedTopic}. Сначала подготовь подробный связный текст выступления, а на слайды вынеси только короткие тезисы.`,
-          scenario: "school_report",
-          level: "8-11 класс",
+          prompt: studentPrompt(normalizedTopic, slideCount),
+          scenario: "university_report",
+          level: "university_student",
           mode: "with_sources",
           slideCount,
+          generationBrief: studentGenerationBrief,
         }),
       });
       if (!createResponse.ok) throw new Error(await createResponse.text());
@@ -88,12 +96,12 @@ export function NewProjectForm() {
           <div className="wizard-pane">
             <div className="wizard-content">
               <label className="field">
-                <span className="wizard-question">О чем будет выступление?</span>
+                <span className="wizard-question">Какая тема или задание?</span>
                 <textarea
                   className="textarea topic-input"
                   value={topic}
                   onChange={(event) => setTopic(event.target.value)}
-                  placeholder="Например: Искусственный интеллект в образовании"
+                  placeholder="Например: анализ статьи о влиянии ИИ на высшее образование"
                   autoFocus
                 />
               </label>
@@ -110,8 +118,8 @@ export function NewProjectForm() {
           <div className="wizard-pane">
             <div className="wizard-content">
               <div>
-                <h2 className="wizard-question">Сколько слайдов нужно?</h2>
-                <p className="muted">Выберите формат выступления. Текст и структура будут подготовлены под этот объем.</p>
+                <h2 className="wizard-question">Сколько слайдов нужно для выступления?</h2>
+                <p className="muted">Выберите формат университетской презентации. Слайды будут короткими, а полный текст уйдет в заметки докладчика.</p>
               </div>
               <div className="slide-count-options" role="radiogroup" aria-label="Количество слайдов">
                 {slideOptions.map((option) => (
@@ -145,8 +153,8 @@ export function NewProjectForm() {
           <div className="wizard-pane">
             <div className="wizard-content">
               <div>
-                <h2 className="wizard-question">Добавьте материалы</h2>
-                <p className="muted">Файлы помогут точнее подготовить речь и тезисы. Этот шаг можно пропустить.</p>
+                <h2 className="wizard-question">Добавьте материалы по заданию</h2>
+                <p className="muted">Статьи, конспекты и файлы помогут точнее подготовить речь, тезисы и визуальные идеи. Этот шаг можно пропустить.</p>
               </div>
               <label
                 className={`dropzone ${dragActive ? "dropzone-active" : ""}`}
@@ -183,8 +191,8 @@ export function NewProjectForm() {
                 </div>
               ) : (
                 <div className="source-mode">
-                  <strong>Режим без файлов</strong>
-                  <span>Подготовим текст по теме и найдём источники в интернете, если материалов не хватает.</span>
+                  <strong>Можно без файлов</strong>
+                  <span>Подготовим студенческий доклад по теме и найдём источники в интернете, если материалов не хватает.</span>
                 </div>
               )}
             </div>
@@ -209,8 +217,8 @@ export function NewProjectForm() {
         </div>
         <div className="summary-steps">
           <button className={`summary-step ${step === 0 ? "summary-step-active" : ""}`} type="button" onClick={() => setStep(0)}>
-            <span>Тема</span>
-            <strong>{normalizedTopic ? "Заполнена" : "Нужна тема"}</strong>
+            <span>Задание</span>
+            <strong>{normalizedTopic ? "Заполнено" : "Нужна тема"}</strong>
           </button>
           <button
             className={`summary-step ${step === 1 ? "summary-step-active" : ""}`}
@@ -239,7 +247,7 @@ export function NewProjectForm() {
         </div>
         <div className="source-confidence">
           <span>{files.length ? "Источники добавлены" : "Источник будет уточнен"}</span>
-          <strong>{files.length ? "Текст опирается на ваши материалы." : "Если материалов нет, StudyDeck начнёт с темы и поиска источников в интернете."}</strong>
+          <strong>{files.length ? "Доклад опирается на ваши материалы." : "Если материалов нет, StudyDeck начнёт с темы и поиска источников в интернете."}</strong>
         </div>
       </aside>
     </section>
@@ -250,4 +258,13 @@ function projectTitleFromTopic(topic: string) {
   const normalized = topic.replace(/\s+/g, " ").trim();
   if (normalized.length <= projectTitleLimit) return normalized;
   return `${normalized.slice(0, projectTitleLimit - 3).trimEnd()}...`;
+}
+
+function studentPrompt(topic: string, slideCount: number) {
+  return [
+    `Подготовь академическую, но легкую для устного выступления студенческую презентацию на ${slideCount} слайдов по теме: ${topic}.`,
+    "Слайды должны быть короткими и визуально аккуратными: один сильный тезис, минимум текста, изображения, схемы или диаграммы там, где они помогают объяснению.",
+    "Основное объяснение перенеси в заметки докладчика и текст выступления: он должен звучать профессионально, понятно и естественно для студента университета.",
+    "Результат должен одинаково хорошо смотреться в веб-превью и в экспорте PPTX/PDF.",
+  ].join(" ");
 }

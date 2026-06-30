@@ -31,6 +31,7 @@ function project(overrides: Record<string, unknown> = {}) {
 function createHarness() {
   const prisma = {
     project: {
+      create: vi.fn(),
       findFirst: vi.fn(),
       update: vi.fn(),
     },
@@ -40,6 +41,7 @@ function createHarness() {
       update: vi.fn(),
     },
     user: {
+      upsert: vi.fn().mockResolvedValue({ id: "user-1", planCode: "free" }),
       findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "user-1", planCode: "free" }),
     },
     usageCounter: {
@@ -58,6 +60,46 @@ function createHarness() {
 
   return { prisma, queue, service };
 }
+
+describe("ProjectsService creation", () => {
+  it("stores the university student creation brief in the saved prompt", async () => {
+    const { prisma, service } = createHarness();
+    prisma.project.create.mockResolvedValueOnce(project({
+      scenario: "university_report",
+      level: "university_student",
+      mode: "with_sources",
+      prompt: "saved",
+    }));
+
+    await service.create("user-1", {
+      title: "AI in higher education",
+      prompt: "Create a concise university presentation about AI in higher education.",
+      scenario: "university_report",
+      level: "university_student",
+      mode: "with_sources",
+      slideCount: 10,
+      generationBrief: {
+        audience: "university_student",
+        speechStyle: "easy_professional",
+        slideDensity: "brief_slides_full_speech",
+        visualStrategy: "images_and_diagrams",
+        exportTarget: "web_and_pptx_pdf",
+      },
+    });
+
+    expect(prisma.project.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        scenario: "university_report",
+        level: "university_student",
+        mode: "with_sources",
+        prompt: expect.stringContaining("Creation brief:"),
+      }),
+      include: { sources: true, presentation: true },
+    });
+    expect(prisma.project.create.mock.calls[0][0].data.prompt).toContain("brief_slides_full_speech");
+    expect(prisma.project.create.mock.calls[0][0].data.prompt).toContain("images_and_diagrams");
+  });
+});
 
 describe("ProjectsService narration acceptance", () => {
   it("queues final presentation generation when the narration draft is accepted", async () => {

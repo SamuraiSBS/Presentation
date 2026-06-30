@@ -4,6 +4,7 @@ export const planCodeSchema = z.enum(["free", "student", "pro"]);
 export type PlanCode = z.infer<typeof planCodeSchema>;
 
 export const scenarioSchema = z.enum([
+  "university_report",
   "school_report",
   "student_seminar",
   "project_defense",
@@ -457,8 +458,8 @@ const legacyThemeToPremiumThemeId: Record<PresentationThemePreset, string> = {
 
 export const designBriefSlideDirectionSchema = z.object({
   slideOrder: z.number().int().positive(),
-  visualRole: z.enum(["hero", "explain", "compare", "sequence", "evidence", "reflect", "summary"]),
-  layoutIntent: z.enum(["full_bleed_image", "split_image_text", "statement", "cards", "timeline", "diagram", "metric", "summary"]),
+  visualRole: z.enum(["hero", "problem", "context", "explain", "compare", "sequence", "evidence", "quote", "visual_statement", "reflect", "summary"]),
+  layoutIntent: z.enum(["full_bleed_image", "split_image_text", "statement", "cards", "timeline", "diagram", "comparison", "evidence_board", "quote_spread", "metric", "summary"]),
   imageStrategy: z.enum(["real_photo", "generated_illustration", "diagram", "none"]),
   visualPrompt: z.string().default(""),
 });
@@ -1104,6 +1105,15 @@ function stableThemeHash(value: string) {
   return hash;
 }
 
+export const generationBriefSchema = z.object({
+  audience: z.enum(["university_student"]).default("university_student"),
+  speechStyle: z.enum(["easy_professional"]).default("easy_professional"),
+  slideDensity: z.enum(["brief_slides_full_speech"]).default("brief_slides_full_speech"),
+  visualStrategy: z.enum(["images_and_diagrams"]).default("images_and_diagrams"),
+  exportTarget: z.enum(["web_and_pptx_pdf"]).default("web_and_pptx_pdf"),
+});
+export type GenerationBrief = z.infer<typeof generationBriefSchema>;
+
 export const createProjectInputSchema = z.object({
   title: z.string().min(2).max(140),
   prompt: z.string().min(18).max(12000),
@@ -1111,6 +1121,7 @@ export const createProjectInputSchema = z.object({
   level: z.string().min(2).max(80),
   mode: z.enum(["fast_draft", "with_sources", "explain_simpler"]),
   slideCount: z.number().int().min(4).max(20),
+  generationBrief: generationBriefSchema.optional(),
 });
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
 
@@ -1335,6 +1346,18 @@ function addPremiumDirectedCanvas(
   }
   if (intent === "timeline") {
     addSequenceCanvas(slide, theme, elements);
+    return true;
+  }
+  if (intent === "comparison") {
+    addComparisonCanvas(slide, theme, elements);
+    return true;
+  }
+  if (intent === "evidence_board") {
+    addEvidenceCanvas(slide, theme, elements);
+    return true;
+  }
+  if (intent === "quote_spread") {
+    addQuoteCanvas(slide, theme, elements);
     return true;
   }
   if (intent === "diagram" || direction?.imageStrategy === "diagram") {

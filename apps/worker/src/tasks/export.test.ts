@@ -227,6 +227,31 @@ describe("createPptx", () => {
     expect(slideXml).toContain("p. 4");
   });
 
+  it("exports visual director canvas variants", async () => {
+    const source = canvasDeck();
+    const slides = source.slides.map(({ canvas: _canvas, ...slide }) => ({
+      ...slide,
+      blocks: [{ type: "quote" as const, content: "A focused quotation for the final spread." }],
+    }));
+    const buffer = await createPptx({
+      ...source,
+      presentationTheme: PREMIUM_PRESENTATION_THEMES.academicClean,
+      designBrief: {
+        themeId: "academicClean", mood: "serious" as const, audienceFit: "University students",
+        visualMetaphor: "A clear evidence wall", colorIntent: "High contrast academic palette",
+        typographyIntent: "Readable academic typography",
+        rhythm: { titleStyle: "academic" as const, density: "medium" as const, imageFrequency: "balanced" as const, sectionBreaks: true },
+        visualDirection: "Evidence-led visual story", layoutPrinciples: ["Keep one clear scene per slide"],
+        imageStrategy: "Use grounded visuals only",
+        slideDirections: [{ slideOrder: 1, visualRole: "quote" as const, layoutIntent: "quote_spread" as const, imageStrategy: "none" as const, visualPrompt: "Editorial quotation spread" }],
+      },
+      slides,
+    });
+    const zip = await JSZip.loadAsync(buffer);
+    const slideXml = await zip.file("ppt/slides/slide1.xml")?.async("string");
+    expect(slideXml).toContain("A focused quotation");
+  });
+
   it("exports every premium presentation theme", async () => {
     for (const themeId of PREMIUM_PRESENTATION_THEME_IDS) {
       const theme = PREMIUM_PRESENTATION_THEMES[themeId];
