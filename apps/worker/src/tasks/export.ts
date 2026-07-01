@@ -226,7 +226,7 @@ function renderCanvasText(slide: any, element: CanvasTextElement, theme: ExportT
     align: element.align,
     valign: element.valign === "middle" ? "mid" : element.valign,
     rotate: element.rotation,
-    fit: "shrink",
+    fit: element.autoFit === true ? "shrink" : "none",
     margin: 0.02,
   });
 }
@@ -263,12 +263,13 @@ function renderCanvasShape(
 async function renderCanvasImage(slide: any, element: CanvasImageElement) {
   const data = await imageDataForCanvasElement(element);
   if (!data) return;
+  const box = canvasBox(element);
   slide.addImage({
     data,
-    ...canvasBox(element),
+    ...box,
+    sizing: { type: element.fit, ...box },
     rotate: element.rotation,
     transparency: opacityToTransparency(element.opacity),
-    rounding: true,
   });
 }
 
@@ -775,7 +776,7 @@ export async function createPdf(presentation: ReturnType<typeof presentationSche
   }
 }
 
-async function renderPdfHtml(presentation: ReturnType<typeof presentationSchema.parse>) {
+export async function renderPdfHtml(presentation: ReturnType<typeof presentationSchema.parse>) {
   const theme = exportTheme(presentation);
   const slides = await Promise.all(
     presentation.slides.map(async (slide) => {
@@ -1053,15 +1054,15 @@ async function renderPdfElement(element: CanvasElement) {
   ].join(";");
 
   if (element.type === "text") {
-    return `<div class="element text" style="${style};${pdfTextStyle(element)}">${renderPdfText(element)}</div>`;
+    return `<div class="element text" data-canvas-element="${escapeHtml(element.id)}" style="${style};${pdfTextStyle(element)}">${renderPdfText(element)}</div>`;
   }
 
   if (element.type === "shape") {
-    return `<div class="element" style="${style}"><div class="shape" style="${pdfShapeStyle(element)}"></div></div>`;
+    return `<div class="element" data-canvas-element="${escapeHtml(element.id)}" style="${style}"><div class="shape" style="${pdfShapeStyle(element)}"></div></div>`;
   }
 
   const src = await pdfImageSrc(element);
-  return src ? `<div class="element" style="${style};border-radius:18px;overflow:hidden"><img class="image" src="${escapeHtml(src)}" alt="${escapeHtml(element.alt)}" style="object-fit:${element.fit}" /></div>` : "";
+  return src ? `<div class="element" data-canvas-element="${escapeHtml(element.id)}" style="${style};overflow:hidden"><img class="image" src="${escapeHtml(src)}" alt="${escapeHtml(element.alt)}" style="object-fit:${element.fit}" /></div>` : "";
 }
 
 function renderPdfText(element: CanvasTextElement) {

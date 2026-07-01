@@ -14,16 +14,18 @@ afterEach(() => {
 });
 
 describe("image search helpers", () => {
-  it("builds different queries for different slides", () => {
+  it("prefers the design brief visual prompt in a short concrete query", () => {
     const presentation = fixturePresentation();
     const project = { id: "project-1", title: "AI in education", prompt: "Explain practical AI in school" };
 
-    const first = buildSlideImageQuery(project, presentation.slides[0]);
-    const second = buildSlideImageQuery(project, presentation.slides[1]);
+    const first = buildSlideImageQuery(project, presentation.slides[0], presentation.designBrief?.slideDirections[0]);
+    const second = buildSlideImageQuery(project, presentation.slides[1], presentation.designBrief?.slideDirections[1]);
 
+    expect(first).toContain("University students using an AI tutor in a real lecture hall");
     expect(first).toContain("AI in education");
     expect(first).toContain("Classroom context");
     expect(second).toContain("Teacher workflow");
+    expect(first).not.toContain("educational presentation image");
     expect(first).not.toEqual(second);
   });
 
@@ -97,17 +99,18 @@ describe("image search helpers", () => {
     expect(selected?.url).toBe("https://images.example.org/new.jpg");
   });
 
-  it("keeps slides valid when one slide image lookup fails", async () => {
+  it("searches concrete real-photo slides and skips diagram slides", async () => {
     process.env.PRESENTATION_IMAGES_ENABLED = "true";
     const presentation = fixturePresentation();
     const warnings: string[] = [];
+    const queries: string[] = [];
 
     const enriched = await enrichPresentationImages(
       { id: "project-1", title: "AI in education", prompt: "Explain practical AI in school" },
       presentation,
       {
         searchImages: async (query) => {
-          if (query.includes("Teacher workflow")) throw new Error("search failed");
+          queries.push(query);
           return [{ url: "https://cdn.example.com/classroom.jpg", description: "Classroom", sourceTitle: "Image source" }];
         },
         downloadImage: async () => ({ buffer: Buffer.from("image"), contentType: "image/jpeg", extension: "jpg" }),
@@ -118,7 +121,30 @@ describe("image search helpers", () => {
 
     expect(enriched.slides[0].visual.image?.objectKey).toContain("projects/project-1/images/slide-1-");
     expect(enriched.slides[1].visual.image).toBeUndefined();
-    expect(warnings).toEqual(["Slide image lookup failed for slide 2"]);
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain("University students using an AI tutor in a real lecture hall");
+    expect(warnings).toEqual([]);
+  });
+
+  it("skips image lookup when an image direction has no concrete prompt", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    presentation.designBrief!.slideDirections[0].visualPrompt = "presentation image";
+    let searchCalls = 0;
+
+    const enriched = await enrichPresentationImages(
+      { id: "project-1", title: "AI in education", prompt: "Explain practical AI in school" },
+      { ...presentation, slides: [presentation.slides[0]] },
+      {
+        searchImages: async () => {
+          searchCalls += 1;
+          return [];
+        },
+      },
+    );
+
+    expect(searchCalls).toBe(0);
+    expect(enriched.slides[0].visual.image).toBeUndefined();
   });
 
   it("tries another Tavily candidate when the first image cannot be downloaded", async () => {
@@ -168,6 +194,33 @@ function fixturePresentation(): PresentationDocument {
       { slideOrder: 1, slideTitle: "Classroom context", text: "Narration one." },
       { slideOrder: 2, slideTitle: "Teacher workflow", text: "Narration two." },
     ],
+    designBrief: {
+      themeId: "academicClean",
+      mood: "serious",
+      audienceFit: "University students",
+      visualMetaphor: "A practical learning environment",
+      colorIntent: "Clear academic contrast",
+      typographyIntent: "Readable academic type",
+      rhythm: { titleStyle: "academic", density: "medium", imageFrequency: "balanced", sectionBreaks: false },
+      layoutPrinciples: ["Use images only for concrete scenes"],
+      imageStrategy: "Balance real photos, diagrams, and text-led slides",
+      slideDirections: [
+        {
+          slideOrder: 1,
+          visualRole: "context",
+          layoutIntent: "split_image_text",
+          imageStrategy: "real_photo",
+          visualPrompt: "University students using an AI tutor in a real lecture hall",
+        },
+        {
+          slideOrder: 2,
+          visualRole: "sequence",
+          layoutIntent: "diagram",
+          imageStrategy: "diagram",
+          visualPrompt: "Three-step teacher planning and review workflow",
+        },
+      ],
+    },
     slides: [
       {
         id: "slide-1",

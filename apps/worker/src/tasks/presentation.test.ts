@@ -664,6 +664,14 @@ describe("generatePresentation fallback behavior", () => {
     expect(directions).toHaveLength(7);
     expect(directions[0]?.visualRole).toBe("hero");
     expect(directions.at(-1)?.visualRole).toBe("summary");
+    expect(directions.at(-1)?.imageStrategy).toBe("none");
+    const imageDirections = directions.filter((direction) =>
+      direction.imageStrategy === "real_photo" || direction.imageStrategy === "generated_illustration",
+    );
+    expect(imageDirections.length).toBeGreaterThanOrEqual(Math.ceil(directions.length * 0.2));
+    expect(imageDirections.length).toBeLessThanOrEqual(Math.floor(directions.length * 0.4));
+    expect(directions.some((direction) => direction.imageStrategy === "diagram")).toBe(true);
+    expect(directions.some((direction) => direction.imageStrategy === "none")).toBe(true);
     for (let index = 2; index < directions.length; index += 1) {
       expect(new Set(directions.slice(index - 2, index + 1).map((item) => item.layoutIntent)).size).toBeGreaterThan(1);
     }
@@ -883,6 +891,9 @@ describe("generatePresentation fallback behavior", () => {
       expect(bodies[2].messages[1].text).toContain("Deck story");
       expect(bodies[2].messages[1].text).toContain("Slide text plans");
       expect(bodies[2].messages[1].text).toContain("Do not output raw CSS");
+      expect(bodies[2].messages[1].text).toContain("Choose imageStrategy independently for every slide");
+      expect(bodies[2].messages[1].text).toContain("Never request a random stock image");
+      expect(bodies[2].messages[1].text).toContain("20-40 percent");
       expect(bodies[3].json_object).toBe(true);
       expect(bodies[3].json_schema).toBeUndefined();
       expect(bodies[3].messages[1].text).toContain(presentationText);

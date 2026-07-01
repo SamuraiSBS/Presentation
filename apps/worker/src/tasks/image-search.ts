@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { PresentationDocument, SlideVisualImage } from "@studydeck/shared";
+import type { DesignBriefSlideDirection, PresentationDocument, SlideVisualImage } from "@studydeck/shared";
 import { putObjectBuffer } from "../storage.js";
 
 type ProjectInput = {
@@ -62,8 +62,14 @@ export async function enrichPresentationImages(
 
   const slides = [];
   for (const slide of presentation.slides) {
+    const direction = presentation.designBrief?.slideDirections.find((item) => item.slideOrder === slide.order);
+    if (!shouldSearchForSlideImage(slide, direction)) {
+      slides.push(slide);
+      continue;
+    }
+
     try {
-      const query = buildSlideImageQuery(project, slide);
+      const query = buildSlideImageQuery(project, slide, direction);
       const candidates = await searchImages(query);
       let image: SlideVisualImage | undefined;
       let lastDownloadError: unknown;
@@ -115,22 +121,58 @@ export async function enrichPresentationImages(
   };
 }
 
-export function buildSlideImageQuery(project: ProjectInput, slide: PresentationDocument["slides"][number]) {
+export function buildSlideImageQuery(
+  project: ProjectInput,
+  slide: PresentationDocument["slides"][number],
+  direction?: DesignBriefSlideDirection,
+) {
+  const subject = shorten(cleanText(direction?.visualPrompt || slide.visual.description || slide.title), 120);
+  const medium = direction?.imageStrategy === "generated_illustration"
+    ? "clear editorial illustration"
+    : "authentic documentary photo";
   const parts = [
-    "educational presentation image",
-    slide.title,
-    slide.visual.description,
-    slide.thesis,
-    project.title,
-    project.prompt,
-    ...slide.bullets.slice(0, 3),
+    subject,
+    shorten(slide.title, 56),
+    shorten(project.title, 48),
+    medium,
   ]
     .map(cleanText)
     .filter(Boolean);
 
-  const query = shorten([...unique(parts).slice(0, 7), "high quality photo or clear illustration"].join(" "), TAVILY_QUERY_SAFE_LENGTH);
+  const query = shorten(unique(parts).slice(0, 4).join(" "), Math.min(TAVILY_QUERY_SAFE_LENGTH, 240));
   return query.length <= TAVILY_QUERY_MAX_LENGTH ? query : query.slice(0, TAVILY_QUERY_MAX_LENGTH);
 }
+
+function shouldSearchForSlideImage(
+  slide: PresentationDocument["slides"][number],
+  direction?: DesignBriefSlideDirection,
+) {
+  if (direction?.imageStrategy !== "real_photo" && direction?.imageStrategy !== "generated_illustration") {
+    return false;
+  }
+
+  const prompt = cleanText(direction.visualPrompt);
+  if (!prompt) return false;
+
+  const meaningfulWords = prompt
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .split(/\s+/)
+    .filter((word) => word.length >= 3 && !GENERIC_VISUAL_PROMPT_WORDS.has(word));
+  const slideWords = cleanText(slide.title)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .split(/\s+/)
+    .filter((word) => word.length >= 3);
+
+  return meaningfulWords.length >= 2 || meaningfulWords.some((word) => slideWords.includes(word));
+}
+
+const GENERIC_VISUAL_PROMPT_WORDS = new Set([
+  "image", "photo", "picture", "visual", "illustration", "editorial", "educational", "presentation",
+  "high", "quality", "clear", "real", "realistic", "картинка", "фото", "изображение", "иллюстрация",
+  "визуал", "презентация", "слайд", "качественный", "реалистичный",
+]);
 
 export function tavilyResponseToImageCandidates(payload: TavilyImageResponse): ImageCandidate[] {
   const candidates: ImageCandidate[] = [];

@@ -1,7 +1,12 @@
 import {
+  ensureEditableCanvas,
+  hasCustomSlideCanvas,
   presentationSchema,
+  resolvePresentationTheme,
   type PresentationDocument,
   type QualityCritique,
+  type QualityDimensionScore,
+  type QualityDimensions,
   type QualityIssue,
   type Slide,
   type Source,
@@ -44,6 +49,14 @@ type QualityTextEntry = {
 
 const QUALITY_SCORE_THRESHOLD = 82;
 const MAX_DEFAULT_REPAIR_ATTEMPTS = 2;
+const WEAK_DIMENSION_THRESHOLD = 78;
+
+const CHILDISH_OR_SCHOOL_COPY = [
+  /(?:^|\s)(?:ребята|детишки|малыши|школьники)(?:\s|$)/iu,
+  /(?:для|в)\s+(?:детей|школе|классе)/iu,
+  /(?:начальн\w+\s+школ|школьн\w+\s+урок|классн\w+\s+час)/iu,
+  /(?:kids?|children|schoolchildren|little learners)/iu,
+];
 
 export const BANNED_QUALITY_PHRASES = [
   "\u043d\u0430 \u044d\u0442\u043e\u043c \u0441\u043b\u0430\u0439\u0434\u0435",
@@ -129,6 +142,118 @@ export function hasWeakConclusion(slide: Slide, project: QualityProjectInput) {
   const hasTopic = topicTokens.length === 0 || topicTokens.some((token) => text.includes(token));
   const hasConclusion = conclusionWords.some((word) => text.includes(normalizeQualityText(word)));
   return !hasTopic || !hasConclusion || wordCount(slide.speakerNotes) < 35;
+}
+
+export function scoreSpeechNaturalness(presentation: PresentationDocument): QualityDimensionScore {
+  let penalty = 0;
+  const shortNotes = presentation.slides.filter((slide) => wordCount(slide.speakerNotes) < 35).length;
+  const metaNotes = presentation.slides.filter((slide) => hasMetaSlideLanguage(slide.speakerNotes)).length;
+  const missingScripts = presentation.slides.filter((slide) => {
+    const script = presentation.speechScript.find((item) => item.slideOrder === slide.order);
+    return !script || wordCount(script.text) < 35;
+  }).length;
+  penalty += ratioPenalty(shortNotes, presentation.slides.length, 30);
+  penalty += ratioPenalty(metaNotes, presentation.slides.length, 35);
+  penalty += ratioPenalty(missingScripts, presentation.slides.length, 20);
+  if (hasRepeatedSentenceStart(presentation.slides.map((slide) => slide.speakerNotes))) penalty += 15;
+  const score = clamp(Math.round(100 - penalty), 0, 100);
+  return dimension(score, score >= 85
+    ? "Speaker notes are complete, direct, and varied enough to read aloud."
+    : "Speaker notes need fuller, less repetitive, more natural spoken phrasing.");
+}
+
+export function scoreUniversityTone(
+  presentation: PresentationDocument,
+  project?: QualityProjectInput,
+): QualityDimensionScore {
+  const text = [
+    presentation.title,
+    presentation.scenario,
+    presentation.level,
+    project?.scenario,
+    project?.level,
+    ...presentation.slides.flatMap((slide) => [slide.title, slide.thesis, ...slide.bullets, slide.speakerNotes]),
+  ].filter(Boolean).join(" ");
+  const childishMatches = CHILDISH_OR_SCHOOL_COPY.filter((pattern) => pattern.test(text)).length;
+  const academicSignals = /(?:университет|вуз|семинар|исследован|анализ|аргумент|university|seminar|research|analysis)/iu.test(text);
+  const score = clamp(100 - childishMatches * 25 - (childishMatches > 0 && !academicSignals ? 10 : 0), 0, 100);
+  return dimension(score, score >= 85
+    ? "The language fits a university student presentation."
+    : "School-oriented or childish wording weakens the university-level tone.");
+}
+
+export function scoreSlideBrevity(presentation: PresentationDocument): QualityDimensionScore {
+  const denseSlides = presentation.slides.filter(isVisibleTextTooLong).length;
+  const crowdedSlides = presentation.slides.filter((slide) => slide.bullets.length > 4 || slide.blocks.length > 3).length;
+  const score = clamp(100
+    - ratioPenalty(denseSlides, presentation.slides.length, 65)
+    - ratioPenalty(crowdedSlides, presentation.slides.length, 20), 0, 100);
+  return dimension(Math.round(score), score >= 85
+    ? "Titles, theses, and supporting text stay concise."
+    : "Visible slide copy is too dense for a speech-first deck.");
+}
+
+export function scoreVisualRhythm(presentation: PresentationDocument): QualityDimensionScore {
+  const layoutIssues = findLayoutRhythmIssues(presentation).length;
+  const textOnlySlides = presentation.slides.filter((slide) =>
+    slide.visual.type === "none" || (!slide.visual.description && !slide.visual.image && !slide.visual.items.length && !slide.visual.rows.length),
+  ).length;
+  const layouts = new Set(presentation.slides.map((slide) => slide.layout)).size;
+  let penalty = Math.min(35, layoutIssues * 12);
+  penalty += ratioPenalty(textOnlySlides, presentation.slides.length, 35);
+  if (presentation.slides.length >= 4 && layouts < 3) penalty += 15;
+  const score = clamp(Math.round(100 - penalty), 0, 100);
+  return dimension(score, score >= 85
+    ? "Layouts and visual roles create an intentional rhythm."
+    : "The deck repeats layouts or relies too heavily on text-only slides.");
+}
+
+export function scoreSourceGrounding(
+  presentation: PresentationDocument,
+  sources: Source[] = presentation.sources,
+): QualityDimensionScore {
+  const unsupported = presentation.slides.filter((slide) =>
+    hasUnsupportedSpecificity([slide.title, slide.thesis, ...slide.bullets, slide.speakerNotes].join(" "), sources),
+  ).length;
+  const preciseSlides = presentation.slides.filter((slide) =>
+    hasPreciseFact([slide.title, slide.thesis, ...slide.bullets, slide.speakerNotes].join(" ")),
+  ).length;
+  const unreferenced = sources.length
+    ? presentation.slides.filter((slide) => hasPreciseFact([slide.thesis, ...slide.bullets].join(" ")) && !slide.sourceRefs.length).length
+    : 0;
+  const denominator = Math.max(1, preciseSlides);
+  const score = clamp(Math.round(100
+    - ratioPenalty(unsupported, denominator, 65)
+    - ratioPenalty(unreferenced, denominator, 20)), 0, 100);
+  return dimension(score, score >= 85
+    ? "Specific claims are sufficiently supported or appropriately general."
+    : "Precise claims need source support or safer general wording.");
+}
+
+export function scoreExportReadiness(presentation: PresentationDocument): QualityDimensionScore {
+  let riskySlides = 0;
+  for (const slide of presentation.slides) {
+    const canvas = slide.canvas;
+    if (!canvas || !canvas.elements.length) {
+      riskySlides += 1;
+      continue;
+    }
+    const ids = new Set<string>();
+    const invalid = canvas.width <= 0 || canvas.height <= 0 || canvas.elements.some((element) => {
+      const duplicateId = ids.has(element.id);
+      ids.add(element.id);
+      const outside = element.x < 0 || element.y < 0 || element.x + element.w > canvas.width || element.y + element.h > canvas.height;
+      const brokenImage = element.type === "image" && !element.objectKey;
+      const overflowingText = element.type === "text" && !element.autoFit
+        && estimatedCanvasTextHeight(element.text, element.fontSize, element.w) > element.h * 1.2;
+      return duplicateId || outside || brokenImage || overflowingText;
+    });
+    if (invalid) riskySlides += 1;
+  }
+  const score = clamp(Math.round(100 - ratioPenalty(riskySlides, presentation.slides.length, 70)), 0, 100);
+  return dimension(score, score >= 85
+    ? "Slide canvases are complete and safe for web, PPTX, and PDF export."
+    : "One or more slides need a rebuilt canvas or corrected export elements.");
 }
 
 export function findGenericTextIssues(presentation: PresentationDocument): QualityIssue[] {
@@ -332,15 +457,74 @@ export function findWeakConclusionIssues(presentation: PresentationDocument, pro
   });
 }
 
-export function scorePresentationQuality(presentation: PresentationDocument, issues: QualityIssue[]): QualityCritique {
+export function findUniversityToneIssues(
+  presentation: PresentationDocument,
+  project?: QualityProjectInput,
+): QualityIssue[] {
+  if (scoreUniversityTone(presentation, project).score >= WEAK_DIMENSION_THRESHOLD) return [];
+  return [{
+    severity: "major",
+    category: "off_topic",
+    field: "universityTone",
+    message: "The deck uses school-oriented or childish wording for a university audience.",
+    repairInstruction: "Rewrite the affected wording in an easy-professional university student voice.",
+  }];
+}
+
+export function findShortNarrationIssues(presentation: PresentationDocument): QualityIssue[] {
+  return presentation.slides.flatMap((slide) => {
+    const script = presentation.speechScript.find((item) => item.slideOrder === slide.order);
+    if (wordCount(slide.speakerNotes) >= 35 && script && wordCount(script.text) >= 35) return [];
+    return [{
+      slideId: slide.id,
+      severity: "major" as const,
+      category: "bad_narration" as const,
+      field: "speakerNotes, speechScript",
+      message: "The spoken explanation is too short for a natural university report.",
+      repairInstruction: "Rewrite speakerNotes and the matching speechScript from the accepted narration with at least 35 natural spoken words.",
+    }];
+  });
+}
+
+export function findExportReadinessIssues(presentation: PresentationDocument): QualityIssue[] {
+  return presentation.slides.flatMap((slide) => {
+    const singleSlide = presentationSchema.parse({
+      ...presentation,
+      slideCount: 1,
+      slides: [{ ...slide, order: 1 }],
+      outline: [slide.title],
+      narrativePlan: [],
+      speechScript: [{ slideOrder: 1, slideTitle: slide.title, text: slide.speakerNotes }],
+    });
+    if (scoreExportReadiness(singleSlide).score >= WEAK_DIMENSION_THRESHOLD) return [];
+    return [{
+      slideId: slide.id,
+      severity: "major" as const,
+      category: "schema_risk" as const,
+      field: "canvas",
+      message: "The slide canvas is missing or unsafe for export.",
+      repairInstruction: "Rebuild the generated canvas without changing a user-edited custom canvas.",
+    }];
+  });
+}
+
+export function scorePresentationQuality(
+  presentation: PresentationDocument,
+  issues: QualityIssue[],
+  sources: Source[] = presentation.sources,
+  project?: QualityProjectInput,
+): QualityCritique {
   const penalty = issues.reduce((total, issue) => total + (issue.severity === "blocker" ? 35 : issue.severity === "major" ? 15 : 6), 0);
-  const score = Math.max(0, 100 - penalty);
+  const dimensions = scoreQualityDimensions(presentation, sources, project);
+  const dimensionAverage = averageDimensionScore(dimensions);
+  const score = Math.max(0, Math.min(100 - penalty, dimensionAverage));
   const summary = issues.length
     ? `${issues.length} quality issue(s): ${issueCountsByCategory(issues)}.`
     : "No quality issues found.";
   return {
     score,
     summary,
+    dimensions,
     issues,
     passed: score >= QUALITY_SCORE_THRESHOLD && !issues.some((issue) => issue.severity === "blocker"),
   };
@@ -362,13 +546,19 @@ export function critiquePresentationDeterministically(
     ...findRepeatedSentenceStartIssues(presentation),
     ...findFactualRiskIssues(presentation, sources),
     ...(project ? findWeakConclusionIssues(presentation, project) : []),
+    ...findUniversityToneIssues(presentation, project),
+    ...findShortNarrationIssues(presentation),
+    ...findExportReadinessIssues(presentation),
   ]);
-  return scorePresentationQuality(presentation, issues);
+  return scorePresentationQuality(presentation, issues, sources, project);
 }
 
 export function shouldRunModelCritic(critique: QualityCritique, presentation: PresentationDocument, sources: Source[]) {
-  return critique.issues.some((issue) => issue.severity === "blocker")
-    && (critique.score < QUALITY_SCORE_THRESHOLD || presentation.slides.length > 4 || sources.length === 0);
+  return critique.score < QUALITY_SCORE_THRESHOLD
+    && (critique.issues.some((issue) => issue.severity !== "minor")
+      || weakestDimensionScore(critique) < WEAK_DIMENSION_THRESHOLD
+      || presentation.slides.length > 4
+      || sources.length === 0);
 }
 
 export async function improvePresentationQuality(
@@ -380,7 +570,18 @@ export async function improvePresentationQuality(
 ): Promise<PresentationDocument> {
   let best = presentationSchema.parse(presentation);
   let bestCritique = critiquePresentationDeterministically(best, sources, project);
+  const initialCritique = bestCritique;
   let modelCritique = bestCritique;
+
+  if ((bestCritique.dimensions?.exportReadiness.score ?? 100) < WEAK_DIMENSION_THRESHOLD) {
+    const exportReady = rebuildGeneratedCanvases(best);
+    const exportReadyCritique = critiquePresentationDeterministically(exportReady, sources, project);
+    if (exportReadyCritique.score >= bestCritique.score) {
+      best = exportReady;
+      bestCritique = exportReadyCritique;
+      modelCritique = exportReadyCritique;
+    }
+  }
 
   if (!isDemoProvider(provider) && options.critique && shouldRunModelCritic(bestCritique, best, sources)) {
     try {
@@ -391,19 +592,22 @@ export async function improvePresentationQuality(
     }
   }
 
-  const beforeScore = bestCritique.score;
+  const beforeScore = initialCritique.score;
   let attempts = 0;
   const maxAttempts = options.maxRepairAttempts ?? MAX_DEFAULT_REPAIR_ATTEMPTS;
   while (
     !isDemoProvider(provider)
     && options.repair
     && bestCritique.score < QUALITY_SCORE_THRESHOLD
-    && bestCritique.issues.some((issue) => issue.severity === "blocker")
+    && (bestCritique.issues.some((issue) => issue.severity !== "minor")
+      || weakestDimensionScore(bestCritique) < WEAK_DIMENSION_THRESHOLD)
     && attempts < maxAttempts
   ) {
     attempts += 1;
     try {
-      const repaired = applyQualityRepairs(best, await options.repair(best, bestCritique.issues, attempts));
+      const repaired = rebuildGeneratedCanvases(
+        applyQualityRepairs(best, await options.repair(best, targetedRepairIssues(bestCritique), attempts)),
+      );
       const parsed = presentationSchema.parse(repaired);
       const repairedCritique = critiquePresentationDeterministically(parsed, sources, project);
       if (repairedCritique.score >= bestCritique.score) {
@@ -422,6 +626,8 @@ export async function improvePresentationQuality(
     provider,
     beforeScore,
     afterScore: bestCritique.score,
+    dimensions: dimensionScoresRecord(bestCritique.dimensions),
+    weakestDimensions: weakestDimensionNames(bestCritique),
     issueCounts: issueCountsRecord(bestCritique.issues),
     repairAttempts: attempts,
   });
@@ -431,6 +637,7 @@ export async function improvePresentationQuality(
       projectId: project.id,
       provider,
       score: bestCritique.score,
+      dimensions: dimensionScoresRecord(bestCritique.dimensions),
       issueCounts: issueCountsRecord(bestCritique.issues),
     });
   }
@@ -449,6 +656,7 @@ export function applyQualityRepairs(presentation: PresentationDocument, rawRepai
         return {
           ...slide,
           title: cleanText(repair.title) || slide.title,
+          layout: repair.layout || slide.layout,
           thesis: cleanText(repair.thesis) || slide.thesis,
           bullets: Array.isArray(repair.bullets) ? repair.bullets.map(cleanText).filter(Boolean).slice(0, 5) : slide.bullets,
           blocks: Array.isArray(repair.blocks) ? repair.blocks : slide.blocks,
@@ -459,12 +667,12 @@ export function applyQualityRepairs(presentation: PresentationDocument, rawRepai
       })
     : presentation.slides;
 
-  const speechScript = Array.isArray(response.speechScript)
-    ? response.speechScript
-    : presentation.speechScript.map((item) => {
-        const slide = slides.find((candidate) => candidate.order === item.slideOrder);
-        return slide ? { ...item, slideTitle: slide.title } : item;
-      });
+  const requestedSpeechScript = Array.isArray(response.speechScript) ? response.speechScript : [];
+  const speechScript = presentation.speechScript.map((item) => {
+    const slide = slides.find((candidate) => candidate.order === item.slideOrder);
+    const requested = requestedSpeechScript.find((candidate: any) => Number(candidate?.slideOrder) === item.slideOrder);
+    return slide ? { ...item, ...(requested || {}), slideOrder: item.slideOrder, slideTitle: slide.title, text: slide.speakerNotes } : item;
+  });
 
   return presentationSchema.parse({
     ...presentation,
@@ -522,6 +730,7 @@ function parseQualityCritique(value: unknown): QualityCritique {
   return {
     score: clamp(score, 0, 100),
     summary: cleanText(parsed.summary) || "Model critique returned quality issues.",
+    dimensions: parseQualityDimensions(parsed.dimensions),
     issues,
     passed: Boolean(parsed.passed ?? score >= QUALITY_SCORE_THRESHOLD),
   };
@@ -541,9 +750,106 @@ function mergeCritiques(left: QualityCritique, right: QualityCritique): QualityC
   return {
     score,
     summary: right.summary || left.summary,
+    dimensions: mergeDimensions(left.dimensions, right.dimensions),
     issues,
     passed: score >= QUALITY_SCORE_THRESHOLD && !issues.some((issue) => issue.severity === "blocker"),
   };
+}
+
+function scoreQualityDimensions(
+  presentation: PresentationDocument,
+  sources: Source[],
+  project?: QualityProjectInput,
+): QualityDimensions {
+  return {
+    speechNaturalness: scoreSpeechNaturalness(presentation),
+    universityTone: scoreUniversityTone(presentation, project),
+    slideBrevity: scoreSlideBrevity(presentation),
+    visualRhythm: scoreVisualRhythm(presentation),
+    sourceGrounding: scoreSourceGrounding(presentation, sources),
+    exportReadiness: scoreExportReadiness(presentation),
+  };
+}
+
+function parseQualityDimensions(value: unknown): QualityDimensions | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Partial<Record<keyof QualityDimensions, unknown>>;
+  const keys = qualityDimensionNames();
+  if (!keys.every((key) => candidate[key] && typeof candidate[key] === "object")) return undefined;
+  return Object.fromEntries(keys.map((key) => {
+    const item = candidate[key] as Partial<QualityDimensionScore>;
+    return [key, dimension(clamp(Number(item.score) || 0, 0, 100), cleanText(item.reason))];
+  })) as QualityDimensions;
+}
+
+function mergeDimensions(left?: QualityDimensions, right?: QualityDimensions): QualityDimensions | undefined {
+  if (!left) return right;
+  if (!right) return left;
+  return Object.fromEntries(qualityDimensionNames().map((key) => [
+    key,
+    right[key].score < left[key].score ? right[key] : left[key],
+  ])) as QualityDimensions;
+}
+
+function targetedRepairIssues(critique: QualityCritique) {
+  const weak = new Set(weakestDimensionNames(critique));
+  const categoryByDimension: Record<keyof QualityDimensions, QualityIssue["category"][]> = {
+    speechNaturalness: ["bad_narration"],
+    universityTone: ["off_topic", "generic_text"],
+    slideBrevity: ["too_long"],
+    visualRhythm: ["bad_visual", "duplicate"],
+    sourceGrounding: ["factual_risk"],
+    exportReadiness: ["schema_risk"],
+  };
+  const categories = new Set([...weak].flatMap((name) => categoryByDimension[name]));
+  const targeted = critique.issues.filter((issue) => categories.has(issue.category) || issue.severity === "blocker");
+  return targeted.length ? targeted : critique.issues;
+}
+
+function rebuildGeneratedCanvases(presentation: PresentationDocument): PresentationDocument {
+  const theme = resolvePresentationTheme({
+    title: presentation.title,
+    scenario: presentation.scenario,
+    level: presentation.level,
+    presentationTheme: presentation.presentationTheme,
+    designBrief: presentation.designBrief,
+  });
+  const customCanvases = new Map(presentation.slides
+    .filter((slide) => hasCustomSlideCanvas(slide, theme))
+    .map((slide) => [slide.id, slide.canvas]));
+  const rebuilt = ensureEditableCanvas(presentation);
+  return presentationSchema.parse({
+    ...rebuilt,
+    slides: rebuilt.slides.map((slide) => customCanvases.has(slide.id)
+      ? { ...slide, canvas: customCanvases.get(slide.id) }
+      : slide),
+  });
+}
+
+function weakestDimensionNames(critique: QualityCritique): Array<keyof QualityDimensions> {
+  if (!critique.dimensions) return [];
+  const entries = qualityDimensionNames().map((name) => [name, critique.dimensions![name].score] as const);
+  return entries.filter(([, score]) => score < WEAK_DIMENSION_THRESHOLD).map(([name]) => name);
+}
+
+function weakestDimensionScore(critique: QualityCritique) {
+  return critique.dimensions
+    ? Math.min(...qualityDimensionNames().map((name) => critique.dimensions![name].score))
+    : 100;
+}
+
+function dimensionScoresRecord(dimensions?: QualityDimensions) {
+  return dimensions
+    ? Object.fromEntries(qualityDimensionNames().map((name) => [name, dimensions[name].score]))
+    : {};
+}
+
+function averageDimensionScore(dimensions: QualityDimensions) {
+  return Math.round(qualityDimensionNames().reduce((sum, name) => sum + dimensions[name].score, 0) / qualityDimensionNames().length);
+}
+
+function qualityDimensionNames(): Array<keyof QualityDimensions> {
+  return ["speechNaturalness", "universityTone", "slideBrevity", "visualRhythm", "sourceGrounding", "exportReadiness"];
 }
 
 function dedupeIssues(issues: QualityIssue[]) {
@@ -610,6 +916,21 @@ function sentenceStarts(value: string) {
 
 function wordCount(value: string) {
   return cleanText(value).split(/\s+/).filter(Boolean).length;
+}
+
+function dimension(score: number, reason: string): QualityDimensionScore {
+  return { score: clamp(Math.round(score), 0, 100), reason };
+}
+
+function ratioPenalty(count: number, total: number, maximum: number) {
+  return total > 0 ? Math.min(maximum, (count / total) * maximum) : 0;
+}
+
+function estimatedCanvasTextHeight(text: string, fontSize: number, width: number) {
+  const approximateCharactersPerLine = Math.max(8, Math.floor(width / Math.max(5, fontSize * 0.55)));
+  const lines = cleanText(text).split(/\n/).reduce((total, line) =>
+    total + Math.max(1, Math.ceil(line.length / approximateCharactersPerLine)), 0);
+  return lines * fontSize * 1.25;
 }
 
 function normalizeQualityText(value: unknown) {

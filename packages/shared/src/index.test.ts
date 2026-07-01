@@ -17,6 +17,7 @@ import {
   presentationThemeSchema,
   projectStatusSchema,
   qualityCritiqueSchema,
+  qualityDimensionScoreSchema,
   researchBriefSchema,
   resolvePremiumPresentationTheme,
   resolvePresentationTheme,
@@ -123,6 +124,13 @@ describe("shared contracts", () => {
     expect(deckStory.chapters[0].slideOrders).toEqual([1]);
     expect(slideTextPlan.evidenceOrExample).toBe("");
     expect(qualityCritique.issues).toEqual([]);
+    expect(qualityCritique.dimensions).toBeUndefined();
+    expect(qualityDimensionScoreSchema.parse({ score: 87 }).reason).toBe("");
+    expect(qualityCritiqueSchema.parse({
+      dimensions: Object.fromEntries([
+        "speechNaturalness", "universityTone", "slideBrevity", "visualRhythm", "sourceGrounding", "exportReadiness",
+      ].map((name) => [name, { score: 90, reason: `${name} is strong.` }])),
+    }).dimensions?.exportReadiness.score).toBe(90);
     expect(() =>
       generationPipelineArtifactsSchema.parse({
         researchBrief,
@@ -702,7 +710,8 @@ describe("shared contracts", () => {
         },
       }],
     }).slides[0].canvas!;
-    expect(marked.elements.find((element) => element.id === "slide-premium-image-body")).toMatchObject({ fontSize: 18, autoFit: false });
+    expect(marked.elements.find((element) => element.id === "slide-premium-image-body")).toMatchObject({ fontSize: 18 });
+    expect(marked.elements.find((element) => element.id === "slide-premium-image-body" && element.type === "text")?.autoFit).toBeUndefined();
   });
 
   it("builds summary slides as one conclusion with supporting thoughts and a final takeaway", () => {
@@ -1518,6 +1527,33 @@ describe("shared contracts", () => {
       });
       expect(canvas.elements.some((element) => element.id.includes(markers[index]))).toBe(true);
     });
+
+    const diagramSlide = {
+      ...presentation.slides[0],
+      layout: "process" as const,
+      visual: {
+        ...presentation.slides[0].visual,
+        type: "process_diagram" as const,
+        image: undefined,
+        items: [
+          { label: "Research", text: "Collect grounded evidence" },
+          { label: "Explain", text: "Connect causes and effects" },
+          { label: "Conclude", text: "State the takeaway" },
+        ],
+      },
+    };
+    const diagramCanvas = buildSlideCanvas(diagramSlide, presentation.presentationTheme!, {
+      designDirection: {
+        slideOrder: 1,
+        visualRole: "sequence",
+        layoutIntent: "diagram",
+        imageStrategy: "diagram",
+        visualPrompt: "Research to explanation to conclusion process",
+      },
+    });
+    expect(diagramCanvas.elements.some((element) => element.id.includes("-step-0-"))).toBe(true);
+    expect(diagramCanvas.elements.some((element) => element.type === "shape")).toBe(true);
+    expect(diagramCanvas.elements.some((element) => element.type === "image")).toBe(false);
   });
 
   it("keeps old presentations without themeId valid", () => {
@@ -1554,4 +1590,104 @@ describe("shared contracts", () => {
     const second = resolvePresentationTheme({ title: "Neutral topic beta" });
     expect(first.preset).not.toBe(second.preset);
   });
+
+  it("creates valid editable canvases for the parity slide set", () => {
+    const parsed = presentationSchema.parse({
+      id: "presentation-parity",
+      title: "Parity fixture",
+      scenario: "college_report",
+      level: "university",
+      slideCount: 4,
+      generationMode: "demo",
+      generatedText: "Parity fixture",
+      sources: [],
+      outline: ["Image hero", "Diagram board", "Evidence", "Summary"],
+      narrativePlan: [],
+      speechScript: [],
+      slides: [
+        paritySlide("hero", 1, "Image hero", "title", "hero", {
+          type: "image",
+          image: { url: "https://example.com/hero.png", objectKey: "projects/p/images/hero.png", alt: "Students", contentType: "image/png" },
+        }),
+        paritySlide("diagram", 2, "Diagram board", "content", "process", {
+          type: "process_diagram",
+          items: [{ label: "Research", text: "Collect evidence" }, { label: "Explain", text: "Build the argument" }],
+        }),
+        paritySlide("evidence", 3, "Evidence", "content", "evidence"),
+        paritySlide("summary", 4, "Summary", "summary", "summary"),
+      ],
+    });
+
+    const editable = ensureEditableCanvas(parsed);
+    expect(editable.slides).toHaveLength(4);
+    for (const slide of editable.slides) {
+      expect(slideCanvasSchema.safeParse(slide.canvas).success, slide.id).toBe(true);
+      expect(slide.canvas?.elements.length, slide.id).toBeGreaterThan(0);
+    }
+    expect(editable.slides[0].canvas?.elements.some((element) => element.type === "image")).toBe(true);
+    expect(editable.slides[1].canvas?.elements.filter((element) => element.type === "shape").length).toBeGreaterThan(2);
+  });
+
+  it("preserves an explicitly edited canvas byte-for-byte", () => {
+    const parsed = presentationSchema.parse({
+      id: "presentation-custom",
+      title: "Custom canvas",
+      scenario: "college_report",
+      level: "university",
+      slideCount: 1,
+      generationMode: "demo",
+      generatedText: "Custom canvas",
+      sources: [],
+      outline: ["Custom canvas"],
+      narrativePlan: [],
+      speechScript: [],
+      slides: [paritySlide("custom", 1, "Custom canvas", "content", "statement")],
+    });
+    const original = buildSlideCanvas(parsed.slides[0], resolvePresentationTheme(parsed));
+    const custom = {
+      ...original,
+      background: "#123456",
+      backgroundStyle: { type: "solid" as const, color: "#123456" },
+      elements: [
+        ...original.elements.map((element) => element.id === "custom-title" ? { ...element, x: element.x + 37 } : element),
+        {
+          id: "custom-custom-canvas-marker",
+          type: "shape" as const,
+          shape: "rect" as const,
+          x: 0, y: 0, w: 1, h: 1, rotation: 0, zIndex: -1, opacity: 0, locked: true,
+          fill: "#000000", stroke: "#000000", strokeWidth: 0,
+        },
+      ],
+    };
+
+    const editable = ensureEditableCanvas({ ...parsed, slides: [{ ...parsed.slides[0], canvas: custom }] });
+    expect(editable.slides[0].canvas).toEqual(custom);
+  });
 });
+
+function paritySlide(
+  id: string,
+  order: number,
+  title: string,
+  slideKind: "title" | "content" | "summary",
+  layout: "hero" | "process" | "evidence" | "summary" | "statement",
+  visual: Record<string, unknown> = {},
+) {
+  return {
+    id,
+    order,
+    title,
+    slideKind,
+    layout,
+    thesis: `${title} keeps one shared visual source.`,
+    bullets: ["First concrete point", "Second concrete point", "Third concrete point"],
+    definition: null,
+    keyConcepts: [],
+    visual: { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [], ...visual },
+    highlights: [],
+    blocks: [{ type: "bullets", items: ["First concrete point", "Second concrete point", "Third concrete point"] }],
+    speakerNotes: `${title} narration.`,
+    timingSeconds: 45,
+    sourceRefs: layout === "evidence" ? [{ sourceId: "source-1", label: "Research", excerpt: "Concrete evidence", page: "4" }] : [],
+  };
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { presentationSchema, type PresentationDocument } from "@studydeck/shared";
+import { ensureEditableCanvas, presentationSchema, type PresentationDocument } from "@studydeck/shared";
 import {
   applyQualityRepairs,
   critiquePresentationDeterministically,
@@ -14,6 +14,10 @@ import {
   improvePresentationQuality,
   isGenericTitle,
   isVisibleTextTooLong,
+  scoreExportReadiness,
+  scoreSlideBrevity,
+  scoreUniversityTone,
+  scoreVisualRhythm,
 } from "./presentation-quality.js";
 
 const source = {
@@ -36,7 +40,7 @@ function makePresentation(overrides: Partial<PresentationDocument> = {}) {
     ]),
   ];
 
-  return presentationSchema.parse({
+  return ensureEditableCanvas(presentationSchema.parse({
     id: "presentation-1",
     title: "Quality deck",
     scenario: "lesson",
@@ -61,7 +65,7 @@ function makePresentation(overrides: Partial<PresentationDocument> = {}) {
     })),
     slides,
     ...overrides,
-  });
+  }));
 }
 
 function makeSlide(order: number, title: string, thesis: string, bullets: string[]) {
@@ -86,13 +90,90 @@ function makeSlide(order: number, title: string, thesis: string, bullets: string
     },
     highlights: [],
     blocks: [{ type: "bullets" as const, items: bullets }],
-    speakerNotes: `${title} starts with a concrete explanation. The example gives the audience a clear point. The details stay connected to the topic. The slide avoids generic transition wording. The ending prepares a grounded conclusion.`,
+    speakerNotes: `${title} starts with a concrete explanation. The example gives the audience a clear point. The details stay connected to the topic. The narration avoids generic transition wording. The ending prepares a grounded conclusion. A university student can read this argument aloud without sounding scripted or simplistic.`,
     timingSeconds: 45,
     sourceRefs: [{ sourceId: source.id, label: source.label, excerpt: source.excerpt, page: null }],
   };
 }
 
 describe("presentation quality checks", () => {
+  it("scores a strong university deck high across positive dimensions", () => {
+    const critique = critiquePresentationDeterministically(makePresentation(), [source], {
+      id: "project-1",
+      title: "Quality deck",
+      prompt: "Prepare a university seminar report about a quality topic",
+      scenario: "university_report",
+      level: "university_student",
+      mode: "with_sources",
+      slideCount: 2,
+    });
+
+    expect(critique.score).toBeGreaterThanOrEqual(82);
+    expect(critique.dimensions).toBeDefined();
+    expect(Object.values(critique.dimensions || {}).every((dimension) => dimension.score >= 78)).toBe(true);
+  });
+
+  it("penalizes school-oriented or childish copy", () => {
+    const presentation = makePresentation({
+      slides: [{
+        ...makeSlide(1, "Урок для малышей", "Ребята узнают простой школьный ответ.", ["Весёлая задача для детей"]),
+        speakerNotes: "Ребята, сегодня у нас школьный урок для малышей. Мы дадим детям очень простой ответ и повторим его всем классом. Эта весёлая задача не требует анализа. Каждый школьник легко запомнит правило. Затем класс дружно назовёт итог. Так материал останется понятным для детей.",
+      }] as any,
+    });
+
+    expect(scoreUniversityTone(presentation, {
+      id: "project-1", title: "University topic", prompt: "University report", scenario: "university_report",
+      level: "university_student", mode: "with_sources", slideCount: 1,
+    }).score).toBeLessThan(78);
+  });
+
+  it("penalizes overfilled slide text", () => {
+    const presentation = makePresentation({
+      slides: [makeSlide(1, "A title that contains far too many separate words to remain readable during a short spoken presentation", "This thesis contains several separate sentences. It also adds a second paragraph-sized thought that belongs in narration rather than on the slide.", [
+        "This bullet tries to carry far too much visible slide text because it includes several ideas, examples, qualifications, and a conclusion all at once",
+      ])] as any,
+    });
+
+    expect(scoreSlideBrevity(presentation).score).toBeLessThan(78);
+  });
+
+  it("penalizes repeated visual layout rhythm", () => {
+    const slides = Array.from({ length: 5 }, (_, index) => ({
+      ...makeSlide(index + 1, `Distinct topic ${index + 1}`, `Distinct thesis ${index + 1} explains one useful point.`, [`Distinct evidence ${index + 1}`]),
+      slideKind: "content" as const,
+      layout: "statement" as const,
+    }));
+    const presentation = makePresentation({ slides: slides as any });
+
+    expect(scoreVisualRhythm(presentation).score).toBeLessThan(78);
+  });
+
+  it("penalizes missing canvas and repairs export readiness without changing custom canvas", async () => {
+    const base = makePresentation();
+    const customCanvas = {
+      ...base.slides[1].canvas!,
+      version: 2,
+      elements: [...base.slides[1].canvas!.elements, {
+        id: "slide-2-custom-canvas-marker", type: "shape" as const, shape: "rect" as const,
+        x: 0, y: 0, w: 10, h: 10, rotation: 0, zIndex: 99, opacity: 1, locked: false,
+        fill: "#FFFFFF", stroke: "#FFFFFF", strokeWidth: 0,
+      }],
+    };
+    const presentation = presentationSchema.parse({
+      ...base,
+      slides: [{ ...base.slides[0], canvas: undefined }, { ...base.slides[1], canvas: customCanvas }],
+    });
+
+    expect(scoreExportReadiness(presentation).score).toBeLessThan(100);
+    const repaired = await improvePresentationQuality(presentation, {
+      id: "project-1", title: "Quality deck", prompt: "University report", scenario: "university_report",
+      level: "university_student", mode: "with_sources", slideCount: 2,
+    }, [source], "yandex");
+    expect(repaired.slides[0].canvas?.elements.length).toBeGreaterThan(0);
+    expect(repaired.slides[1].canvas).toEqual(customCanvas);
+    expect(() => presentationSchema.parse(repaired)).not.toThrow();
+  });
+
   it("exposes deterministic checks from the text quality plan", () => {
     const slide = makeSlide(2, "Dense point", "The thesis stays short.", [
       "This bullet tries to carry far too much visible slide text because it includes several ideas, examples, qualifications, and a conclusion all at once",
@@ -210,7 +291,7 @@ describe("presentation quality checks", () => {
     ).resolves.toEqual(presentation);
   });
 
-  it("keeps the best schema-valid deck when only non-blocking issues remain", async () => {
+  it("attempts bounded targeted repair when several weak dimensions remain", async () => {
     const presentation = makePresentation({
       sources: [],
       slides: [
@@ -247,7 +328,7 @@ describe("presentation quality checks", () => {
       },
     );
 
-    expect(repairCalls).toBe(0);
+    expect(repairCalls).toBe(2);
     expect(() => presentationSchema.parse(result)).not.toThrow();
   });
 

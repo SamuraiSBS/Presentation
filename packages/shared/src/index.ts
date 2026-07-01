@@ -547,10 +547,27 @@ export const qualityIssueSchema = z.object({
 });
 export type QualityIssue = z.infer<typeof qualityIssueSchema>;
 
+export const qualityDimensionScoreSchema = z.object({
+  score: z.number().min(0).max(100),
+  reason: z.string().default(""),
+});
+export type QualityDimensionScore = z.infer<typeof qualityDimensionScoreSchema>;
+
+export const qualityDimensionsSchema = z.object({
+  speechNaturalness: qualityDimensionScoreSchema,
+  universityTone: qualityDimensionScoreSchema,
+  slideBrevity: qualityDimensionScoreSchema,
+  visualRhythm: qualityDimensionScoreSchema,
+  sourceGrounding: qualityDimensionScoreSchema,
+  exportReadiness: qualityDimensionScoreSchema,
+});
+export type QualityDimensions = z.infer<typeof qualityDimensionsSchema>;
+
 export const qualityCritiqueSchema = z
   .object({
     score: z.number().min(0).max(100).default(100),
     summary: z.string().default("No quality issues found."),
+    dimensions: qualityDimensionsSchema.optional(),
     issues: z.array(qualityIssueSchema).default([]),
     passed: z.boolean().optional(),
   })
@@ -1188,9 +1205,14 @@ export function ensureEditableCanvas(document: PresentationDocument): Presentati
     slides: document.slides.map((slide) => {
       const designDirection = document.designBrief?.slideDirections.find((direction) => direction.slideOrder === slide.order);
       const generatedCanvas = buildSlideCanvas(slide, theme, { designDirection });
+      const hasExplicitCustomCanvas = slide.canvas?.elements.some(
+        (element) => element.id === `${slide.id}-custom-canvas-marker`,
+      );
       return {
         ...slide,
-        canvas: hasCustomSlideCanvas(slide, theme, generatedCanvas)
+        canvas: hasExplicitCustomCanvas
+          ? slide.canvas
+          : hasCustomSlideCanvas(slide, theme, generatedCanvas)
           ? upgradeCustomCanvas(slide.canvas!, generatedCanvas, theme)
           : generatedCanvas,
       };
@@ -1361,7 +1383,7 @@ function addPremiumDirectedCanvas(
     return true;
   }
   if (intent === "diagram" || direction?.imageStrategy === "diagram") {
-    addPanelGridCanvas(slide, theme, elements, ["РџСЂРёС‡РёРЅР°", "Р”РµС‚Р°Р»СЊ", "РС‚РѕРі"]);
+    addDirectedDiagramCanvas(slide, theme, elements, direction);
     return true;
   }
   if (intent === "metric") {
@@ -1373,6 +1395,38 @@ function addPremiumDirectedCanvas(
     return true;
   }
   return false;
+}
+
+function addDirectedDiagramCanvas(
+  slide: Slide,
+  theme: PresentationTheme,
+  elements: CanvasElement[],
+  direction?: DesignBriefSlideDirection,
+) {
+  const visualType = slide.visual?.type || "none";
+  const sceneText = `${slide.title} ${slide.thesis} ${direction?.visualPrompt || ""}`;
+  if (
+    visualType === "process_diagram" ||
+    slide.layout === "process" ||
+    slide.layout === "timeline" ||
+    /process|workflow|cycle|stage|step|timeline|процесс|цикл|этап|шаг|хронолог/iu.test(sceneText)
+  ) {
+    addSequenceCanvas(slide, theme, elements);
+    return;
+  }
+  if (visualType === "comparison_diagram" || slide.visual?.rows.length || /compare|comparison|versus|сравнен/iu.test(sceneText)) {
+    addComparisonCanvas(slide, theme, elements);
+    return;
+  }
+  if (slide.sourceRefs.length > 0 && direction?.visualRole === "evidence") {
+    addEvidenceCanvas(slide, theme, elements);
+    return;
+  }
+  if (slide.layout === "problem-solution" || /cause|effect|problem|solution|причин|следств|проблем|решен/iu.test(sceneText)) {
+    addProblemSolutionCanvas(slide, theme, elements);
+    return;
+  }
+  addPanelGridCanvas(slide, theme, elements, ["Причина", "Связь", "Итог"]);
 }
 
 function addPremiumSplitImageCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], fullBleed: boolean) {

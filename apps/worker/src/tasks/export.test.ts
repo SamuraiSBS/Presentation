@@ -1,8 +1,16 @@
 import { existsSync } from "node:fs";
 import JSZip from "jszip";
 import { PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS } from "@studydeck/shared";
-import { describe, expect, it } from "vitest";
-import { createPdf, createPptx } from "./export.js";
+import { describe, expect, it, vi } from "vitest";
+import { createPdf, createPptx, renderPdfHtml } from "./export.js";
+
+vi.mock("../storage.js", () => ({
+  readObjectBuffer: vi.fn(async () => Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+3MxZ5wAAAABJRU5ErkJggg==",
+    "base64",
+  )),
+  putObjectBuffer: vi.fn(),
+}));
 
 describe("createPptx", () => {
   it("creates a wide deck without visible source text", async () => {
@@ -208,6 +216,30 @@ describe("createPptx", () => {
     expect(slideXml).toContain("161A1F");
   });
 
+  it("keeps canvas gradients, opacity, image fit, text fit, and notes in pptx", async () => {
+    const buffer = await createPptx(richCanvasDeck());
+    const zip = await JSZip.loadAsync(buffer);
+    const slideXml = await zip.file("ppt/slides/slide1.xml")?.async("string");
+    const notesXml = await zip.file("ppt/notesSlides/notesSlide1.xml")?.async("string");
+
+    expect(slideXml).toContain("<a:srcRect");
+    expect(slideXml).not.toContain("<a:normAutofit");
+    expect(slideXml).toMatch(/<a:alpha val="40000"\/>/);
+    expect(Object.keys(zip.files).some((name) => name.startsWith("ppt/media/") && name.endsWith(".svg"))).toBe(true);
+    expect(notesXml).toContain("Canvas parity narration");
+  });
+
+  it("renders the same rich canvas source into PDF HTML", async () => {
+    const html = await renderPdfHtml(richCanvasDeck());
+
+    expect(html).toContain("linear-gradient(135deg");
+    expect(html).toContain('data-canvas-element="image-1"');
+    expect(html).toContain("object-fit:cover");
+    expect(html).toContain('data-canvas-element="shape-1"');
+    expect(html).toContain("opacity:0.4");
+    expect(html).toContain("Canvas title");
+  });
+
   it("exports evidence sources compactly without breaking pptx", async () => {
     const source = canvasDeck();
     const evidenceSlide = {
@@ -375,6 +407,64 @@ function canvasDeck() {
         sourceRefs: [],
       },
     ],
+  };
+}
+
+function richCanvasDeck() {
+  const deck = canvasDeck();
+  return {
+    ...deck,
+    speechScript: [{ slideOrder: 1, slideTitle: "Canvas title", text: "Canvas parity narration" }],
+    slides: deck.slides.map((slide) => ({
+      ...slide,
+      speakerNotes: "Canvas parity narration",
+      canvas: {
+        ...slide.canvas,
+        version: 2,
+        backgroundStyle: {
+          type: "gradient" as const,
+          angle: 135,
+          stops: [
+            { offset: 0, color: "#FFFFFF", opacity: 1 },
+            { offset: 1, color: "#DDEEFF", opacity: 1 },
+          ],
+          blobs: [{ x: 0.8, y: 0.2, size: 0.5, color: "#FF8A00", opacity: 0.25, blur: 60 }],
+        },
+        elements: [
+          ...slide.canvas.elements.map((element) =>
+            element.id === "shape-1"
+              ? { ...element, opacity: 0.4 }
+              : element.type === "text"
+                ? { ...element, autoFit: false }
+                : element,
+          ),
+          {
+            id: "image-1",
+            type: "image" as const,
+            x: 900,
+            y: 430,
+            w: 240,
+            h: 160,
+            rotation: 0,
+            zIndex: 4,
+            opacity: 0.7,
+            locked: false,
+            objectKey: "projects/p/slides/slide-1/assets/image.png",
+            url: "/api/projects/p/slides/slide-1/assets/image-1",
+            alt: "Stored parity image",
+            contentType: "image/png",
+            fit: "cover" as const,
+          },
+          {
+            id: "slide-1-custom-canvas-marker",
+            type: "shape" as const,
+            shape: "rect" as const,
+            x: 0, y: 0, w: 1, h: 1, rotation: 0, zIndex: -1, opacity: 0, locked: true,
+            fill: "#000000", stroke: "#000000", strokeWidth: 0,
+          },
+        ],
+      },
+    })),
   };
 }
 

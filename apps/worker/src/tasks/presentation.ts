@@ -167,16 +167,19 @@ const SYSTEM_PROMPT = [
 ].join(" ");
 
 const QUALITY_CRITIC_SYSTEM_PROMPT = [
-  "You are a strict quality editor for study presentations.",
+  "You are a strict quality editor for university student presentations.",
   "Evaluate the presentation. Do not rewrite it.",
-  "Return only JSON with score, summary, and issues.",
+  "Return only structured JSON with score, summary, all six dimension scores, and issues.",
+  "Judge whether a university student can read the narration aloud naturally, whether slides are brief, whether visual rhythm is intentionally designed, whether claims are grounded, and whether export will preserve the design.",
   "Flag generic text, off-topic slides, overlong visible text, duplicated structure, weak narration, weak visuals, and factual risk.",
 ].join(" ");
 
 const QUALITY_REPAIR_SYSTEM_PROMPT = [
   "You are a careful repair editor for study presentations.",
   "Repair only fields explicitly named by quality issues.",
+  "Target the weakest quality dimensions first: spoken narration, university tone, brevity, visual rhythm, grounding, then export safety.",
   "Keep the deck schema-compatible and preserve source-backed facts.",
+  "Never invent evidence and never replace a user-edited custom canvas.",
   "Return only JSON. Do not add markdown.",
 ].join(" ");
 
@@ -1041,10 +1044,11 @@ function buildResearchVocabulary(project: ProjectInput, sources: Source[]) {
 function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, narrativePlan: SlideNarrative[]): DesignBrief {
   const theme = resolvePresentationTheme(project);
   const themeId = theme.themeId || "academicClean";
-  const directions = Array.from({ length: project.slideCount }, (_, index) => {
+  const hasGroundedVisualContext = researchBrief.facts.some((fact) => fact.confidence !== "low");
+  let directions: DesignBrief["slideDirections"] = Array.from({ length: project.slideCount }, (_, index) => {
     const order = index + 1;
     const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, order);
-    const sceneText = `${plan.slideTitle} ${plan.slidePurpose} ${plan.keyMessage}`;
+    const sceneText = `${plan.slideTitle} ${plan.keyMessage} ${project.title}`;
     const visualRole: DesignBrief["slideDirections"][number]["visualRole"] =
       order === 1 ? "hero" :
       order === project.slideCount ? "summary" :
@@ -1052,33 +1056,34 @@ function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, n
       /этап|шаг|chron|хрон|дата|год|period|timeline/i.test(sceneText) ? "sequence" :
       /доказ|fact|source|источник|пример|evidence/i.test(sceneText) ? "evidence" :
       /проблем|риск|challenge|problem|barrier/i.test(sceneText) ? "problem" :
-      /цитат|quote|«|»|“|”/i.test(sceneText) ? "quote" :
+      /цитат|quote/i.test(sceneText) ? "quote" :
       order === 2 ? "context" :
       order % 5 === 0 ? "visual_statement" :
       researchBrief.facts.length > 0 && order % 4 === 0 ? "evidence" :
       "explain";
+    const concreteScene = isConcreteVisualScene(sceneText);
     const layoutIntent: DesignBrief["slideDirections"][number]["layoutIntent"] =
-      visualRole === "hero" ? "full_bleed_image" :
+      visualRole === "hero" && concreteScene && hasGroundedVisualContext ? "full_bleed_image" :
+      visualRole === "hero" ? "statement" :
       visualRole === "summary" ? "summary" :
       visualRole === "compare" ? "comparison" :
       visualRole === "sequence" ? "timeline" :
       visualRole === "evidence" ? "evidence_board" :
       visualRole === "quote" ? "quote_spread" :
       visualRole === "problem" || visualRole === "visual_statement" ? "statement" :
-      visualRole === "context" && project.mode === "with_sources" ? "split_image_text" :
-      visualRole === "explain" && order % 3 === 0 ? "diagram" :
+      visualRole === "context" && concreteScene && hasGroundedVisualContext ? "split_image_text" :
+      visualRole === "explain" && (isExplanationHeavyScene(sceneText) || order % 3 === 0) ? "diagram" :
       "cards";
-    const imageStrategy =
+    const imageStrategy: DesignBrief["slideDirections"][number]["imageStrategy"] =
       layoutIntent === "timeline" || layoutIntent === "diagram" || layoutIntent === "comparison" ? "diagram" :
-      (layoutIntent === "full_bleed_image" || layoutIntent === "split_image_text") && project.mode === "with_sources" ? "real_photo" :
-      layoutIntent === "full_bleed_image" ? "generated_illustration" :
+      (layoutIntent === "full_bleed_image" || layoutIntent === "split_image_text") ? "real_photo" :
       "none";
     return {
       slideOrder: order,
       visualRole,
       layoutIntent,
       imageStrategy,
-      visualPrompt: `${project.title}: ${plan.keyMessage}`,
+      visualPrompt: buildDeterministicVisualPrompt(project, plan, imageStrategy, layoutIntent),
     };
   });
   for (let index = 2; index < directions.length; index += 1) {
@@ -1092,8 +1097,15 @@ function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, n
       ...current,
       layoutIntent: replacement,
       imageStrategy: replacement === "diagram" ? "diagram" : "none",
+      visualPrompt: buildDeterministicVisualPrompt(
+        project,
+        narrativePlan[index] || buildFallbackNarrativeItem(project, current.slideOrder),
+        replacement === "diagram" ? "diagram" : "none",
+        replacement,
+      ),
     };
   }
+  directions = balanceDeterministicVisualDirections(directions, project, narrativePlan, hasGroundedVisualContext);
   return designBriefSchema.parse({
     themePreset: theme.preset,
     themeId,
@@ -1118,6 +1130,88 @@ function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, n
     imageStrategy: "Use concrete visual descriptions only when they are grounded in the topic or source excerpts.",
     slideDirections: directions,
   });
+}
+
+const CONCRETE_VISUAL_SCENE_PATTERN = /(?:\b(?:person|people|students?|campus|universit\w*|classroom|laboratory|museum|city|country|company|factory|building|device|robot|car|vehicle|book|painting|sculpture|artifact|product|machine|computer|phone|conference|protest|battle|war|expedition|landscape|environment)\b|(?:человек|люди|студент|университет|кампус|аудитори|лаборатори|музей|город|стран|компани|завод|здани|устройств|робот|автомобил|машин|книг|картин|скульптур|артефакт|продукт|компьютер|телефон|конференц|протест|битв|войн|экспедиц|ландшафт|окружающ))/iu;
+const ABSTRACT_VISUAL_SCENE_PATTERN = /(?:\b(?:principle|idea|ethic|meaning|value|theory|concept|conclusion|takeaway)\b|(?:принцип|иде[яи]|этик|смысл|ценност|теори|концепц|вывод|итог))/iu;
+const EXPLANATION_VISUAL_SCENE_PATTERN = /(?:\b(?:process|workflow|system|structure|cause|effect|cycle|stage|step|mechanism|relationship|hierarchy|timeline|compare|versus)\b|(?:процесс|систем|структур|причин|следств|цикл|этап|шаг|механизм|связ|иерарх|хронолог|сравнен))/iu;
+
+function isConcreteVisualScene(value: string) {
+  const text = cleanText(value);
+  return CONCRETE_VISUAL_SCENE_PATTERN.test(text) && !ABSTRACT_VISUAL_SCENE_PATTERN.test(text);
+}
+
+function isExplanationHeavyScene(value: string) {
+  return EXPLANATION_VISUAL_SCENE_PATTERN.test(cleanText(value));
+}
+
+function buildDeterministicVisualPrompt(
+  project: ProjectInput,
+  plan: SlideNarrative,
+  imageStrategy: DesignBrief["slideDirections"][number]["imageStrategy"],
+  layoutIntent: DesignBrief["slideDirections"][number]["layoutIntent"],
+) {
+  const subject = shortenWords(cleanText(plan.keyMessage || plan.slideTitle || project.title), 12);
+  if (imageStrategy === "real_photo") {
+    return `Documentary scene of ${subject}; real people, place, object, or event from ${cleanText(project.title)}`;
+  }
+  if (imageStrategy === "diagram") {
+    const diagramType = layoutIntent === "timeline" ? "Timeline" : layoutIntent === "comparison" ? "Comparison" : "Concept";
+    return `${diagramType} diagram showing ${subject}`;
+  }
+  return `Text-led emphasis on ${subject}`;
+}
+
+function balanceDeterministicVisualDirections(
+  directions: DesignBrief["slideDirections"],
+  project: ProjectInput,
+  narrativePlan: SlideNarrative[],
+  hasGroundedVisualContext: boolean,
+) {
+  if (!hasGroundedVisualContext || directions.length < 3) return directions;
+
+  const minimumImages = Math.ceil(directions.length * 0.2);
+  const maximumImages = Math.max(minimumImages, Math.floor(directions.length * 0.4));
+  const imageStrategies = new Set(["real_photo", "generated_illustration"]);
+  let imageCount = directions.filter((direction) => imageStrategies.has(direction.imageStrategy)).length;
+  const balanced = [...directions];
+
+  for (let index = 0; index < balanced.length && imageCount < minimumImages; index += 1) {
+    const direction = balanced[index];
+    const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, direction.slideOrder);
+    const sceneText = `${plan.slideTitle} ${plan.keyMessage} ${project.title}`;
+    if (
+      direction.visualRole === "summary" ||
+      direction.visualRole === "evidence" ||
+      direction.visualRole === "quote" ||
+      direction.imageStrategy === "diagram" ||
+      !isConcreteVisualScene(sceneText) &&
+      !isConcreteVisualScene(project.title)
+    ) continue;
+
+    balanced[index] = {
+      ...direction,
+      layoutIntent: direction.visualRole === "hero" ? "full_bleed_image" : "split_image_text",
+      imageStrategy: "real_photo",
+      visualPrompt: buildDeterministicVisualPrompt(project, plan, "real_photo", direction.layoutIntent),
+    };
+    imageCount += 1;
+  }
+
+  for (let index = balanced.length - 1; index >= 0 && imageCount > maximumImages; index -= 1) {
+    const direction = balanced[index];
+    if (!imageStrategies.has(direction.imageStrategy)) continue;
+    const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, direction.slideOrder);
+    balanced[index] = {
+      ...direction,
+      layoutIntent: direction.visualRole === "hero" ? "statement" : "cards",
+      imageStrategy: "none",
+      visualPrompt: buildDeterministicVisualPrompt(project, plan, "none", direction.layoutIntent),
+    };
+    imageCount -= 1;
+  }
+
+  return balanced;
 }
 
 function buildDeckStory(project: ProjectInput, researchBrief: ResearchBrief, narrativePlan: SlideNarrative[]): DeckStory {
@@ -1801,9 +1895,14 @@ function buildDesignBriefPrompt(
     "Choose layoutIntent as an art-direction intent: full_bleed_image, split_image_text, statement, cards, timeline, diagram, comparison, evidence_board, quote_spread, or summary.",
     "Build Gamma-like visual rhythm while preserving university clarity: strong cover, short text-led moments, image-led scenes only when grounded, diagrams for explanation, evidence support, and a strong final takeaway.",
     "Do not repeat the same layoutIntent three times in a row. Do not make every slide a card grid.",
-    "Use imageStrategy=real_photo only when a grounded image search could help. Use diagram for timelines, comparisons, processes, causes, concepts, and structures.",
+    "Choose imageStrategy independently for every slide: real_photo, generated_illustration, diagram, or none.",
+    "Use real_photo only for a concrete, searchable person, place, object, company, event, artwork, historical scene, laboratory object, product, or environment that makes the idea more memorable.",
+    "Use diagram for processes, comparisons, causes and effects, concept maps, timelines, structures, and systems. Diagram slides must be understandable from deterministic shapes and labels without an external image.",
+    "Use none for strong theses, abstract claims, thinly sourced topics, reflective moments, and the final takeaway. Never request a random stock image merely to fill space.",
+    "Across most decks, keep real_photo and generated_illustration together near 20-40 percent of slides; explanation-heavy slides should prefer diagrams, and images must not appear on every slide.",
     "Keep density low or medium: brief visible slides, richer speaker notes, and a balanced images_and_diagrams rhythm.",
-    "Use visualPrompt as a concise image/search/art-direction prompt for the real slide topic.",
+    "For real_photo or generated_illustration, visualPrompt must be a short, concrete, searchable subject describing visible people, place, object, action, or event. Do not write generic phrases such as 'educational presentation image'.",
+    "For diagram, visualPrompt must name the specific process, comparison, causal chain, timeline, or structure to draw. For none, describe the text-led emphasis briefly.",
     "Required JSON shape:",
     JSON.stringify({
       themeId: "academicClean",
@@ -2597,7 +2696,9 @@ function buildQualityCriticPrompt(presentation: PresentationDocument, determinis
   }));
 
   return [
-    "Evaluate the presentation. Do not rewrite it. Return only JSON with score, summary and issues.",
+    "Evaluate the presentation. Do not rewrite it. Return only JSON with score, summary, dimensions and issues.",
+    "Dimensions are speechNaturalness, universityTone, slideBrevity, visualRhythm, sourceGrounding and exportReadiness. Score each from 0 to 100 and give a short reason.",
+    "Ask: can a university student read this aloud naturally; are slides brief; is visual rhythm intentional; are claims grounded; will export preserve the design?",
     "Use severity blocker, major or minor. Use category generic_text, off_topic, too_long, duplicate, bad_narration, bad_visual, factual_risk or schema_risk.",
     "Prefer field-level issues with slideId when a single slide can be repaired.",
     "Do not quote or repeat full source text.",
@@ -2617,8 +2718,9 @@ function buildQualityCriticPrompt(presentation: PresentationDocument, determinis
 
 function buildQualityRepairPrompt(presentation: PresentationDocument, issues: QualityIssue[], attempt: number) {
   const affectedSlideIds = new Set(issues.map((issue) => issue.slideId).filter(Boolean));
+  const acceptedNarration = new Map(parseNarrationSections(presentation.generatedText).map((section) => [section.order, section.text]));
   const slides = presentation.slides
-    .filter((slide) => affectedSlideIds.has(slide.id))
+    .filter((slide) => !affectedSlideIds.size || affectedSlideIds.has(slide.id))
     .map((slide) => ({
       slideId: slide.id,
       slideOrder: slide.order,
@@ -2638,6 +2740,7 @@ function buildQualityRepairPrompt(presentation: PresentationDocument, issues: Qu
         rows: slide.visual.rows,
       },
       speakerNotes: slide.speakerNotes,
+      acceptedNarration: acceptedNarration.get(slide.order) || slide.speakerNotes,
       sourceRefs: slide.sourceRefs.map((ref) => ({ sourceId: ref.sourceId, label: ref.label })),
     }));
 
@@ -2645,6 +2748,8 @@ function buildQualityRepairPrompt(presentation: PresentationDocument, issues: Qu
     `Repair attempt ${attempt}. Repair only the listed broken fields and slides.`,
     "Return JSON { slides: [...] }. Each slide item must include slideId or slideOrder plus changed fields only.",
     "You may change title, thesis, bullets, blocks, visual.description and speakerNotes when the issue explicitly requires it.",
+    "For visual rhythm issues you may also choose a schema-valid layout and make the visual description concrete; the worker will rebuild generated canvases.",
+    "For weak speech, rewrite speakerNotes from the accepted narration and keep the matching speechScript aligned.",
     "Replace template transitions, filler, and watery phrases with topic-specific causes, examples, consequences, concrete mechanisms, and a clear conclusion.",
     "Do not write about slide structure, transitions, next sections, or what the presentation will explain; write the actual subject matter.",
     "Do not invent precise facts, dates, names, numbers, or citations. Preserve existing sourceRefs.",
@@ -2950,21 +3055,48 @@ function normalizeDesignBrief(raw: unknown, project: ProjectInput, sources: Sour
 }
 
 function ensureDesignBriefDirections(brief: DesignBrief, project: ProjectInput, narrativePlan: SlideNarrative[]) {
-  if (brief.slideDirections.length === project.slideCount) {
-    return brief;
+  let normalized = brief;
+  if (brief.slideDirections.length !== project.slideCount) {
+    const fallback = buildDesignBrief(project, {
+      topic: cleanText(project.title || project.prompt),
+      angle: cleanText(project.prompt),
+      facts: [],
+      warnings: [],
+      vocabulary: [],
+    }, narrativePlan);
+    const byOrder = new Map(brief.slideDirections.map((direction) => [direction.slideOrder, direction]));
+    normalized = designBriefSchema.parse({
+      ...brief,
+      slideDirections: fallback.slideDirections.map((direction) => byOrder.get(direction.slideOrder) || direction),
+    });
   }
-  const fallback = buildDesignBrief(project, {
-    topic: cleanText(project.title || project.prompt),
-    angle: cleanText(project.prompt),
-    facts: [],
-    warnings: [],
-    vocabulary: [],
-  }, narrativePlan);
-  const byOrder = new Map(brief.slideDirections.map((direction) => [direction.slideOrder, direction]));
-  return designBriefSchema.parse({
-    ...brief,
-    slideDirections: fallback.slideDirections.map((direction) => byOrder.get(direction.slideOrder) || direction),
+
+  const maximumImages = Math.max(1, Math.floor(project.slideCount * 0.4));
+  let imageCount = 0;
+  const slideDirections = normalized.slideDirections.map((direction) => {
+    const plan = narrativePlan[direction.slideOrder - 1] || buildFallbackNarrativeItem(project, direction.slideOrder);
+    if (direction.slideOrder === project.slideCount || direction.visualRole === "summary") {
+      return {
+        ...direction,
+        layoutIntent: "summary" as const,
+        imageStrategy: "none" as const,
+        visualPrompt: buildDeterministicVisualPrompt(project, plan, "none", "summary"),
+      };
+    }
+    if (direction.imageStrategy !== "real_photo" && direction.imageStrategy !== "generated_illustration") {
+      return direction;
+    }
+    imageCount += 1;
+    if (imageCount <= maximumImages) return direction;
+    return {
+      ...direction,
+      layoutIntent: direction.visualRole === "hero" ? "statement" as const : "cards" as const,
+      imageStrategy: "none" as const,
+      visualPrompt: buildDeterministicVisualPrompt(project, plan, "none", direction.layoutIntent),
+    };
   });
+
+  return designBriefSchema.parse({ ...normalized, slideDirections });
 }
 
 function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], project: ProjectInput, narrationSection?: NarrationSection): Slide {
@@ -4347,12 +4479,35 @@ const slideTextRepairSchema = {
   required: ["slides"],
 };
 
+const qualityDimensionJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    score: { type: "number" },
+    reason: { type: "string" },
+  },
+  required: ["score", "reason"],
+};
+
 const qualityCritiqueJsonSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
     score: { type: "number" },
     summary: { type: "string" },
+    dimensions: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        speechNaturalness: qualityDimensionJsonSchema,
+        universityTone: qualityDimensionJsonSchema,
+        slideBrevity: qualityDimensionJsonSchema,
+        visualRhythm: qualityDimensionJsonSchema,
+        sourceGrounding: qualityDimensionJsonSchema,
+        exportReadiness: qualityDimensionJsonSchema,
+      },
+      required: ["speechNaturalness", "universityTone", "slideBrevity", "visualRhythm", "sourceGrounding", "exportReadiness"],
+    },
     issues: {
       type: "array",
       items: {
@@ -4382,7 +4537,7 @@ const qualityCritiqueJsonSchema = {
       },
     },
   },
-  required: ["score", "summary", "issues"],
+  required: ["score", "summary", "dimensions", "issues"],
 };
 
 const qualityRepairJsonSchema = {
@@ -4412,6 +4567,11 @@ const qualityRepairJsonSchema = {
           slideId: { type: "string" },
           slideOrder: { type: "number" },
           title: { type: "string" },
+          layout: { type: "string", enum: [
+            "hero", "bullets", "two-column", "summary", "statement", "quote", "definition", "timeline",
+            "comparison", "process", "image-focus", "case-study", "question-answer", "myth-fact", "metrics",
+            "evidence", "problem-solution", "explain-example",
+          ] },
           thesis: { type: "string" },
           bullets: { type: "array", items: { type: "string" } },
           speakerNotes: { type: "string" },
