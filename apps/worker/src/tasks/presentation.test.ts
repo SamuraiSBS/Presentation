@@ -54,6 +54,12 @@ const forbiddenNarrationFragments = [
   "переход к следующему",
 ];
 const forbiddenSlideTextFragments = [
+  "Подготовь академическую",
+  "легкую для устного выступления",
+  "студенческую презентацию",
+  "Связи:",
+  "требует осторожных формулировок",
+  "лучше объяснять через проверяемые причины",
   "Главная идея связана с темой",
   "Материал стоит разбирать",
   "смысловым частым",
@@ -492,6 +498,62 @@ describe("slide-facing text quality", () => {
       },
     ]);
   });
+
+  it("flags Alfa-style local fallback formulas in visible slide text", () => {
+    const issues = findSlideTextIssues({
+      slides: [
+        {
+          order: 4,
+          title: "Перед финалом остаются самые сильные факты",
+          thesis: "Сложную часть \"Альфа-Банк\" лучше передать коротко и по существу.",
+          bullets: [
+            "Связь между фактами делает \"Альфа-Банк\" понятнее для слушателя.",
+            "Банк развивает цифровые сервисы для повседневных финансовых задач.",
+          ],
+          blocks: [{ type: "callout", content: "Конкретный случай помогает объяснить \"Альфа-Банк\" через понятный опыт." }],
+          definition: null,
+          visual: { title: "", items: [], rows: [], leftLabel: "", rightLabel: "" },
+          speakerNotes: "Альфа-Банк работает как крупная финансовая организация, поэтому его удобно рассматривать через услуги, цифровые каналы и клиентский опыт. В такой теме важно не придумывать неподтверждённые цифры, а говорить о том, как банк взаимодействует с людьми. Цифровые сервисы делают банковские операции быстрее и привычнее для клиента. При этом качество сервиса зависит от надёжности, доступности и доверия. Поэтому вывод должен быть осторожным и опираться на проверяемые наблюдения.",
+        },
+      ],
+    } as any);
+
+    expect(issues).toEqual([
+      {
+        slideOrder: 4,
+        fields: ["title", "thesis", "bullets.0", "blocks.0.content"],
+        reasons: ["generic or meta text"],
+      },
+    ]);
+  });
+
+  it("flags prompt echoes and cautious fallback formulas in visible slide text", () => {
+    const issues = findSlideTextIssues({
+      slides: [
+        {
+          order: 7,
+          title: "Связи: Карибский кризис",
+          thesis: "Подготовь академическую, но легкую для устного выступления студенческую презентацию на 10 слайдов по теме: Карибский кризис.",
+          bullets: [
+            "Карибский кризис требует осторожных формулировок без неподтверждённых деталей.",
+            "Карибский кризис лучше объяснять через проверяемые причины и последствия.",
+          ],
+          blocks: [],
+          definition: null,
+          visual: { title: "", items: [], rows: [], leftLabel: "", rightLabel: "" },
+          speakerNotes: "Карибский кризис стал одним из самых опасных эпизодов холодной войны. США и СССР оказались близко к прямому столкновению из-за размещения ракет и взаимного давления. Главная опасность была не только в оружии, но и в скорости решений. Переговоры помогли снизить риск войны. Поэтому этот кризис важно рассматривать как пример предельной ответственности политических лидеров.",
+        },
+      ],
+    } as any);
+
+    expect(issues).toEqual([
+      {
+        slideOrder: 7,
+        fields: ["title", "thesis", "bullets.0", "bullets.1"],
+        reasons: ["generic or meta text"],
+      },
+    ]);
+  });
 });
 
 describe("layout normalization", () => {
@@ -637,6 +699,43 @@ describe("generatePresentation fallback behavior", () => {
     expect(presentation.slides[0].speakerNotes).toContain("Городской воздух меняется из-за транспорта");
     expect(presentation.speechScript[0].text).toContain("Городской воздух меняется из-за транспорта");
     expect(presentation.slides).toHaveLength(2);
+  });
+
+  it("uses the clean topic instead of the student prompt in demo fallback slides", async () => {
+    process.env.AI_PROVIDER = "";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "";
+    process.env.YANDEX_FOLDER_ID = "";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "true";
+
+    const studentPrompt = "Подготовь академическую, но легкую для устного выступления студенческую презентацию на 10 слайдов по теме: Карибский кризис. Слайды должны быть короткими.";
+    const acceptedNarration = [
+      "Слайд 1: Карибский кризис как предел холодной войны",
+      "Карибский кризис стал моментом, когда противостояние США и СССР подошло к опасной границе. Размещение ракет и ответные действия сторон создали риск прямого военного столкновения. Важным было не только оружие, но и скорость политических решений. Переговоры помогли остановить эскалацию. Поэтому кризис показывает, насколько важна связь между силой и дипломатией.",
+      "",
+      "Слайд 2: Итог для международной политики",
+      "После кризиса стало очевидно, что ядерное сдерживание требует каналов связи и взаимного контроля. Политические лидеры увидели, что давление без переговоров повышает риск ошибки. Компромисс позволил избежать войны, хотя напряжение между системами не исчезло. Этот опыт повлиял на дальнейшие соглашения о безопасности. Главный вывод в том, что ответственность в кризисе важнее демонстрации силы.",
+    ].join("\n");
+
+    const presentation = await generatePresentationFromNarration(
+      {
+        id: "project-script",
+        title: studentPrompt,
+        prompt: studentPrompt,
+        scenario: "university_report",
+        level: "university_student",
+        mode: "with_sources",
+        slideCount: 2,
+      },
+      [{ id: "src-prompt", label: "Prompt", type: "PROMPT", size: 0, excerpt: studentPrompt }],
+      acceptedNarration,
+    );
+
+    const visibleText = visiblePresentationText(presentation);
+    expect(presentation.title).toBe("Карибский кризис");
+    expect(visibleText).toContain("Карибский кризис");
+    expectNoForbiddenSlideText(visibleText);
   });
 
   it("stores a deterministic dark theme for heavy topics in demo generation", async () => {

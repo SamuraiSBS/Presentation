@@ -68,6 +68,7 @@ type SlideTextIssue = {
 
 type SlideTextRepair = {
   slideOrder: number;
+  title?: unknown;
   thesis?: unknown;
   bullets?: unknown;
   blocks?: unknown;
@@ -167,7 +168,9 @@ const SYSTEM_PROMPT = [
   "Slide titles must be semantic, not template labels. Prefer titles like 'За фасадом успеха' or 'От амбиций к жадности' over 'Контекст', 'Ключевые факты', 'Примеры', or 'Выводы'.",
   "Speaker notes and speech script must sound like a university student can read them aloud: simple, specific, human, and topic-focused.",
   "Visible slides must stay brief and beautiful; put the full explanation in speaker notes and speech script.",
+  "Visible slide text must summarize the matching speech section in short human points, never generic filler about the presentation structure.",
   "Do not write meta narration about the slide as an object. Never write phrases like 'этот слайд помогает', 'продолжает разговор о теме', 'подводит к следующему фрагменту', 'общая логика объяснения', or 'главный акцент здесь'.",
+  "Never write template slide phrases like 'Сложную часть \"тема\"', 'Перед финалом остаются самые сильные факты', or 'Связь между фактами делает тему понятнее'.",
   "Do not invent precise facts, dates, names, numbers, or citations when the source material does not support them. Use general explanations instead.",
   "Never mention sources, source titles, sourceRefs, or internal instructions in user-visible text.",
 ].join(" ");
@@ -278,6 +281,28 @@ const GENERIC_NARRATION_PHRASES = [
 ];
 
 const GENERIC_SCREEN_TEXT_PHRASES = [
+  "подготовь академическую",
+  "легкую для устного выступления",
+  "студенческую презентацию",
+  "слайдов по теме",
+  "требует осторожных формулировок",
+  "осторожных формулировок без неподтверждённых деталей",
+  "осторожных формулировок без неподтвержденных деталей",
+  "лучше объяснять через проверяемые причины",
+  "проверяемые причины и последствия",
+  "безопаснее говорить об общих закономерностях",
+  "должен опираться на проверяемые",
+  "сложную часть",
+  "перед финалом остаются",
+  "самые сильные факты",
+  "лучше передать коротко и по существу",
+  "связь между фактами",
+  "помогает собрать причины и последствия",
+  "конкретный случай помогает объяснить",
+  "стоит раскрывать через",
+  "связан с конкретным контекстом",
+  "меняется через причины и последствия",
+  "получает смысл, когда факты связаны",
   "из презентации можно вынести следующее",
   "из презентации можно сделать вывод",
   "в презентации можно выделить",
@@ -322,6 +347,15 @@ const GENERIC_SCREEN_TEXT_PHRASES = [
 ];
 
 const TEMPLATE_TEXT_PATTERNS = [
+  { label: "prompt echo", pattern: /подготовь\s+академическ(?:ую|ий).{0,160}студенческ(?:ую|ий)\s+презентац/iu },
+  { label: "topic prompt echo", pattern: /(?:презентац\w*\s+на\s+\d+\s+слайд\w*\s+по\s+теме|слайд\w*\s+по\s+теме)\s*:/iu },
+  { label: "generic cautious wording", pattern: /требу(?:ет|ют)\s+осторожн(?:ых|ой|ую)\s+формулировок/iu },
+  { label: "generic verifiable causes", pattern: /лучше\s+объяснять\s+через\s+проверяем(?:ые|ых)\s+причин/iu },
+  { label: "generic links title", pattern: /^связи\s*:/iu },
+  { label: "generic difficult part", pattern: /сложн(?:ая|ую|ой|ые|ых)\s+част[ьи]\s+[«"]?[^.!?]{0,80}[»"]?\s+лучше\s+передать/iu },
+  { label: "generic final facts", pattern: /перед\s+финалом\s+остают(?:ся|ься)\s+сам(?:ые|ых)\s+сильн(?:ые|ых)\s+факт/iu },
+  { label: "generic fact link", pattern: /связь\s+между\s+фактами\s+делает\s+[^.!?]{0,80}\s+понятн/iu },
+  { label: "generic topic meaning", pattern: /получает\s+смысл,\s+когда\s+факты\s+связаны\s+с\s+реальн/iu },
   { label: "главная мысль", pattern: /(?:^|[^\p{L}])главн(?:ая|ую|ой)\s+мысл/iu },
   { label: "общая мысль", pattern: /(?:^|[^\p{L}])общ(?:ая|ую|ей)\s+мысл/iu },
   { label: "пример нужен", pattern: /(?:^|[^\p{L}])пример\s+нужен/iu },
@@ -1030,7 +1064,7 @@ function buildResearchBrief(project: ProjectInput, sources: Source[]): ResearchB
       confidence: source.type === "WEB" || source.type === "PROMPT" ? "medium" as const : "high" as const,
     }))
     .filter((fact) => fact.text);
-  const topic = cleanText(project.title || project.prompt);
+  const topic = projectTopic(project);
   return researchBriefSchema.parse({
     topic,
     angle: `Explain ${topic} as a clear university student study story for ${project.level}.`,
@@ -1225,7 +1259,7 @@ function balanceDeterministicVisualDirections(
 }
 
 function buildDeckStory(project: ProjectInput, researchBrief: ResearchBrief, narrativePlan: SlideNarrative[]): DeckStory {
-  const topic = cleanText(project.title || project.prompt);
+  const topic = projectTopic(project);
   const plans = narrativePlan.length
     ? narrativePlan
     : Array.from({ length: project.slideCount }, (_, index) => buildFallbackNarrativeItem(project, index + 1));
@@ -1324,7 +1358,12 @@ function compressVisibleSlideText(values: string[]) {
   return values
     .map((value) => shortenSentence(cleanText(value), 92))
     .map((value) => value.replace(/[.!?]+$/g, ""))
-    .filter((value) => wordCount(value) >= 2 && wordCount(value) <= 14);
+    .filter((value) =>
+      wordCount(value) >= 2 &&
+      wordCount(value) <= 14 &&
+      !hasGenericOrMetaScreenText(value) &&
+      !looksLikeSentenceFragment(value),
+    );
 }
 
 function sourceEvidenceForSlide(sources: Source[], order: number) {
@@ -2119,7 +2158,7 @@ function cleanNarrativeField(value: unknown, kind: "title" | "purpose" | "messag
 
 function buildFallbackNarrativeItem(project: ProjectInput, order: number, titleOverride = ""): SlideNarrative {
   const title = cleanText(titleOverride) || fallbackTitle(project, order);
-  const topic = cleanText(project.title || project.prompt);
+  const topic = projectTopic(project);
   return {
     slideOrder: order,
     slideTitle: title,
@@ -2229,7 +2268,9 @@ export function buildGenerationPrompt(
     "Slide-facing text style:",
     "- every visible title, thesis, bullet, block, definition, and visual item must be a complete thought; never end visible text with an unfinished phrase such as 'the first thing to note is rich';",
     "- use the same clear study-report style as the narration, but much shorter;",
+    "- visible slide text must be a compressed version of the matching speech section, not a separate template phrase;",
     "- do not write 'Главная идея связана с темой', 'Материал стоит разбирать по смысловым частям', or similar filler;",
+    "- never write phrases like 'Сложную часть \"тема\"', 'Перед финалом остаются самые сильные факты', 'Связь между фактами делает тему понятнее', or similar universal placeholders;",
     "- do not repeat the user's request as content. Answer the request instead.",
     "- do not mention nonexistent topics, pictures, diagrams, images, examples, sources, or visual objects unless they are explicitly present in the provided material;",
     "- do not refer to the slide itself with phrases like 'на слайде показано', 'этот слайд помогает', or 'текст на слайде';",
@@ -2292,10 +2333,10 @@ function legacyBuildGenerationPrompt(project: ProjectInput, sources: Source[]) {
     STUDENT_CREATION_BRIEF_LINES,
     "Требования к слайдам:",
     "- каждый слайд выглядит как 16:9 учебный кадр: короткий заголовок и один блок текста на 1-2 фразы;",
-    "- текст на слайде должен быть кратким, без маркированных списков, markdown-заголовков и длинных абзацев;",
+    "- текст на слайде должен быть кратким сокращением speakerNotes: без маркированных списков, markdown-заголовков, длинных абзацев и метатекста о презентации;",
     "- источники используй только как внутренний материал для фактов; не упоминай слово 'источник' и названия источников в slides, speakerNotes и speechScript;",
     "- speakerNotes и speechScript должны быть подробным связным текстом, который можно читать во время выступления;",
-    "- не используй фразы: 'тезис нужно объяснить', 'проверьте тезис', 'добавьте источник', 'ключевой вывод нужно связать', 'основная мысль слайда'.",
+    "- не используй фразы: 'тезис нужно объяснить', 'проверьте тезис', 'добавьте источник', 'ключевой вывод нужно связать', 'основная мысль слайда', 'Сложную часть \"тема\"', 'Перед финалом остаются самые сильные факты'.",
     "Обязательный JSON: id, title, scenario, level, slideCount, outline, speechScript, slides.",
     "Для каждого slide: id, order, title, layout, blocks, speakerNotes, timingSeconds, sourceRefs.",
     "layout: hero, statement или summary. blocks лучше возвращать как один callout; bullets допустимы только если это 1-2 короткие фразы.",
@@ -2360,6 +2401,7 @@ function normalizePresentation(
   repairRepeatedSlideTitles(slides, outline, project);
   diversifySlideLayouts(slides, normalizedDesignBrief);
   const normalizedNarrativePlan = normalizePresentationNarrativePlan(input.narrativePlan, narrativePlan, project, narrationSections, slides);
+  const documentTitle = cleanPresentationTitle(input.title, project);
 
   const rawSpeechScript = Array.isArray(input.speechScript) ? input.speechScript : [];
   const speechTitleCounts = countTitles(rawSpeechScript.map((item) => cleanText(item?.slideTitle)));
@@ -2377,7 +2419,7 @@ function normalizePresentation(
 
   const presentation = presentationSchema.parse({
     id: cleanText(input.id) || crypto.randomUUID(),
-    title: cleanText(input.title) || project.title,
+    title: documentTitle,
     scenario: cleanText(input.scenario) || project.scenario,
     level: cleanText(input.level) || project.level,
     slideCount: slides.length,
@@ -2387,7 +2429,7 @@ function normalizePresentation(
     outline: slides.map((slide) => slide.title),
     narrativePlan: normalizedNarrativePlan,
     presentationTheme: resolvePresentationTheme({
-      title: cleanText(input.title) || project.title,
+      title: documentTitle,
       prompt: project.prompt,
       scenario: cleanText(input.scenario) || project.scenario,
       level: cleanText(input.level) || project.level,
@@ -2466,9 +2508,17 @@ async function finalizeGeneratedPresentation(
     }
   }
 
-  const improved = await improvePresentationQuality(presentation, project, sources, generationMode, qualityCallbacks);
+  let improved = await improvePresentationQuality(presentation, project, sources, generationMode, qualityCallbacks);
+  let finalIssues = findSlideTextIssues(improved);
+  if (finalIssues.length) {
+    improved = applyNarrationFallbacks(improved, finalIssues, project);
+    finalIssues = findSlideTextIssues(improved);
+  }
   assertNoForbiddenTemplateText(improved);
-  const finalIssues = findSlideTextIssues(improved);
+  const blockingFinalIssues = finalIssues.filter(isBlockingSlideTextIssue);
+  if (blockingFinalIssues.length && !isDemoMode(generationMode)) {
+    throw new Error(`AI generation quality check failed: unresolved visible slide text: ${blockingFinalIssues.map((issue) => `slide ${issue.slideOrder} ${issue.reasons.join(", ")}`).join("; ")}`);
+  }
   return finalIssues.length
     ? presentationSchema.parse({ ...improved, qualityCritique: buildQualityCritique(improved, finalIssues) })
     : improved;
@@ -2684,8 +2734,8 @@ function buildSlideTextRepairPrompt(presentation: PresentationDocument, issues: 
     "Перепиши только перечисленные проблемные слайды одним ответом.",
     "Текст должен быть понятным без заметок докладчика: законченные формулировки, конкретный смысл, без обрывков и метатекста о презентации.",
     "Сохрани факты и смысл speakerNotes. Не придумывай имена, даты, числа, причины или выводы, которых там нет.",
-    "Не меняй title, speakerNotes или speechScript.",
-    "Верни объект { slides: [...] }. Для каждого slideOrder верни полный набор thesis, bullets, blocks, definition и visual с исправленным видимым текстом.",
+    "title можно менять только если поле title указано в problems/fields; speakerNotes и speechScript не меняй.",
+    "Верни объект { slides: [...] }. Для каждого slideOrder верни полный набор title, thesis, bullets, blocks, definition и visual с исправленным видимым текстом.",
     JSON.stringify({ slides }),
   ].join("\n\n");
 }
@@ -2786,6 +2836,7 @@ function applySlideTextRepairs(
     return normalizeSlide(
       {
         ...slide,
+        title: repair.title ?? slide.title,
         thesis: repair.thesis ?? slide.thesis,
         bullets: repair.bullets ?? slide.bullets,
         blocks: repair.blocks ?? slide.blocks,
@@ -2824,6 +2875,9 @@ function applyNarrationFallbacks(
     const fallbackThesis = existingBullet
       ? shortenCompleteSentence(`${slide.title}: ${sentenceFragment(existingBullet)}`, 18)
       : sentences[0] || slide.thesis || fallbackSlideText(project, slide.order);
+    const title = issue.fields.includes("title")
+      ? shortenVisibleTitle(narrationSections[index]?.title || fallbackTitle(project, slide.order))
+      : slide.title;
     const thesis = issue.fields.includes("thesis") ? fallbackThesis : slide.thesis;
     const bullets = uniqueShortItems(sentences.slice(1, 5)).filter((item) => !isDuplicateDisplayText(item, thesis));
     const safeBullets = ensureRange(
@@ -2860,6 +2914,7 @@ function applyNarrationFallbacks(
     return normalizeSlide(
       {
         ...slide,
+        title,
         thesis,
         bullets: repairedBullets,
         blocks: repairedBlocks,
@@ -2910,7 +2965,7 @@ function inspectSlideText(slide: Slide): SlideTextIssue | null {
 
     const normalizedText = normalizeForQuality(text);
     const key = `${entry.group}:${normalizedText}`;
-    if (normalizedText && normalizedText === normalizeForQuality(slide.title) && entry.field !== "definition.term") {
+    if (normalizedText && normalizedText === normalizeForQuality(slide.title) && entry.field !== "title" && entry.field !== "definition.term") {
       fields.add(entry.field);
       reasons.add("text duplicates the slide title");
     } else if (key && seen.has(key)) {
@@ -2931,12 +2986,22 @@ function inspectSlideText(slide: Slide): SlideTextIssue | null {
     : null;
 }
 
+function isBlockingSlideTextIssue(issue: SlideTextIssue) {
+  return issue.reasons.some((reason) =>
+    reason === "generic or meta text" ||
+    reason === "sentence fragment" ||
+    reason === "text duplicates the slide title" ||
+    reason === "visible text is duplicated",
+  );
+}
+
 function isNarrativeScreenField(field: string) {
   return field === "thesis" || field.startsWith("bullets.") || field.startsWith("blocks.") || field === "definition.text";
 }
 
 function visibleSlideTextEntries(slide: Slide) {
   return [
+    { field: "title", text: slide.title, label: true, group: "title" },
     { field: "thesis", text: slide.thesis, label: false, group: "thesis" },
     ...slide.bullets.map((text, index) => ({ field: `bullets.${index}`, text, label: false, group: "bullets" })),
     ...slide.blocks.flatMap((block, index) =>
@@ -3009,6 +3074,10 @@ function completeNarrationSentences(value: string) {
     .map((sentence) => shortenCompleteSentence(sentence, 18));
 }
 
+function firstCompleteScreenSentence(value: string) {
+  return splitIntoSentences(value).find(isCompleteScreenSentence) || "";
+}
+
 function isCompleteScreenSentence(value: string) {
   const text = cleanText(value);
   const words = text.split(/\s+/).filter(Boolean);
@@ -3070,7 +3139,7 @@ function ensureDesignBriefDirections(brief: DesignBrief, project: ProjectInput, 
   let normalized = brief;
   if (brief.slideDirections.length !== project.slideCount) {
     const fallback = buildDesignBrief(project, {
-      topic: cleanText(project.title || project.prompt),
+      topic: projectTopic(project),
       angle: cleanText(project.prompt),
       facts: [],
       warnings: [],
@@ -3118,8 +3187,9 @@ function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], pro
     : [sourceRefFromSource(sources[(order - 1) % sources.length])];
   const rawBlocks = Array.isArray(slide.blocks) ? slide.blocks.map(normalizeBlock).filter((block): block is SlideBlock => Boolean(block)) : [];
   const slideKind = normalizeSlideKind(slide.slideKind, order, project.slideCount);
-  const title = shortenWords(cleanText(slide.title) || narrationSection?.title || fallbackTitle(project, order), slideKind === "title" ? 12 : 8);
-  const thesis = normalizeThesis(slide.thesis, rawBlocks, project, order, slideKind, title);
+  const title = shortenWords(sanitizeScreenText(slide.title) || narrationSection?.title || fallbackTitle(project, order), slideKind === "title" ? 12 : 8);
+  const narrationFallbackSource = [narrationSection?.text, slideText(rawBlocks)].filter(Boolean).join(" ");
+  const thesis = normalizeThesis(slide.thesis, rawBlocks, project, order, slideKind, title, narrationFallbackSource);
   const fallbackSource = [narrationSection?.text, thesis, slideText(rawBlocks)].filter(Boolean).join(" ");
   const bullets = ensureSlideSentenceDensity(normalizeBullets(slide.bullets, rawBlocks, project, order, slideKind, title, fallbackSource), thesis, project, order, slideKind, fallbackSource);
   const definition = normalizeDefinition(slide.definition);
@@ -3187,12 +3257,13 @@ function normalizeSlideKind(value: unknown, order: number, slideCount: number): 
   return "content";
 }
 
-function normalizeThesis(value: unknown, blocks: SlideBlock[], project: ProjectInput, order: number, slideKind: SlideKind, title = "") {
+function normalizeThesis(value: unknown, blocks: SlideBlock[], project: ProjectInput, order: number, slideKind: SlideKind, title = "", fallbackSource = "") {
   if (slideKind === "section") return "";
   const fromValue = firstSentence(sanitizeScreenText(value));
   if (fromValue && !isDuplicateDisplayText(fromValue, title)) return shortenSentence(fromValue, slideKind === "title" ? 150 : 180);
   const fromBlocks = firstSentence(slideText(blocks));
-  const fallback = isDuplicateDisplayText(fromBlocks, title) ? "" : fromBlocks;
+  const fromNarration = firstCompleteScreenSentence(fallbackSource);
+  const fallback = [fromBlocks, fromNarration].find((item) => item && !isDuplicateDisplayText(item, title)) || "";
   return shortenSentence(fallback || fallbackSlideText(project, order), slideKind === "title" ? 150 : 180);
 }
 
@@ -3443,7 +3514,7 @@ function fallbackVisual(order: number, title: string, thesis: string, bullets: s
 }
 
 function imageConcept(project: ProjectInput, order: number, title: string, thesis: string, bullets: string[], slideKind: SlideKind) {
-  const topic = cleanText(project.title || project.prompt);
+  const topic = projectTopic(project);
   const focus = cleanText(title || fallbackTitle(project, order));
   const detail = cleanText(thesis || bullets[0] || project.prompt);
   const role = slideKind === "summary" ? "summary educational image" : slideKind === "title" ? "opening educational image" : "educational image";
@@ -3451,18 +3522,18 @@ function imageConcept(project: ProjectInput, order: number, title: string, thesi
 }
 
 function fallbackTitle(project: ProjectInput, order: number) {
-  const topic = cleanText(project.title || project.prompt) || "Материал";
+  const topic = projectTopic(project);
   const titles = [
     topic,
-    `Контекст: ${topic}`,
-    `Причины: ${topic}`,
-    `Изменения: ${topic}`,
-    `Конкретный случай: ${topic}`,
-    `Последствия: ${topic}`,
-    `Связи: ${topic}`,
-    `Практический вывод: ${topic}`,
-    `Итог: ${topic}`,
-    `Значение: ${topic}`,
+    "Исторический контекст",
+    "Причины напряженности",
+    "Главные участники",
+    "Ключевой поворот",
+    "Как искали решение",
+    "Последствия кризиса",
+    "Уроки для политики",
+    "Итоговый вывод",
+    "Почему это важно",
   ];
   return shortenWords(titles[order - 1] || `${order}. ${topic}`, 12);
 }
@@ -3617,7 +3688,7 @@ function sentenceEdgeKey(value: string) {
 }
 
 function buildFallbackBulletItems(project: ProjectInput, order: number, sourceText = "") {
-  const topic = cleanText(project.title || project.prompt);
+  const topic = projectTopic(project);
   const focus = order > 1 ? fallbackTitle(project, order) : topic;
   const sourceItems = uniqueShortItems(
     splitIntoSentences(sourceText)
@@ -3629,12 +3700,37 @@ function buildFallbackBulletItems(project: ProjectInput, order: number, sourceTe
   }
   const base = [
     ...sourceItems,
-    shortenCompleteSentence(cleanText(project.prompt || topic), 16),
-    shortenCompleteSentence(`${focus}: ${topic}`, 16),
-    shortenCompleteSentence(`${topic} связан с конкретным контекстом`, 16),
-    shortenCompleteSentence(`${topic} меняется через причины и последствия`, 16),
+    ...fallbackTopicBulletItems(project, order, focus),
   ];
   return uniqueShortItems(base).slice(0, 5);
+}
+
+function fallbackTopicBulletItems(project: ProjectInput, order: number, focus: string) {
+  const topic = projectTopic(project);
+  const historical = isHistoricalTopic(topic);
+  const sets = historical
+    ? [
+        [`${topic} возник на фоне международной напряженности.`, "Решения лидеров быстро повышали цену ошибки.", "Развязка зависела от переговоров и контроля риска."],
+        ["Контекст показывает, почему локальный конфликт стал мировым кризисом.", "Военные и политические решения усиливали взаимное недоверие.", "Общественная тревога росла вместе с угрозой прямого столкновения."],
+        ["Причины кризиса связаны с безопасностью, влиянием и балансом сил.", "Каждая сторона стремилась защитить свои стратегические интересы.", "Компромисс стал возможен только после признания взаимных рисков."],
+        ["Главные участники действовали под давлением времени и союзников.", "Ошибочная оценка намерений могла привести к резкой эскалации.", "Переговоры стали способом остановить опасную цепочку решений."],
+        ["Ключевой поворот наступил, когда риск войны стал слишком очевидным.", "Секретная и публичная дипломатия работали одновременно.", "Именно сочетание давления и уступок помогло снизить напряжение."],
+        ["Решение кризиса строилось на взаимных шагах назад.", "Компромисс позволил сторонам сохранить лицо и избежать столкновения.", "После кризиса контроль над ядерными рисками стал важнее."],
+        ["Последствия кризиса изменили подход к прямой связи между лидерами.", "Мир увидел, насколько опасной может быть логика сдерживания.", "Политические решения стали осторожнее из-за памяти о риске войны."],
+        ["Урок кризиса в том, что сила без коммуникации повышает опасность.", "Дипломатия работает лучше, когда признает страхи обеих сторон.", "История показывает цену решений, принятых в условиях давления."],
+        ["Итоговый вывод связан с ответственностью политических лидеров.", "Кризис показал пределы военного давления.", "Главным результатом стало понимание необходимости контроля эскалации."],
+        [`${topic} важен как пример опасного столкновения сверхдержав.`, "Его значение сохраняется в разговорах о безопасности.", "История кризиса помогает понять современную международную политику."],
+      ]
+    : [
+        [`${topic} показывает центральную проблему выступления.`, `${focus} добавляет конкретный смысл к объяснению.`, "Итог формулирует понятный вывод для аудитории."],
+        ["Контекст помогает увидеть исходную ситуацию.", "Ключевые причины объясняют развитие проблемы.", "Последствия показывают практическое значение результата."],
+        ["Главные факторы задают логику объяснения.", "Изменения становятся понятнее через причины и результаты.", "Итог связывает отдельные факты в общий вывод."],
+      ];
+  return sets[(order - 1) % sets.length].map((item) => shortenCompleteSentence(item, 16));
+}
+
+function isHistoricalTopic(value: string) {
+  return /кризис|войн|конфликт|революц|истори|импер|ссср|сша|кариб|холодн|политик|дипломат|международ/iu.test(value);
 }
 
 function ensureRange(items: string[], fallback: string[], min: number, max: number) {
@@ -3779,21 +3875,9 @@ function isGenericSlideTitle(titleKey: string) {
 }
 
 function fallbackSlideText(project: ProjectInput, order: number) {
-  const topic = cleanText(project.title || project.prompt) || "Материал";
-  const focus = fallbackTitle(project, order);
-  const texts = [
-    `${topic}: ${sentenceFragment(focus)}.`,
-    `${focus} связан с конкретным контекстом "${topic}".`,
-    `${topic} стоит раскрывать через причины, изменения и последствия.`,
-    `${focus} показывает, что в "${topic}" меняется и почему это важно.`,
-    `Конкретный случай помогает объяснить "${topic}" через понятный опыт.`,
-    `Сложную часть "${topic}" лучше передать коротко и по существу.`,
-    `Связь между фактами делает "${topic}" понятнее для слушателя.`,
-    `Перед финалом остаются самые сильные факты про "${topic}".`,
-    `${focus} помогает собрать причины и последствия в понятный вывод.`,
-    `${topic} получает смысл, когда факты связаны с реальной ситуацией.`,
-  ];
-  return shortenSentence(texts[order - 1] || `${topic}: суть лучше объяснить коротко и по существу.`, 230);
+  const topic = projectTopic(project);
+  const texts = fallbackTopicBulletItems(project, order, fallbackTitle(project, order));
+  return shortenSentence(texts[0] || `${topic}: суть лучше объяснить коротко и по существу.`, 230);
 }
 
 function buildFallbackSpeakerNotes(project: ProjectInput, order: number) {
@@ -3995,6 +4079,11 @@ function assertPresentationQuality(presentation: PresentationDocument, project: 
   if (isDemoMode(mode)) return;
 
   const issues = qualityIssuesForText(visiblePresentationText(presentation), project, false);
+  const slideTextIssues = findSlideTextIssues(presentation);
+  const blockingSlideTextIssues = slideTextIssues.filter(isBlockingSlideTextIssue);
+  if (blockingSlideTextIssues.length) {
+    issues.push(...blockingSlideTextIssues.map((issue) => `slide ${issue.slideOrder} visible text ${issue.reasons.join(", ")}`));
+  }
 
   if (!/Слайд\s+1\s*:/i.test(presentation.generatedText)) {
     issues.push("generatedText is not divided into slide narration");
@@ -4328,6 +4417,48 @@ function cleanMultilineText(value: unknown) {
 
 function cleanText(value: unknown) {
   return String(value || "").replace(/\u0000/g, "").replace(/\s+/g, " ").trim();
+}
+
+function projectTopic(project: ProjectInput) {
+  const title = stripPromptInstructions(cleanText(project.title));
+  const promptTopic = extractTopicFromPrompt(project.prompt);
+  if (title && !looksLikePromptInstruction(title)) {
+    return title;
+  }
+  return promptTopic || stripPromptInstructions(cleanText(project.prompt)) || title || "Материал";
+}
+
+function cleanPresentationTitle(value: unknown, project: ProjectInput) {
+  const title = stripPromptInstructions(cleanText(value));
+  return title && !looksLikePromptInstruction(title) ? title : projectTopic(project);
+}
+
+function extractTopicFromPrompt(value: unknown) {
+  const text = cleanText(value);
+  const match = text.match(/по\s+теме\s*:\s*([^.!?\n]+)(?:[.!?]|$)/iu);
+  return stripTopicQuotes(match?.[1] || "");
+}
+
+function stripPromptInstructions(value: string) {
+  const promptTopic = extractTopicFromPrompt(value);
+  if (promptTopic) return promptTopic;
+  return cleanText(value)
+    .replace(/^подготовь\s+академическ(?:ую|ий).{0,220}?по\s+теме\s*:?\s*/iu, "")
+    .replace(/^сделай\s+презентаци\w*\s+(?:на\s+\d+\s+слайд\w*\s+)?(?:по|про|о)\s+/iu, "")
+    .replace(/^создай\s+презентаци\w*\s+(?:на\s+\d+\s+слайд\w*\s+)?(?:по|про|о)\s+/iu, "")
+    .split(/[.!?]\s+/)[0]
+    .trim();
+}
+
+function stripTopicQuotes(value: string) {
+  return cleanText(value).replace(/^[«"'`]+|[»"'`]+$/g, "").trim();
+}
+
+function looksLikePromptInstruction(value: string) {
+  const normalized = normalizeExactForQuality(value);
+  return normalized.includes("подготовь академическую")
+    || normalized.includes("студенческую презентацию")
+    || normalized.includes("слайдов по теме");
 }
 
 function sanitizeScreenText(value: unknown) {

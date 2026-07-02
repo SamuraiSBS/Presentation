@@ -58,10 +58,11 @@ export async function handleGenerationJob(job: Job<{ projectId: string; userId: 
   }
 }
 
-async function prepareGenerationSources(project: {
+export async function prepareGenerationSources(project: {
   id: string;
   prompt: string;
   mode: string;
+  speechDraft?: string | null;
   sources: Array<{
     id: string;
     label: string;
@@ -73,7 +74,6 @@ async function prepareGenerationSources(project: {
     text: string;
   }>;
 }) {
-  const prisma = getPrisma();
   const sources: Source[] = [];
 
   for (const source of project.sources) {
@@ -98,6 +98,7 @@ async function prepareGenerationSources(project: {
     const buffer = await readObjectBuffer(source.objectKey);
     const text = cleanText(await extractTextFromSource(source.label, buffer)).slice(0, 9000);
     const excerpt = makeExcerpt(text, project.prompt);
+    const prisma = getPrisma();
     const updated = await prisma.source.update({ where: { id: source.id }, data: { text, excerpt } });
     sources.push({
       id: updated.id,
@@ -111,6 +112,7 @@ async function prepareGenerationSources(project: {
   }
 
   if (!sources.length || project.mode === "with_sources") {
+    const prisma = getPrisma();
     await prisma.source.deleteMany({ where: { projectId: project.id, type: "WEB" } });
     const webSources = await searchWebSources(project.prompt);
 
@@ -136,6 +138,17 @@ async function prepareGenerationSources(project: {
         url: created.url || undefined,
       });
     }
+  }
+
+  if (!sources.length && project.speechDraft?.trim()) {
+    const text = cleanText(project.speechDraft).slice(0, 9000);
+    sources.push({
+      id: `${project.id}-accepted-speech`,
+      label: "Accepted speech text",
+      type: "PROMPT",
+      size: text.length,
+      excerpt: makeExcerpt(text, project.prompt) || text.slice(0, 1100),
+    });
   }
 
   if (!sources.length) {

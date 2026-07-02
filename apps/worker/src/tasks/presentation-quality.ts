@@ -673,14 +673,31 @@ export function applyQualityRepairs(presentation: PresentationDocument, rawRepai
     const requested = requestedSpeechScript.find((candidate: any) => Number(candidate?.slideOrder) === item.slideOrder);
     return slide ? { ...item, ...(requested || {}), slideOrder: item.slideOrder, slideTitle: slide.title, text: slide.speakerNotes } : item;
   });
+  const repairedGeneratedText = cleanMultilineText(response.generatedText);
+  const generatedText = keepsExpectedNarrationSections(repairedGeneratedText, presentation)
+    ? repairedGeneratedText
+    : presentation.generatedText;
+  const repairedOutline = Array.isArray(response.outline) ? response.outline.map(cleanText).filter(Boolean) : [];
+  const outline = repairedOutline.length >= slides.length ? repairedOutline : slides.map((slide) => slide.title);
 
   return presentationSchema.parse({
     ...presentation,
-    generatedText: cleanMultilineText(response.generatedText) || presentation.generatedText,
-    outline: Array.isArray(response.outline) ? response.outline.map(cleanText).filter(Boolean) : slides.map((slide) => slide.title),
+    generatedText,
+    outline,
     speechScript,
     slides,
   });
+}
+
+function keepsExpectedNarrationSections(value: string, presentation: PresentationDocument) {
+  if (!value) return false;
+  const current = countNarrationSections(presentation.generatedText);
+  const next = countNarrationSections(value);
+  return next >= Math.max(1, current);
+}
+
+function countNarrationSections(value: unknown) {
+  return cleanMultilineText(value).match(/(?:^|\n)Слайд\s+\d+\s*:/gi)?.length || 0;
 }
 
 function collectSlideTextEntries(presentation: PresentationDocument): QualityTextEntry[] {
