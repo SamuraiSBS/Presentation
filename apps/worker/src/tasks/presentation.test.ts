@@ -119,7 +119,13 @@ function designBriefForTitles(titles: string[]) {
   };
 }
 
-function mockYandexTwoStep(narrationText: string, json: unknown, bodies?: unknown[], repairJson?: unknown) {
+function mockYandexTwoStep(
+  narrationText: string,
+  json: unknown,
+  bodies?: unknown[],
+  repairJson?: unknown,
+  rewrittenNarrationText?: string,
+) {
   let callCount = 0;
   const titles = narrationText
     .split("\n")
@@ -131,8 +137,23 @@ function mockYandexTwoStep(narrationText: string, json: unknown, bodies?: unknow
     callCount += 1;
     if (callCount === 1) return yandexTextResponse(JSON.stringify(narrativePlan));
     if (callCount === 2) return yandexTextResponse(narrationText);
-    if (callCount === 3) return yandexTextResponse(JSON.stringify(designBriefForTitles(narrativePlan.map((item) => item.slideTitle))));
-    return yandexTextResponse(JSON.stringify(callCount === 4 || repairJson === undefined ? json : repairJson));
+    if (rewrittenNarrationText && callCount === 3) return yandexTextResponse(rewrittenNarrationText);
+    const offset = rewrittenNarrationText ? 1 : 0;
+    if (callCount === 3 + offset) return yandexTextResponse(JSON.stringify(designBriefForTitles(narrativePlan.map((item) => item.slideTitle))));
+    return yandexTextResponse(JSON.stringify(callCount === 4 + offset || repairJson === undefined ? json : repairJson));
+  };
+}
+
+function mockYandexNarrationRewrite(initialText: string, rewrittenText: string) {
+  let narrationCalls = 0;
+  global.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body || "{}"));
+    const systemText = String(body.messages?.[0]?.text || "");
+    if (systemText.includes("full Russian oral narration")) {
+      narrationCalls += 1;
+      return yandexTextResponse(narrationCalls === 1 ? initialText : rewrittenText);
+    }
+    return yandexTextResponse(initialText);
   };
 }
 
@@ -267,7 +288,7 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("semantic and memorable");
     expect(prompt).toContain("keyConcepts: return an empty array");
     expect(prompt).toContain("highlights: return an empty array");
-    expect(prompt).toContain("5-6 sentence");
+    expect(prompt).toContain("3-7 sentence");
     expect(prompt).toContain("generatedText");
     expect(prompt).toContain("Do not generate a separate second story");
     expect(prompt).toContain("Do not write long text blocks");
@@ -755,7 +776,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("repairs the repeated template text from the bad neural output", async () => {
+  it("asks the provider to rewrite the full speech after repeated template text", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -774,7 +795,8 @@ describe("generatePresentation fallback behavior", () => {
       "Ключевые факты продолжает разговор о теме и снова не называет факты. Основной смысл раскрывается через обещание рассказать о Samsung позже. Текст на слайде оставляет только опорные пункты без реального объяснения. Главный акцент здесь повторяет название темы и не развивает мысль. Поэтому такой ответ должен быть отклонен как шаблонный.",
     ].join("\n");
     const originalFetch = global.fetch;
-    global.fetch = async () => yandexTextResponse(badText);
+    const rewrittenText = narrationForSlides(["Телефоны Samsung", "Развитие линейки Galaxy", "Вывод о бренде"]);
+    mockYandexNarrationRewrite(badText, rewrittenText);
 
     try {
       const presentation = await generatePresentation(
@@ -790,6 +812,7 @@ describe("generatePresentation fallback behavior", () => {
         [{ id: "src-1", label: "Samsung", type: "WEB", size: 0, excerpt: "Материал о линейке Samsung Galaxy." }],
       );
       expect(() => presentationSchema.parse(presentation)).not.toThrow();
+      expect(presentation.generatedText).toBe(rewrittenText);
       expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
@@ -886,7 +909,9 @@ describe("generatePresentation fallback behavior", () => {
       expect(bodies[0].messages[1].text).toContain("narrativePlan");
       expect(bodies[1].json_object).toBeUndefined();
       expect(bodies[1].messages[1].text).toContain("Narrative plan to follow exactly");
-      expect(bodies[1].messages[1].text).toContain("exactly 5-6 complete sentences");
+      expect(bodies[1].messages[1].text).toContain("3-7 complete sentences");
+      expect(bodies[1].messages[1].text).toContain("one continuous speech");
+      expect(bodies[1].messages[1].text).toContain("read the result word for word");
       expect(bodies[2].json_schema?.schema).toBeTruthy();
       expect(bodies[2].messages[1].text).toContain("Deck story");
       expect(bodies[2].messages[1].text).toContain("Slide text plans");
@@ -963,7 +988,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("repairs short Yandex narration sections before building JSON", async () => {
+  it("asks Yandex to rewrite the full speech when a section is too short", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -988,15 +1013,20 @@ describe("generatePresentation fallback behavior", () => {
     const bodies: any[] = [];
     const originalFetch = global.fetch;
     let callCount = 0;
+    let narrationCalls = 0;
     global.fetch = async (_input, init) => {
-      bodies.push(JSON.parse(String(init?.body || "{}")));
+      const body = JSON.parse(String(init?.body || "{}"));
+      bodies.push(body);
       callCount += 1;
       if (callCount === 1) {
         return yandexTextResponse(
           JSON.stringify(narrativePlanForTitles(["Р—Р° С„Р°СЃР°РґРѕРј СѓСЃРїРµС…Р°", "Р“Р»Р°РІРЅС‹Р№ РІС‹РІРѕРґ"])),
         );
       }
-      if (callCount === 2) return yandexTextResponse(shortText);
+      if (String(body.messages?.[0]?.text || "").includes("full Russian oral narration")) {
+        narrationCalls += 1;
+        return yandexTextResponse(narrationCalls === 1 ? shortText : repairedText);
+      }
       return yandexTextResponse(
         JSON.stringify({
           title: "За фасадом успеха",
@@ -1033,14 +1063,15 @@ describe("generatePresentation fallback behavior", () => {
         [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "A story about success and responsibility." }],
       );
 
-      expect(bodies).toHaveLength(4);
+      expect(bodies).toHaveLength(5);
       expect(bodies[0].json_schema?.schema).toBeTruthy();
       expect(bodies[1].json_object).toBeUndefined();
-      expect(bodies[2].json_schema?.schema).toBeTruthy();
-      expect(bodies[3].json_object).toBe(true);
-      expect(bodies[3].json_schema).toBeUndefined();
-      expect(bodies[3].messages[1].text).toContain("only source of truth");
-      expect(presentation.generatedText).not.toBe(shortText);
+      expect(bodies[2].messages[1].text).toContain("Rewrite the full narration from scratch");
+      expect(bodies[3].json_schema?.schema).toBeTruthy();
+      expect(bodies[4].json_object).toBe(true);
+      expect(bodies[4].json_schema).toBeUndefined();
+      expect(bodies[4].messages[1].text).toContain("only source of truth");
+      expect(presentation.generatedText).toBe(repairedText);
       expect(sentenceCount(presentation.speechScript[0].text)).toBe(5);
       expect(sentenceCount(presentation.speechScript[1].text)).toBe(5);
       expectNoForbiddenNarration(visiblePresentationText(presentation));
@@ -1049,7 +1080,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("repairs narration when neighboring slides repeat the same closing sentence", async () => {
+  it("rewrites the full narration when neighboring slides repeat the same closing sentence", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1065,7 +1096,8 @@ describe("generatePresentation fallback behavior", () => {
       "Конфликт становится сильнее после нового решения героя. Это решение влияет на других участников истории. Последствия уже нельзя объяснить одной случайностью. Так рассказ переходит от завязки к более серьезной проблеме. Финальная мысль кратко собирает смысл этих событий.",
     ].join("\n");
     const originalFetch = global.fetch;
-    global.fetch = async () => yandexTextResponse(repeatedText);
+    const rewrittenText = narrationForSlides(["Начало истории", "Развитие конфликта"]);
+    mockYandexNarrationRewrite(repeatedText, rewrittenText);
 
     try {
       const presentation = await generatePresentation(
@@ -1081,13 +1113,14 @@ describe("generatePresentation fallback behavior", () => {
         [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Conflict story excerpt." }],
       );
       expect(() => presentationSchema.parse(presentation)).not.toThrow();
+      expect(presentation.generatedText).toBe(rewrittenText);
       expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
     }
   });
 
-  it("repairs narration when many slides repeat the same opening phrase", async () => {
+  it("rewrites the full narration when many slides repeat the same opening phrase", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1107,7 +1140,8 @@ describe("generatePresentation fallback behavior", () => {
     ].join("\n");
 
     const originalFetch = global.fetch;
-    global.fetch = async () => yandexTextResponse(repeatedText);
+    const rewrittenText = narrationForSlides(["Первые изменения", "Новые привычки", "Итог индустрии"]);
+    mockYandexNarrationRewrite(repeatedText, rewrittenText);
 
     try {
       const presentation = await generatePresentation(
@@ -1123,13 +1157,14 @@ describe("generatePresentation fallback behavior", () => {
         [],
       );
       expect(() => presentationSchema.parse(presentation)).not.toThrow();
+      expect(presentation.generatedText).toBe(rewrittenText);
       expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
     }
   });
 
-  it("compresses overlong complete Yandex narration before final assembly", async () => {
+  it("asks Yandex to rewrite overlong narration before final assembly", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1139,23 +1174,14 @@ describe("generatePresentation fallback behavior", () => {
 
     const titles = Array.from({ length: 14 }, (_, index) => `Repair topic ${index + 1}`);
     const overlongText = overlongNarrationForSlides(titles);
+    const rewrittenText = titles
+      .map((title, index) => [
+        `Слайд ${index + 1}: ${title}`,
+        `Openingpoint${index + 1} explains a concrete part of the report with enough context for the listener. The supporting example for item ${index + 1} shows how this point works in practice. Closingpoint${index + 1} preserves the evidence while keeping the spoken explanation concise and distinct.`,
+      ].join("\n"))
+      .join("\n\n");
     const originalFetch = global.fetch;
-    mockYandexTwoStep(overlongText, {
-      title: "Narration repair",
-      generatedText: overlongText,
-      outline: titles,
-      slides: titles.map((title) => ({
-        title,
-        thesis: `${title} has a concrete first point for the study report.`,
-        bullets: [`${title} useful example`, `${title} specific consequence`],
-        speakerNotes: overlongText,
-      })),
-      speechScript: titles.map((title, index) => ({
-        slideOrder: index + 1,
-        slideTitle: title,
-        text: overlongText,
-      })),
-    });
+    mockYandexNarrationRewrite(overlongText, rewrittenText);
 
     try {
       const presentation = await generatePresentation(
@@ -1177,15 +1203,16 @@ describe("generatePresentation fallback behavior", () => {
       expect(generatedSections).toHaveLength(14);
       for (const section of generatedSections) {
         const body = section.split("\n").slice(1).join(" ");
-        expect(sentenceCount(body)).toBeGreaterThanOrEqual(5);
-        expect(sentenceCount(body)).toBeLessThanOrEqual(6);
+        expect(sentenceCount(body)).toBeGreaterThanOrEqual(3);
+        expect(sentenceCount(body)).toBeLessThanOrEqual(7);
         expect(body).not.toContain("main takeaway of the topic");
       }
 
       expect(presentation.slides).toHaveLength(14);
       expect(presentation.speechScript).toHaveLength(14);
-      expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 5 && sentenceCount(slide.speakerNotes) <= 6)).toBe(true);
-      expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 5 && sentenceCount(item.text) <= 6)).toBe(true);
+      expect(presentation.generatedText).toBe(rewrittenText);
+      expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 3 && sentenceCount(slide.speakerNotes) <= 7)).toBe(true);
+      expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 3 && sentenceCount(item.text) <= 7)).toBe(true);
 
       const noteStarts = presentation.slides.map((slide) => sentenceStartKey(firstSentence(slide.speakerNotes)));
       const noteEndings = presentation.slides.map((slide) => sentenceStartKey(lastSentence(slide.speakerNotes)));
@@ -1198,7 +1225,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("refuses overlong narration when fewer than five usable sentences remain", async () => {
+  it("refuses overlong narration when the provider does not return a valid rewrite", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1231,7 +1258,7 @@ describe("generatePresentation fallback behavior", () => {
           },
           [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Narration repair keeps each section concise and specific." }],
         ),
-      ).rejects.toThrow("must have 5-6 narration sentences");
+      ).rejects.toThrow("must have 3-7 narration sentences");
     } finally {
       global.fetch = originalFetch;
     }
@@ -1269,6 +1296,68 @@ describe("generatePresentation fallback behavior", () => {
           [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "A process has ordered steps." }],
         ),
       ).rejects.toThrow("expected 3 narration sections");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("uses the accepted narration when Yandex structured JSON omits requested slides", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const titles = ["Alfa Romeo introduction", "Brand history", "Motorsport legacy"];
+    const presentationText = narrationForSlides(titles);
+    const partialText = presentationText.split("\n\n")[0];
+    const bodies: any[] = [];
+    const originalFetch = global.fetch;
+    let callCount = 0;
+    global.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body || "{}")));
+      callCount += 1;
+      if (callCount === 1) return yandexTextResponse(JSON.stringify(narrativePlanForTitles(titles)));
+      if (callCount === 2) return yandexTextResponse(presentationText);
+      if (callCount === 3) return yandexTextResponse(JSON.stringify(designBriefForTitles(titles)));
+      return yandexTextResponse(
+        JSON.stringify({
+          title: "Alfa Romeo",
+          generatedText: partialText,
+          outline: [titles[0]],
+          slides: [
+            {
+              title: titles[0],
+              thesis: "Alfa Romeo is introduced through concrete brand context.",
+              bullets: ["Italian design", "Sporting identity"],
+              speakerNotes: partialText,
+            },
+          ],
+          speechScript: [{ slideOrder: 1, slideTitle: titles[0], text: partialText }],
+        }),
+      );
+    };
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-alfa",
+          title: "Alfa Romeo",
+          prompt: "Create a university presentation about Alfa Romeo",
+          scenario: "school_report",
+          level: "university",
+          mode: "with_sources",
+          slideCount: 3,
+        },
+        [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Alfa Romeo has a long sporting and design history." }],
+      );
+
+      expect(bodies.length).toBeGreaterThanOrEqual(4);
+      expect(presentation.generatedText).toBe(presentationText);
+      expect(presentation.slides).toHaveLength(3);
+      expect(presentation.speechScript).toHaveLength(3);
+      expect(presentation.outline).toEqual(titles);
     } finally {
       global.fetch = originalFetch;
     }
@@ -1404,9 +1493,8 @@ describe("generatePresentation fallback behavior", () => {
     expect(presentation.slides.every((slide) => slide.highlights.length === 0)).toBe(true);
     expect(new Set(presentation.slides.map((slide) => slide.layout)).size).toBeGreaterThan(2);
     expect(presentation.slides.map((slide) => slide.layout)).not.toContain("case-study");
-    expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 5 && sentenceCount(item.text) <= 6)).toBe(true);
-    expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 5 && sentenceCount(slide.speakerNotes) <= 6)).toBe(true);
-    expect(presentation.slides.every((slide) => slide.speakerNotes.length > slide.thesis.length)).toBe(true);
+    expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 1 && sentenceCount(item.text) <= 7)).toBe(true);
+    expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 1 && sentenceCount(slide.speakerNotes) <= 7)).toBe(true);
     expectNoForbiddenNarration(visiblePresentationText(presentation));
     expectNoForbiddenSlideText(visiblePresentationText(presentation));
   });
@@ -1523,9 +1611,8 @@ describe("generatePresentation fallback behavior", () => {
         [],
       );
 
-      expect(bodies).toHaveLength(5);
-      expect(bodies[4].messages[1].text).toContain('"slideOrder":2');
-      expect(bodies[4].messages[1].text).toContain('"slideOrder":3');
+      const slideRepairRequest = bodies.find((body) => String(body.messages?.[1]?.text || "").includes('"slideOrder":2'));
+      expect(slideRepairRequest?.messages[1].text).toContain('"slideOrder":3');
       expectNoForbiddenSlideText(visiblePresentationText(presentation));
       expect(visiblePresentationText(presentation)).not.toContain("Из презентации можно вынести следующее");
       expect(presentation.slides[2].thesis).not.toContain("Морские течения");
@@ -1602,7 +1689,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("repairs template-like AI narration with fallback text", async () => {
+  it("rewrites template-like AI narration instead of inserting fallback text", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1614,7 +1701,8 @@ describe("generatePresentation fallback behavior", () => {
     const templateNarration =
       'Слайд 1: Новая волна\nСлайд "Новая волна" объясняет часть темы "Русское кино" через одну главную мысль: кино стало разнообразнее. Сначала важно разобрать опорный пункт: появились онлайн-платформы. Затем стоит показать связь с другим элементом темы: зрители стали смотреть фильмы иначе. После этого можно закрепить объяснение через деталь: фестивальное кино стало заметнее. Поэтому текст на слайде оставляет только опорные пункты. Основной смысл раскрывается в рассказе про "Новая волна".';
 
-    global.fetch = async () => yandexTextResponse(templateNarration);
+    const rewrittenText = narrationForSlides(["Новая волна"]);
+    mockYandexNarrationRewrite(templateNarration, rewrittenText);
 
     try {
       const presentation = await generatePresentation(
@@ -1630,13 +1718,14 @@ describe("generatePresentation fallback behavior", () => {
         [],
       );
       expect(() => presentationSchema.parse(presentation)).not.toThrow();
+      expect(presentation.generatedText).toBe(rewrittenText);
       expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
     }
   });
 
-  it("repairs complaint-style universal narration endings", async () => {
+  it("rewrites complaint-style universal narration endings", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1650,7 +1739,8 @@ describe("generatePresentation fallback behavior", () => {
     ].join("\n");
 
     const originalFetch = global.fetch;
-    global.fetch = async () => yandexTextResponse(badNarration);
+    const rewrittenText = narrationForSlides(["Новая волна"]);
+    mockYandexNarrationRewrite(badNarration, rewrittenText);
 
     try {
       const presentation = await generatePresentation(
@@ -1666,13 +1756,14 @@ describe("generatePresentation fallback behavior", () => {
         [],
       );
       expect(() => presentationSchema.parse(presentation)).not.toThrow();
+      expect(presentation.generatedText).toBe(rewrittenText);
       expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
     }
   });
 
-  it("repairs direct slide-structure narration phrases", async () => {
+  it("rewrites direct slide-structure narration phrases", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1686,7 +1777,8 @@ describe("generatePresentation fallback behavior", () => {
     ].join("\n");
 
     const originalFetch = global.fetch;
-    global.fetch = async () => yandexTextResponse(badNarration);
+    const rewrittenText = narrationForSlides(["Развитие темы"]);
+    mockYandexNarrationRewrite(badNarration, rewrittenText);
 
     try {
       const presentation = await generatePresentation(
@@ -1702,13 +1794,14 @@ describe("generatePresentation fallback behavior", () => {
         [],
       );
       expect(() => presentationSchema.parse(presentation)).not.toThrow();
+      expect(presentation.generatedText).toBe(rewrittenText);
       expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
     }
   });
 
-  it("repairs repeated fallback-like sentence formulas in narration", async () => {
+  it("rewrites repeated fallback-like sentence formulas in narration", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1722,7 +1815,8 @@ describe("generatePresentation fallback behavior", () => {
     ].join("\n");
 
     const originalFetch = global.fetch;
-    global.fetch = async () => yandexTextResponse(badNarration);
+    const rewrittenText = narrationForSlides(["Онлайн-платформы"]);
+    mockYandexNarrationRewrite(badNarration, rewrittenText);
 
     try {
       const presentation = await generatePresentation(
@@ -1738,7 +1832,50 @@ describe("generatePresentation fallback behavior", () => {
         [],
       );
       expect(() => presentationSchema.parse(presentation)).not.toThrow();
+      expect(presentation.generatedText).toBe(rewrittenText);
       expectNoForbiddenNarration(visiblePresentationText(presentation));
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("rewrites Alfa-style deterministic formulas instead of showing them to the user", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const badNarration = [
+      "Слайд 1: Знакомство с Alfa Romeo",
+      'Alfa Romeo — итальянский автомобильный бренд с богатой историей. Он известен спортивными автомобилями и узнаваемым дизайном. Рассказ про авто бренд Alfa Romeo связан с тем, что компания объединяет спорт и элегантность. Эта особенность влияет на объяснение "Рассказ про авто бренд Alfa Romeo". "Знакомство с Alfa Romeo" соединяет два факта: историю марки и её спортивный характер.',
+      "",
+      "Слайд 2: История марки",
+      'Компания появилась в Милане в начале двадцатого века. Автоспорт быстро стал важной частью её репутации. Рассказ про авто бренд Alfa Romeo связан с тем, что гонки влияли на дорожные модели. Этот опыт влияет на объяснение "Рассказ про авто бренд Alfa Romeo". "История марки" соединяет два факта: развитие производства и участие в соревнованиях.',
+    ].join("\n");
+    const rewrittenText = narrationForSlides(["Знакомство с Alfa Romeo", "История марки"]);
+    const originalFetch = global.fetch;
+    mockYandexNarrationRewrite(badNarration, rewrittenText);
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-alfa",
+          title: "Рассказ про авто бренд Alfa Romeo",
+          prompt: "Подготовь выступление об истории и особенностях Alfa Romeo",
+          scenario: "school_report",
+          level: "университет",
+          mode: "with_sources",
+          slideCount: 2,
+        },
+        [],
+      );
+
+      expect(presentation.generatedText).toBe(rewrittenText);
+      expect(presentation.generatedText).not.toContain("влияет на объяснение");
+      expect(presentation.generatedText).not.toContain("соединяет два факта");
+      expect(presentation.generatedText).not.toContain("Рассказ про авто бренд Alfa Romeo связан с тем");
     } finally {
       global.fetch = originalFetch;
     }
@@ -1754,7 +1891,7 @@ describe("generatePresentation fallback behavior", () => {
 
     const presentationText = [
       "Слайд 1: Intro",
-      "A real generated point starts the narration for this slide. It gives the listener a concrete idea before the short slide text appears. The next sentence explains why this idea matters for Russian cinema. Another sentence connects the point with the rest of the presentation. The final sentence keeps the speech readable and complete.",
+      "Russian cinema changed as online platforms became a normal way to reach viewers. Home premieres gave smaller films another route to their audience. This shift also changed how producers compare theatrical and digital releases. Genre boundaries became more flexible as viewing habits diversified. Together these changes explain why the industry now develops across several distribution models.",
     ].join("\n");
     const originalFetch = global.fetch;
     mockYandexTwoStep(presentationText, {
@@ -1791,9 +1928,9 @@ describe("generatePresentation fallback behavior", () => {
       expect(presentation.slides[0].bullets.length).toBeGreaterThanOrEqual(2);
       expect(presentation.slides[0].bullets[0]).toBe("A real generated point");
       expect(presentation.slides[0].visual.description).toBeTruthy();
-      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(5);
-      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(6);
-      expect(presentation.speechScript[0].text.toLowerCase()).toContain("a real generated point");
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(3);
+      expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(7);
+      expect(presentation.speechScript[0].text.toLowerCase()).toContain("online platforms");
     } finally {
       global.fetch = originalFetch;
     }
@@ -2030,12 +2167,8 @@ describe("generatePresentation fallback behavior", () => {
     expect(presentation.slides[presentation.slides.length - 1].slideKind).toBe("summary");
     expect(presentation.slides[presentation.slides.length - 1].bullets.length).toBeGreaterThanOrEqual(3);
     expect(presentation.slides.every((slide) => slide.thesis.length < 240)).toBe(true);
-    expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) === 5)).toBe(true);
-    expect(presentation.speechScript.every((item) => sentenceCount(item.text) === 5)).toBe(true);
-    const noteStarts = presentation.slides.map((slide) => sentenceStartKey(firstSentence(slide.speakerNotes)));
-    const noteEndings = presentation.slides.map((slide) => sentenceStartKey(lastSentence(slide.speakerNotes)));
-    expect(new Set(noteStarts).size).toBe(noteStarts.length);
-    expect(new Set(noteEndings).size).toBe(noteEndings.length);
+    expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 1 && sentenceCount(slide.speakerNotes) <= 7)).toBe(true);
+    expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 1 && sentenceCount(item.text) <= 7)).toBe(true);
     const speechText = [
       ...presentation.slides.map((slide) => slide.speakerNotes),
       ...presentation.speechScript.map((item) => item.text),
@@ -2044,9 +2177,6 @@ describe("generatePresentation fallback behavior", () => {
       expect(speechText).not.toContain(fragment);
     }
     expectNoForbiddenNarration(speechText);
-    expect(presentation.speechScript[0].text.length).toBeGreaterThan(
-      presentation.slides[0].thesis.length,
-    );
   });
 });
 

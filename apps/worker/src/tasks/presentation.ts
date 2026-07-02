@@ -144,9 +144,15 @@ const NARRATION_SYSTEM_PROMPT = [
   "You write the full Russian oral narration for a university student study presentation.",
   "Return only plain text, not JSON and not markdown.",
   "The output must be divided into slide sections exactly as `Слайд 1: Заголовок`.",
-  "Every slide section must contain exactly 5 or 6 complete Russian sentences after the title line.",
+  "Write one coherent speech first, then divide that same speech into slide sections without breaking its logical flow.",
+  "Each slide section may contain 3 to 7 complete Russian sentences; use only as many sentences as the meaning requires.",
+  "Aim for about 35-55 seconds of natural speech per slide, so the total duration grows with the number of slides.",
   "Write exactly one narration section for each requested slide, in strict order, with no extra sections.",
   "Write like a university student report: academic, easy-professional, concrete, human, calm, and close to the topic.",
+  "The first section must naturally introduce the subject and the question of the report without saying that you are introducing it.",
+  "Middle sections must continue one argument by meaning, with each section starting from the result or tension created by the previous one.",
+  "The last section must give a genuine conclusion or judgment, not a list-like recap of earlier sections.",
+  "The result is a word-for-word script that a student can read aloud without editing.",
   "Answer the user's request; do not copy or paraphrase the request itself as slide content.",
   "Each next slide must continue the previous thought by content, not by repeated transition formulas.",
   "Do not reuse the same opening or closing sentence in neighboring sections.",
@@ -184,6 +190,10 @@ const QUALITY_REPAIR_SYSTEM_PROMPT = [
 ].join(" ");
 
 const GENERIC_NARRATION_PHRASES = [
+  "влияет на объяснение",
+  "соединяет два факта",
+  "помогает сделать вывод по материалу",
+  "сохраняет связь с",
   "финальный вывод раскрывается через контекст, причины и последствия",
   "главные факты лучше воспринимаются, когда между ними видна связь",
   "точная формулировка помогает перейти от факта к смыслу",
@@ -1285,7 +1295,7 @@ function buildSlideTextPlans(
     const order = index + 1;
     const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, order);
     const section = sections[index];
-    const notes = completeNarrationSentences(section?.text || plan.keyMessage || deckStory.mainIdea).slice(0, 6).join(" ");
+    const notes = completeNarrationSentences(section?.text || plan.keyMessage || deckStory.mainIdea).slice(0, 7).join(" ");
     const sourceHint = sourceEvidenceForSlide(sources, order);
     const coreClaim = shortenSentence(firstSentence(notes) || plan.keyMessage || deckStory.mainIdea, 180);
     const evidenceOrExample = sourceHint || shortenSentence(secondSentence(notes), 160);
@@ -1358,7 +1368,7 @@ function buildQualityCritique(presentation: PresentationDocument, issues: SlideT
 function shouldRetryNarration(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return (
-    message.includes("must have 5-6 narration sentences") ||
+    message.includes("AI narration quality check failed") ||
     message.includes("expected") && message.includes("narration sections") ||
     message.includes("missing narration section") ||
     message.includes("adjacent narration sections repeat") ||
@@ -1442,33 +1452,16 @@ function normalizeNarrationText(value: unknown, project: ProjectInput) {
     throw new Error("AI narration quality check failed: response is not plain slide narration");
   }
 
-  let sections = repairNarrationSentenceCounts(parseNarrationSections(text), project);
+  const sections = parseNarrationSections(text);
   const issues = validateNarrationSections(sections, project);
   if (issues.length) {
-    const blockingIssues = issues.filter((issue) => !isRepairableNarrationQualityIssue(issue));
-    if (blockingIssues.length) {
-      throw new Error(`AI narration quality check failed: ${blockingIssues.join("; ")}`);
-    }
-    console.warn("AI narration quality check found repairable issues; using local narration repair", {
-      projectId: project.id,
-      issues,
-    });
-    sections = repairNarrationQualitySections(sections, project);
+    throw new Error(`AI narration quality check failed: ${issues.join("; ")}`);
   }
 
-  let normalizedText = sections.map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n");
+  const normalizedText = sections.map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n");
   const textIssues = qualityIssuesForText(normalizedText, project);
   if (textIssues.length) {
-    console.warn("AI narration quality check found template text; using local narration repair", {
-      projectId: project.id,
-      issues: textIssues,
-    });
-    sections = repairNarrationQualitySections(sections, project);
-    normalizedText = sections.map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n");
-    const repairedIssues = qualityIssuesForText(normalizedText, project);
-    if (repairedIssues.length) {
-      throw new Error(`AI narration quality check failed: ${repairedIssues.join("; ")}`);
-    }
+    throw new Error(`AI narration quality check failed: ${textIssues.join("; ")}`);
   }
 
   return normalizedText;
@@ -1553,15 +1546,27 @@ function validateNarrationSections(sections: NarrationSection[], project: Projec
     if (!section.title) {
       issues.push(`slide ${expectedOrder} has no title`);
     }
-    const count = sentenceCount(section.text);
-    if (count < 5 || count > 6) {
-      issues.push(`slide ${expectedOrder} must have 5-6 narration sentences, got ${count}`);
+    const sentences = speechSentences(section.text);
+    const count = sentences.length;
+    if (count < 3 || count > 7) {
+      issues.push(`slide ${expectedOrder} must have 3-7 narration sentences, got ${count}`);
+    }
+    const words = section.text.split(/\s+/).filter(Boolean).length;
+    if (words < 25) {
+      issues.push(`slide ${expectedOrder} narration is too short for a word-for-word speech, got ${words} words`);
+    }
+    if (words > 130) {
+      issues.push(`slide ${expectedOrder} narration is too long for one slide, got ${words} words`);
+    }
+    const genericSentence = sentences.find(isGenericNarrationSentence);
+    if (genericSentence) {
+      issues.push(`slide ${expectedOrder} contains template narration: ${genericSentence.slice(0, 120)}`);
     }
 
     const previous = sections[index - 1];
     if (previous) {
       const previousSentences = speechSentences(previous.text);
-      const currentSentences = speechSentences(section.text);
+      const currentSentences = sentences;
       const previousFirst = normalizeForQuality(previousSentences[0] || "");
       const currentFirst = normalizeForQuality(currentSentences[0] || "");
       const previousLast = normalizeForQuality(previousSentences[previousSentences.length - 1] || "");
@@ -1619,10 +1624,10 @@ function repairNarrationSentenceCounts(sections: NarrationSection[], project: Pr
     }
 
     const count = sentenceCount(section.text);
-    if (count >= 5 && count <= 6) {
+    if (count >= 3 && count <= 7) {
       return section;
     }
-    if (count > 6) {
+    if (count > 7) {
       return section;
     }
 
@@ -1644,7 +1649,7 @@ function compressOverlongNarrationSections(sections: NarrationSection[], project
 
 function compressOverlongNarrationSection(section: NarrationSection, project: ProjectInput, previous?: NarrationSection): NarrationSection {
   const sentences = speechSentences(sanitizeSpeechText(section.text));
-  if (sentences.length <= 6) {
+  if (sentences.length <= 7) {
     return section;
   }
 
@@ -1653,7 +1658,7 @@ function compressOverlongNarrationSection(section: NarrationSection, project: Pr
   const previousFirst = firstNarrationEdge(previous?.text || "");
   const previousLast = lastNarrationEdge(previous?.text || "");
   const useful = sentences.filter((sentence) => isUsableNarrationSentence(sentence, section, project));
-  if (useful.length < 5) {
+  if (useful.length < 3) {
     return section;
   }
 
@@ -1663,10 +1668,10 @@ function compressOverlongNarrationSection(section: NarrationSection, project: Pr
     if (!selected.length && previousFirst && sentenceEdgeKey(sentence) === previousFirst) continue;
     selected.push(sentence);
     seen.add(key);
-    if (selected.length >= 6) break;
+    if (selected.length >= 7) break;
   }
 
-  if (selected.length > 5 && previousLast && sentenceEdgeKey(selected[selected.length - 1]) === previousLast) {
+  if (selected.length > 3 && previousLast && sentenceEdgeKey(selected[selected.length - 1]) === previousLast) {
     const replacement = useful.find((sentence) => {
       const key = normalizeForQuality(sentence);
       return key && !seen.has(key) && sentenceEdgeKey(sentence) !== previousLast;
@@ -1676,11 +1681,11 @@ function compressOverlongNarrationSection(section: NarrationSection, project: Pr
     }
   }
 
-  if (selected.length < 5) {
+  if (selected.length < 3) {
     return section;
   }
 
-  return { ...section, text: selected.slice(0, 6).join(" ") };
+  return { ...section, text: selected.slice(0, 7).join(" ") };
 }
 
 function isUsableNarrationSentence(sentence: string, section: NarrationSection, project: ProjectInput) {
@@ -1779,7 +1784,7 @@ function repairShortNarrationSections(sections: NarrationSection[], project: Pro
     }
 
     const sentences = speechSentences(section.text);
-    if (sentences.length >= 5 || sentences.length === 0) {
+    if (sentences.length >= 3 || sentences.length === 0) {
       return section;
     }
 
@@ -1806,12 +1811,12 @@ function repairShortNarrationSections(sections: NarrationSection[], project: Pro
       }
       repaired.push(addition);
       seen.add(key);
-      if (repaired.length >= 5) {
+      if (repaired.length >= 3) {
         break;
       }
     }
 
-    return { ...section, text: repaired.slice(0, 6).join(" ") };
+    return { ...section, text: repaired.slice(0, 7).join(" ") };
   });
 }
 
@@ -1953,10 +1958,16 @@ export function buildNarrationPrompt(project: ProjectInput, sources: Source[], n
     "- exactly one section per slide;",
     "- every section starts with `Слайд N: semantic title`;",
     "- N must run from 1 through the exact slide count without gaps;",
-    "- after each title line, write exactly 5-6 complete sentences for that slide;",
+    "- after each title line, write 3-7 complete sentences; vary the count naturally instead of padding every slide to the same size;",
+    "- target roughly 45-90 spoken words per slide and about 35-55 seconds of reading time per slide;",
     "- do not use bullet lists, markdown, JSON, citations, source names, or comments.",
     "University speech rules:",
     "- write as a prepared university student: natural, confident, easy to read aloud, and professional without bureaucratic wording;",
+    "- compose the whole answer as one continuous speech before splitting it into slide sections;",
+    "- the student must be able to read the result word for word, with no rewriting or improvised connective phrases;",
+    "- the first section naturally establishes the subject and central question; do not begin with `Сегодня я расскажу`, `На этом слайде`, or another presentation cliché;",
+    "- middle sections must grow out of the previous idea through facts, causes, contrasts, consequences, or chronology, without announcing a transition;",
+    "- the last section must answer the central question with a real conclusion or judgment instead of repeating the slide list;",
     "- every section must explain the real topic, not the slide object;",
     "- every section must include at least one concrete detail, example, reason, consequence, contrast, or definition;",
     "- keep the full explanation in narration; visible slide text will be compressed later;",
@@ -2008,7 +2019,7 @@ function buildNarrationRepairPrompt(
     "Rewrite the full narration from scratch as one coherent university student report and fix every listed issue.",
     "Do not patch short sections with generic endings or transition phrases. Replace weak paragraphs with real topic content.",
     "Never explain how slides, sections, neighboring paragraphs, or next parts connect; write the connected content itself.",
-    "Every slide section must contain 5 or 6 complete sentences after its title line, and sections must not share the same opening or closing phrase.",
+    "Every slide section must contain 3-7 complete sentences and enough substance to be read word for word. Sections must not share the same opening or closing phrase.",
     previousText ? `Previous invalid answer, for diagnosis only:\n${cleanMultilineText(previousText).slice(0, 12000)}` : "",
   ]
     .filter(Boolean)
@@ -2171,7 +2182,7 @@ export function buildGenerationPrompt(
       ? `Use this fixed speech narration as the only source of truth. Copy it exactly into generatedText and do not rewrite its meaning:\n${fixedNarration}`
       : "Use generatedText as the single source of truth for the deck, divided exactly as `Слайд 1: ...` through the requested slide count.",
     "Build title, thesis, bullets, blocks, visual.description, speakerNotes, and speechScript from the matching generatedText section and the matching narrativePlan item.",
-    "Treat the slideTextPlans as the compression layer: visible text comes from title, thesis, and bullets; speakerNotes remain the richer 5-6 sentence report text.",
+    "Treat the slideTextPlans as the compression layer: visible text comes from title, thesis, and bullets; speakerNotes remain the richer 3-7 sentence report text.",
     "Do not generate a separate second story outside generatedText or narrativePlan.",
     "Do not put slidePurpose or transitionToNext on the slide as visible text.",
     "Visual theme rules:",
@@ -2225,8 +2236,8 @@ export function buildGenerationPrompt(
     "- if the source material is thin, write a cautious general explanation instead of inventing facts or visuals.",
     "- never write generic filler such as 'Финальный вывод раскрывается через контекст, причины и последствия', 'Главные факты лучше воспринимаются, когда между ними видна связь', 'Точная формулировка помогает перейти от факта к смыслу', or similar universal placeholder phrases.",
     "Narration rules:",
-    "- speakerNotes must be the matching generatedText section body or a very close 5-6 sentence restatement, guided by the matching narrativePlan item;",
-    "- speechScript must contain one matching 5-6 sentence item for every slide and must duplicate or closely restate the matching speakerNotes;",
+    "- speakerNotes must be the matching generatedText section body or a very close 3-7 sentence restatement, guided by the matching narrativePlan item;",
+    "- speechScript must contain one matching 3-7 sentence item for every slide and must duplicate or closely restate the matching speakerNotes;",
     "- slide thesis, bullets, definition, blocks, and visual content must be a short outline based on generatedText and narrativePlan, not on a separate story;",
     "- write narration in a concise study-report style: concrete, human, explanatory, and understandable to listeners;",
     "- speakerNotes and speechScript must continue the report from slide to slide; do not make every slide begin or end with the same pattern;",
@@ -2326,10 +2337,11 @@ function normalizePresentation(
   designBrief?: DesignBrief,
 ): PresentationDocument {
   const input = raw && typeof raw === "object" ? (raw as Partial<PresentationDocument>) : {};
-  assertRawGenerationQuality({ ...input, generatedText: input.generatedText || generatedText }, project, generationMode);
+  const rawGeneratedText = pickCanonicalGeneratedText(input.generatedText, generatedText);
+  assertRawGenerationQuality({ ...input, generatedText: rawGeneratedText }, project, generationMode);
   const publicSources = normalizeSources(sources, project);
   const normalizedGeneratedText = normalizeGeneratedText(
-    generatedText || cleanMultilineText(input.generatedText) || buildFallbackGeneratedText(project),
+    rawGeneratedText || buildFallbackGeneratedText(project),
     project,
   );
   const narrationSections = parseNarrationSections(normalizedGeneratedText);
@@ -3484,12 +3496,12 @@ function normalizeSpeakerNotes(
 ) {
   const narration = sanitizeSpeechText(narrationText);
   if (isCompleteNarration(narration)) {
-    return limitSentences(narration, 6);
+    return limitSentences(narration, 7);
   }
 
   const text = sanitizeSpeechText(value);
   if (isCompleteNarration(text)) {
-    return limitSentences(text, 6);
+    return limitSentences(text, 7);
   }
 
   return buildSlideNarration(slide, project, order);
@@ -3498,12 +3510,12 @@ function normalizeSpeakerNotes(
 function normalizeSpeechScriptText(value: unknown, slide: Slide, project: ProjectInput, index: number, narrationText = "") {
   const narration = sanitizeSpeechText(narrationText);
   if (isCompleteNarration(narration)) {
-    return limitSentences(narration, 6);
+    return limitSentences(narration, 7);
   }
 
   const text = sanitizeSpeechText(value);
   if (isCompleteNarration(text)) {
-    return limitSentences(text, 6);
+    return limitSentences(text, 7);
   }
 
   return normalizeSpeakerNotes(slide.speakerNotes, slide, project, index + 1);
@@ -3524,30 +3536,15 @@ function buildSlideNarration(slide: Pick<Slide, "title" | "thesis" | "bullets" |
 }
 
 function buildNarrationFromContent(titleInput: string, thesisInput: string, pointInputs: string[], project: ProjectInput, order: number) {
-  const topic = cleanText(project.title || project.prompt) || "Материал";
   const title = cleanText(titleInput) || fallbackTitle(project, order);
   const thesis = cleanText(thesisInput) || fallbackSlideText(project, order);
-  const points = uniqueShortItems([
-    ...pointInputs,
-    thesis,
-    fallbackSlideText(project, order + 1),
-    fallbackSlideText(project, order + 2),
-  ])
-    .filter((item) => !isDuplicateDisplayText(item, title))
-    .filter((item) => !hasForbiddenTemplateText(item));
-  const firstPoint = points[0] || thesis;
-  const secondPoint = points[1] || firstPoint;
-  const thirdPoint = points[2] || secondPoint;
-  const fourthPoint = points[3] || thirdPoint;
-  const candidates = [
-    `${title}: ${sentenceFragment(thesis)}.`,
-    completeNarrationSentence(firstPoint),
-    `${topic} связан с тем, что ${sentenceFragment(secondPoint)}.`,
-    `${completeNarrationFragment(thirdPoint)} влияет на объяснение "${topic}".`,
-    `"${title}" соединяет два факта: ${sentenceFragment(firstPoint)} и ${sentenceFragment(secondPoint)}.`,
-    `${completeNarrationFragment(fourthPoint)} помогает сделать вывод по материалу.`,
-    `${title} сохраняет связь с "${topic}" через конкретные детали.`,
-  ];
+  const candidates = [thesis, ...pointInputs]
+    .flatMap((value) => {
+      const clean = cleanText(value);
+      const sentences = speechSentences(clean);
+      return sentences.length > 1 ? sentences : [completeNarrationSentence(clean)];
+    })
+    .filter((item) => !isDuplicateDisplayText(item, title));
   const selected: string[] = [];
   const seen = new Set<string>();
 
@@ -3556,24 +3553,31 @@ function buildNarrationFromContent(titleInput: string, thesisInput: string, poin
     const key = normalizeForQuality(clean);
     if (!key || seen.has(key)) continue;
     if (clean.split(/\s+/).filter(Boolean).length < 4) continue;
-    if (looksLikeSentenceFragment(clean) || hasForbiddenTemplateText(clean)) continue;
+    if (looksLikeSentenceFragment(clean) || isGenericNarrationSentence(clean) || isPromptEchoSentence(clean, project)) continue;
     selected.push(clean);
     seen.add(key);
-    if (selected.length >= 5) break;
+    if (selected.length >= 7) break;
   }
 
-  return selected.slice(0, 5).join(" ");
+  if (selected.length < 3) {
+    for (const sentence of candidates.flatMap((candidate) => speechSentences(cleanText(candidate)))) {
+      const clean = completeNarrationSentence(sentence);
+      const key = normalizeForQuality(clean);
+      if (!key || seen.has(key) || hasForbiddenTemplateText(clean)) continue;
+      if (clean.split(/\s+/).filter(Boolean).length < 4) continue;
+      selected.push(clean);
+      seen.add(key);
+      if (selected.length >= 3) break;
+    }
+  }
+
+  return selected.length ? selected.join(" ") : completeNarrationSentence(title);
 }
 
 function completeNarrationSentence(value: string) {
   const text = cleanText(value);
   if (!text) return "";
   return /[.!?]$/.test(text) ? text : `${text}.`;
-}
-
-function completeNarrationFragment(value: string) {
-  const fragment = sentenceFragment(value);
-  return fragment ? `${fragment.charAt(0).toUpperCase()}${fragment.slice(1)}` : "";
 }
 
 function visualNarrationText(visual: SlideVisual) {
@@ -3585,7 +3589,7 @@ function visualNarrationText(visual: SlideVisual) {
 
 function isCompleteNarration(text: string) {
   const count = sentenceCount(text);
-  if (count < 5 || count > 6) return false;
+  if (count < 3 || count > 7) return false;
   if (text.length < 80) return false;
   return !hasForbiddenTemplateText(text);
 }
@@ -4003,15 +4007,15 @@ function assertPresentationQuality(presentation: PresentationDocument, project: 
 
   for (const slide of presentation.slides) {
     const count = sentenceCount(slide.speakerNotes);
-    if (count < 5 || count > 6) {
-      issues.push(`slide ${slide.order} speakerNotes must have 5-6 sentences`);
+    if (count < 3 || count > 7) {
+      issues.push(`slide ${slide.order} speakerNotes must have 3-7 sentences`);
     }
   }
 
   for (const item of presentation.speechScript) {
     const count = sentenceCount(item.text);
-    if (count < 5 || count > 6) {
-      issues.push(`slide ${item.slideOrder} speechScript must have 5-6 sentences`);
+    if (count < 3 || count > 7) {
+      issues.push(`slide ${item.slideOrder} speechScript must have 3-7 sentences`);
     }
   }
 
@@ -4049,9 +4053,9 @@ function isRepairablePresentationQualityError(error: unknown) {
     "expected ",
     "missing narration section",
     "has no title",
-    "must have 5-6 narration sentences",
-    "speakerNotes must have 5-6 sentences",
-    "speechScript must have 5-6 sentences",
+    "must have 3-7 narration sentences",
+    "speakerNotes must have 3-7 sentences",
+    "speechScript must have 3-7 sentences",
   ];
   return !blockingFragments.some((fragment) => message.includes(fragment));
 }
@@ -4099,6 +4103,12 @@ function collectRawPresentationText(input: Partial<PresentationDocument>) {
 function countGeneratedTextSlides(value: unknown) {
   const matches = cleanMultilineText(value).match(/(?:^|\n)Слайд\s+\d+\s*:/gi);
   return matches?.length || 0;
+}
+
+function pickCanonicalGeneratedText(primary: unknown, secondary: unknown) {
+  const primaryText = cleanMultilineText(primary);
+  const secondaryText = cleanMultilineText(secondary);
+  return secondaryText || primaryText;
 }
 
 function visiblePresentationText(presentation: PresentationDocument) {

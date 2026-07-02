@@ -11,6 +11,9 @@ type TavilySearchResponse = {
   results?: TavilySearchResult[];
 };
 
+const TAVILY_QUERY_MAX_LENGTH = 400;
+const TAVILY_QUERY_SAFE_LENGTH = 380;
+
 export async function searchWebSources(prompt: string): Promise<Source[]> {
   const provider = (process.env.WEB_SEARCH_PROVIDER || "tavily").toLowerCase();
   if (provider !== "tavily") {
@@ -30,7 +33,7 @@ export async function searchWebSources(prompt: string): Promise<Source[]> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      query: prompt,
+      query: buildTavilyWebSearchQuery(prompt),
       search_depth: "basic",
       max_results: maxResults,
       country: "russia",
@@ -44,6 +47,17 @@ export async function searchWebSources(prompt: string): Promise<Source[]> {
   }
 
   return tavilyResultsToSources((await response.json()) as TavilySearchResponse);
+}
+
+export function buildTavilyWebSearchQuery(prompt: string) {
+  const cleaned = cleanText(prompt);
+  if (cleaned.length <= TAVILY_QUERY_MAX_LENGTH) {
+    return cleaned;
+  }
+
+  const shortened = cleaned.slice(0, TAVILY_QUERY_SAFE_LENGTH);
+  const lastSpace = shortened.lastIndexOf(" ");
+  return (lastSpace > 80 ? shortened.slice(0, lastSpace) : shortened).trim();
 }
 
 export function tavilyResultsToSources(payload: TavilySearchResponse): Source[] {
