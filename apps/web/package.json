@@ -12,6 +12,8 @@
     "lint": "next lint || eslint src --ext .ts,.tsx"
   },
   "dependencies": {
-    "@studydeck/shared": "*"
+    "@fontsource-variable/nunito": "^5.2.7",
+    "@studydeck/shared": "*",
+    "lucide-react": "^1.23.0"
   }
 }

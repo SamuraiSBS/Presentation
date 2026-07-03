@@ -2,50 +2,51 @@
 name: StudyDeck AI
 description: A focused study-workflow interface for turning prompts and source material into editable presentations, speaker notes, scripts, and exports.
 colors:
-  app-bg: "#f8f8f5"
+  app-bg: "#fff5e9"
   surface: "#ffffff"
-  surface-warm: "#fff4e6"
+  surface-warm: "#fff0dc"
   surface-input: "#fffefb"
-  ink: "#151914"
-  muted: "#626c62"
-  line: "#ddded6"
+  ink: "#3a2109"
+  muted: "#805c38"
+  line: "#efd6b9"
   action-orange: "#ff8a00"
-  verified-green: "#137447"
-  ai-purple: "#6d3df7"
-  editor-dark: "#171915"
-  editor-panel: "#24271f"
-  editor-control: "#30342c"
+  verified-green: "#22a866"
+  ai-purple: "#7b3dff"
+  editor-dark: "#302012"
+  editor-panel: "#432b18"
+  editor-control: "#54371f"
   error-bg: "#fff2ee"
   error-line: "#f0b8a8"
   error-text: "#8d2d18"
 typography:
   display:
-    fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+    fontFamily: "Nunito Variable, Nunito, ui-sans-serif, system-ui, sans-serif"
     fontSize: "38px to 78px on marketing shell; 30px to 52px in app pages"
     fontWeight: 900
     lineHeight: 0.98
     letterSpacing: "0"
   headline:
-    fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+    fontFamily: "Nunito Variable, Nunito, ui-sans-serif, system-ui, sans-serif"
     fontSize: "26px to 48px"
     fontWeight: 850
     lineHeight: 1.1
     letterSpacing: "0"
   body:
-    fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+    fontFamily: "Nunito Variable, Nunito, ui-sans-serif, system-ui, sans-serif"
     fontSize: "16px to 19px"
     fontWeight: 400
     lineHeight: 1.55
     letterSpacing: "0"
   label:
-    fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+    fontFamily: "Nunito Variable, Nunito, ui-sans-serif, system-ui, sans-serif"
     fontSize: "12px to 14px"
     fontWeight: 800
     lineHeight: 1.2
     letterSpacing: "0"
 rounded:
-  sm: "8px"
-  md: "10px"
+  sm: "12px"
+  md: "18px"
+  major: "24px"
   pill: "999px"
 spacing:
   xs: "8px"
@@ -101,8 +102,8 @@ It explicitly rejects generic green SaaS styling, childish classroom cartoons, d
 - Workflow-first composition: prompt, files, plan, editor, script, export.
 - Single-family typography with heavy, readable labels and headings.
 - Orange action language, green confidence language, purple AI/editor language.
-- Mostly flat surfaces with borders; shadow appears only for the dark preview object.
-- Compact 8px geometry across cards, controls, editor panels, and slide primitives.
+- Tonal layers and restrained elevation separate major workflow objects without turning every surface into glass.
+- Friendly 24px workflow surfaces, 16-18px cards and controls, and dense 12px editor chrome.
 
 ## 2. Colors
 
@@ -133,9 +134,9 @@ The palette is warm-neutral product UI with three functional accents: orange for
 
 ## 3. Typography
 
-**Display Font:** Inter with system sans fallbacks.
-**Body Font:** Inter with system sans fallbacks.
-**Label/Mono Font:** Inter with system sans fallbacks.
+**Display Font:** Nunito Variable with system sans fallbacks.
+**Body Font:** Nunito Variable with system sans fallbacks.
+**Label/Mono Font:** Nunito Variable with system sans fallbacks.
 
 **Character:** The type system is direct and sturdy. Heavy weights make actions and slide structure scannable, while body copy stays plain and readable for long Russian labels and study text.
 
@@ -148,7 +149,7 @@ The palette is warm-neutral product UI with three functional accents: orange for
 
 ### Named Rules
 
-**The Product Sans Rule.** Do not introduce display fonts into controls, labels, data, editor rails, or generated slide chrome. Inter carries the product.
+**The Product Sans Rule.** Nunito carries all application chrome. Generated slide themes keep their own typography and must not inherit the app font contract.
 
 **The Russian Label Rule.** Buttons, chips, and navigation must be sized for long Russian labels without clipping. Use wrapping or wider containers before reducing legibility.
 
@@ -167,8 +168,8 @@ StudyDeck AI is flat by default. Depth is conveyed with tonal layers, dark edito
 ## 5. Components
 
 ### Buttons
-- **Shape:** Compact rounded rectangles (8px radius), minimum 40px height.
-- **Primary:** Action Orange background with Ink text; heavy label; used for start, next, generate, export, and create.
+- **Shape:** Friendly rounded rectangles (14px radius), minimum 44px height.
+- **Primary:** Action Orange background with Primary Ink text for AA contrast; heavy label; used for start, next, generate, export, and create.
 - **Hover / Focus:** Preserve the same vocabulary across routes. Add visible focus rings before adding decorative hover effects.
 - **Secondary / Ghost:** White surface with Divider Line border and Ink text; used for back, refresh, pricing, dashboard, and secondary export actions.
 
@@ -177,19 +178,19 @@ StudyDeck AI is flat by default. Depth is conveyed with tonal layers, dark edito
 - **State:** Active wizard steps switch to orange; completed steps keep orange number marks. Inactive steps stay neutral with muted text.
 
 ### Cards / Containers
-- **Corner Style:** Gently rounded, not soft (8px radius for cards and panels; 10px only for major preview/editor shells).
+- **Corner Style:** 24px for major workflow surfaces, 16-18px for cards and controls, and 12px for dense editor chrome.
 - **Background:** White Surface for normal containers, Warm Source Surface for generated or secondary content, Editor Dark for the slide workspace.
-- **Shadow Strategy:** No shadow on ordinary panels. Use borders and tonal layering.
-- **Border:** 1px Divider Line for cards, panels, inputs, slide text panels, and slide canvas frames.
+- **Shadow Strategy:** Restrained short shadows may separate ordinary app surfaces; major workflow objects may use a wider ambient shadow.
+- **Border:** Prefer a tonal edge or a shadow on app cards, never both. Slide canvas frames remain independently theme-driven.
 - **Internal Padding:** Cards use 18px; panels use `clamp(18px, 3vw, 28px)`.
 
 ### Inputs / Fields
-- **Style:** Full-width, 1px Divider Line border, 8px radius, Warm Input Surface background, 12px padding.
+- **Style:** Full-width, tonal edge, 16px radius, warm input surface, and 12px padding.
 - **Focus:** Must be visibly keyboard-focusable. Use a high-contrast outline or border shift that does not move layout.
 - **Error / Disabled:** Error panels use pale red background, red border, and dark red text. Disabled controls keep shape and label legibility.
 
 ### Navigation
-- **Style, typography, default/hover/active states, mobile treatment.** The topbar is sticky, lightly translucent, and bordered. Brand mark is an orange 36px square with an 8px radius. Navigation uses 14px heavy muted text and hides on narrow screens; action buttons remain visible.
+- **Style, typography, default/hover/active states, mobile treatment.** The topbar is sticky and lightly translucent. The orange icon tile uses Lucide artwork. Desktop navigation gives way to a safe-area-aware bottom bar below 760px.
 
 ### Wizard
 - **Style:** Step chips form a compact progression. The selected step has orange border influence and Ink text; completed and active number dots are orange.
@@ -201,7 +202,7 @@ StudyDeck AI is flat by default. Depth is conveyed with tonal layers, dark edito
 
 ### Slide Canvas
 - **Style:** Generated slides use their own CSS variables for background, surface, text, muted text, accent, secondary accent, line, and fonts. Layouts are structured and readable, not decorative-only.
-- **Behavior:** Visual blocks, comparison boards, definition panels, sequence nodes, and metric tiles use the same 8px geometry as the app so export rendering and web preview stay aligned.
+- **Behavior:** Generated slide geometry remains theme-driven and independent from the rounded application chrome so export rendering and web preview stay aligned.
 
 ## 6. Do's and Don'ts
 
@@ -210,7 +211,7 @@ StudyDeck AI is flat by default. Depth is conveyed with tonal layers, dark edito
 - **Do** use orange only for action and active progress.
 - **Do** use green only for verified, completed, ready, or trustworthy states.
 - **Do** reserve purple for AI/editor power and generated presentation accents.
-- **Do** keep ordinary panels flat with 1px borders and 8px corners.
+- **Do** use tonal separation or restrained elevation on ordinary panels without combining a large shadow and visible border.
 - **Do** keep source confidence, speaker preparation, and export readiness visible in workflow surfaces.
 - **Do** test long Russian labels and small mobile widths before shipping any new control.
 

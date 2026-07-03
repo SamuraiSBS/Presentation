@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { CheckoutButton } from "@/components/checkout-button";
+import { Check, Sparkles } from "lucide-react";
 
 export default function PricingPage() {
   const plans = [
@@ -14,10 +15,11 @@ export default function PricingPage() {
       <p className="lead">Бесплатный тариф и платные планы для студентов и преподавателей. Оплата и управление подпиской подключаются через платёжный сервис.</p>
       <section className="grid">
         {plans.map(([name, price, ...features]) => (
-          <article className="card" key={name}>
+          <article className={name === "Студенческий" ? "card pricing-card pricing-card-featured" : "card pricing-card"} key={name}>
+            {name === "Студенческий" ? <span className="recommended"><Sparkles aria-hidden="true" size={15} />Для учёбы</span> : null}
             <h2>{name}</h2>
             <div className="price"><strong>{price}</strong><span className="muted">/мес.</span></div>
-            {features.map((feature) => <p className="muted" key={feature}>{feature}</p>)}
+            <div className="plan-features">{features.map((feature) => <p className="muted" key={feature}><Check aria-hidden="true" size={17} />{feature}</p>)}</div>
             {name === "Бесплатный" ? <Link className="ghost" href="/new">Начать бесплатно</Link> : <CheckoutButton plan={name === "Для преподавателя" ? "pro" : "student"} />}
           </article>
         ))}

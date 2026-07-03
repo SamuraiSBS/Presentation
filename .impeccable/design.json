@@ -7,7 +7,7 @@
       "app-bg": {
         "role": "neutral",
         "displayName": "Study Canvas",
-        "canonical": "#f8f8f5",
+        "canonical": "#fff5e9",
         "tonalRamp": ["#20211f", "#363732", "#54554f", "#74756d", "#95968d", "#b8b9b1", "#ddded6", "#f8f8f5"]
       },
       "surface": {
@@ -19,25 +19,25 @@
       "surface-warm": {
         "role": "neutral",
         "displayName": "Warm Source Surface",
-        "canonical": "#fff4e6",
+        "canonical": "#fff0dc",
         "tonalRamp": ["#251b10", "#49331d", "#724f2d", "#9b7044", "#c99564", "#e6bb82", "#ffe0b4", "#fff4e6"]
       },
       "ink": {
         "role": "neutral",
         "displayName": "Ink",
-        "canonical": "#151914",
+        "canonical": "#3a2109",
         "tonalRamp": ["#151914", "#2f352d", "#4c5448", "#6b7567", "#8d9788", "#b0b9ab", "#d6ddd1", "#f5f8f1"]
       },
       "muted": {
         "role": "neutral",
         "displayName": "Muted Text",
-        "canonical": "#626c62",
+        "canonical": "#805c38",
         "tonalRamp": ["#151914", "#293028", "#40493e", "#596356", "#737f70", "#969f91", "#c0c7ba", "#eef4ea"]
       },
       "line": {
         "role": "neutral",
         "displayName": "Divider Line",
-        "canonical": "#ddded6",
+        "canonical": "#efd6b9",
         "tonalRamp": ["#242520", "#3e4038", "#5e6056", "#808278", "#a4a69c", "#c7c9c0", "#ddded6", "#f4f5ee"]
       },
       "action-orange": {
@@ -55,7 +55,7 @@
       "ai-purple": {
         "role": "secondary",
         "displayName": "AI Purple",
-        "canonical": "#6d3df7",
+        "canonical": "#7b3dff",
         "tonalRamp": ["#13042f", "#26075d", "#3e1191", "#5621c8", "#6d3df7", "#9371ff", "#c4b4ff", "#eee9ff"]
       },
       "editor-dark": {
@@ -195,8 +195,8 @@
       "Workflow-first composition: prompt, files, plan, editor, script, export.",
       "Single-family typography with heavy, readable labels and headings.",
       "Orange action language, green confidence language, purple AI/editor language.",
-      "Mostly flat surfaces with borders; shadow appears only for the dark preview object.",
-      "Compact 8px geometry across cards, controls, editor panels, and slide primitives."
+      "Tonal layers and restrained elevation separate workflow objects without excessive glass.",
+      "Rounded 24px workflow surfaces, 16-18px controls, and dense 12px editor chrome."
     ],
     "rules": [
       {
@@ -211,7 +211,7 @@
       },
       {
         "name": "The Product Sans Rule",
-        "body": "Do not introduce display fonts into controls, labels, data, editor rails, or generated slide chrome. Inter carries the product.",
+        "body": "Nunito carries the application chrome while generated slide themes keep their own typography.",
         "section": "typography"
       },
       {
@@ -230,7 +230,7 @@
       "Do use orange only for action and active progress.",
       "Do use green only for verified, completed, ready, or trustworthy states.",
       "Do reserve purple for AI/editor power and generated presentation accents.",
-      "Do keep ordinary panels flat with 1px borders and 8px corners.",
+      "Do use 24px major surfaces, 16-18px cards and controls, and 12px editor chrome.",
       "Do keep source confidence, speaker preparation, and export readiness visible in workflow surfaces.",
       "Do test long Russian labels and small mobile widths before shipping any new control."
     ],

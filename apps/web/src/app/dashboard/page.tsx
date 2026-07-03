@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ArrowRight, Plus, Presentation } from "lucide-react";
 import { internalFetch } from "@/lib/internal-api";
 
 export const dynamic = "force-dynamic";
@@ -17,32 +18,32 @@ export default async function DashboardPage() {
 
   return (
     <main className="page">
-      <div className="row" style={{ justifyContent: "space-between", gap: 16, marginBottom: 24 }}>
+      <div className="page-heading-row">
         <div>
-          <h1 className="page-title" style={{ fontSize: 48 }}>Проекты</h1>
+          <h1 className="page-title">Проекты</h1>
           <p className="lead">Здесь хранятся черновики, готовые презентации и файлы для скачивания.</p>
         </div>
-        <Link className="button" href="/new">Новая презентация</Link>
+        <Link className="button" href="/new"><Plus aria-hidden="true" size={18} />Новая презентация</Link>
       </div>
 
       <section className="project-list">
         {projects.length ? (
           projects.map((project) => (
-            <Link className="card" href={`/projects/${project.id}/editor`} key={project.id}>
-              <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-                <div>
+            <Link className="card project-card" href={`/projects/${project.id}/editor`} key={project.id}>
+              <span className="icon-surface"><Presentation aria-hidden="true" size={23} /></span>
+              <div className="project-card-copy">
                   <strong>{project.title}</strong>
                   <p className="muted">{project.slideCount} слайдов</p>
-                </div>
-                <span className="status">{statusLabel(project.status)}</span>
               </div>
+              <span className={`status status-${project.status}`}>{statusLabel(project.status)}</span>
+              <ArrowRight className="project-arrow" aria-hidden="true" size={20} />
             </Link>
           ))
         ) : (
-          <div className="panel">
+          <div className="panel empty-state">
             <h2>Пока нет проектов</h2>
             <p className="muted">Создайте первую презентацию: добавьте тему, файлы и запустите генерацию.</p>
-            <Link className="button" href="/new">Создать</Link>
+            <Link className="button" href="/new"><Plus aria-hidden="true" size={18} />Создать первую презентацию</Link>
           </div>
         )}
       </section>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { LoaderCircle } from "lucide-react";
 
 export function CheckoutButton({ plan }: { plan: "student" | "pro" }) {
   const [busy, setBusy] = useState(false);
@@ -19,7 +20,7 @@ export function CheckoutButton({ plan }: { plan: "student" | "pro" }) {
 
   return (
     <button className="button" type="button" onClick={checkout} disabled={busy}>
-      {busy ? "Открываем страницу оплаты..." : "Оформить"}
+      {busy ? <><LoaderCircle className="spin" aria-hidden="true" size={18} />Открываем оплату...</> : "Оформить"}
     </button>
   );
 }
