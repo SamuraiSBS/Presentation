@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  auditSlideCanvas,
   buildSlideCanvas,
   createProjectInputSchema,
   deckStorySchema,
@@ -633,6 +634,100 @@ describe("shared contracts", () => {
     }
   });
 
+  it("drops optional title plaques instead of clipping them below the slide", () => {
+    const theme = resolvePresentationTheme({ title: "Safe title plaques" });
+    const slide = presentationSchema.parse({
+      id: "presentation-safe-title-plaques",
+      title: "Safe title plaques",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Safe title plaques"],
+      speechScript: [{ slideOrder: 1, slideTitle: "Safe title plaques", text: "Narration." }],
+      presentationTheme: theme,
+      slides: [{
+        id: "slide-safe-title-plaques",
+        order: 1,
+        title: "Введение в Карибский кризис",
+        slideKind: "title",
+        layout: "hero",
+        thesis: "Карибский кризис — это напряжённое противостояние между СССР и США в 1962 году.",
+        bullets: [
+          "Противостояние между двумя сверхдержавами могло привести к катастрофическим последствиям.",
+          "Что такое Карибский кризис и почему он важен для понимания международной политики.",
+        ],
+        visual: { type: "none" },
+        blocks: [],
+        speakerNotes: "Narration.",
+        timingSeconds: 45,
+        sourceRefs: [],
+      }],
+    }).slides[0];
+
+    const canvas = buildSlideCanvas(slide, theme);
+
+    expect(canvas.elements.some((element) => /-mini-\d+(?:-shape)?$/.test(element.id))).toBe(false);
+    expect(canvas.elements.every((element) => element.x >= 0 && element.y >= 0 && element.x + element.w <= 1280 && element.y + element.h <= 720)).toBe(true);
+    expect(auditSlideCanvas(canvas)).toEqual([]);
+  });
+
+  it("flags canvas collisions and unreadably small generated body text", () => {
+    const issues = auditSlideCanvas({
+      version: 2,
+      width: 1280,
+      height: 720,
+      background: "#101820",
+      elements: [
+        {
+          id: "image",
+          type: "image",
+          x: 100,
+          y: 100,
+          w: 500,
+          h: 320,
+          rotation: 0,
+          zIndex: 5,
+          opacity: 1,
+          locked: false,
+          url: "https://example.com/image.jpg",
+          objectKey: "image.jpg",
+          alt: "Example",
+          contentType: "image/jpeg",
+          fit: "cover",
+        },
+        {
+          id: "body",
+          type: "text",
+          role: "body",
+          x: 180,
+          y: 160,
+          w: 360,
+          h: 80,
+          rotation: 0,
+          zIndex: 4,
+          opacity: 1,
+          locked: false,
+          text: "This generated paragraph is long enough that sixteen pixel body text should be rejected as unreadable in the editor preview.",
+          runs: [{ text: "This generated paragraph is long enough that sixteen pixel body text should be rejected as unreadable in the editor preview." }],
+          fontSize: 16,
+          autoFit: false,
+          fontFamily: "Arial",
+          color: "#ffffff",
+          bold: false,
+          italic: false,
+          underline: false,
+          align: "left",
+          valign: "top",
+        },
+      ],
+    });
+
+    expect(issues.some((issue) => issue.includes("body uses 16px"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("overlaps"))).toBe(true);
+  });
+
   it("uses the fixed 30px body in premium image layouts and upgrades only unmarked generated canvases", () => {
     const theme = resolvePresentationTheme({ title: "Premium image layout" });
     const parsed = presentationSchema.parse({
@@ -712,6 +807,70 @@ describe("shared contracts", () => {
     }).slides[0].canvas!;
     expect(marked.elements.find((element) => element.id === "slide-premium-image-body")).toMatchObject({ fontSize: 18 });
     expect(marked.elements.find((element) => element.id === "slide-premium-image-body" && element.type === "text")?.autoFit).toBeUndefined();
+  });
+
+  it("rebuilds an unmarked generated canvas when image enrichment changes the layout", () => {
+    const theme = resolvePresentationTheme({ title: "Late image enrichment" });
+    const direction = {
+      slideOrder: 1,
+      visualRole: "visual_statement",
+      layoutIntent: "split_image_text",
+      imageStrategy: "real_photo",
+      visualPrompt: "Students in a public discussion",
+    } as const;
+    const document = presentationSchema.parse({
+      id: "presentation-late-image",
+      title: "Late image enrichment",
+      scenario: "lesson",
+      level: "university",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Public participation"],
+      speechScript: [{ slideOrder: 1, slideTitle: "Public participation", text: "Narration." }],
+      designBrief: {
+        themePreset: "editorial",
+        mood: "neutral",
+        visualDirection: "Editorial split image",
+        slideDirections: [direction],
+      },
+      presentationTheme: theme,
+      slides: [{
+        id: "slide-late-image",
+        order: 1,
+        title: "Public participation",
+        slideKind: "content",
+        layout: "image-focus",
+        thesis: "Participation gives citizens a practical role in public decision making.",
+        bullets: ["Public hearings", "Independent associations"],
+        visual: { type: "image", description: "Students in a public discussion" },
+        blocks: [],
+        speakerNotes: "Narration.",
+        timingSeconds: 45,
+        sourceRefs: [],
+      }],
+    });
+    const beforeEnrichment = ensureEditableCanvas(document);
+    const enriched = presentationSchema.parse({
+      ...beforeEnrichment,
+      slides: [{
+        ...beforeEnrichment.slides[0],
+        visual: {
+          ...beforeEnrichment.slides[0].visual,
+          image: {
+            url: "https://cdn.example.com/discussion.jpg",
+            objectKey: "projects/project-1/images/discussion.jpg",
+            alt: "Students in a discussion",
+          },
+        },
+      }],
+    });
+
+    const rebuilt = ensureEditableCanvas(enriched).slides[0].canvas!;
+
+    expect(rebuilt.elements.some((element) => element.type === "image")).toBe(true);
+    expect(rebuilt.elements.find((element) => element.id === "slide-late-image-body")).toMatchObject({ x: 84, w: 548, fontSize: 30 });
+    expect(auditSlideCanvas(rebuilt)).toEqual([]);
   });
 
   it("builds summary slides as one conclusion with supporting thoughts and a final takeaway", () => {
@@ -843,6 +1002,57 @@ describe("shared contracts", () => {
     });
     expect(supportBackplates.at(-1)!.y + supportBackplates.at(-1)!.h).toBeLessThanOrEqual(finalBackground?.y || 0);
     expect(canvas.elements.every((element) => element.x >= 0 && element.y >= 0 && element.x + element.w <= 1280 && element.y + element.h <= 720)).toBe(true);
+  });
+
+  it("grows summary cards for long Russian words without clipping or overlap", () => {
+    const theme = resolvePresentationTheme({ title: "Гражданское общество" });
+    const thesis = "Гражданское общество и правовое государство являются взаимозависимыми и взаимодополняющими элементами демократического общества.";
+    const slide = presentationSchema.parse({
+      id: "presentation-russian-summary",
+      title: "Гражданское общество",
+      scenario: "lesson",
+      level: "university",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Заключение"],
+      speechScript: [{ slideOrder: 1, slideTitle: "Заключение", text: "Narration." }],
+      slides: [{
+        id: "slide-russian-summary",
+        order: 1,
+        title: "Заключение",
+        slideKind: "summary",
+        layout: "summary",
+        thesis,
+        bullets: [
+          "Взаимозависимость гражданского общества и правового государства.",
+          thesis,
+          "Развитие гражданского общества способствует укреплению правового государства.",
+          "Развитие механизмов контроля и защита прав.",
+        ],
+        visual: { type: "none" },
+        blocks: [],
+        speakerNotes: "Narration.",
+        timingSeconds: 45,
+        sourceRefs: [],
+      }],
+      presentationTheme: theme,
+    }).slides[0];
+
+    const canvas = buildSlideCanvas(slide, theme);
+    const supportText = canvas.elements
+      .filter((element) => element.type === "text" && /^slide-russian-summary-summary-support-\d+$/.test(element.id))
+      .sort((left, right) => left.y - right.y);
+    const supportBackplates = canvas.elements
+      .filter((element) => element.type === "shape" && /^slide-russian-summary-summary-support-\d+-backplate$/.test(element.id))
+      .sort((left, right) => left.y - right.y);
+
+    expect(supportText).toHaveLength(3);
+    expect(supportText[1]).toMatchObject({ h: 110, fontSize: 24 });
+    supportBackplates.slice(1).forEach((backplate, index) => {
+      expect(supportBackplates[index].y + supportBackplates[index].h).toBeLessThanOrEqual(backplate.y);
+    });
+    expect(auditSlideCanvas(canvas)).toEqual([]);
   });
 
   it("centers title content and stretches a single lower plaque to the upper row width", () => {

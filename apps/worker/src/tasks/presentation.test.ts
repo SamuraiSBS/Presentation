@@ -2035,6 +2035,50 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
+  it("normalizes string blocks returned by Yandex", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const presentationText = narrationForSlides(["Civil society"]);
+    const originalFetch = global.fetch;
+    mockYandexTwoStep(presentationText, {
+      title: "Civil society",
+      generatedText: presentationText,
+      slides: [{
+        title: "Civil society",
+        blocks: ["Civil society includes organizations and relationships between citizens and the state."],
+      }],
+      speechScript: [],
+    });
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-string-block",
+          title: "Civil society",
+          prompt: "Create a presentation about civil society",
+          scenario: "school_report",
+          level: "university",
+          mode: "with_sources",
+          slideCount: 1,
+        },
+        [],
+      );
+
+      expect(() => presentationSchema.parse(presentation)).not.toThrow();
+      expect(presentation.slides[0].blocks).toContainEqual({
+        type: "callout",
+        content: "Civil society includes organizations and relationships between citizens and the state.",
+      });
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it("allows user-provided topical titles that contain рассказ про", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";

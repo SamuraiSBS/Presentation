@@ -1,4 +1,5 @@
 import {
+  auditSlideCanvas,
   ensureEditableCanvas,
   hasCustomSlideCanvas,
   presentationSchema,
@@ -238,16 +239,9 @@ export function scoreExportReadiness(presentation: PresentationDocument): Qualit
       riskySlides += 1;
       continue;
     }
-    const ids = new Set<string>();
-    const invalid = canvas.width <= 0 || canvas.height <= 0 || canvas.elements.some((element) => {
-      const duplicateId = ids.has(element.id);
-      ids.add(element.id);
-      const outside = element.x < 0 || element.y < 0 || element.x + element.w > canvas.width || element.y + element.h > canvas.height;
-      const brokenImage = element.type === "image" && !element.objectKey;
-      const overflowingText = element.type === "text" && !element.autoFit
-        && estimatedCanvasTextHeight(element.text, element.fontSize, element.w) > element.h * 1.2;
-      return duplicateId || outside || brokenImage || overflowingText;
-    });
+    const invalid = auditSlideCanvas(canvas).length > 0 || canvas.elements.some((element) =>
+      element.type === "image" && !element.objectKey,
+    );
     if (invalid) riskySlides += 1;
   }
   const score = clamp(Math.round(100 - ratioPenalty(riskySlides, presentation.slides.length, 70)), 0, 100);
@@ -941,13 +935,6 @@ function dimension(score: number, reason: string): QualityDimensionScore {
 
 function ratioPenalty(count: number, total: number, maximum: number) {
   return total > 0 ? Math.min(maximum, (count / total) * maximum) : 0;
-}
-
-function estimatedCanvasTextHeight(text: string, fontSize: number, width: number) {
-  const approximateCharactersPerLine = Math.max(8, Math.floor(width / Math.max(5, fontSize * 0.55)));
-  const lines = cleanText(text).split(/\n/).reduce((total, line) =>
-    total + Math.max(1, Math.ceil(line.length / approximateCharactersPerLine)), 0);
-  return lines * fontSize * 1.25;
 }
 
 function normalizeQualityText(value: unknown) {

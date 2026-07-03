@@ -1,5 +1,5 @@
 import type { Job } from "bullmq";
-import { ensureEditableCanvas, type Source } from "@studydeck/shared";
+import { auditSlideCanvas, ensureEditableCanvas, type Source } from "@studydeck/shared";
 import { getPrisma } from "../prisma.js";
 import { readObjectBuffer } from "../storage.js";
 import { extractTextFromSource } from "./extract.js";
@@ -43,6 +43,13 @@ export async function handleGenerationJob(job: Job<{ projectId: string; userId: 
 
     const generatedPresentation = await generatePresentationFromNarration(project, sources, project.speechDraft);
     const presentation = ensureEditableCanvas(await enrichPresentationImages(project, generatedPresentation));
+    const unsafeCanvases = presentation.slides.flatMap((slide) =>
+      (slide.canvas ? auditSlideCanvas(slide.canvas) : ["canvas is missing"])
+        .map((issue) => `slide ${slide.order}: ${issue}`),
+    );
+    if (unsafeCanvases.length) {
+      throw new Error(`Presentation layout check failed: ${unsafeCanvases.slice(0, 8).join("; ")}`);
+    }
     await prisma.presentation.upsert({
       where: { projectId },
       create: { projectId, document: presentation },

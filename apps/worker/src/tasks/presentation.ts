@@ -3231,6 +3231,11 @@ function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], pro
 }
 
 function normalizeBlock(block: unknown): SlideBlock | null {
+  if (typeof block === "string") {
+    const content = sanitizeScreenText(block);
+    return content ? { type: "callout", content } : null;
+  }
+
   if (!block || typeof block !== "object") {
     return null;
   }
@@ -4178,7 +4183,7 @@ function collectRawPresentationText(input: Partial<PresentationDocument>) {
           candidate.speakerNotes,
           ...(Array.isArray(candidate.bullets) ? candidate.bullets : []),
           ...(Array.isArray(candidate.blocks)
-            ? candidate.blocks.flatMap((block) => (block?.type === "bullets" ? block.items : "content" in block ? [block.content] : []))
+            ? candidate.blocks.flatMap(rawBlockText)
             : []),
         ];
       }),
@@ -4187,6 +4192,21 @@ function collectRawPresentationText(input: Partial<PresentationDocument>) {
       .filter(Boolean)
       .join("\n"),
   );
+}
+
+function rawBlockText(block: unknown): string[] {
+  if (typeof block === "string") {
+    return [block];
+  }
+  if (!block || typeof block !== "object") {
+    return [];
+  }
+
+  const candidate = block as { type?: unknown; items?: unknown; content?: unknown };
+  if (candidate.type === "bullets" && Array.isArray(candidate.items)) {
+    return candidate.items.filter((item): item is string => typeof item === "string");
+  }
+  return typeof candidate.content === "string" ? [candidate.content] : [];
 }
 
 function countGeneratedTextSlides(value: unknown) {

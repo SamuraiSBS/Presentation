@@ -1166,8 +1166,11 @@ export type ExportType = z.infer<typeof exportTypeSchema>;
 
 const READABLE_BODY_FONT_SIZE = 30;
 const READABLE_PLAQUE_FONT_SIZE = 24;
+const MIN_GENERATED_BODY_FONT_SIZE = 22;
+const MIN_GENERATED_CAPTION_FONT_SIZE = 18;
 const PLAQUE_PADDING_X = 18;
 const PLAQUE_PADDING_Y = 12;
+const CANVAS_SAFE_BOTTOM = 680;
 
 export const planLimits = {
   free: {
@@ -1426,7 +1429,12 @@ function addDirectedDiagramCanvas(
     addProblemSolutionCanvas(slide, theme, elements);
     return;
   }
-  addPanelGridCanvas(slide, theme, elements, ["Причина", "Связь", "Итог"]);
+  const items = uniqueCanvasItems(sequenceItems(slide)).slice(0, 3);
+  if (items.length < 2) {
+    addStatementCanvas(slide, theme, elements);
+    return;
+  }
+  addPanelGridCanvas(slide, theme, elements, items.map((_, index) => String(index + 1).padStart(2, "0")));
 }
 
 function addPremiumSplitImageCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], fullBleed: boolean) {
@@ -1460,31 +1468,34 @@ function addPremiumSplitImageCanvas(slide: Slide, theme: PresentationTheme, elem
 
 function addPremiumCardsCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
   addSlideTitle(slide, theme, elements);
-  const items = sequenceItems(slide).slice(0, 4);
-  const columns = Math.max(2, Math.min(4, items.length || 3));
-  const cardWidth = (1096 - (columns - 1) * 22) / columns;
-  const startX = 92;
-  elements.push(textElement(`${slide.id}-premium-kicker`, slide.thesis || slide.visual?.title || "", 92, 138, 1096, 52, 4, {
+  const items = uniqueCanvasItems(sequenceItems(slide)).slice(0, 4);
+  const columns = Math.max(1, items.length);
+  const cardWidth = columns === 1 ? 820 : (1096 - (columns - 1) * 22) / columns;
+  const totalWidth = columns * cardWidth + (columns - 1) * 22;
+  const startX = (1280 - totalWidth) / 2;
+  elements.push(textElement(`${slide.id}-premium-kicker`, slide.thesis || slide.visual?.title || "", 92, 184, 1096, 56, 4, {
     role: "body",
-    fontSize: 20,
+    fontSize: MIN_GENERATED_BODY_FONT_SIZE,
     fontFamily: theme.fonts.body,
     color: theme.colors.muted,
     align: "center",
   }));
-  Array.from({ length: columns }, (_, index) => items[index] || slide.bullets[index] || slide.thesis || slideBodyText(slide)).forEach((item, index) => {
+  items.forEach((item, index) => {
     const x = startX + index * (cardWidth + 22);
+    const cardText = compactSummaryPoint(item, 12) || item;
     elements.push(
-      shapeElement(`${slide.id}-premium-card-${index}`, "roundRect", x, 236, cardWidth, 248, 2, index % 2 ? theme.colors.surface : theme.colors.surfaceAlt, theme.colors.line, 1, 1),
-      textElement(`${slide.id}-premium-card-${index}-label`, String(index + 1).padStart(2, "0"), x + 22, 260, cardWidth - 44, 36, 4, {
+      shapeElement(`${slide.id}-premium-card-${index}`, "roundRect", x, 270, cardWidth, 248, 2, index % 2 ? theme.colors.surface : theme.colors.surfaceAlt, theme.colors.line, 1, 1),
+      textElement(`${slide.id}-premium-card-${index}-label`, String(index + 1).padStart(2, "0"), x + 22, 294, cardWidth - 44, 36, 4, {
         role: "caption",
         fontSize: 24,
         fontFamily: theme.fonts.heading,
         color: theme.colors.accent,
         bold: true,
       }),
-      textElement(`${slide.id}-premium-card-${index}-text`, item, x + 22, 322, cardWidth - 44, 112, 4, {
+      textElement(`${slide.id}-premium-card-${index}-text`, cardText, x + 22, 356, cardWidth - 44, 128, 4, {
         role: "body",
-        fontSize: 18,
+        fontSize: MIN_GENERATED_BODY_FONT_SIZE,
+        autoFit: false,
         fontFamily: theme.fonts.body,
         color: theme.colors.muted,
       }),
@@ -1493,7 +1504,109 @@ function addPremiumCardsCanvas(slide: Slide, theme: PresentationTheme, elements:
 }
 
 function finalizeGeneratedElements(elements: CanvasElement[], theme: PresentationTheme) {
-  return sortCanvasElements(clampCanvasElements(linkContainedElements(addStandaloneTextBackplates(elements, theme))));
+  return sortCanvasElements(clampCanvasElements(repairUnsafeGeneratedElements(linkContainedElements(addStandaloneTextBackplates(elements, theme)))));
+}
+
+export function auditSlideCanvas(canvas: SlideCanvas) {
+  const issues: string[] = [];
+  const ids = new Set<string>();
+  const visible = sortCanvasElements(canvas.elements).filter((element) => element.opacity > 0.02);
+
+  if (canvas.width <= 0 || canvas.height <= 0) issues.push("canvas has invalid dimensions");
+
+  visible.forEach((element) => {
+    if (ids.has(element.id)) issues.push(`${element.id} duplicates another canvas element id`);
+    ids.add(element.id);
+    if (element.x < 0 || element.y < 0 || element.x + element.w > canvas.width || element.y + element.h > canvas.height) {
+      issues.push(`${element.id} is outside the slide bounds`);
+    }
+    if (element.type !== "text") return;
+
+    const minFontSize = minimumReadableFontSize(element);
+    if (element.fontSize < minFontSize) issues.push(`${element.id} uses ${element.fontSize}px text below the ${minFontSize}px readable minimum`);
+    if (estimatedTextHeight(element.text, element.fontSize, element.w) > element.h * 1.14) {
+      issues.push(`${element.id} text does not fit its box`);
+    }
+    const container = element.groupId
+      ? visible.find((candidate): candidate is CanvasShapeElement =>
+          candidate.type === "shape" && candidate.groupId === element.groupId && candidate.id !== element.id,
+        )
+      : undefined;
+    if (container && !shapeContainsElement(container, element)) {
+      issues.push(`${element.id} extends outside ${container.id}`);
+    }
+  });
+
+  visible.forEach((element, index) => {
+    for (const other of visible.slice(index + 1)) {
+      if (!elementsVisuallyOverlap(element, other)) continue;
+      if (isAllowedCanvasOverlap(element, other)) continue;
+      issues.push(`${element.id} overlaps ${other.id}`);
+    }
+  });
+
+  return issues;
+}
+
+function repairUnsafeGeneratedElements(elements: CanvasElement[]) {
+  const optionalPlaquesUnsafe = elements.some((element) =>
+    /-mini-\d+(?:-shape)?$/.test(element.id) && element.y + element.h > CANVAS_SAFE_BOTTOM,
+  );
+  if (!optionalPlaquesUnsafe) return elements;
+  return elements.filter((element) => !/-mini-\d+(?:-shape)?$/.test(element.id));
+}
+
+function minimumReadableFontSize(element: CanvasTextElement) {
+  if (/-source-\d+$/.test(element.id)) return 14;
+  if (element.role === "title") return 28;
+  if (element.role === "body") return MIN_GENERATED_BODY_FONT_SIZE;
+  if (element.role === "caption" && /^\d{1,2}$/.test(cleanCanvasText(element.text))) return 16;
+  if (element.role === "caption") return MIN_GENERATED_CAPTION_FONT_SIZE;
+  return 16;
+}
+
+function elementsVisuallyOverlap(left: CanvasElement, right: CanvasElement) {
+  const overlapX = Math.min(left.x + left.w, right.x + right.w) - Math.max(left.x, right.x);
+  const overlapY = Math.min(left.y + left.h, right.y + right.h) - Math.max(left.y, right.y);
+  if (overlapX <= 1 || overlapY <= 1) return false;
+  const overlapArea = overlapX * overlapY;
+  const smallerArea = Math.max(1, Math.min(left.w * left.h, right.w * right.h));
+  return overlapArea / smallerArea > 0.08;
+}
+
+function isAllowedCanvasOverlap(left: CanvasElement, right: CanvasElement) {
+  if (left.groupId && left.groupId === right.groupId) {
+    if (left.type === "shape" && right.type === "text") return shapeContainsElement(left, right);
+    if (right.type === "shape" && left.type === "text") return shapeContainsElement(right, left);
+  }
+  if (isTextBackplatePair(left, right) || isTextBackplatePair(right, left)) return true;
+  if (isDecorativeRuleBehindText(left, right) || isDecorativeRuleBehindText(right, left)) return true;
+  if (isSoftBackgroundBehindText(left, right) || isSoftBackgroundBehindText(right, left)) return true;
+  if (left.type === "shape" && right.type === "shape") return true;
+  if (left.type === "image" && right.type === "shape") return right.opacity >= 0.65 && right.zIndex > left.zIndex;
+  if (right.type === "image" && left.type === "shape") return left.opacity >= 0.65 && left.zIndex > right.zIndex;
+  return false;
+}
+
+function shapeContainsElement(shape: CanvasShapeElement, element: CanvasElement) {
+  const tolerance = 2;
+  return element.x >= shape.x - tolerance && element.y >= shape.y - tolerance
+    && element.x + element.w <= shape.x + shape.w + tolerance
+    && element.y + element.h <= shape.y + shape.h + tolerance;
+}
+
+function isTextBackplatePair(shape: CanvasElement, text: CanvasElement) {
+  return shape.type === "shape" && text.type === "text" && shape.id === `${text.id}-backplate`;
+}
+
+function isDecorativeRuleBehindText(shape: CanvasElement, text: CanvasElement) {
+  return shape.type === "shape" && text.type === "text" && shape.zIndex < text.zIndex && (shape.h <= 8 || shape.w <= 8);
+}
+
+function isSoftBackgroundBehindText(background: CanvasElement, text: CanvasElement) {
+  if (text.type !== "text" || background.zIndex >= text.zIndex) return false;
+  if (background.type === "image") return background.opacity <= 0.4;
+  return background.type === "shape" && /wash|bg|background/i.test(background.id) && background.opacity >= 0.55;
 }
 
 function addStandaloneTextBackplates(elements: CanvasElement[], theme: PresentationTheme) {
@@ -1637,8 +1750,37 @@ export function hasCustomSlideCanvas(slide: Slide, theme: PresentationTheme, gen
   if (sameCanvas(slide.canvas, generatedCanvas) || sameCanvasStructure(slide.canvas, generatedCanvas)) return false;
   if (sameCanvasStructure(slide.canvas, legacyGeneratedCanvas(generatedCanvas))) return false;
   if (isLegacyLeanTitleCanvas(slide)) return false;
+  const imageWasEnrichedAfterCanvas = Boolean(slide.visual?.image)
+    && !slide.canvas.elements.some((element) => element.type === "image")
+    && generatedCanvas.elements.some((element) => element.type === "image")
+    && slide.canvas.elements.every((element) => isKnownGeneratedCanvasElementId(slide.id, element.id));
+  if (imageWasEnrichedAfterCanvas) return false;
+  if (isHistoricalGeneratedCanvas(slide, generatedCanvas)) return false;
   if ((slide.canvas.version || 1) >= 2) return true;
   return !hasAutoGeneratedCanvasMarker(slide);
+}
+
+function isHistoricalGeneratedCanvas(slide: Slide, generatedCanvas: SlideCanvas) {
+  if (!slide.canvas || !slide.canvas.elements.length) return false;
+  if (!slide.canvas.elements.every((element) => isKnownGeneratedCanvasElementId(slide.id, element.id))) return false;
+
+  const currentById = new Map(generatedCanvas.elements.map((element) => [element.id, element]));
+  const storedIds = new Set(slide.canvas.elements.map((element) => element.id));
+  if (storedIds.size !== currentById.size || [...storedIds].some((id) => !currentById.has(id))) return true;
+
+  let changedElements = 0;
+  for (const stored of slide.canvas.elements) {
+    const current = currentById.get(stored.id);
+    if (!current || generatedElementSignature(stored) !== generatedElementSignature(current)) changedElements += 1;
+  }
+  return changedElements >= 3;
+}
+
+function generatedElementSignature(element: CanvasElement) {
+  const base = [element.type, element.x, element.y, element.w, element.h, element.zIndex, element.opacity];
+  if (element.type === "text") return [...base, element.text, element.fontSize, element.autoFit, element.align, element.valign].join("|");
+  if (element.type === "image") return [...base, element.objectKey, element.fit].join("|");
+  return [...base, element.shape, element.strokeWidth].join("|");
 }
 
 function upgradeCustomCanvas(canvas: SlideCanvas, generatedCanvas: SlideCanvas, theme: PresentationTheme): SlideCanvas {
@@ -1876,6 +2018,15 @@ function isKnownGeneratedCanvasElementId(slideId: string, elementId: string) {
   return (
     elementId.startsWith(`${slideId}-bg-`) ||
     elementId.startsWith(`${slideId}-chip-`) ||
+    elementId.startsWith(`${slideId}-statement`) ||
+    elementId.startsWith(`${slideId}-quote`) ||
+    elementId.startsWith(`${slideId}-definition`) ||
+    elementId.startsWith(`${slideId}-sequence`) ||
+    elementId.startsWith(`${slideId}-step-`) ||
+    elementId.startsWith(`${slideId}-comparison-`) ||
+    elementId.startsWith(`${slideId}-panel-`) ||
+    elementId.startsWith(`${slideId}-answer-`) ||
+    elementId.startsWith(`${slideId}-myth-`) ||
     elementId.startsWith(`${slideId}-seq-`) ||
     elementId.startsWith(`${slideId}-left-`) ||
     elementId.startsWith(`${slideId}-right-`) ||
@@ -2007,7 +2158,7 @@ function addDefaultContentCanvas(slide: Slide, theme: PresentationTheme, element
     }),
     textElement(`${slide.id}-body`, body, hasImage ? 78 : 144, hasImage ? 197 : 300, hasImage ? 514 : 992, hasImage ? 336 : 160, 4, {
       role: "body",
-      fontSize: fittedFontSize(body, hasImage ? READABLE_BODY_FONT_SIZE : 26, 16, hasImage ? 336 : 160),
+      fontSize: fittedFontSize(body, hasImage ? READABLE_BODY_FONT_SIZE : 26, MIN_GENERATED_BODY_FONT_SIZE, hasImage ? 336 : 160),
       fontFamily: theme.fonts.body,
       color: theme.colors.muted,
       align: hasImage ? "left" : "center",
@@ -2036,7 +2187,7 @@ function addStatementCanvas(slide: Slide, theme: PresentationTheme, elements: Ca
 function addQuoteCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
   addSlideTitle(slide, theme, elements);
   elements.push(
-    textElement(`${slide.id}-quote-mark`, "“", 96, 164, 64, 88, 4, {
+    textElement(`${slide.id}-quote-mark`, "“", 68, 190, 64, 88, 4, {
       role: "caption",
       fontSize: 74,
       fontFamily: theme.fonts.heading,
@@ -2080,7 +2231,7 @@ function addDefinitionCanvas(slide: Slide, theme: PresentationTheme, elements: C
     }),
     textElement(`${slide.id}-definition-text`, definition.text, 120, 293, 1038, 130, 4, {
       role: "body",
-      fontSize: fittedFontSize(definition.text, READABLE_BODY_FONT_SIZE, 17, 130),
+      fontSize: fittedFontSize(definition.text, READABLE_BODY_FONT_SIZE, MIN_GENERATED_BODY_FONT_SIZE, 130),
       fontFamily: theme.fonts.body,
       color: theme.colors.muted,
     }),
@@ -2090,9 +2241,9 @@ function addDefinitionCanvas(slide: Slide, theme: PresentationTheme, elements: C
 function addSequenceCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
   addSlideTitle(slide, theme, elements);
   if (slide.thesis) {
-    elements.push(textElement(`${slide.id}-kicker`, slide.thesis, 78, 144, 1124, 56, 4, {
+    elements.push(textElement(`${slide.id}-kicker`, slide.thesis, 78, 188, 1124, 64, 4, {
       role: "body",
-      fontSize: 19,
+      fontSize: MIN_GENERATED_BODY_FONT_SIZE,
       fontFamily: theme.fonts.body,
       color: theme.colors.muted,
     }));
@@ -2102,12 +2253,16 @@ function addSequenceCanvas(slide: Slide, theme: PresentationTheme, elements: Can
     ? detailedItems
     : sequenceItems(slide).slice(0, 5).map((text, index) => ({ label: `Шаг ${index + 1}`, text }));
   const width = 1123 / Math.max(items.length, 1);
-  elements.push(shapeElement(`${slide.id}-sequence-line`, "rect", 100, 256, 1076, 4, 2, theme.colors.line, theme.colors.line, 0, 1));
+  elements.push(shapeElement(`${slide.id}-sequence-line`, "rect", 100, 300, 1076, 4, 2, theme.colors.line, theme.colors.line, 0, 1));
   items.forEach((item, index) => {
     const x = 79 + index * width;
+    const bodyWidth = width - 52;
+    const bodyFontSize = bodyWidth >= 480 ? MIN_GENERATED_BODY_FONT_SIZE : 18;
+    const bodyText = sentencePreview(item.text || item.label, bodyWidth >= 480 ? 86 : 62);
+    const bodyHeight = Math.max(104, estimatedTextHeight(bodyText, bodyFontSize, bodyWidth));
     elements.push(
-      shapeElement(`${slide.id}-step-${index}-num-bg`, "ellipse", x + 18, 236, 43, 43, 3, theme.colors.text, theme.colors.text, 0, 1),
-      textElement(`${slide.id}-step-${index}-num`, String(index + 1), x + 18, 244, 43, 24, 4, {
+      shapeElement(`${slide.id}-step-${index}-num-bg`, "ellipse", x + 18, 280, 43, 43, 3, theme.colors.text, theme.colors.text, 0, 1),
+      textElement(`${slide.id}-step-${index}-num`, String(index + 1), x + 18, 288, 43, 24, 4, {
         role: "caption",
         fontSize: 16,
         fontFamily: theme.fonts.body,
@@ -2115,16 +2270,17 @@ function addSequenceCanvas(slide: Slide, theme: PresentationTheme, elements: Can
         bold: true,
         align: "center",
       }),
-      textElement(`${slide.id}-step-${index}-label`, item.label, x + 18, 300, width - 52, 46, 4, {
+      textElement(`${slide.id}-step-${index}-label`, item.label, x + 18, 344, width - 52, 46, 4, {
         role: "caption",
         fontSize: 18,
         fontFamily: theme.fonts.heading,
         color: theme.colors.text,
         bold: true,
       }),
-      textElement(`${slide.id}-step-${index}`, item.text || item.label, x + 18, 352, width - 52, 104, 4, {
+      textElement(`${slide.id}-step-${index}`, bodyText, x + 18, 414, bodyWidth, bodyHeight, 4, {
         role: "body",
-        fontSize: 16,
+        fontSize: bodyFontSize,
+        autoFit: false,
         fontFamily: theme.fonts.body,
         color: theme.colors.muted,
       }),
@@ -2138,12 +2294,12 @@ function addComparisonCanvas(slide: Slide, theme: PresentationTheme, elements: C
   const leftLabel = slide.visual?.leftLabel || "Первое";
   const rightLabel = slide.visual?.rightLabel || "Второе";
   elements.push(
-    textElement(`${slide.id}-comparison-criterion-label`, "Критерий", 86, 164, 222, 42, 4, labelText(theme)),
-    textElement(`${slide.id}-comparison-left-label`, leftLabel, 329, 164, 420, 42, 4, labelText(theme)),
-    textElement(`${slide.id}-comparison-right-label`, rightLabel, 770, 164, 425, 42, 4, labelText(theme)),
+    textElement(`${slide.id}-comparison-criterion-label`, "Критерий", 86, 196, 222, 42, 4, labelText(theme)),
+    textElement(`${slide.id}-comparison-left-label`, leftLabel, 329, 196, 420, 42, 4, labelText(theme)),
+    textElement(`${slide.id}-comparison-right-label`, rightLabel, 770, 196, 425, 42, 4, labelText(theme)),
   );
   rows.forEach((row, index) => {
-    const y = 209 + index * 117;
+    const y = 248 + index * 126;
     addComparisonCell(slide, theme, elements, `criterion-${index}`, 86, y, row.label || `Критерий ${index + 1}`, 222);
     addComparisonCell(slide, theme, elements, `left-${index}`, 329, y, row.left || row.label, 420);
     addComparisonCell(slide, theme, elements, `right-${index}`, 770, y, row.right || row.label, 425);
@@ -2202,6 +2358,7 @@ function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: Canv
   }
 
   let supportY = 264;
+  let supportBottom = supportY;
   supportingItems.forEach((item, index) => {
     const itemHeight = Math.max(55, estimatedTextHeight(item, READABLE_PLAQUE_FONT_SIZE, 362));
     const y = supportY;
@@ -2215,13 +2372,15 @@ function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: Canv
         color: theme.colors.muted,
       }),
     );
-    supportY += itemHeight + 34;
+    supportBottom = y + itemHeight + PLAQUE_PADDING_Y;
+    supportY += itemHeight + 28;
   });
 
-  if (finalThought) {
+  const finalThoughtY = Math.max(536, supportBottom + 12);
+  if (finalThought && finalThoughtY + 112 <= 696) {
     elements.push(
-      shapeElement(`${slide.id}-summary-final-bg`, "roundRect", 70, 536, 1140, 112, 2, theme.colors.surfaceAlt, theme.colors.line, 1, 0.92),
-      textElement(`${slide.id}-summary-final-label`, "Что стоит запомнить", 94, 558, 270, 68, 4, {
+      shapeElement(`${slide.id}-summary-final-bg`, "roundRect", 70, finalThoughtY, 1140, 112, 2, theme.colors.surfaceAlt, theme.colors.line, 1, 0.92),
+      textElement(`${slide.id}-summary-final-label`, "Что стоит запомнить", 94, finalThoughtY + 22, 270, 68, 4, {
         role: "caption",
         fontSize: READABLE_PLAQUE_FONT_SIZE,
         autoFit: false,
@@ -2230,7 +2389,7 @@ function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: Canv
         bold: true,
         valign: "middle",
       }),
-      textElement(`${slide.id}-summary-final`, finalThought, 390, 554, 790, 76, 4, {
+      textElement(`${slide.id}-summary-final`, finalThought, 390, finalThoughtY + 18, 790, 76, 4, {
         role: "body",
         fontSize: READABLE_PLAQUE_FONT_SIZE,
         autoFit: false,
@@ -2244,16 +2403,25 @@ function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: Canv
 
 function addPanelGridCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], labels: string[]) {
   addSlideTitle(slide, theme, elements);
-  const items = sequenceItems(slide);
-  const width = 1104 / labels.length;
-  labels.forEach((label, index) => {
-    const x = 88 + index * width;
+  const items = uniqueCanvasItems(sequenceItems(slide)).slice(0, Math.max(1, labels.length));
+  const count = Math.max(1, items.length);
+  const gap = 22;
+  const availableWidth = count === 1 ? 860 : 1104;
+  const width = (availableWidth - gap * (count - 1)) / count;
+  const startX = (1280 - availableWidth) / 2;
+  items.forEach((item, index) => {
+    const x = startX + index * (width + gap);
+    const value = compactSummaryPoint(item, count >= 3 ? 14 : 18) || item;
     elements.push(
-      shapeElement(`${slide.id}-panel-${index}`, "roundRect", x, 192, width - 18, 240, 2, index % 2 ? theme.colors.surface : theme.colors.surfaceAlt, theme.colors.line, 1, 1),
-      textElement(`${slide.id}-panel-${index}-label`, label, x + 22, 215, width - 62, 36, 4, labelText(theme)),
-      textElement(`${slide.id}-panel-${index}-text`, items[index] || slide.thesis || slideBodyText(slide), x + 22, 274, width - 62, 112, 4, {
+      shapeElement(`${slide.id}-panel-${index}`, "roundRect", x, 192, width, 286, 2, index % 2 ? theme.colors.surface : theme.colors.surfaceAlt, theme.colors.line, 1, 1),
+      textElement(`${slide.id}-panel-${index}-label`, labels[index] || String(index + 1).padStart(2, "0"), x + 24, 218, width - 48, 36, 4, {
+        ...labelText(theme),
+        fontSize: MIN_GENERATED_CAPTION_FONT_SIZE,
+      }),
+      textElement(`${slide.id}-panel-${index}-text`, value, x + 24, 278, width - 48, 154, 4, {
         role: "body",
-        fontSize: 18,
+        fontSize: MIN_GENERATED_BODY_FONT_SIZE,
+        autoFit: false,
         fontFamily: theme.fonts.body,
         color: theme.colors.muted,
       }),
@@ -2317,8 +2485,8 @@ function addMythFactCanvas(slide: Slide, theme: PresentationTheme, elements: Can
   slide.bullets.slice(0, 2).forEach((item, index) => {
     const x = 88 + index * 552;
     elements.push(
-      textElement(`${slide.id}-myth-context-${index}-label`, index ? "Проверка" : "Почему в это верят", x, 430, 534, 30, 4, labelText(theme)),
-      textElement(`${slide.id}-myth-context-${index}`, item, x, 469, 534, 82, 4, {
+      textElement(`${slide.id}-myth-context-${index}-label`, index ? "Проверка" : "Почему в это верят", x, 420, 534, 30, 4, labelText(theme)),
+      textElement(`${slide.id}-myth-context-${index}`, item, x, 482, 534, 82, 4, {
         role: "body",
         fontSize: 16,
         fontFamily: theme.fonts.body,
@@ -2361,25 +2529,26 @@ function addEvidenceCanvas(slide: Slide, theme: PresentationTheme, elements: Can
   const thesis = sentencePreview(slide.thesis || slideBodyText(slide), 180);
   const evidence = sequenceItems(slide).filter((item) => !isDuplicateCanvasText(item, thesis)).slice(0, 4);
   elements.push(
-    textElement(`${slide.id}-evidence-thesis`, thesis, 86, 158, 1108, 104, 4, {
+    textElement(`${slide.id}-evidence-thesis`, thesis, 86, 196, 1108, 104, 4, {
       role: "body",
       fontSize: fittedFontSize(thesis, 34, 25, 105),
       fontFamily: theme.fonts.heading,
       color: theme.colors.text,
       bold: true,
     }),
-    shapeElement(`${slide.id}-evidence-divider`, "rect", 86, 282, 1108, 3, 2, theme.colors.accent, theme.colors.accent, 0, 1),
+    shapeElement(`${slide.id}-evidence-divider`, "rect", 86, 320, 1108, 3, 2, theme.colors.accent, theme.colors.accent, 0, 1),
   );
   evidence.forEach((item, index) => {
     const column = index % 2;
     const row = Math.floor(index / 2);
     const x = 86 + column * 560;
-    const y = 315 + row * 112;
+    const y = 348 + row * 104;
     elements.push(
       shapeElement(`${slide.id}-evidence-${index}-dot`, "ellipse", x, y + 4, 28, 28, 3, theme.colors.accentAlt, theme.colors.accentAlt, 0, 1),
       textElement(`${slide.id}-evidence-${index}`, item, x + 44, y, 500, 72, 4, {
         role: "body",
-        fontSize: fittedFontSize(item, 19, 15, 72),
+        fontSize: fittedFontSize(item, 24, MIN_GENERATED_BODY_FONT_SIZE, 72),
+        autoFit: false,
         fontFamily: theme.fonts.body,
         color: theme.colors.muted,
       }),
@@ -2415,30 +2584,30 @@ function addExplainExampleCanvas(slide: Slide, theme: PresentationTheme, element
   const example = items[1] || items[0] || slide.thesis;
   const caveat = items[2] || slide.bullets[1] || "Пример помогает понять идею, но не заменяет её точное определение.";
   elements.push(
-    textElement(`${slide.id}-explain-term`, definition.term, 86, 164, 416, 72, 4, {
+    textElement(`${slide.id}-explain-term`, definition.term, 86, 192, 416, 72, 4, {
       role: "title",
       fontSize: fittedFontSize(definition.term, 35, 25, 72),
       fontFamily: theme.fonts.heading,
       color: theme.colors.text,
       bold: true,
     }),
-    textElement(`${slide.id}-explain-definition`, definition.text, 86, 252, 416, 168, 4, {
+    textElement(`${slide.id}-explain-definition`, definition.text, 86, 284, 416, 168, 4, {
       role: "body",
       fontSize: fittedFontSize(definition.text, 23, 17, 168),
       fontFamily: theme.fonts.body,
       color: theme.colors.muted,
     }),
-    shapeElement(`${slide.id}-explain-divider`, "rect", 548, 164, 3, 358, 2, theme.colors.line, theme.colors.line, 0, 1),
-    textElement(`${slide.id}-explain-example-label`, "Пример", 596, 164, 564, 34, 4, labelText(theme)),
-    textElement(`${slide.id}-explain-example`, example, 596, 220, 564, 126, 4, {
+    shapeElement(`${slide.id}-explain-divider`, "rect", 548, 192, 3, 358, 2, theme.colors.line, theme.colors.line, 0, 1),
+    textElement(`${slide.id}-explain-example-label`, "Пример", 596, 192, 564, 34, 4, labelText(theme)),
+    textElement(`${slide.id}-explain-example`, example, 596, 248, 564, 126, 4, {
       role: "body",
       fontSize: fittedFontSize(example, 22, 17, 126),
       fontFamily: theme.fonts.body,
       color: theme.colors.text,
       bold: true,
     }),
-    textElement(`${slide.id}-explain-caveat-label`, "Важно помнить", 596, 382, 564, 34, 4, labelText(theme)),
-    textElement(`${slide.id}-explain-caveat`, caveat, 596, 438, 564, 82, 4, {
+    textElement(`${slide.id}-explain-caveat-label`, "Важно помнить", 596, 404, 564, 34, 4, labelText(theme)),
+    textElement(`${slide.id}-explain-caveat`, caveat, 596, 460, 564, 82, 4, {
       role: "body",
       fontSize: fittedFontSize(caveat, 17, 14, 82),
       fontFamily: theme.fonts.body,
@@ -2451,7 +2620,8 @@ function addSourceRefsCanvas(slide: Slide, theme: PresentationTheme, elements: C
   compactSourceRefs(slide.sourceRefs, 3).forEach((ref, index) => {
     elements.push(textElement(`${slide.id}-source-${index}`, ref, 86 + index * 370, 575, 344, 48, 4, {
       role: "caption",
-      fontSize: fittedFontSize(ref, 13, 10, 48),
+      fontSize: 14,
+      autoFit: false,
       fontFamily: theme.fonts.body,
       color: theme.colors.muted,
     }));
@@ -2463,7 +2633,9 @@ function addFallbackImageCanvas(slide: Slide, elements: CanvasElement[]) {
   const image = slide.visual?.image;
   if (!image) return;
   if (elements.some((element) => element.type === "image")) return;
-  elements.push(imageElement(`${slide.id}-image`, image, 840, 132, 340, 410, 3, 0.94, "contain"));
+  const candidate = imageElement(`${slide.id}-image`, image, 840, 180, 340, 362, 3, 0.94, "contain");
+  if (elements.some((element) => element.type === "text" && elementsVisuallyOverlap(element, candidate))) return;
+  elements.push(candidate);
 }
 
 function addSlideTitle(
@@ -2490,7 +2662,7 @@ function addMiniPointRow(
   y: number,
   options: { rightBoundary?: number; maxBottom?: number } = {},
 ) {
-  const labels = (slide.bullets || []).slice(0, 3).map((item, index) => miniChipText(item, slide, index));
+  const labels = uniqueCanvasItems((slide.bullets || []).slice(0, 3).map((item, index) => miniChipText(item, slide, index)));
   if (!labels.length) return;
   const gap = 18;
   const rightBoundary = options.rightBoundary || 1232;
@@ -2525,7 +2697,7 @@ function addMiniPointRow(
 }
 
 function addTitleMiniPointGrid(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], topY = 430) {
-  const labels = (slide.bullets || []).slice(0, 3).map((item, index) => miniChipText(item, slide, index));
+  const labels = uniqueCanvasItems((slide.bullets || []).slice(0, 3).map((item, index) => miniChipText(item, slide, index)));
   if (!labels.length) return;
 
   const gap = 18;
@@ -2542,6 +2714,7 @@ function addTitleMiniPointGrid(slide: Slide, theme: PresentationTheme, elements:
   const singleRowHeight = useSingleRow
     ? Math.max(...labels.map((label) => plaqueHeight(label, READABLE_PLAQUE_FONT_SIZE, singleRowWidth - PLAQUE_PADDING_X * 2)))
     : 0;
+  if (!useSingleRow && gridBottom > CANVAS_SAFE_BOTTOM) return;
   if (useSingleRow && topY + singleRowHeight > 680) return;
   const effectiveRowWidth = useSingleRow ? labels.length * singleRowWidth + gap * (labels.length - 1) : rowWidth;
   const startX = (1280 - effectiveRowWidth) / 2;
@@ -2579,11 +2752,13 @@ function addComparisonCell(
   value: string,
   width = 533,
 ) {
+  const compactValue = compactSummaryPoint(value, width < 300 ? 5 : 14) || value;
   elements.push(
-    shapeElement(`${slide.id}-comparison-${id}-card`, "roundRect", x, y, width, 92, 2, theme.colors.surface, theme.colors.line, 1, 1),
-    textElement(`${slide.id}-comparison-${id}-text`, value, x + 19, y + 15, width - 38, 54, 4, {
+    shapeElement(`${slide.id}-comparison-${id}-card`, "roundRect", x, y, width, 108, 2, theme.colors.surface, theme.colors.line, 1, 1),
+    textElement(`${slide.id}-comparison-${id}-text`, compactValue, x + 19, y + 16, width - 38, 76, 4, {
       role: "body",
-      fontSize: 18,
+      fontSize: MIN_GENERATED_BODY_FONT_SIZE,
+      autoFit: false,
       fontFamily: theme.fonts.body,
       color: theme.colors.muted,
     }),
@@ -2593,7 +2768,7 @@ function addComparisonCell(
 function labelText(theme: PresentationTheme): Partial<CanvasTextElement> {
   return {
     role: "caption",
-    fontSize: 16,
+    fontSize: MIN_GENERATED_CAPTION_FONT_SIZE,
     fontFamily: theme.fonts.heading,
     color: theme.colors.text,
     bold: true,
@@ -2680,17 +2855,24 @@ function textElement(
 }
 
 function fitCanvasTextElement(element: CanvasTextElement): CanvasTextElement {
+  const minimum = minimumReadableFontSize(element);
+  const requestedFontSize = Math.max(element.fontSize, minimum);
   if (element.autoFit === false) {
     return {
       ...element,
-      h: Math.max(element.h, estimatedTextHeight(element.text, element.fontSize, element.w)),
+      fontSize: requestedFontSize,
+      h: Math.max(element.h, estimatedTextHeight(element.text, requestedFontSize, element.w)),
     };
   }
-  let fontSize = element.fontSize;
-  while (fontSize > 8 && estimatedTextHeight(element.text, fontSize, element.w) > element.h) {
+  let fontSize = requestedFontSize;
+  while (fontSize > minimum && estimatedTextHeight(element.text, fontSize, element.w) > element.h) {
     fontSize -= 1;
   }
-  return { ...element, fontSize };
+  return {
+    ...element,
+    fontSize,
+    h: Math.max(element.h, estimatedTextHeight(element.text, fontSize, element.w)),
+  };
 }
 
 function resizeTextPlaques(elements: CanvasElement[]) {
@@ -2795,10 +2977,31 @@ function estimatedTextHeight(value: string, fontSize: number, width: number) {
   const safeWidth = Math.max(1, width);
   const averageCharacterWidth = fontSize * 0.54;
   const charactersPerLine = Math.max(1, Math.floor(safeWidth / averageCharacterWidth));
-  const lines = cleanCanvasText(value)
-    .split("\n")
-    .reduce((total, line) => total + Math.max(1, Math.ceil(line.length / charactersPerLine)), 0);
+  const lines = estimatedWrappedLineCount(cleanCanvasText(value), charactersPerLine);
   return Math.ceil(lines * fontSize * 1.14);
+}
+
+function estimatedWrappedLineCount(value: string, charactersPerLine: number) {
+  const words = value.split(/\s+/).filter(Boolean);
+  if (!words.length) return 1;
+
+  let lines = 1;
+  let currentLineLength = 0;
+
+  words.forEach((word) => {
+    const separator = currentLineLength ? 1 : 0;
+    if (currentLineLength + separator + word.length <= charactersPerLine) {
+      currentLineLength += separator + word.length;
+      return;
+    }
+
+    if (currentLineLength) lines += 1;
+    const fullLines = Math.floor(word.length / charactersPerLine);
+    lines += Math.max(0, fullLines - (word.length % charactersPerLine === 0 ? 1 : 0));
+    currentLineLength = word.length % charactersPerLine || charactersPerLine;
+  });
+
+  return lines;
 }
 
 function estimatedPlaqueTextHeight(value: string, fontSize: number, width: number) {
@@ -2868,6 +3071,16 @@ function sequenceItems(slide: Slide) {
   return (visualItems.length ? visualItems : bullets.length ? bullets : blockItems.length ? blockItems : [slide.thesis || slide.title]).filter(Boolean);
 }
 
+function uniqueCanvasItems(items: string[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = cleanCanvasText(item).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function comparisonRows(slide: Slide) {
   if (slide.visual?.rows?.length) return slide.visual.rows;
   const bullets = slide.bullets || [];
@@ -2910,7 +3123,8 @@ function isDuplicateCanvasText(left: string, right: string) {
 
 function miniChipText(value: string, slide: Slide, index: number) {
   const bullets = slide.bullets || [];
-  const primary = compactChipSentence(value, 12);
+  const primary = compactChipSentence(value, 12)
+    || (!looksLikeChipFragment(value) ? compactSummaryPoint(value, 10) : "");
   if (primary) return primary;
   const candidates = [
     bullets[index + 1],

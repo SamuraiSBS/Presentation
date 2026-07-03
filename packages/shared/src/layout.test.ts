@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  auditSlideCanvas,
   buildSlideCanvas,
   hasMeasurableValue,
   metricLead,
@@ -55,6 +56,7 @@ describe("slide layouts", () => {
         }, theme);
 
         expect(canvas.backgroundStyle?.type, `${theme.preset}/${definition.id}`).toBe("gradient");
+        expect(auditSlideCanvas(canvas), `${theme.preset}/${definition.id}`).toEqual([]);
         expect(canvas.elements.some((element) => element.id.startsWith(`${theme.preset}-${definition.id}-bg`)), `${theme.preset}/${definition.id}`).toBe(false);
         for (const element of canvas.elements) {
           expect(element.x, element.id).toBeGreaterThanOrEqual(0);
