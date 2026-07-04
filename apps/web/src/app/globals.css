@@ -2626,3 +2626,290 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Page scroll contracts: reading surfaces scroll, focused workspaces do not. */
+body:has(.editor-page) {
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.app-content:has(.editor-page) {
+  height: calc(100dvh - 72px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-page {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px clamp(12px, 1.5vw, 24px);
+}
+
+.editor-workspace {
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.editor-workspace .editor-top {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+}
+
+.editor-workspace .form-error {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.editor-workspace .power-editor {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.editor-workspace .slide-rail,
+.editor-workspace .properties-panel,
+.editor-workspace .canvas-shell,
+.editor-workspace .canvas-scroll {
+  min-height: 0;
+}
+
+.editor-workspace .canvas-shell {
+  overflow: hidden;
+}
+
+@media (min-width: 901px) and (min-height: 721px) {
+  body:has(.new-page) {
+    height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  .app-content:has(.new-page) {
+    height: calc(100dvh - 72px);
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .new-page {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    padding-block: clamp(14px, 2.5vh, 28px);
+  }
+
+  .new-page .new-workspace {
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  .new-page .wizard-main,
+  .new-page .wizard-summary {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+@media (max-width: 1100px) {
+  .editor-page {
+    padding-inline: 10px;
+  }
+
+  .editor-workspace .editor-top h1 {
+    font-size: 28px;
+  }
+
+  .editor-workspace .power-editor {
+    grid-template-columns: 160px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(150px, 0.42fr);
+  }
+
+  .editor-workspace .properties-panel {
+    grid-column: 1 / -1;
+    max-height: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-content:has(.editor-page) {
+    height: calc(100dvh - 62px - 82px - env(safe-area-inset-bottom));
+    padding-bottom: 0;
+  }
+
+  .editor-page {
+    padding: 8px max(8px, env(safe-area-inset-right)) 8px max(8px, env(safe-area-inset-left));
+  }
+
+  .editor-workspace {
+    gap: 8px;
+  }
+
+  .editor-workspace .editor-top {
+    align-items: center;
+    flex-direction: row;
+    gap: 8px;
+  }
+
+  .editor-workspace .editor-top > div:first-child {
+    min-width: 0;
+  }
+
+  .editor-workspace .editor-top .status {
+    padding-block: 3px;
+  }
+
+  .editor-workspace .editor-top h1 {
+    margin-top: 4px;
+    overflow: hidden;
+    font-size: 20px;
+    line-height: 1.1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .editor-workspace .editor-top .actions {
+    flex: 0 0 auto;
+  }
+
+  .editor-workspace .editor-top .ghost {
+    min-height: 40px;
+    padding-inline: 10px;
+  }
+
+  .editor-workspace .power-editor {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(360px, 1fr) auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+  }
+
+  .editor-workspace .slide-rail {
+    max-height: 174px;
+    overflow: hidden;
+  }
+
+  .editor-workspace .slide-rail-list {
+    margin-top: 8px;
+    scrollbar-width: thin;
+  }
+
+  .editor-workspace .canvas-shell {
+    min-height: 360px;
+  }
+
+  .editor-workspace .properties-panel {
+    grid-column: auto;
+    max-height: min(42dvh, 360px);
+  }
+
+  .editor-workspace .editor-toolbar-primary {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .editor-workspace .editor-toolbar-primary .toolbar-group {
+    flex-wrap: nowrap;
+  }
+
+  .editor-workspace .editor-toolbar-primary .toolbar-spacer {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .editor-workspace .editor-top .status {
+    display: none;
+  }
+
+  .editor-workspace .editor-top h1 {
+    margin: 0;
+  }
+
+  .editor-workspace .editor-toolbar button span,
+  .editor-workspace .toolbar-export span {
+    display: none;
+  }
+
+  .editor-workspace .editor-toolbar button,
+  .editor-workspace .toolbar-export {
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    padding-right: max(16px, env(safe-area-inset-right));
+    padding-left: max(16px, env(safe-area-inset-left));
+  }
+
+  .mobile-bottom-nav {
+    padding-right: max(10px, env(safe-area-inset-right));
+    padding-left: max(10px, env(safe-area-inset-left));
+  }
+
+  .page:not(.editor-page) {
+    padding-right: max(12px, env(safe-area-inset-right));
+    padding-left: max(12px, env(safe-area-inset-left));
+  }
+}
+
+@media (pointer: coarse) {
+  .editor-toolbar button,
+  .segmented button,
+  .toolbar-export,
+  .object-floating-menu button,
+  .property-actions button,
+  .property-danger {
+    min-height: 44px;
+  }
+
+  .slide-thumb {
+    min-height: 48px;
+  }
+}
+
+@media (max-height: 720px), (max-width: 900px) {
+  body:has(.new-page) {
+    height: auto;
+    overflow-y: auto;
+    overscroll-behavior-y: auto;
+  }
+
+  .app-content:has(.new-page) {
+    height: auto;
+    min-height: calc(100dvh - 72px);
+    overflow: visible;
+  }
+
+  .new-page {
+    height: auto;
+    min-height: calc(100dvh - 72px);
+    overflow: visible;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-content:has(.new-page) {
+    min-height: calc(100dvh - 62px);
+  }
+
+  .new-page {
+    min-height: calc(100dvh - 62px);
+  }
+}

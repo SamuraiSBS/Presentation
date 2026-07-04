@@ -17,7 +17,11 @@ export function MobileBottomNav() {
     <nav className="mobile-bottom-nav" aria-label="Мобильная навигация">
       <div className="mobile-bottom-nav-inner">
         {items.map(({ href, label, icon: Icon }) => {
-          const active = href === "/" ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+          const active = href === "/"
+            ? pathname === href
+            : pathname === href
+              || pathname.startsWith(`${href}/`)
+              || (href === "/dashboard" && pathname.startsWith("/projects/"));
           return (
             <Link className={active ? "mobile-nav-item mobile-nav-item-active" : "mobile-nav-item"} href={href} key={href} aria-current={active ? "page" : undefined}>
               <Icon aria-hidden="true" size={21} strokeWidth={2.3} />

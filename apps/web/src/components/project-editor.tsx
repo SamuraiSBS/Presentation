@@ -555,7 +555,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
   }
 
   return (
-    <>
+    <section className="editor-workspace">
       <div className="editor-top">
         <div>
           <span className="status">{projectStatusLabel(project.status)}</span>
@@ -719,7 +719,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
           />
         </aside>
       </section>
-    </>
+    </section>
   );
 }
 

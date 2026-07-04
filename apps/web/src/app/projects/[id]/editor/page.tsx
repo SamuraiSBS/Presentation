@@ -9,7 +9,7 @@ export default async function EditorPage({ params }: { params: Promise<{ id: str
   const project = sanitizeProjectForDisplay(await internalFetch(`/projects/${id}`));
 
   return (
-    <main className="page">
+    <main className="page editor-page">
       <ProjectEditor initialProject={project} />
     </main>
   );
