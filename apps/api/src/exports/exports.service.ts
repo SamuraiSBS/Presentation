@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Queue } from "bullmq";
+import path from "node:path";
 import { type ExportType, planLimits } from "@studydeck/shared";
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -48,6 +49,7 @@ export class ExportsService {
       new GetObjectCommand({
         Bucket: this.config.getOrThrow<string>("S3_BUCKET"),
         Key: item.objectKey,
+        ResponseContentDisposition: `attachment; filename="${safeDownloadName(item.objectKey)}"`,
       }),
       { expiresIn: 60 * 5 },
     );
@@ -70,4 +72,8 @@ export class ExportsService {
 
     return this.s3Client;
   }
+}
+
+function safeDownloadName(objectKey: string) {
+  return path.basename(objectKey).replace(/[^\w.-]+/g, "-") || "presentation";
 }

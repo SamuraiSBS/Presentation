@@ -31,10 +31,8 @@ export function ExportPanel({ project }: { project: ProjectPayload }) {
     }
   }
 
-  async function download(item: ExportItem) {
-    const response = await fetch(`/api/projects/${project.id}/exports/${item.id}/download-url`);
-    const result = await response.json();
-    if (result.url) window.location.href = result.url;
+  function download(item: ExportItem) {
+    window.location.href = `/api/projects/${project.id}/exports/${item.id}/download`;
   }
 
   return (
