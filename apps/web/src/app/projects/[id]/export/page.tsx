@@ -1,4 +1,4 @@
-import { ExportPanel } from "@/components/export-panel";
+import { ExportPanelV2 } from "@/components/export-panel-v2";
 import { internalFetch } from "@/lib/internal-api";
 import { sanitizeProjectForDisplay } from "@/lib/presentation-display";
 
@@ -10,7 +10,7 @@ export default async function ExportPage({ params }: { params: Promise<{ id: str
 
   return (
     <main className="page">
-      <ExportPanel project={project} />
+      <ExportPanelV2 project={project} />
     </main>
   );
 }
