@@ -214,6 +214,8 @@ describe("createPptx", () => {
     expect(slideXml).toContain("Canvas body");
     expect(slideXml).toContain("FF8A00");
     expect(slideXml).toContain("161A1F");
+    expect(slideXml).toContain('sz="3450"');
+    expect(slideXml).toContain('<a:spcPct val="114000"/>');
   });
 
   it("keeps canvas gradients, opacity, image fit, text fit, and notes in pptx", async () => {
@@ -225,7 +227,14 @@ describe("createPptx", () => {
     expect(slideXml).toContain("<a:srcRect");
     expect(slideXml).not.toContain("<a:normAutofit");
     expect(slideXml).toMatch(/<a:alpha val="40000"\/>/);
-    expect(Object.keys(zip.files).some((name) => name.startsWith("ppt/media/") && name.endsWith(".svg"))).toBe(true);
+    const mediaNames = Object.keys(zip.files).filter((name) => name.startsWith("ppt/media/") && !zip.files[name].dir);
+    const pngNames = mediaNames.filter((name) => name.endsWith(".png"));
+    expect(mediaNames.some((name) => name.endsWith(".svg"))).toBe(false);
+    expect(pngNames.length).toBeGreaterThan(0);
+    for (const name of pngNames) {
+      const data = await zip.file(name)?.async("nodebuffer");
+      expect(data?.subarray(0, 8).toString("hex"), name).toBe("89504e470d0a1a0a");
+    }
     expect(notesXml).toContain("Canvas parity narration");
   });
 

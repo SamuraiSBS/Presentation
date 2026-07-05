@@ -1,6 +1,7 @@
 import type { Job } from "bullmq";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
+import sharp from "sharp";
 import {
   ensureEditableCanvas,
   canvasBackgroundCss,
@@ -184,7 +185,7 @@ async function renderCanvasSlide(
 ) {
   slide.background = { color: pptxColor(canvas.background || theme.colors.background) };
   if (canvas.backgroundStyle?.type === "gradient") {
-    slide.addImage({ data: canvasBackgroundSvgData(canvas), x: 0, y: 0, w: WIDE_LAYOUT.width, h: WIDE_LAYOUT.height });
+    slide.addImage({ data: await canvasBackgroundPngData(canvas), x: 0, y: 0, w: WIDE_LAYOUT.width, h: WIDE_LAYOUT.height });
   }
   for (const element of sortCanvasElements(canvas.elements)) {
     if (element.opacity <= 0) continue;
@@ -218,7 +219,9 @@ function renderCanvasText(slide: any, element: CanvasTextElement, theme: ExportT
   slide.addText(runs, {
     ...canvasBox(element),
     fontFace: element.fontFamily || theme.fonts.body,
-    fontSize: element.fontSize,
+    // Canvas typography is expressed in CSS pixels, while PPTX uses points.
+    // 1 CSS px = 0.75 pt at the canvas' 96 DPI coordinate system.
+    fontSize: pixelsToPoints(element.fontSize),
     bold: element.bold,
     italic: element.italic,
     underline: element.underline,
@@ -227,7 +230,8 @@ function renderCanvasText(slide: any, element: CanvasTextElement, theme: ExportT
     valign: element.valign === "middle" ? "mid" : element.valign,
     rotate: element.rotation,
     fit: element.autoFit === true ? "shrink" : "none",
-    margin: 0.02,
+    lineSpacingMultiple: 1.14,
+    margin: 0,
   });
 }
 
@@ -292,6 +296,10 @@ function canvasBox(element: Pick<CanvasElement, "x" | "y" | "w" | "h">) {
     w: element.w / 96,
     h: element.h / 96,
   };
+}
+
+function pixelsToPoints(pixels: number) {
+  return Math.round(pixels * 75) / 100;
 }
 
 function opacityToTransparency(opacity: number) {
@@ -1098,11 +1106,16 @@ function pdfTextStyle(element: CanvasTextElement) {
   ].join(";");
 }
 
-function canvasBackgroundSvgData(canvas: SlideCanvas) {
+async function canvasBackgroundPngData(canvas: SlideCanvas) {
+  const png = await sharp(Buffer.from(canvasBackgroundSvg(canvas))).png().toBuffer();
+  return `data:image/png;base64,${png.toString("base64")}`;
+}
+
+function canvasBackgroundSvg(canvas: SlideCanvas) {
   const style = canvas.backgroundStyle;
   if (!style || style.type === "solid") {
     const color = style?.color || canvas.background;
-    return `data:image/svg+xml;base64,${Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}"><rect width="100%" height="100%" fill="${color}"/></svg>`).toString("base64")}`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}"><rect width="100%" height="100%" fill="${color}"/></svg>`;
   }
   const x1 = 50 - Math.cos((style.angle * Math.PI) / 180) * 50;
   const y1 = 50 - Math.sin((style.angle * Math.PI) / 180) * 50;
@@ -1115,7 +1128,7 @@ function canvasBackgroundSvgData(canvas: SlideCanvas) {
   }).join("");
   const filters = style.blobs.map((blob, index) => `<filter id="blur${index}" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="${blob.blur}"/></filter>`).join("");
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="0 0 ${canvas.width} ${canvas.height}"><defs><linearGradient id="base" x1="${x1}%" y1="${y1}%" x2="${x2}%" y2="${y2}%">${stops}</linearGradient>${filters}</defs><rect width="100%" height="100%" fill="url(#base)"/>${blobs}</svg>`;
-  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+  return svg;
 }
 
 function pdfShapeStyle(element: CanvasShapeElement) {
