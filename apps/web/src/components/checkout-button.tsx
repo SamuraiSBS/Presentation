@@ -20,7 +20,7 @@ export function CheckoutButton({ plan }: { plan: "student" | "pro" }) {
 
   return (
     <button className="button" type="button" onClick={checkout} disabled={busy}>
-      {busy ? <><LoaderCircle className="spin" aria-hidden="true" size={18} />Открываем оплату...</> : "Оформить"}
+      {busy ? <><LoaderCircle className="spin" aria-hidden="true" size={18} />Открываем оплату...</> : "Выбрать план"}
     </button>
   );
 }

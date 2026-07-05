@@ -4,11 +4,11 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 const slideOptions = [
-  { count: 6, label: "Короткий семинар", description: "5-7 минут" },
-  { count: 8, label: "Быстрый доклад", description: "7-9 минут" },
-  { count: 10, label: "Учебная презентация", description: "10-12 минут" },
-  { count: 12, label: "Развернутый доклад", description: "12-15 минут" },
-  { count: 14, label: "Защита работы", description: "15+ минут" },
+  { count: 6, label: "Короткое выступление", description: "5-7 минут" },
+  { count: 8, label: "Доклад на паре", description: "7-9 минут" },
+  { count: 10, label: "Обычная презентация", description: "10-12 минут" },
+  { count: 12, label: "Подробный доклад", description: "12-15 минут" },
+  { count: 14, label: "Защита проекта", description: "от 15 минут" },
 ];
 
 const projectTitleLimit = 140;
@@ -36,7 +36,7 @@ export function NewProjectForm() {
   function nextFromTopic() {
     setError("");
     if (normalizedTopic.length < 2) {
-      setError("Введите тему презентации.");
+      setError("Напиши тему презентации.");
       return;
     }
     setStep(1);
@@ -83,7 +83,7 @@ export function NewProjectForm() {
       if (!narrationResponse.ok) throw new Error(await narrationResponse.text());
       router.push(`/projects/${project.id}/script`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось создать презентацию");
+      setError(err instanceof Error && /[А-Яа-яЁё]/.test(err.message) ? err.message : "Не получилось начать работу. Попробуй ещё раз.");
     } finally {
       setBusy(false);
     }
@@ -96,19 +96,19 @@ export function NewProjectForm() {
           <div className="wizard-pane">
             <div className="wizard-content">
               <label className="field">
-                <span className="wizard-question">Какая тема или задание?</span>
+                <span className="wizard-question">О чём будет презентация?</span>
                 <textarea
                   className="textarea topic-input"
                   value={topic}
                   onChange={(event) => setTopic(event.target.value)}
-                  placeholder="Например: анализ статьи о влиянии ИИ на высшее образование"
+                  placeholder="Например: как AI меняет высшее образование"
                   autoFocus
                 />
               </label>
             </div>
             <div className="actions action-row">
               <button className="button" type="button" onClick={nextFromTopic}>
-                Выбрать объем
+                Дальше
               </button>
             </div>
           </div>
@@ -118,8 +118,8 @@ export function NewProjectForm() {
           <div className="wizard-pane">
             <div className="wizard-content">
               <div>
-                <h2 className="wizard-question">Сколько слайдов нужно для выступления?</h2>
-                <p className="muted">Выберите формат университетской презентации. Слайды будут короткими, а полный текст уйдет в заметки докладчика.</p>
+                <h2 className="wizard-question">Сколько слайдов собрать?</h2>
+                <p className="muted">Выбери подходящую длину. На слайдах оставим главное, а подробный рассказ добавим в заметки.</p>
               </div>
               <div className="slide-count-options" role="radiogroup" aria-label="Количество слайдов">
                 {slideOptions.map((option) => (
@@ -143,7 +143,7 @@ export function NewProjectForm() {
                 Назад
               </button>
               <button className="button" type="button" onClick={() => setStep(2)}>
-                Добавить материалы
+                Дальше
               </button>
             </div>
           </div>
@@ -153,8 +153,8 @@ export function NewProjectForm() {
           <div className="wizard-pane">
             <div className="wizard-content">
               <div>
-                <h2 className="wizard-question">Добавьте материалы по заданию</h2>
-                <p className="muted">Статьи, конспекты и файлы помогут точнее подготовить речь, тезисы и визуальные идеи. Этот шаг можно пропустить.</p>
+                <h2 className="wizard-question">Есть конспект или задание?</h2>
+                <p className="muted">Добавь их сюда, чтобы презентация точнее попала в тему. Если материалов нет, просто пропусти этот шаг.</p>
               </div>
               <label
                 className={`dropzone ${dragActive ? "dropzone-active" : ""}`}
@@ -177,8 +177,8 @@ export function NewProjectForm() {
                   multiple
                   onChange={(event) => updateFiles(event.target.files)}
                 />
-                <span>Перетащите PDF, DOCX, PPTX, TXT или выберите файлы</span>
-                <small>Без файлов StudyDeck использует тему и при необходимости ищет источники в интернете.</small>
+                <span>Перетащи сюда PDF, DOCX, PPTX или TXT</span>
+                <small>Или нажми, чтобы выбрать файлы на устройстве.</small>
               </label>
               {files.length ? (
                 <div className="source-list" aria-label="Выбранные файлы">
@@ -191,8 +191,8 @@ export function NewProjectForm() {
                 </div>
               ) : (
                 <div className="source-mode">
-                  <strong>Можно без файлов</strong>
-                  <span>Подготовим студенческий доклад по теме и найдём источники в интернете, если материалов не хватает.</span>
+                  <strong>Файлы не обязательны</strong>
+                  <span>Если ничего не добавишь, начнём с темы и сами поищем подходящие источники.</span>
                 </div>
               )}
             </div>
@@ -201,7 +201,7 @@ export function NewProjectForm() {
                 Назад
               </button>
               <button className="button" type="button" onClick={createProjectAndNarration} disabled={busy}>
-                {busy ? "Готовим текст..." : "Подготовить текст выступления"}
+                {busy ? "Готовим текст..." : "Подготовить текст"}
               </button>
             </div>
           </div>
@@ -213,12 +213,12 @@ export function NewProjectForm() {
       <aside className="wizard-summary" aria-label="Сводка презентации">
         <div className="summary-head">
           <span className="status">Черновик</span>
-          <strong>{normalizedTopic || "Тема пока не указана"}</strong>
+          <strong>{normalizedTopic || "Тема появится здесь"}</strong>
         </div>
         <div className="summary-steps">
           <button className={`summary-step ${step === 0 ? "summary-step-active" : ""}`} type="button" onClick={() => setStep(0)}>
             <span>Задание</span>
-            <strong>{normalizedTopic ? "Заполнено" : "Нужна тема"}</strong>
+            <strong>{normalizedTopic ? "Готово" : "Напиши тему"}</strong>
           </button>
           <button
             className={`summary-step ${step === 1 ? "summary-step-active" : ""}`}
@@ -228,7 +228,7 @@ export function NewProjectForm() {
             }}
             disabled={!normalizedTopic}
           >
-            <span>Объем</span>
+            <span>Объём</span>
             <strong>{slideCount} слайдов</strong>
             <small>{activeSlideOption?.label}</small>
           </button>
@@ -241,17 +241,26 @@ export function NewProjectForm() {
             disabled={!normalizedTopic}
           >
             <span>Источники</span>
-            <strong>{files.length ? `${files.length} файл${files.length === 1 ? "" : "а"}` : "Поиск в интернете"}</strong>
-            <small>{files.length ? "Используем материалы" : "Файлы можно пропустить"}</small>
+            <strong>{files.length ? formatFileCount(files.length) : "Без файлов"}</strong>
+            <small>{files.length ? "Возьмём их за основу" : "Найдём источники сами"}</small>
           </button>
         </div>
         <div className="source-confidence">
-          <span>{files.length ? "Источники добавлены" : "Источник будет уточнен"}</span>
-          <strong>{files.length ? "Доклад опирается на ваши материалы." : "Если материалов нет, StudyDeck начнёт с темы и поиска источников в интернете."}</strong>
+          <span>{files.length ? "Материалы добавлены" : "Можно продолжать"}</span>
+          <strong>{files.length ? "Будем опираться на твои файлы." : "Начнём с темы и найдём источники в интернете."}</strong>
         </div>
       </aside>
     </section>
   );
+}
+
+function formatFileCount(count: number) {
+  const lastTwo = count % 100;
+  const last = count % 10;
+  if (lastTwo >= 11 && lastTwo <= 14) return `${count} файлов`;
+  if (last === 1) return `${count} файл`;
+  if (last >= 2 && last <= 4) return `${count} файла`;
+  return `${count} файлов`;
 }
 
 function projectTitleFromTopic(topic: string) {

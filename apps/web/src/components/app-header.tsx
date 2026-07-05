@@ -14,7 +14,7 @@ export function AppHeader() {
         <Link href="/pricing"><Tags aria-hidden="true" size={17} />Тарифы</Link>
       </nav>
       <div className="actions">
-        <Link className="ghost header-dashboard" href="/dashboard">Кабинет</Link>
+        <Link className="ghost header-dashboard" href="/dashboard">Мои проекты</Link>
         <Link className="button" href="/new"><Plus aria-hidden="true" size={18} />Создать</Link>
       </div>
     </header>

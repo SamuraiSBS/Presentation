@@ -8,8 +8,8 @@ export default async function NewProjectPage() {
 
   return (
     <main className="page new-page">
-      <h1 className="page-title">Новая презентация</h1>
-      <p className="lead">Сначала подготовим текст выступления, потом соберем слайды.</p>
+      <h1 className="page-title">О чём будешь выступать?</h1>
+      <p className="lead">Сначала вместе подготовим текст, а после соберём из него слайды.</p>
       <NewProjectForm />
     </main>
   );

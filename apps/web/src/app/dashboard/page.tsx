@@ -21,7 +21,7 @@ export default async function DashboardPage() {
       <div className="page-heading-row">
         <div>
           <h1 className="page-title">Проекты</h1>
-          <p className="lead">Здесь хранятся черновики, готовые презентации и файлы для скачивания.</p>
+          <p className="lead">Здесь лежат твои черновики и готовые презентации.</p>
         </div>
         <Link className="button" href="/new"><Plus aria-hidden="true" size={18} />Новая презентация</Link>
       </div>
@@ -41,9 +41,9 @@ export default async function DashboardPage() {
           ))
         ) : (
           <div className="panel empty-state">
-            <h2>Пока нет проектов</h2>
-            <p className="muted">Создайте первую презентацию: добавьте тему, файлы и запустите генерацию.</p>
-            <Link className="button" href="/new"><Plus aria-hidden="true" size={18} />Создать первую презентацию</Link>
+            <h2>Здесь пока пусто</h2>
+            <p className="muted">Начни с темы. Материалы можно добавить сразу или обойтись без них.</p>
+            <Link className="button" href="/new"><Plus aria-hidden="true" size={18} />Создать презентацию</Link>
           </div>
         )}
       </section>
@@ -56,12 +56,12 @@ function statusLabel(status: string) {
     draft: "Черновик",
     uploading: "Загрузка файлов",
     script_queued: "Текст в очереди",
-    script_generating: "Создаём текст",
+    script_generating: "Готовим текст",
     script_ready: "Текст готов",
     queued: "В очереди",
-    generating: "Создаём презентацию",
+    generating: "Собираем презентацию",
     ready: "Готово",
-    failed: "Ошибка",
+    failed: "Нужно повторить",
   };
-  return labels[status] || status;
+  return labels[status] || "Обновляем статус";
 }

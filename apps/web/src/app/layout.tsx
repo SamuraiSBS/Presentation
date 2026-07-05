@@ -6,7 +6,7 @@ import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 
 export const metadata: Metadata = {
   title: "StudyDeck AI",
-  description: "AI-сервис для учебных презентаций с заметками, рассказом и экспортом.",
+  description: "AI-помощник для учебных презентаций, заметок и подготовки к выступлению.",
 };
 
 export const viewport: Viewport = {

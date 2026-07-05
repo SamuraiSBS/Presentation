@@ -38,9 +38,9 @@ export function ExportPanel({ project }: { project: ProjectPayload }) {
   return (
     <section className="panel">
       <span className={`status status-${project.status}`}>{statusLabel(project.status)}</span>
-      <h1 className="page-title">Экспорт</h1>
+      <h1 className="page-title">Скачать презентацию</h1>
       <p className="lead">
-        {project.title}: {document?.slides?.length || 0} слайдов.
+        «{project.title}», {document?.slides?.length || 0} слайдов. Выбери нужный формат.
       </p>
       <div className="actions">
         <button className="button" type="button" onClick={() => requestExport("pdf")} disabled={busyType !== null}>{busyType === "pdf" ? <LoaderCircle className="spin" aria-hidden="true" size={18} /> : <FileText aria-hidden="true" size={18} />}Подготовить PDF</button>
@@ -54,8 +54,8 @@ export function ExportPanel({ project }: { project: ProjectPayload }) {
               <strong>{item.type.toUpperCase()}</strong>
               <span className={`status status-${item.status}`}>{statusLabel(item.status)}</span>
             </div>
-            <p className="muted">{item.objectKey || "Файл появится после обработки фоновой задачей."}</p>
-            {item.status === "ready" ? <button className="ghost" type="button" onClick={() => download(item)}><Download aria-hidden="true" size={18} />Скачать</button> : <span className="export-pending"><FileDown aria-hidden="true" size={18} />Файл готовится в фоне</span>}
+            <p className="muted">{item.status === "ready" ? "Файл готов к скачиванию." : "Можно уйти с этой страницы. Подготовка продолжится сама."}</p>
+            {item.status === "ready" ? <button className="ghost" type="button" onClick={() => download(item)}><Download aria-hidden="true" size={18} />Скачать</button> : <span className="export-pending"><FileDown aria-hidden="true" size={18} />Готовим файл</span>}
           </div>
         ))}
       </div>
@@ -67,11 +67,11 @@ function statusLabel(status: string) {
   const labels: Record<string, string> = {
     draft: "Черновик",
     queued: "В очереди",
-    active: "Обрабатывается",
-    generating: "Создаётся",
+    active: "Готовим файл",
+    generating: "Готовим файл",
     completed: "Готово",
     ready: "Готово",
-    failed: "Ошибка",
+    failed: "Не получилось",
   };
-  return labels[status] || status;
+  return labels[status] || "Обновляем статус";
 }

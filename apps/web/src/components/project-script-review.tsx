@@ -27,13 +27,13 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
   const draftIsLongEnough = draft.trim().length >= 50;
 
   const statusText = useMemo(() => {
-    if (project.status === "script_queued") return "Текст выступления в очереди";
-    if (project.status === "script_generating") return "Генерируем текст выступления";
-    if (project.status === "script_ready") return "Текст готов к проверке";
+    if (project.status === "script_queued") return "Скоро начнём готовить текст";
+    if (project.status === "script_generating") return "Готовим текст выступления";
+    if (project.status === "script_ready") return "Текст готов, проверь его";
     if (project.status === "queued") return "Презентация в очереди";
-    if (project.status === "generating") return "Создаем презентацию";
-    if (project.status === "failed") return "Нужно повторить действие";
-    return project.status;
+    if (project.status === "generating") return "Собираем презентацию";
+    if (project.status === "failed") return "Не получилось, попробуй ещё раз";
+    return "Обновляем статус";
   }, [project.status]);
 
   async function refresh() {
@@ -57,7 +57,7 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
 
     if (!isWaiting) return;
     const timer = window.setInterval(() => {
-      refresh().catch((error) => setActionError(error instanceof Error ? error.message : "Не удалось обновить проект"));
+      refresh().catch((error) => setActionError(userError(error, "Не получилось обновить проект. Попробуй ещё раз.")));
     }, 2500);
     return () => window.clearInterval(timer);
   }, [project.id, project.status, isWaiting, dirty, router]);
@@ -70,7 +70,7 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
       if (!response.ok) throw new Error(await response.text());
       await refresh();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Не удалось запустить генерацию текста");
+      setActionError(userError(error, "Не получилось начать подготовку текста. Попробуй ещё раз."));
     } finally {
       setBusy(false);
     }
@@ -78,7 +78,7 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
 
   async function saveDraft() {
     if (!draftIsLongEnough) {
-      setActionError("Текст выступления должен быть не короче 50 символов.");
+      setActionError("Добавь немного деталей. Текст должен быть хотя бы 50 символов.");
       return null;
     }
 
@@ -97,7 +97,7 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
       setDirty(false);
       return next;
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Не удалось сохранить текст");
+      setActionError(userError(error, "Не получилось сохранить текст. Попробуй ещё раз."));
       return null;
     } finally {
       setBusy(false);
@@ -106,7 +106,7 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
 
   async function acceptAndGenerate() {
     if (!draftIsLongEnough) {
-      setActionError("Проверьте текст выступления перед созданием презентации.");
+      setActionError("Сначала проверь текст выступления и добавь недостающие детали.");
       return;
     }
 
@@ -124,7 +124,7 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
       setDraft(next.speechDraft || draft.trim());
       setDirty(false);
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Не удалось создать презентацию");
+      setActionError(userError(error, "Не получилось собрать презентацию. Попробуй ещё раз."));
     } finally {
       setBusy(false);
     }
@@ -140,7 +140,7 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
         <button
           className="ghost"
           type="button"
-          onClick={() => refresh().catch((error) => setActionError(error instanceof Error ? error.message : "Не удалось обновить проект"))}
+          onClick={() => refresh().catch((error) => setActionError(userError(error, "Не получилось обновить проект. Попробуй ещё раз.")))}
           disabled={busy}
         >
           Обновить
@@ -151,15 +151,15 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
         <div className="panel script-waiting">
           <div className="loading-band" />
           <h2>Готовим текст выступления</h2>
-          <p className="muted">После генерации здесь появится полный текст. Его можно будет отредактировать перед созданием слайдов.</p>
+          <p className="muted">Скоро здесь появится черновик. Прочитай его и поправь всё, что звучит не по-твоему.</p>
         </div>
       ) : null}
 
       {isFinalGeneration ? (
         <div className="panel script-waiting">
           <div className="loading-band" />
-          <h2>Создаем презентацию</h2>
-          <p className="muted">Слайды строятся из принятого текста выступления. Когда презентация будет готова, откроется редактор.</p>
+          <h2>Собираем презентацию</h2>
+          <p className="muted">Берём за основу принятый текст. Когда слайды будут готовы, редактор откроется сам.</p>
         </div>
       ) : null}
 
@@ -177,13 +177,13 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
             />
           </label>
           <div className="script-toolbar">
-            <p className="muted">{dirty ? "Есть несохраненные правки" : "Текст сохранен"}</p>
+            <p className="muted">{dirty ? "Есть несохранённые правки" : "Всё сохранено"}</p>
             <div className="actions">
               <button className="ghost" type="button" onClick={saveDraft} disabled={busy || !draftIsLongEnough}>
                 Сохранить
               </button>
               <button className="button" type="button" onClick={acceptAndGenerate} disabled={busy || !draftIsLongEnough}>
-                {busy ? "Запускаем..." : "Принять и создать презентацию"}
+                {busy ? "Собираем слайды..." : "Принять текст и собрать слайды"}
               </button>
             </div>
           </div>
@@ -192,16 +192,16 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
 
       {project.status === "failed" ? (
         <div className="panel script-error-panel">
-          <h2>Не удалось выполнить шаг</h2>
-          {project.error ? <p className="muted">{project.error}</p> : null}
+          <h2>Что-то пошло не так</h2>
+          {project.error ? <p className="muted">{userError(new Error(project.error), "Не получилось завершить этот шаг. Попробуй ещё раз.")}</p> : null}
           <div className="actions">
             {draft ? (
               <button className="button" type="button" onClick={acceptAndGenerate} disabled={busy || !draftIsLongEnough}>
-                Повторить создание презентации
+                Попробовать собрать слайды ещё раз
               </button>
             ) : (
               <button className="button" type="button" onClick={startNarration} disabled={busy}>
-                Повторить генерацию текста
+                Попробовать подготовить текст ещё раз
               </button>
             )}
           </div>
@@ -211,4 +211,11 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
       {actionError ? <p className="form-error">{actionError}</p> : null}
     </section>
   );
+}
+
+function userError(error: unknown, fallback: string) {
+  if (error instanceof Error && /[А-Яа-яЁё]/.test(error.message) && !/<[^>]+>|\b(?:error|failed|invalid|internal)\b/i.test(error.message)) {
+    return error.message;
+  }
+  return fallback;
 }

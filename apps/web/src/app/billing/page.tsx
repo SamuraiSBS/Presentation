@@ -11,11 +11,11 @@ export default async function BillingPage() {
     <main className="page">
       <section className="panel billing-panel">
         <span className="icon-surface icon-surface-large"><CreditCard aria-hidden="true" size={28} /></span>
-        <h1 className="page-title">Оплата и подписка</h1>
+        <h1 className="page-title">Подписка</h1>
         <p className="lead">
-          Управление подпиской пока недоступно в личном кабинете. Выбрать доступный план можно на странице тарифов.
+          Управление подпиской ещё настраиваем. Пока выбрать план можно на странице тарифов.
         </p>
-        <Link className="button" href="/pricing"><Tags aria-hidden="true" size={18} />Посмотреть тарифы</Link>
+        <Link className="button" href="/pricing"><Tags aria-hidden="true" size={18} />Выбрать тариф</Link>
       </section>
     </main>
   );

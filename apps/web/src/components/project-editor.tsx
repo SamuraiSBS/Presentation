@@ -143,7 +143,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
       if (!response.ok) throw new Error(await response.text());
       await refresh();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Не удалось запустить генерацию");
+      setActionError(editorError(error, "Не получилось запустить сборку презентации. Попробуй ещё раз."));
     } finally {
       setBusy(false);
     }
@@ -157,7 +157,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
       body: JSON.stringify(next),
     });
     if (!response.ok) {
-      setActionError(await response.text());
+      setActionError(editorError(new Error(await response.text()), "Не получилось сохранить изменения. Попробуй ещё раз."));
     }
   }
 
@@ -520,7 +520,7 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
       setSelectedId(nextElement.id);
       void saveSlide({ title: titleFromCanvas(slide, next), canvas: next });
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Не удалось загрузить изображение");
+      setActionError(editorError(error, "Не получилось загрузить изображение. Проверь файл и попробуй ещё раз."));
     } finally {
       setBusy(false);
       setImageReplaceTargetId("");
@@ -537,15 +537,15 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
         <h1 className="page-title" style={{ fontSize: 44 }}>{project.title}</h1>
         <p className="lead">
           {canStartGeneration
-            ? "Презентация еще не отправлена в генерацию. Запустите ее вручную."
-            : "Генерация еще идет. Обновите страницу через несколько секунд."}
+            ? "Слайды ещё не собирались. Запусти подготовку, когда будешь готов."
+            : "Презентация ещё собирается. Подожди немного и обнови страницу."}
         </p>
-        {project.error ? <p className="muted">{project.error}</p> : null}
+        {project.error ? <p className="muted">{editorError(new Error(project.error), "Не получилось собрать презентацию. Попробуй ещё раз.")}</p> : null}
         {actionError ? <p className="form-error">{actionError}</p> : null}
         <div className="actions">
           {canStartGeneration ? (
             <button className="button" type="button" onClick={generate} disabled={busy}>
-              {busy ? "Запускаем..." : "Запустить генерацию"}
+              {busy ? "Запускаем..." : "Собрать презентацию"}
             </button>
           ) : null}
           <button className="ghost" type="button" onClick={refresh}>Обновить</button>
@@ -699,8 +699,8 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
 
           {!showObjectCanvas && activeSlideText ? (
             <aside className="slide-text-panel">
-              <strong>Текст презентации</strong>
-              <textarea className="textarea notes" value={activeSlideText} readOnly aria-label="Текст презентации" />
+              <strong>Текст выступления</strong>
+              <textarea className="textarea notes" value={activeSlideText} readOnly aria-label="Текст выступления" />
             </aside>
           ) : null}
         </main>
@@ -1074,9 +1074,9 @@ function PropertiesPanel({
         <strong>{selected ? elementLabel(selected) : "Слайд"}</strong>
       </div>
 
-      <PropertySection title="Шаблон слайда" description="Композиция пересобирается из текущего содержания.">
+      <PropertySection title="Макет слайда" description="Выбери, как расположить материалы на слайде.">
         <label className="field">
-          Шаблон
+          Макет
           <select className="select" value={slide.layout} onChange={(event) => onChangeLayout(event.target.value as SlideLayout)}>
             {slideLayoutOptions(slide.slideKind).map((option) => (
               <option key={option.id} value={option.id} disabled={!layoutCanRender(option.id, slide)}>
@@ -1089,13 +1089,13 @@ function PropertiesPanel({
 
       {selected ? (
         <>
-          <PropertySection title="Содержимое" description="Текст или изображение внутри объекта.">
+          <PropertySection title="Содержимое" description="Здесь можно изменить текст, фигуру или изображение.">
             {selected.type === "text" ? <TextContentProperties selected={selected} onUpdate={onUpdate} /> : null}
             {selected.type === "shape" ? <ShapeContentProperties selected={selected} onUpdate={onUpdate} /> : null}
             {selected.type === "image" ? <ImageContentProperties selected={selected} onUpdate={onUpdate} /> : null}
           </PropertySection>
 
-          <PropertySection title="Оформление" description="Настройте внешний вид объекта.">
+          <PropertySection title="Оформление" description="Настрой, как выглядит выбранный объект.">
             {selected.type === "text" ? <TextStyleProperties selected={selected} onUpdate={onUpdate} /> : null}
             {selected.type === "shape" ? <ShapeStyleProperties selected={selected} onUpdate={onUpdate} /> : null}
             {selected.type === "image" ? <ImageStyleProperties selected={selected} onUpdate={onUpdate} /> : null}
@@ -1113,7 +1113,7 @@ function PropertiesPanel({
             </label>
           </PropertySection>
 
-          <PropertySection title="Положение" description="Точно разместите объект на слайде.">
+          <PropertySection title="Положение" description="Укажи размер и точное место на слайде.">
             <div className="property-grid">
               <label className="field">
                 X
@@ -1138,7 +1138,7 @@ function PropertiesPanel({
             </div>
           </PropertySection>
 
-          <PropertySection title="Слой" description="Настройте порядок и блокировку объекта.">
+          <PropertySection title="Слой" description="Перемести объект выше или ниже, либо заблокируй его.">
             <div className="property-actions">
               <button type="button" onClick={onDuplicate}>
                 <Icon name="copy" />
@@ -1165,12 +1165,12 @@ function PropertiesPanel({
         </>
       ) : (
         <div className="properties-empty">
-          <strong>Выберите объект на слайде</strong>
-          <p>Нажмите на текст, изображение или фигуру, чтобы изменить содержимое, оформление и положение.</p>
+          <strong>Выбери объект на слайде</strong>
+          <p>Нажми на текст, изображение или фигуру. Справа появятся настройки.</p>
         </div>
       )}
 
-      <PropertySection title="Заметки докладчика" description="Текст выступления для этого слайда.">
+      <PropertySection title="Заметки докладчика" description="То, что ты расскажешь на этом слайде.">
         <label className="field">
           Заметки
           <textarea key={slide.id} className="textarea notes" defaultValue={slide.speakerNotes} onBlur={(event) => onSaveNotes(event.target.value)} />
@@ -1408,14 +1408,21 @@ function projectStatusLabel(status: string) {
     draft: "Черновик",
     uploading: "Загрузка файлов",
     script_queued: "Текст в очереди",
-    script_generating: "Создаём текст",
+    script_generating: "Готовим текст",
     script_ready: "Текст готов",
     queued: "В очереди",
-    generating: "Создаём презентацию",
+    generating: "Собираем презентацию",
     ready: "Готово",
-    failed: "Ошибка",
+    failed: "Нужно повторить",
   };
-  return labels[status] || status;
+  return labels[status] || "Обновляем статус";
+}
+
+function editorError(error: unknown, fallback: string) {
+  if (error instanceof Error && /[А-Яа-яЁё]/.test(error.message) && !/<[^>]+>|\b(?:error|failed|invalid|internal)\b/i.test(error.message)) {
+    return error.message;
+  }
+  return fallback;
 }
 
 function elementStyle(element: CanvasElement): CSSProperties {

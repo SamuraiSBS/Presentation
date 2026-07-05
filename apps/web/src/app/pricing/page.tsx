@@ -12,7 +12,7 @@ export default function PricingPage() {
   return (
     <main className="page">
       <h1 className="page-title">Тарифы</h1>
-      <p className="lead">Бесплатный тариф и платные планы для студентов и преподавателей. Оплата и управление подпиской подключаются через платёжный сервис.</p>
+      <p className="lead">Выбери, сколько презентаций тебе нужно. Начать можно бесплатно.</p>
       <section className="grid">
         {plans.map(([name, price, ...features]) => (
           <article className={name === "Студенческий" ? "card pricing-card pricing-card-featured" : "card pricing-card"} key={name}>
@@ -20,7 +20,7 @@ export default function PricingPage() {
             <h2>{name}</h2>
             <div className="price"><strong>{price}</strong><span className="muted">/мес.</span></div>
             <div className="plan-features">{features.map((feature) => <p className="muted" key={feature}><Check aria-hidden="true" size={17} />{feature}</p>)}</div>
-            {name === "Бесплатный" ? <Link className="ghost" href="/new">Начать бесплатно</Link> : <CheckoutButton plan={name === "Для преподавателя" ? "pro" : "student"} />}
+            {name === "Бесплатный" ? <Link className="ghost" href="/new">Попробовать бесплатно</Link> : <CheckoutButton plan={name === "Для преподавателя" ? "pro" : "student"} />}
           </article>
         ))}
       </section>
