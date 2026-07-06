@@ -11,6 +11,7 @@ import {
   generationBriefSchema,
   generationPipelineArtifactsSchema,
   generationJobKindSchema,
+  generationProgressStageSchema,
   hasCustomSlideCanvas,
   planLimits,
   PREMIUM_PRESENTATION_THEMES,
@@ -79,6 +80,8 @@ describe("shared contracts", () => {
     expect(projectStatusSchema.parse("script_ready")).toBe("script_ready");
     expect(generationJobKindSchema.parse("narration")).toBe("narration");
     expect(generationJobKindSchema.parse("presentation")).toBe("presentation");
+    expect(generationProgressStageSchema.parse("researching")).toBe("researching");
+    expect(generationProgressStageSchema.parse("selecting_visuals")).toBe("selecting_visuals");
   });
 
   it("validates editable speech drafts for final generation", () => {

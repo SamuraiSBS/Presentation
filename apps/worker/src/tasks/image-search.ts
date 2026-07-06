@@ -143,16 +143,18 @@ export function buildSlideImageQuery(
   return query.length <= TAVILY_QUERY_MAX_LENGTH ? query : query.slice(0, TAVILY_QUERY_MAX_LENGTH);
 }
 
-function shouldSearchForSlideImage(
+export function shouldSearchForSlideImage(
   slide: PresentationDocument["slides"][number],
   direction?: DesignBriefSlideDirection,
 ) {
-  if (direction?.imageStrategy !== "real_photo" && direction?.imageStrategy !== "generated_illustration") {
+  if (direction?.imageStrategy !== "real_photo") {
     return false;
   }
 
   const prompt = cleanText(direction.visualPrompt);
   if (!prompt) return false;
+  if (hasAbstractVisualPrompt(prompt, slide)) return false;
+  if (hasConcreteVisualEvidence(prompt, slide)) return true;
 
   const meaningfulWords = prompt
     .toLowerCase()
@@ -165,7 +167,7 @@ function shouldSearchForSlideImage(
     .split(/\s+/)
     .filter((word) => word.length >= 3);
 
-  return meaningfulWords.length >= 2 || meaningfulWords.some((word) => slideWords.includes(word));
+  return meaningfulWords.length >= 3 && meaningfulWords.some((word) => slideWords.includes(word));
 }
 
 const GENERIC_VISUAL_PROMPT_WORDS = new Set([
@@ -173,6 +175,28 @@ const GENERIC_VISUAL_PROMPT_WORDS = new Set([
   "high", "quality", "clear", "real", "realistic", "картинка", "фото", "изображение", "иллюстрация",
   "визуал", "презентация", "слайд", "качественный", "реалистичный",
 ]);
+
+const CONCRETE_VISUAL_PATTERNS = [
+  /\b(person|people|students?|teachers?|leaders?|scientists?|writers?|artists?|city|country|map|factory|laboratory|museum|products?|devices?|cars?|building|monument|battle|protest|meeting|conference|portrait|photo|documentary|classroom|lecture hall)\b/i,
+  /\b(человек|люди|студент|преподавател|учен[ыо]й|писател|художник|город|страна|карта|завод|лаборатор|музей|продукт|устройств|автомобил|здание|памятник|битва|протест|встреча|конференц|портрет|фото|документальн)\b/i,
+  /\b(19|20)\d{2}\b/,
+];
+
+const ABSTRACT_VISUAL_PATTERNS = [
+  /\b(theory|concept|principle|idea|overview|summary|conclusion|structure|process|workflow|framework|model|pros and cons|cause and effect)\b/i,
+  /\b(теори|концепц|принцип|иде[яи]|обзор|итог|вывод|структур|процесс|этап|модель|схема|сравнение|причин|последств|плюсы|минусы)\b/i,
+];
+
+function hasConcreteVisualEvidence(prompt: string, _slide: PresentationDocument["slides"][number]) {
+  const text = prompt;
+  return CONCRETE_VISUAL_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function hasAbstractVisualPrompt(prompt: string, _slide: PresentationDocument["slides"][number]) {
+  const text = prompt;
+  return ABSTRACT_VISUAL_PATTERNS.some((pattern) => pattern.test(text))
+    && !CONCRETE_VISUAL_PATTERNS.some((pattern) => pattern.test(text));
+}
 
 export function tavilyResponseToImageCandidates(payload: TavilyImageResponse): ImageCandidate[] {
   const candidates: ImageCandidate[] = [];

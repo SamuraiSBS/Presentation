@@ -4,6 +4,13 @@ import { getPrisma } from "../prisma.js";
 import { readObjectBuffer } from "../storage.js";
 import { extractTextFromSource } from "./extract.js";
 import { enrichPresentationImages } from "./image-search.js";
+import {
+  classifyGenerationError,
+  logGenerationStage,
+  safeErrorSummary,
+  updateGenerationProgress,
+  type GenerationProgressStage,
+} from "./job-progress.js";
 import { generateNarrationDraft, generatePresentationFromNarration } from "./presentation.js";
 import { searchWebSources } from "./web-search.js";
 
@@ -16,14 +23,34 @@ export async function handleGenerationJob(job: Job<{ projectId: string; userId: 
     where: { id: projectId },
     data: { status: kind === "narration" ? "script_generating" : "generating", error: null },
   });
-  await prisma.generationJob.updateMany({ where: { projectId, queueJobId: job.id, kind }, data: { status: "active" } });
+  await prisma.generationJob.updateMany({
+    where: { projectId, queueJobId: job.id, kind },
+    data: { status: "active", progressStage: "queued", progressLabel: "В очереди", progressPercent: 0, stageStartedAt: new Date() },
+  });
+
+  const stageStartedAt = new Map<GenerationProgressStage, number>();
+  const setStage = async (stage: GenerationProgressStage) => {
+    stageStartedAt.set(stage, Date.now());
+    await updateGenerationProgress(job, stage, (data) =>
+      prisma.generationJob.updateMany({ where: { projectId, queueJobId: job.id, kind }, data }),
+    );
+  };
+  const finishStage = (stage: GenerationProgressStage, error?: unknown) => {
+    const startedAt = stageStartedAt.get(stage) || Date.now();
+    logGenerationStage({ projectId, jobId: job.id, stage, durationMs: Date.now() - startedAt, error });
+  };
 
   try {
     const project = await prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { sources: true } });
+    await setStage("researching");
     const sources = await prepareGenerationSources(project);
+    finishStage("researching");
 
     if (kind === "narration") {
+      await setStage("drafting_speech");
       const draft = await generateNarrationDraft(project, sources);
+      finishStage("drafting_speech");
+      await setStage("saving");
       await prisma.project.update({
         where: { id: projectId },
         data: {
@@ -33,7 +60,12 @@ export async function handleGenerationJob(job: Job<{ projectId: string; userId: 
           error: null,
         },
       });
-      await prisma.generationJob.updateMany({ where: { projectId, queueJobId: job.id, kind }, data: { status: "completed" } });
+      finishStage("saving");
+      await setStage("completed");
+      await prisma.generationJob.updateMany({
+        where: { projectId, queueJobId: job.id, kind },
+        data: { status: "completed", progressStage: "completed", progressLabel: "Готово", progressPercent: 100 },
+      });
       return;
     }
 
@@ -41,8 +73,14 @@ export async function handleGenerationJob(job: Job<{ projectId: string; userId: 
       throw new Error("No accepted speech text was found for presentation generation");
     }
 
+    await setStage("building_slides");
     const generatedPresentation = await generatePresentationFromNarration(project, sources, project.speechDraft);
-    const presentation = ensureEditableCanvas(await enrichPresentationImages(project, generatedPresentation));
+    finishStage("building_slides");
+    await setStage("selecting_visuals");
+    const presentationWithImages = await enrichPresentationImages(project, generatedPresentation);
+    finishStage("selecting_visuals");
+    await setStage("polishing");
+    const presentation = ensureEditableCanvas(presentationWithImages);
     const unsafeCanvases = presentation.slides.flatMap((slide) =>
       (slide.canvas ? auditSlideCanvas(slide.canvas) : ["canvas is missing"])
         .map((issue) => `slide ${slide.order}: ${issue}`),
@@ -50,17 +88,43 @@ export async function handleGenerationJob(job: Job<{ projectId: string; userId: 
     if (unsafeCanvases.length) {
       throw new Error(`Presentation layout check failed: ${unsafeCanvases.slice(0, 8).join("; ")}`);
     }
+    finishStage("polishing");
+    await setStage("saving");
     await prisma.presentation.upsert({
       where: { projectId },
       create: { projectId, document: presentation },
       update: { document: presentation },
     });
     await prisma.project.update({ where: { id: projectId }, data: { status: "ready" } });
-    await prisma.generationJob.updateMany({ where: { projectId, queueJobId: job.id, kind }, data: { status: "completed" } });
+    finishStage("saving");
+    await setStage("completed");
+    await prisma.generationJob.updateMany({
+      where: { projectId, queueJobId: job.id, kind },
+      data: { status: "completed", progressStage: "completed", progressLabel: "Готово", progressPercent: 100 },
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Generation failed";
-    await prisma.project.update({ where: { id: projectId }, data: { status: "failed", error: message } });
-    await prisma.generationJob.updateMany({ where: { projectId, queueJobId: job.id, kind }, data: { status: "failed", error: message } });
+    const message = safeErrorSummary(error);
+    const retryClass = classifyGenerationError(error);
+    const attempts = typeof job.opts.attempts === "number" ? job.opts.attempts : 1;
+    const willRetry = retryClass === "transient" && job.attemptsMade + 1 < attempts;
+    if (!willRetry) {
+      job.discard();
+    }
+    logGenerationStage({ projectId, jobId: job.id, stage: "failed", durationMs: 0, error });
+    if (!willRetry) {
+      await prisma.project.update({ where: { id: projectId }, data: { status: "failed", error: message } });
+    }
+    await prisma.generationJob.updateMany({
+      where: { projectId, queueJobId: job.id, kind },
+      data: {
+        status: willRetry ? "active" : "failed",
+        error: message,
+        progressStage: willRetry ? "queued" : "failed",
+        progressLabel: willRetry ? "Временная ошибка, попробуем ещё раз" : "Не получилось",
+        progressPercent: willRetry ? 5 : 100,
+        stageStartedAt: new Date(),
+      },
+    });
     throw error;
   }
 }

@@ -29,6 +29,19 @@ export type ProjectStatus = z.infer<typeof projectStatusSchema>;
 export const jobStatusSchema = z.enum(["queued", "active", "completed", "failed"]);
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 
+export const generationProgressStageSchema = z.enum([
+  "queued",
+  "researching",
+  "drafting_speech",
+  "building_slides",
+  "selecting_visuals",
+  "polishing",
+  "saving",
+  "completed",
+  "failed",
+]);
+export type GenerationProgressStage = z.infer<typeof generationProgressStageSchema>;
+
 export const generationJobKindSchema = z.enum(["narration", "presentation"]);
 export type GenerationJobKind = z.infer<typeof generationJobKindSchema>;
 

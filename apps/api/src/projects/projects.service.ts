@@ -18,6 +18,7 @@ import {
   presentationSchema,
   slideCanvasSchema,
 } from "@studydeck/shared";
+import { generationJobOptions } from "../jobs/job-options.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 const activePresentationJobStatuses = ["queued", "active"] as const;
@@ -81,7 +82,7 @@ export class ProjectsService {
     const job = await this.prisma.generationJob.create({
       data: { projectId: project.id, kind: "narration", status: "queued" },
     });
-    const queueJob = await this.generationQueue.add("generate-narration", { projectId: project.id, userId }, { attempts: 2 });
+    const queueJob = await this.generationQueue.add("generate-narration", { projectId: project.id, userId }, generationJobOptions());
 
     await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
 
@@ -162,7 +163,7 @@ export class ProjectsService {
     const job = await this.prisma.generationJob.create({
       data: { projectId: project.id, kind: "presentation", status: "queued" },
     });
-    const queueJob = await this.generationQueue.add("generate-presentation", { projectId: project.id, userId }, { attempts: 2 });
+    const queueJob = await this.generationQueue.add("generate-presentation", { projectId: project.id, userId }, generationJobOptions());
 
     await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
     await this.prisma.usageCounter.update({

@@ -130,7 +130,11 @@ describe("ProjectsService narration acceptance", () => {
     expect(prisma.generationJob.create).toHaveBeenCalledWith({
       data: { projectId: "project-1", kind: "presentation", status: "queued" },
     });
-    expect(queue.add).toHaveBeenCalledWith("generate-presentation", { projectId: "project-1", userId: "user-1" }, { attempts: 2 });
+    expect(queue.add).toHaveBeenCalledWith(
+      "generate-presentation",
+      { projectId: "project-1", userId: "user-1" },
+      expect.objectContaining({ attempts: 3, backoff: { type: "exponential", delay: 5_000 } }),
+    );
     expect(prisma.usageCounter.update).toHaveBeenCalledWith({
       where: { userId_period: { userId: "user-1", period: expect.any(String) } },
       data: { generated: { increment: 1 } },

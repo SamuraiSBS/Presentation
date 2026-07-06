@@ -156,6 +156,10 @@ model GenerationJob {
   kind      GenerationJobKind @default(presentation)
   status    JobStatus @default(queued)
   queueJobId String?
+  progressStage String @default("queued")
+  progressLabel String @default("В очереди")
+  progressPercent Int @default(0)
+  stageStartedAt DateTime?
   error     String?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt

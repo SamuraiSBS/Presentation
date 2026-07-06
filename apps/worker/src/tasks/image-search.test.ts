@@ -4,6 +4,7 @@ import {
   buildSlideImageQuery,
   chooseImageCandidate,
   enrichPresentationImages,
+  shouldSearchForSlideImage,
   tavilyResponseToImageCandidates,
 } from "./image-search.js";
 
@@ -145,6 +146,35 @@ describe("image search helpers", () => {
 
     expect(searchCalls).toBe(0);
     expect(enriched.slides[0].visual.image).toBeUndefined();
+  });
+
+  it("gates Tavily lookup to real concrete visual evidence", () => {
+    const presentation = fixturePresentation();
+    const slide = presentation.slides[0];
+
+    expect(shouldSearchForSlideImage(slide, {
+      slideOrder: 1,
+      visualRole: "evidence",
+      layoutIntent: "split_image_text",
+      imageStrategy: "real_photo",
+      visualPrompt: "Map of missile sites in Cuba during the 1962 Cuban Missile Crisis",
+    })).toBe(true);
+
+    expect(shouldSearchForSlideImage(slide, {
+      slideOrder: 1,
+      visualRole: "explain",
+      layoutIntent: "diagram",
+      imageStrategy: "real_photo",
+      visualPrompt: "Cause and effect process diagram for political tension",
+    })).toBe(false);
+
+    expect(shouldSearchForSlideImage(slide, {
+      slideOrder: 1,
+      visualRole: "context",
+      layoutIntent: "split_image_text",
+      imageStrategy: "generated_illustration",
+      visualPrompt: "University students discussing an abstract theory",
+    })).toBe(false);
   });
 
   it("tries another Tavily candidate when the first image cannot be downloaded", async () => {
