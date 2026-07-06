@@ -51,18 +51,60 @@ export const sourceRefSchema = z.object({
 });
 export type SourceRef = z.infer<typeof sourceRefSchema>;
 
+const unsupportedGeneratedTextPatterns = [
+  /слайд\s+должен/i,
+  /на\s+этом\s+слайде\s+нужно/i,
+  /этот\s+слайд\s+помогает/i,
+  /продолжает\s+разговор\s+о\s+теме/i,
+  /общая\s+логика\s+объяснения/i,
+  /главный\s+акцент\s+здесь/i,
+  /slide\s+should/i,
+  /this\s+slide\s+helps/i,
+];
+
+const genericEducationalFillerPatterns = [
+  /тема\s+становится\s+понятнее/i,
+  /важно\s+понять\s+основные\s+моменты/i,
+  /это\s+важно\s+для\s+понимания\s+темы/i,
+  /данная\s+презентация\s+рассказывает/i,
+  /in\s+this\s+presentation/i,
+];
+
+function hasUnsupportedGeneratedText(value: string) {
+  return unsupportedGeneratedTextPatterns.some((pattern) => pattern.test(value));
+}
+
+function hasGenericEducationalFiller(value: string) {
+  return genericEducationalFillerPatterns.some((pattern) => pattern.test(value));
+}
+
+const visibleSlideTextSchema = (field: string, maxLength: number) =>
+  z
+    .string()
+    .trim()
+    .min(1, `${field} cannot be empty`)
+    .max(maxLength, `${field} is too long for visible slide text`)
+    .refine((value) => !hasUnsupportedGeneratedText(value), `${field} contains unsupported slide-instruction language`)
+    .refine((value) => !hasGenericEducationalFiller(value), `${field} contains generic educational filler`);
+
+const speakerNotesTextSchema = z
+  .string()
+  .trim()
+  .min(1, "speakerNotes cannot be empty")
+  .refine((value) => !hasUnsupportedGeneratedText(value), "speakerNotes contains unsupported slide-instruction language");
+
 export const slideBlockSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("bullets"),
-    items: z.array(z.string()).max(6),
+    items: z.array(visibleSlideTextSchema("bullet", 1000)).max(6),
   }),
   z.object({
     type: z.literal("callout"),
-    content: z.string(),
+    content: visibleSlideTextSchema("callout", 1000),
   }),
   z.object({
     type: z.literal("quote"),
-    content: z.string(),
+    content: visibleSlideTextSchema("quote", 1000),
   }),
 ]);
 export type SlideBlock = z.infer<typeof slideBlockSchema>;
@@ -160,19 +202,19 @@ export const visualTypeSchema = z.enum([
 export type VisualType = z.infer<typeof visualTypeSchema>;
 
 export const slideDefinitionSchema = z.object({
-  term: z.string().default(""),
-  text: z.string().default(""),
+  term: z.string().trim().max(80).default(""),
+  text: z.string().trim().max(240).default(""),
 });
 export type SlideDefinition = z.infer<typeof slideDefinitionSchema>;
 
 export const keyConceptSchema = z.object({
-  label: z.string(),
+  label: visibleSlideTextSchema("key concept", 80),
   icon: z.string().default("dot"),
 });
 export type KeyConcept = z.infer<typeof keyConceptSchema>;
 
 export const highlightSchema = z.object({
-  text: z.string(),
+  text: visibleSlideTextSchema("highlight", 140),
   tone: z.enum(["accent", "success", "warning", "neutral"]).default("accent"),
 });
 export type Highlight = z.infer<typeof highlightSchema>;
@@ -219,15 +261,15 @@ export const presentationThemeSchema = z.object({
 export type PresentationTheme = z.infer<typeof presentationThemeSchema>;
 
 export const slideVisualItemSchema = z.object({
-  label: z.string(),
-  text: z.string().default(""),
+  label: visibleSlideTextSchema("visual item label", 100),
+  text: z.string().trim().max(180).default(""),
 });
 export type SlideVisualItem = z.infer<typeof slideVisualItemSchema>;
 
 export const slideVisualRowSchema = z.object({
-  label: z.string().default(""),
-  left: z.string().default(""),
-  right: z.string().default(""),
+  label: z.string().trim().max(80).default(""),
+  left: z.string().trim().max(160).default(""),
+  right: z.string().trim().max(160).default(""),
 });
 export type SlideVisualRow = z.infer<typeof slideVisualRowSchema>;
 
@@ -245,10 +287,10 @@ export type SlideVisualImage = z.infer<typeof slideVisualImageSchema>;
 
 export const slideVisualSchema = z.object({
   type: visualTypeSchema.default("none"),
-  title: z.string().default(""),
-  description: z.string().default(""),
-  leftLabel: z.string().default(""),
-  rightLabel: z.string().default(""),
+  title: z.string().trim().max(100).default(""),
+  description: z.string().trim().max(260).default(""),
+  leftLabel: z.string().trim().max(80).default(""),
+  rightLabel: z.string().trim().max(80).default(""),
   items: z.array(slideVisualItemSchema).max(8).default([]),
   rows: z.array(slideVisualRowSchema).max(8).default([]),
   image: slideVisualImageSchema.optional(),
@@ -258,10 +300,10 @@ export type SlideVisual = z.infer<typeof slideVisualSchema>;
 const canvasElementBaseSchema = z.object({
   id: z.string(),
   groupId: z.string().optional(),
-  x: z.number(),
-  y: z.number(),
-  w: z.number().positive(),
-  h: z.number().positive(),
+  x: z.number().min(-1280).max(2560),
+  y: z.number().min(-720).max(1440),
+  w: z.number().positive().max(2560),
+  h: z.number().positive().max(1440),
   rotation: z.number().default(0),
   zIndex: z.number().int().default(1),
   opacity: z.number().min(0).max(1).default(1),
@@ -269,7 +311,7 @@ const canvasElementBaseSchema = z.object({
 });
 
 export const canvasTextRunSchema = z.object({
-  text: z.string(),
+  text: z.string().max(500),
   bold: z.boolean().optional(),
   italic: z.boolean().optional(),
   underline: z.boolean().optional(),
@@ -280,7 +322,7 @@ export type CanvasTextRun = z.infer<typeof canvasTextRunSchema>;
 export const canvasTextElementSchema = canvasElementBaseSchema.extend({
   type: z.literal("text"),
   role: z.enum(["title", "body", "caption", "free"]).default("free"),
-  text: z.string().default(""),
+  text: z.string().max(1000).default(""),
   runs: z.array(canvasTextRunSchema).default([]),
   fontSize: z.number().int().min(8).max(160).default(28),
   autoFit: z.boolean().optional(),
@@ -356,24 +398,34 @@ export const slideCanvasSchema = z.object({
   background: presentationThemeColorSchema.default("#F7F8FA"),
   backgroundStyle: canvasBackgroundStyleSchema.optional(),
   elements: z.array(canvasElementSchema).max(80).default([]),
+}).superRefine((canvas, context) => {
+  for (const [index, element] of canvas.elements.entries()) {
+    if (element.x + element.w < -1 || element.x > canvas.width + 1 || element.y + element.h < -1 || element.y > canvas.height + 1) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["elements", index],
+        message: "canvas element is outside the export-safe slide bounds",
+      });
+    }
+  }
 });
 export type SlideCanvas = z.infer<typeof slideCanvasSchema>;
 
 export const slideSchema = z.object({
   id: z.string(),
   order: z.number().int().positive(),
-  title: z.string(),
+  title: visibleSlideTextSchema("slide title", 1000),
   slideKind: slideKindSchema.default("content"),
   layout: slideLayoutSchema,
-  thesis: z.string().default(""),
-  bullets: z.array(z.string()).max(5).default([]),
+  thesis: z.string().trim().max(360).default(""),
+  bullets: z.array(visibleSlideTextSchema("bullet", 1000)).max(5).default([]),
   definition: slideDefinitionSchema.nullable().default(null),
   keyConcepts: z.array(keyConceptSchema).max(5).default([]),
   visual: slideVisualSchema.default({ type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] }),
   highlights: z.array(highlightSchema).max(6).default([]),
   blocks: z.array(slideBlockSchema),
   canvas: slideCanvasSchema.optional(),
-  speakerNotes: z.string(),
+  speakerNotes: speakerNotesTextSchema,
   timingSeconds: z.number().int().min(20).max(240),
   sourceRefs: z.array(sourceRefSchema),
 });
@@ -381,18 +433,18 @@ export type Slide = z.infer<typeof slideSchema>;
 
 export const speechScriptItemSchema = z.object({
   slideOrder: z.number().int().positive(),
-  slideTitle: z.string(),
-  text: z.string(),
+  slideTitle: visibleSlideTextSchema("speech script slide title", 1000),
+  text: speakerNotesTextSchema,
 });
 export type SpeechScriptItem = z.infer<typeof speechScriptItemSchema>;
 
 export const slideNarrativeSchema = z.object({
   slideOrder: z.number().int().positive(),
-  slideTitle: z.string(),
-  slidePurpose: z.string(),
-  keyMessage: z.string(),
-  audienceQuestion: z.string(),
-  transitionToNext: z.string(),
+  slideTitle: visibleSlideTextSchema("narrative slide title", 1000),
+  slidePurpose: z.string().trim().min(1),
+  keyMessage: z.string().trim().min(1),
+  audienceQuestion: z.string().trim().min(1),
+  transitionToNext: z.string().trim().default(""),
 });
 export type SlideNarrative = z.infer<typeof slideNarrativeSchema>;
 
@@ -411,24 +463,24 @@ export type DeckStory = z.infer<typeof deckStorySchema>;
 
 export const slideTextPlanSchema = z.object({
   slideOrder: z.number().int().positive(),
-  slideQuestion: z.string(),
-  coreClaim: z.string(),
+  slideQuestion: z.string().trim().min(1),
+  coreClaim: z.string().trim().min(1),
   evidenceOrExample: z.string().default(""),
-  listenerTakeaway: z.string(),
-  title: z.string(),
-  thesis: z.string(),
-  bullets: z.array(z.string()).max(3),
-  speakerNotes: z.string(),
+  listenerTakeaway: z.string().trim().min(1),
+  title: visibleSlideTextSchema("slide plan title", 90),
+  thesis: z.string().trim().min(1).max(360),
+  bullets: z.array(visibleSlideTextSchema("slide plan bullet", 140)).max(3),
+  speakerNotes: speakerNotesTextSchema,
 });
 export type SlideTextPlan = z.infer<typeof slideTextPlanSchema>;
 
 export const researchBriefSchema = z.object({
-  topic: z.string(),
-  angle: z.string(),
+  topic: z.string().trim().min(1).max(180),
+  angle: z.string().trim().min(1).max(360),
   facts: z
     .array(
       z.object({
-        text: z.string(),
+        text: z.string().trim().min(1).max(500),
         sourceId: z.string().optional(),
         confidence: z.enum(["high", "medium", "low"]).default("medium"),
       }),
@@ -438,8 +490,8 @@ export const researchBriefSchema = z.object({
   vocabulary: z
     .array(
       z.object({
-        term: z.string(),
-        explanation: z.string(),
+        term: z.string().trim().min(1).max(80),
+        explanation: z.string().trim().min(1).max(260),
       }),
     )
     .default([]),
@@ -520,13 +572,40 @@ export type DesignBrief = z.infer<typeof designBriefSchema>;
 
 export const slideBlueprintSchema = z.object({
   slideOrder: z.number().int().positive(),
-  purpose: z.string(),
-  title: z.string(),
-  visualStrategy: z.string(),
+  purpose: z.string().trim().min(1),
+  title: visibleSlideTextSchema("slide blueprint title", 90),
+  visualStrategy: z.string().trim().min(1).max(260),
   layoutCandidate: slideLayoutSchema,
   textDensity: z.enum(["low", "medium", "high"]).default("medium"),
 });
 export type SlideBlueprint = z.infer<typeof slideBlueprintSchema>;
+
+export const visualStrategySchema = z.object({
+  slideOrder: z.number().int().positive(),
+  visualType: visualTypeSchema.default("none"),
+  role: z.enum(["explain", "evidence", "compare", "sequence", "emotion", "summary", "none"]).default("none"),
+  rationale: z.string().trim().max(260).default(""),
+  searchQuery: z.string().trim().max(160).default(""),
+});
+export type VisualStrategy = z.infer<typeof visualStrategySchema>;
+
+export const diagramSpecSchema = z.object({
+  slideOrder: z.number().int().positive(),
+  kind: z.enum(["process", "comparison", "cause_effect", "timeline", "mind_map", "none"]).default("none"),
+  title: z.string().trim().max(90).default(""),
+  nodes: z.array(z.string().trim().min(1).max(80)).max(8).default([]),
+  links: z
+    .array(
+      z.object({
+        from: z.string().trim().min(1).max(80),
+        to: z.string().trim().min(1).max(80),
+        label: z.string().trim().max(80).default(""),
+      }),
+    )
+    .max(12)
+    .default([]),
+});
+export type DiagramSpec = z.infer<typeof diagramSpecSchema>;
 
 export const qualityIssueSchema = z.object({
   slideId: z.string().optional(),
@@ -584,6 +663,8 @@ export const generationPipelineArtifactsSchema = z.object({
   designBrief: designBriefSchema,
   slideBlueprints: z.array(slideBlueprintSchema).default([]),
   slideTextPlans: z.array(slideTextPlanSchema).default([]),
+  visualStrategies: z.array(visualStrategySchema).default([]),
+  diagramSpecs: z.array(diagramSpecSchema).default([]),
   qualityCritique: qualityCritiqueSchema.optional(),
 });
 export type GenerationPipelineArtifacts = z.infer<typeof generationPipelineArtifactsSchema>;

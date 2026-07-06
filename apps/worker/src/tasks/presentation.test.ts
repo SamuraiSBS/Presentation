@@ -336,6 +336,28 @@ describe("buildGenerationPrompt", () => {
 });
 
 describe("structured generation helper", () => {
+  it("uses the Vercel AI SDK path for OpenAI structured output", async () => {
+    const calls: any[] = [];
+    const fakeGenerateText = async (body: any) => {
+      calls.push(body);
+      return { output: { title: "Plan", summary: "Short Russian university brief." } };
+    };
+
+    const result = await generateStructuredWithProvider({
+      provider: "openai",
+      system: "Return JSON only.",
+      prompt: "Create a short brief.",
+      schemaName: "studydeck_sdk_brief",
+      schema: z.object({ title: z.string(), summary: z.string() }),
+      openAIGenerateText: fakeGenerateText as any,
+    });
+
+    expect(result).toEqual({ title: "Plan", summary: "Short Russian university brief." });
+    expect(calls[0].prompt).toContain("Return only JSON");
+    expect(calls[0].output).toBeTruthy();
+    expect(calls[0].temperature).toBe(0.25);
+  });
+
   it("uses strict OpenAI json schema for small structured artifacts", async () => {
     const calls: any[] = [];
     const client = {

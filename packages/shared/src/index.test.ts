@@ -5,6 +5,7 @@ import {
   createProjectInputSchema,
   deckStorySchema,
   designBriefSchema,
+  diagramSpecSchema,
   ensureEditableCanvas,
   generatePresentationInputSchema,
   generationBriefSchema,
@@ -28,6 +29,7 @@ import {
   slideLayoutSchema,
   slideLayoutOptions,
   slideTextPlanSchema,
+  visualStrategySchema,
   updateNarrationInputSchema,
 } from "./index";
 
@@ -191,6 +193,67 @@ describe("shared contracts", () => {
   it("rejects incomplete generation pipeline artifacts", () => {
     expect(() => researchBriefSchema.parse({ topic: "Only topic" })).toThrow();
     expect(() => slideBlueprintSchema.parse({ slideOrder: 1, title: "Missing fields" })).toThrow();
+  });
+
+  it("rejects unsafe generated slide text and export canvas geometry", () => {
+    expect(() =>
+      presentationSchema.parse({
+        id: "presentation-unsafe",
+        title: "Unsafe deck",
+        scenario: "lesson",
+        level: "beginner",
+        slideCount: 1,
+        generationMode: "demo",
+        generatedText: "Draft",
+        sources: [],
+        outline: ["Unsafe"],
+        speechScript: [{ slideOrder: 1, slideTitle: "Unsafe", text: "This is a complete spoken note for the slide." }],
+        slides: [
+          {
+            id: "slide-1",
+            order: 1,
+            title: "This slide helps explain the topic",
+            layout: "statement",
+            blocks: [{ type: "callout", content: "This slide helps explain the topic" }],
+            speakerNotes: "",
+            timingSeconds: 45,
+            sourceRefs: [],
+            canvas: {
+              width: 1280,
+              height: 720,
+              elements: [{ id: "shape-1", type: "shape", x: 2000, y: 100, w: 100, h: 100 }],
+            },
+          },
+        ],
+      }),
+    ).toThrow();
+  });
+
+  it("parses visual strategy and diagram artifacts with defaults", () => {
+    expect(visualStrategySchema.parse({ slideOrder: 1 }).visualType).toBe("none");
+    expect(diagramSpecSchema.parse({ slideOrder: 1, nodes: ["Cause", "Effect"] }).kind).toBe("none");
+    expect(
+      generationPipelineArtifactsSchema.parse({
+        researchBrief: {
+          topic: "AI in education",
+          angle: "How students can use AI responsibly.",
+        },
+        narrativePlan: [
+          {
+            slideOrder: 1,
+            slideTitle: "Responsible AI",
+            slidePurpose: "Open the topic.",
+            keyMessage: "AI is useful when students keep control of the argument.",
+            audienceQuestion: "How should students use AI?",
+          },
+        ],
+        designBrief: {
+          themePreset: "minimal",
+          mood: "neutral",
+          visualDirection: "Clean study deck.",
+        },
+      }).diagramSpecs,
+    ).toEqual([]);
   });
 
   it("requires a structured presentation document", () => {

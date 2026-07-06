@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 import OpenAI from "openai";
+import { generateText, Output } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import {
   type DesignBrief,
@@ -93,16 +95,19 @@ type GenerateStructuredOptions<T> = {
   schemaName: string;
   parse?: (value: unknown) => T;
   openAIClient?: OpenAI;
+  openAIGenerateText?: typeof generateText;
   yandexApiKey?: string;
   jsonSchema?: Record<string, unknown>;
   strict?: boolean;
   maxAttempts?: number;
+  temperature?: number;
 };
 
 type GenerateAndValidateOptions<T> = {
   call: (attempt: number, repairPrompt?: string) => Promise<unknown>;
   schema: z.ZodType<T, z.ZodTypeDef, unknown>;
   schemaName: string;
+  provider?: AiGenerationMode;
   parse?: (value: unknown) => T;
   repair?: (error: unknown, previousValue: unknown, attempt: number) => string;
   maxAttempts?: number;
@@ -946,38 +951,44 @@ export async function generateStructuredWithProvider<T>({
   schemaName,
   parse,
   openAIClient,
+  openAIGenerateText,
   yandexApiKey,
   jsonSchema: schemaJson,
   strict = true,
   maxAttempts = 2,
+  temperature = 0.25,
 }: GenerateStructuredOptions<T>): Promise<T> {
   if (provider === "openai") {
-    const client = openAIClient || new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const sdkGenerateText = openAIGenerateText || generateText;
+    const legacyClient = openAIClient;
     return generateAndValidate({
       schema,
       schemaName,
       parse,
       maxAttempts,
-      call: async (_attempt, repairPrompt) => {
-        const response = await client.responses.create({
-          model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-          input: [
-            { role: "system", content: system },
-            { role: "user", content: repairPrompt || withJsonPromptRules(prompt) },
-          ],
-          text: schemaJson
-            ? {
-                format: {
-                  type: "json_schema",
-                  name: schemaName,
-                  strict,
-                  schema: schemaJson,
-                },
-              }
-            : undefined,
+      provider,
+      call: async (attempt, repairPrompt) => {
+        logStructuredGenerationAttempt(provider, schemaName, attempt);
+        if (legacyClient && !openAIGenerateText) {
+          return requestOpenAIStructuredLegacy({
+            client: legacyClient,
+            system,
+            prompt,
+            repairPrompt,
+            schemaName,
+            schemaJson,
+            strict,
+          });
+        }
+        return requestOpenAIStructuredWithSdk({
+          generate: sdkGenerateText,
+          system,
+          prompt,
+          repairPrompt,
+          schema,
+          schemaName,
+          temperature,
         });
-        const typedResponse = response as typeof response & { output_parsed?: unknown };
-        return typedResponse.output_parsed || response.output_text || "";
       },
       repair: (error, previousValue) => buildStructuredRepairPrompt(prompt, schemaName, error, previousValue),
     });
@@ -993,9 +1004,99 @@ export async function generateStructuredWithProvider<T>({
     schemaName,
     parse,
     maxAttempts,
-    call: (_attempt, repairPrompt) =>
-      requestYandexText(apiKey, system, repairPrompt || withJsonPromptRules(prompt), schemaJson ? { jsonSchema: schemaJson } : { jsonObject: true }),
+    provider,
+    call: (attempt, repairPrompt) => {
+      logStructuredGenerationAttempt(provider, schemaName, attempt);
+      return requestYandexText(apiKey, system, repairPrompt || withJsonPromptRules(prompt), schemaJson ? { jsonSchema: schemaJson } : { jsonObject: true });
+    },
     repair: (error, previousValue) => buildStructuredRepairPrompt(prompt, schemaName, error, previousValue),
+  });
+}
+
+async function requestOpenAIStructuredWithSdk<T>({
+  generate,
+  system,
+  prompt,
+  repairPrompt,
+  schema,
+  schemaName,
+  temperature,
+}: {
+  generate: typeof generateText;
+  system: string;
+  prompt: string;
+  repairPrompt?: string;
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>;
+  schemaName: string;
+  temperature: number;
+}) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  const provider = createOpenAI(apiKey ? { apiKey } : undefined);
+  const model = provider(process.env.OPENAI_MODEL || "gpt-4.1-mini");
+  const output = isUnknownSchema(schema)
+    ? Output.json({ name: schemaName })
+    : Output.object({
+        schema,
+        name: schemaName,
+        description: "StudyDeck structured generation output. User-facing educational text should be in Russian.",
+      });
+  const result = await generate({
+    model,
+    system,
+    prompt: repairPrompt || withJsonPromptRules(prompt),
+    output,
+    temperature,
+  });
+  return result.output;
+}
+
+async function requestOpenAIStructuredLegacy({
+  client,
+  system,
+  prompt,
+  repairPrompt,
+  schemaName,
+  schemaJson,
+  strict,
+}: {
+  client: OpenAI;
+  system: string;
+  prompt: string;
+  repairPrompt?: string;
+  schemaName: string;
+  schemaJson?: Record<string, unknown>;
+  strict: boolean;
+}) {
+  const response = await client.responses.create({
+    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    input: [
+      { role: "system", content: system },
+      { role: "user", content: repairPrompt || withJsonPromptRules(prompt) },
+    ],
+    text: schemaJson
+      ? {
+          format: {
+            type: "json_schema",
+            name: schemaName,
+            strict,
+            schema: schemaJson,
+          },
+        }
+      : undefined,
+  });
+  const typedResponse = response as typeof response & { output_parsed?: unknown };
+  return typedResponse.output_parsed || response.output_text || "";
+}
+
+function isUnknownSchema(schema: z.ZodType<unknown, z.ZodTypeDef, unknown>) {
+  return (schema as z.ZodTypeAny)._def.typeName === z.ZodFirstPartyTypeKind.ZodUnknown;
+}
+
+function logStructuredGenerationAttempt(provider: AiGenerationMode, schemaName: string, attempt: number) {
+  console.info("AI structured generation", {
+    provider,
+    schemaName,
+    retry: attempt,
   });
 }
 
@@ -1003,6 +1104,7 @@ async function generateAndValidate<T>({
   call,
   schema,
   schemaName,
+  provider,
   parse,
   repair,
   maxAttempts = 2,
@@ -1017,6 +1119,7 @@ async function generateAndValidate<T>({
       return schema.parse(parse ? parse(previousValue) : previousValue);
     } catch (error) {
       lastError = error;
+      logStructuredGenerationValidationFailure(provider, schemaName, attempt, error);
       if (attempt === maxAttempts - 1) {
         throw new StructuredGenerationError(schemaName, error);
       }
@@ -1174,6 +1277,25 @@ function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, n
     imageStrategy: "Use concrete visual descriptions only when they are grounded in the topic or source excerpts.",
     slideDirections: directions,
   });
+}
+
+function logStructuredGenerationValidationFailure(provider: AiGenerationMode | undefined, schemaName: string, attempt: number, error: unknown) {
+  console.warn("AI structured generation validation failed", {
+    provider,
+    schemaName,
+    retry: attempt,
+    reason: formatStructuredGenerationError(error),
+  });
+}
+
+function formatStructuredGenerationError(error: unknown) {
+  if (error instanceof z.ZodError) {
+    return error.issues
+      .slice(0, 5)
+      .map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`)
+      .join("; ");
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 const CONCRETE_VISUAL_SCENE_PATTERN = /(?:\b(?:person|people|students?|campus|universit\w*|classroom|laboratory|museum|city|country|company|factory|building|device|robot|car|vehicle|book|painting|sculpture|artifact|product|machine|computer|phone|conference|protest|battle|war|expedition|landscape|environment)\b|(?:человек|люди|студент|университет|кампус|аудитори|лаборатори|музей|город|стран|компани|завод|здани|устройств|робот|автомобил|машин|книг|картин|скульптур|артефакт|продукт|компьютер|телефон|конференц|протест|битв|войн|экспедиц|ландшафт|окружающ))/iu;
