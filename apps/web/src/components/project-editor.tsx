@@ -1,6 +1,15 @@
 "use client";
 
-import { type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import type {
   CanvasElement,
@@ -23,7 +32,6 @@ import {
   sortCanvasElements,
 } from "@studydeck/shared";
 import { sanitizeProjectForDisplay } from "@/lib/presentation-display";
-import { presentationTextForSlide } from "./slide-template-renderer";
 
 type ProjectPayload = {
   id: string;
@@ -37,15 +45,35 @@ type Tool = "select" | "text" | "shape";
 type ViewMode = "preview" | "edit";
 type ElementPatch = Partial<CanvasElement> & Record<string, unknown>;
 type DragState =
-  | { mode: "move"; id: string; startX: number; startY: number; original: CanvasElement; originals: CanvasElement[] }
-  | { mode: "resize"; id: string; startX: number; startY: number; original: CanvasElement; originals: CanvasElement[] };
+  | {
+      mode: "move";
+      id: string;
+      startX: number;
+      startY: number;
+      original: CanvasElement;
+      originals: CanvasElement[];
+    }
+  | {
+      mode: "resize";
+      id: string;
+      startX: number;
+      startY: number;
+      original: CanvasElement;
+      originals: CanvasElement[];
+    };
 
 const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = 720;
 const CUSTOM_CANVAS_MARKER_SUFFIX = "custom-canvas-marker";
 
-export function ProjectEditor({ initialProject }: { initialProject: ProjectPayload }) {
-  const [project, setProject] = useState(() => sanitizeProjectForDisplay(initialProject));
+export function ProjectEditor({
+  initialProject,
+}: {
+  initialProject: ProjectPayload;
+}) {
+  const [project, setProject] = useState(() =>
+    sanitizeProjectForDisplay(initialProject),
+  );
   const [active, setActive] = useState(0);
   const [selectedId, setSelectedId] = useState("");
   const [tool, setTool] = useState<Tool>("select");
@@ -62,16 +90,20 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragRef = useRef<DragState | null>(null);
 
-  const presentation = project.presentation?.document ? ensureEditableCanvas(project.presentation.document) : null;
+  const presentation = project.presentation?.document
+    ? ensureEditableCanvas(project.presentation.document)
+    : null;
   const theme = presentation?.presentationTheme;
   const slide = presentation?.slides[active];
-  const canvas = slide?.canvas || (slide && theme ? buildSlideCanvas(slide, theme) : null);
-  const selected = canvas?.elements.find((element) => element.id === selectedId) || null;
+  const canvas =
+    slide?.canvas || (slide && theme ? buildSlideCanvas(slide, theme) : null);
+  const selected =
+    canvas?.elements.find((element) => element.id === selectedId) || null;
   const canvasWidth = canvas?.width ?? CANVAS_WIDTH;
   const canvasHeight = canvas?.height ?? CANVAS_HEIGHT;
   const showObjectCanvas = viewMode === "edit";
-  const activeSlideText = presentation && slide ? presentationTextForSlide(presentation, slide, active) : "";
-  const canUpload = project.id !== "demo" || process.env.NEXT_PUBLIC_DEMO_PREVIEW === "false";
+  const canUpload =
+    project.id !== "demo" || process.env.NEXT_PUBLIC_DEMO_PREVIEW === "false";
 
   useEffect(() => {
     setSelectedId("");
@@ -91,7 +123,9 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
 
   useEffect(() => {
     if (!editingTextId) return;
-    const editor = stageRef.current?.querySelector<HTMLElement>(`[data-element-editor="${editingTextId}"]`);
+    const editor = stageRef.current?.querySelector<HTMLElement>(
+      `[data-element-editor="${editingTextId}"]`,
+    );
     if (!editor) return;
     editor.focus();
     const selection = window.getSelection();
@@ -109,14 +143,21 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     const updateScale = (width: number, height: number) => {
       if (width <= 0 || height <= 0) return;
       const nextScale = Math.min(width / canvasWidth, height / canvasHeight);
-      setCanvasScale((current) => (Math.abs(current - nextScale) < 0.001 ? current : nextScale));
+      setCanvasScale((current) =>
+        Math.abs(current - nextScale) < 0.001 ? current : nextScale,
+      );
     };
 
     const readFrameContentBox = () => {
       const styles = window.getComputedStyle(frame);
-      const horizontalPadding = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
-      const verticalPadding = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
-      updateScale(frame.clientWidth - horizontalPadding, frame.clientHeight - verticalPadding);
+      const horizontalPadding =
+        parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
+      const verticalPadding =
+        parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+      updateScale(
+        frame.clientWidth - horizontalPadding,
+        frame.clientHeight - verticalPadding,
+      );
     };
 
     readFrameContentBox();
@@ -139,25 +180,46 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     setActionError("");
 
     try {
-      const response = await fetch(`/api/projects/${project.id}/generate`, { method: "POST" });
+      const response = await fetch(`/api/projects/${project.id}/generate`, {
+        method: "POST",
+      });
       if (!response.ok) throw new Error(await response.text());
       await refresh();
     } catch (error) {
-      setActionError(editorError(error, "Не получилось запустить сборку презентации. Попробуй ещё раз."));
+      setActionError(
+        editorError(
+          error,
+          "Не получилось запустить сборку презентации. Попробуй ещё раз.",
+        ),
+      );
     } finally {
       setBusy(false);
     }
   }
 
-  async function saveSlide(next: { title?: string; layout?: SlideLayout; visual?: SlideVisual; canvas?: SlideCanvas; speakerNotes?: string }) {
+  async function saveSlide(next: {
+    title?: string;
+    layout?: SlideLayout;
+    visual?: SlideVisual;
+    canvas?: SlideCanvas;
+    speakerNotes?: string;
+  }) {
     if (!slide) return;
-    const response = await fetch(`/api/projects/${project.id}/slides/${slide.id}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(next),
-    });
+    const response = await fetch(
+      `/api/projects/${project.id}/slides/${slide.id}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(next),
+      },
+    );
     if (!response.ok) {
-      setActionError(editorError(new Error(await response.text()), "Не получилось сохранить изменения. Попробуй ещё раз."));
+      setActionError(
+        editorError(
+          new Error(await response.text()),
+          "Не получилось сохранить изменения. Попробуй ещё раз.",
+        ),
+      );
     }
   }
 
@@ -165,7 +227,9 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     setProject((current) => {
       const document = current.presentation?.document;
       if (!document) return current;
-      const slides = document.slides.map((item, index) => (index === active ? { ...item, canvas: next } : item));
+      const slides = document.slides.map((item, index) =>
+        index === active ? { ...item, canvas: next } : item,
+      );
       return {
         ...current,
         presentation: {
@@ -176,29 +240,52 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     });
   }
 
-  function commitCanvas(next: SlideCanvas, options: { history?: boolean; persist?: boolean } = { history: true, persist: true }) {
+  function commitCanvas(
+    next: SlideCanvas,
+    options: { history?: boolean; persist?: boolean } = {
+      history: true,
+      persist: true,
+    },
+  ) {
     if (!canvas || !slide) return;
-    const nextCanvas = options.persist ? markCanvasAsCustom(slide.id, next) : next;
-    const normalized = { ...nextCanvas, elements: sortCanvasElements(nextCanvas.elements) };
+    const nextCanvas = options.persist
+      ? markCanvasAsCustom(slide.id, next)
+      : next;
+    const normalized = {
+      ...nextCanvas,
+      elements: sortCanvasElements(nextCanvas.elements),
+    };
     if (options.history) {
       setUndoStack((stack) => [...stack.slice(-29), cloneCanvas(canvas)]);
       setRedoStack([]);
     }
     setLocalCanvas(normalized);
     if (options.persist) {
-      void saveSlide({ title: titleFromCanvas(slide, normalized), canvas: normalized });
+      void saveSlide({
+        title: titleFromCanvas(slide, normalized),
+        canvas: normalized,
+      });
     }
   }
 
   function applySlideLayout(layout: SlideLayout) {
     if (!slide || !theme || layout === slide.layout) return;
-    const nextVisual = layoutKeepsVisualImage(layout) ? slide.visual : visualWithoutImage(slide.visual);
-    const nextSlide = { ...slide, layout, visual: nextVisual, canvas: undefined };
+    const nextVisual = layoutKeepsVisualImage(layout)
+      ? slide.visual
+      : visualWithoutImage(slide.visual);
+    const nextSlide = {
+      ...slide,
+      layout,
+      visual: nextVisual,
+      canvas: undefined,
+    };
     const nextCanvas = buildSlideCanvas(nextSlide, theme);
     setProject((current) => {
       const document = current.presentation?.document;
       if (!document) return current;
-      const slides = document.slides.map((item, index) => (index === active ? { ...nextSlide, canvas: nextCanvas } : item));
+      const slides = document.slides.map((item, index) =>
+        index === active ? { ...nextSlide, canvas: nextCanvas } : item,
+      );
       return {
         ...current,
         presentation: {
@@ -210,14 +297,23 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     setSelectedId("");
     setUndoStack([]);
     setRedoStack([]);
-    void saveSlide({ layout, title: slide.title, visual: nextVisual, canvas: nextCanvas });
+    void saveSlide({
+      layout,
+      title: slide.title,
+      visual: nextVisual,
+      canvas: nextCanvas,
+    });
   }
 
   function updateSelected(patch: ElementPatch) {
     if (!canvas || !selected) return;
     commitCanvas({
       ...canvas,
-      elements: canvas.elements.map((element) => (element.id === selected.id ? ({ ...element, ...patch } as CanvasElement) : element)),
+      elements: canvas.elements.map((element) =>
+        element.id === selected.id
+          ? ({ ...element, ...patch } as CanvasElement)
+          : element,
+      ),
     });
   }
 
@@ -280,7 +376,11 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     if (!canvas || !selected || selected.locked) return;
     commitCanvas({
       ...canvas,
-      elements: canvas.elements.filter((element) => selected.groupId ? element.groupId !== selected.groupId : element.id !== selected.id),
+      elements: canvas.elements.filter((element) =>
+        selected.groupId
+          ? element.groupId !== selected.groupId
+          : element.id !== selected.id,
+      ),
     });
     setSelectedId("");
     setEditingTextId("");
@@ -288,19 +388,31 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
 
   function duplicateSelected() {
     if (!canvas || !selected) return;
-    const source = selected.groupId ? canvas.elements.filter((element) => element.groupId === selected.groupId) : [selected];
-    const nextGroupId = selected.groupId ? `group:${crypto.randomUUID()}` : undefined;
+    const source = selected.groupId
+      ? canvas.elements.filter(
+          (element) => element.groupId === selected.groupId,
+        )
+      : [selected];
+    const nextGroupId = selected.groupId
+      ? `group:${crypto.randomUUID()}`
+      : undefined;
     const baseZ = nextZIndex(canvas);
-    const copies = source.map((element, index) => ({
-      ...element,
-      id: `${element.type}-${crypto.randomUUID()}`,
-      groupId: nextGroupId,
-      x: clamp(element.x + 32, 0, canvasWidth - element.w),
-      y: clamp(element.y + 32, 0, canvasHeight - element.h),
-      zIndex: baseZ + index,
-    } as CanvasElement));
+    const copies = source.map(
+      (element, index) =>
+        ({
+          ...element,
+          id: `${element.type}-${crypto.randomUUID()}`,
+          groupId: nextGroupId,
+          x: clamp(element.x + 32, 0, canvasWidth - element.w),
+          y: clamp(element.y + 32, 0, canvasHeight - element.h),
+          zIndex: baseZ + index,
+        }) as CanvasElement,
+    );
     commitCanvas({ ...canvas, elements: [...canvas.elements, ...copies] });
-    setSelectedId(copies.find((element) => element.type === selected.type)?.id || copies[0].id);
+    setSelectedId(
+      copies.find((element) => element.type === selected.type)?.id ||
+        copies[0].id,
+    );
   }
 
   function moveLayer(direction: "up" | "down") {
@@ -309,8 +421,13 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     commitCanvas({
       ...canvas,
       elements: canvas.elements.map((element) =>
-        selected.groupId ? element.groupId === selected.groupId ? { ...element, zIndex: Math.max(1, element.zIndex + delta) } : element
-          : element.id === selected.id ? { ...element, zIndex: Math.max(1, element.zIndex + delta) } : element,
+        selected.groupId
+          ? element.groupId === selected.groupId
+            ? { ...element, zIndex: Math.max(1, element.zIndex + delta) }
+            : element
+          : element.id === selected.id
+            ? { ...element, zIndex: Math.max(1, element.zIndex + delta) }
+            : element,
       ),
     });
   }
@@ -321,7 +438,10 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     setUndoStack((stack) => stack.slice(0, -1));
     setRedoStack((stack) => [...stack, cloneCanvas(canvas)]);
     setLocalCanvas(previous);
-    void saveSlide({ title: titleFromCanvas(slide, previous), canvas: previous });
+    void saveSlide({
+      title: titleFromCanvas(slide, previous),
+      canvas: previous,
+    });
   }
 
   function redo() {
@@ -395,7 +515,10 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     }
   }
 
-  function startMove(event: PointerEvent<HTMLDivElement>, element: CanvasElement) {
+  function startMove(
+    event: PointerEvent<HTMLDivElement>,
+    element: CanvasElement,
+  ) {
     event.stopPropagation();
     setSelectedId(element.id);
     if (element.locked) return;
@@ -403,17 +526,38 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
       setEditingTextId("");
     }
     const point = eventPoint(event, stageRef.current, canvasScale);
-    const originals = element.groupId ? canvas!.elements.filter((item) => item.groupId === element.groupId) : [element];
-    dragRef.current = { mode: "move", id: element.id, startX: point.x, startY: point.y, original: element, originals };
+    const originals = element.groupId
+      ? canvas!.elements.filter((item) => item.groupId === element.groupId)
+      : [element];
+    dragRef.current = {
+      mode: "move",
+      id: element.id,
+      startX: point.x,
+      startY: point.y,
+      original: element,
+      originals,
+    };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
-  function startResize(event: PointerEvent<HTMLButtonElement>, element: CanvasElement) {
+  function startResize(
+    event: PointerEvent<HTMLButtonElement>,
+    element: CanvasElement,
+  ) {
     if (element.locked) return;
     event.stopPropagation();
     const point = eventPoint(event, stageRef.current, canvasScale);
-    const originals = element.groupId ? canvas!.elements.filter((item) => item.groupId === element.groupId) : [element];
-    dragRef.current = { mode: "resize", id: element.id, startX: point.x, startY: point.y, original: element, originals };
+    const originals = element.groupId
+      ? canvas!.elements.filter((item) => item.groupId === element.groupId)
+      : [element];
+    dragRef.current = {
+      mode: "resize",
+      id: element.id,
+      startX: point.x,
+      startY: point.y,
+      original: element,
+      originals,
+    };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
@@ -423,7 +567,9 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     const point = eventPoint(event, stageRef.current, canvasScale);
     const dx = point.x - drag.startX;
     const dy = point.y - drag.startY;
-    const originalById = new Map(drag.originals.map((element) => [element.id, element]));
+    const originalById = new Map(
+      drag.originals.map((element) => [element.id, element]),
+    );
     const elements = canvas.elements.map((element) => {
       const original = originalById.get(element.id);
       if (!original) return element;
@@ -442,7 +588,15 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
         y: drag.original.y + (original.y - drag.original.y) * scaleY,
         w: clamp(original.w * scaleX, 24, canvasWidth),
         h: clamp(original.h * scaleY, 20, canvasHeight),
-        ...(element.type === "text" ? { fontSize: clamp(Math.round(element.fontSize * Math.min(scaleX, scaleY)), 8, 160) } : {}),
+        ...(element.type === "text"
+          ? {
+              fontSize: clamp(
+                Math.round(element.fontSize * Math.min(scaleX, scaleY)),
+                8,
+                160,
+              ),
+            }
+          : {}),
       } as CanvasElement;
     });
     setLocalCanvas({ ...canvas, elements });
@@ -455,26 +609,41 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLElement>) {
-    if (!showObjectCanvas || !selected || !canvas || isTypingTarget(event.target)) return;
+    if (
+      !showObjectCanvas ||
+      !selected ||
+      !canvas ||
+      isTypingTarget(event.target)
+    )
+      return;
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
       deleteSelected();
       return;
     }
-    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    if (
+      !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+    )
+      return;
     event.preventDefault();
     const step = event.shiftKey ? 10 : 2;
-    const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
-    const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+    const dx =
+      event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+    const dy =
+      event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
     commitCanvas({
       ...canvas,
       elements: canvas.elements.map((element) => {
-        const included = selected.groupId ? element.groupId === selected.groupId : element.id === selected.id;
-        return included ? {
-          ...element,
-          x: clamp(element.x + dx, 0, canvasWidth - element.w),
-          y: clamp(element.y + dy, 0, canvasHeight - element.h),
-        } : element;
+        const included = selected.groupId
+          ? element.groupId === selected.groupId
+          : element.id === selected.id;
+        return included
+          ? {
+              ...element,
+              x: clamp(element.x + dx, 0, canvasWidth - element.w),
+              y: clamp(element.y + dy, 0, canvasHeight - element.h),
+            }
+          : element;
       }),
     });
   }
@@ -486,11 +655,19 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
     try {
       const body = new FormData();
       body.append("file", file);
-      const response = await fetch(`/api/projects/${project.id}/slides/${slide.id}/assets`, { method: "POST", body });
+      const response = await fetch(
+        `/api/projects/${project.id}/slides/${slide.id}/assets`,
+        { method: "POST", body },
+      );
       if (!response.ok) throw new Error(await response.text());
-      const payload = (await response.json()) as { element: CanvasImageElement };
+      const payload = (await response.json()) as {
+        element: CanvasImageElement;
+      };
       const imageToReplace = replaceElementId
-        ? canvas?.elements.find((element): element is CanvasImageElement => element.id === replaceElementId && element.type === "image")
+        ? canvas?.elements.find(
+            (element): element is CanvasImageElement =>
+              element.id === replaceElementId && element.type === "image",
+          )
         : null;
       const nextElement: CanvasImageElement = imageToReplace
         ? {
@@ -512,15 +689,32 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
         ? {
             ...canvas,
             elements: imageToReplace
-              ? canvas.elements.map((element) => (element.id === imageToReplace.id ? nextElement : element))
-              : [...canvas.elements.filter((element) => element.id !== payload.element.id), nextElement],
+              ? canvas.elements.map((element) =>
+                  element.id === imageToReplace.id ? nextElement : element,
+                )
+              : [
+                  ...canvas.elements.filter(
+                    (element) => element.id !== payload.element.id,
+                  ),
+                  nextElement,
+                ],
           }
-        : { width: CANVAS_WIDTH, height: CANVAS_HEIGHT, background: theme?.colors.background || "#F7F8FA", elements: [nextElement] };
+        : {
+            width: CANVAS_WIDTH,
+            height: CANVAS_HEIGHT,
+            background: theme?.colors.background || "#F7F8FA",
+            elements: [nextElement],
+          };
       setLocalCanvas(next);
       setSelectedId(nextElement.id);
       void saveSlide({ title: titleFromCanvas(slide, next), canvas: next });
     } catch (error) {
-      setActionError(editorError(error, "Не получилось загрузить изображение. Проверь файл и попробуй ещё раз."));
+      setActionError(
+        editorError(
+          error,
+          "Не получилось загрузить изображение. Проверь файл и попробуй ещё раз.",
+        ),
+      );
     } finally {
       setBusy(false);
       setImageReplaceTargetId("");
@@ -529,27 +723,41 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
   }
 
   if (!presentation || !slide || !canvas) {
-    const canStartGeneration = project.status === "draft" || project.status === "failed";
+    const canStartGeneration =
+      project.status === "draft" || project.status === "failed";
 
     return (
       <section className="panel">
         <span className="status">{projectStatusLabel(project.status)}</span>
-        <h1 className="page-title" style={{ fontSize: 44 }}>{project.title}</h1>
+        <h1 className="page-title" style={{ fontSize: 44 }}>
+          {project.title}
+        </h1>
         <p className="lead">
           {canStartGeneration
             ? "Слайды ещё не собирались. Запусти подготовку, когда будешь готов."
             : "Презентация ещё собирается. Подожди немного и обнови страницу."}
         </p>
-        {project.error ? <p className="muted">{editorError(new Error(project.error), "Не получилось собрать презентацию. Попробуй ещё раз.")}</p> : null}
+        {project.error ? (
+          <p className="muted">
+            {editorError(
+              new Error(project.error),
+              "Не получилось собрать презентацию. Попробуй ещё раз.",
+            )}
+          </p>
+        ) : null}
         {actionError ? <p className="form-error">{actionError}</p> : null}
-        <div className="actions">
-          {canStartGeneration ? (
-            <button className="button" type="button" onClick={generate} disabled={busy}>
+        {canStartGeneration ? (
+          <div className="actions">
+            <button
+              className="button"
+              type="button"
+              onClick={generate}
+              disabled={busy}
+            >
               {busy ? "Запускаем..." : "Собрать презентацию"}
             </button>
-          ) : null}
-          <button className="ghost" type="button" onClick={refresh}>Обновить</button>
-        </div>
+          </div>
+        ) : null}
       </section>
     );
   }
@@ -560,9 +768,6 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
         <div>
           <span className="status">{projectStatusLabel(project.status)}</span>
           <h1>{presentation.title}</h1>
-        </div>
-        <div className="actions">
-          <button className="ghost" type="button" onClick={refresh}>Обновить</button>
         </div>
       </div>
 
@@ -616,7 +821,12 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
             type="file"
             accept="image/png,image/jpeg,image/webp"
             disabled={!canUpload || busy}
-            onChange={(event) => void uploadImage(event.target.files?.[0] || null, imageReplaceTargetId)}
+            onChange={(event) =>
+              void uploadImage(
+                event.target.files?.[0] || null,
+                imageReplaceTargetId,
+              )
+            }
           />
 
           {showObjectCanvas ? (
@@ -636,7 +846,10 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
                       style={{
                         width: `${canvasWidth}px`,
                         height: `${canvasHeight}px`,
-                        background: canvasBackgroundCss(canvas.backgroundStyle, canvas.background),
+                        background: canvasBackgroundCss(
+                          canvas.backgroundStyle,
+                          canvas.background,
+                        ),
                         transform: `scale(${canvasScale})`,
                       }}
                       onPointerDown={onCanvasPointerDown}
@@ -651,7 +864,9 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
                           selected={element.id === selectedId}
                           editing={editingTextId === element.id}
                           onPointerDown={(event) => startMove(event, element)}
-                          onResizePointerDown={(event) => startResize(event, element)}
+                          onResizePointerDown={(event) =>
+                            startResize(event, element)
+                          }
                           onEditText={() => setEditingTextId(element.id)}
                           onStopEditText={() => setEditingTextId("")}
                           onTextChange={(text) => {
@@ -663,7 +878,9 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
                             };
                             commitCanvas({
                               ...canvas,
-                              elements: canvas.elements.map((item) => (item.id === element.id ? next : item)),
+                              elements: canvas.elements.map((item) =>
+                                item.id === element.id ? next : item,
+                              ),
                             });
                           }}
                         />
@@ -694,15 +911,14 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
               </div>
             </>
           ) : (
-            <TemplatePreviewFrame slide={slide} theme={theme} scale={canvasScale} frameRef={frameRef} />
+            <TemplatePreviewFrame
+              slide={slide}
+              theme={theme}
+              scale={canvasScale}
+              frameRef={frameRef}
+            />
           )}
 
-          {!showObjectCanvas && activeSlideText ? (
-            <aside className="slide-text-panel">
-              <strong>Текст выступления</strong>
-              <textarea className="textarea notes" value={activeSlideText} readOnly aria-label="Текст выступления" />
-            </aside>
-          ) : null}
         </main>
 
         <aside className="properties-panel">
@@ -723,25 +939,44 @@ export function ProjectEditor({ initialProject }: { initialProject: ProjectPaylo
   );
 }
 
-function TemplatePreviewFrame({ slide, theme, scale, frameRef }: { slide: Slide; theme?: PresentationTheme; scale: number; frameRef: RefObject<HTMLDivElement | null> }) {
-  const canvas = slide.canvas || (theme ? buildSlideCanvas(slide, theme) : null);
+function TemplatePreviewFrame({
+  slide,
+  theme,
+  scale,
+  frameRef,
+}: {
+  slide: Slide;
+  theme?: PresentationTheme;
+  scale: number;
+  frameRef: RefObject<HTMLDivElement | null>;
+}) {
+  const canvas =
+    slide.canvas || (theme ? buildSlideCanvas(slide, theme) : null);
   if (!canvas) return null;
   return (
     <div className="canvas-scroll">
       <div className="canvas-frame" ref={frameRef}>
-        <div className="canvas-viewport" style={{ width: canvas.width * scale, height: canvas.height * scale }}>
+        <div
+          className="canvas-viewport"
+          style={{ width: canvas.width * scale, height: canvas.height * scale }}
+        >
           <div
             className="object-canvas object-canvas-preview"
             style={{
               width: canvas.width,
               height: canvas.height,
-              background: canvasBackgroundCss(canvas.backgroundStyle, canvas.background),
+              background: canvasBackgroundCss(
+                canvas.backgroundStyle,
+                canvas.background,
+              ),
               transform: `scale(${scale})`,
             }}
           >
-            {sortCanvasElements(canvas.elements).filter((element) => element.opacity > 0).map((element) => (
-              <ReadonlyCanvasElement element={element} key={element.id} />
-            ))}
+            {sortCanvasElements(canvas.elements)
+              .filter((element) => element.opacity > 0)
+              .map((element) => (
+                <ReadonlyCanvasElement element={element} key={element.id} />
+              ))}
           </div>
         </div>
       </div>
@@ -751,12 +986,43 @@ function TemplatePreviewFrame({ slide, theme, scale, frameRef }: { slide: Slide;
 
 function ReadonlyCanvasElement({ element }: { element: CanvasElement }) {
   if (element.type === "shape") {
-    return <div className="canvas-element" style={elementStyle(element)}><div className={`canvas-shape canvas-shape-${element.shape}`} style={shapeStyle(element)} /></div>;
+    return (
+      <div className="canvas-element" style={elementStyle(element)}>
+        <div
+          className={`canvas-shape canvas-shape-${element.shape}`}
+          style={shapeStyle(element)}
+        />
+      </div>
+    );
   }
   if (element.type === "image") {
-    return <div className="canvas-element" style={{ ...elementStyle(element), borderRadius: 18, overflow: "hidden" }}>{element.url ? <img src={element.url} alt={element.alt} style={{ objectFit: element.fit }} /> : null}</div>;
+    return (
+      <div
+        className="canvas-element"
+        style={{
+          ...elementStyle(element),
+          borderRadius: 18,
+          overflow: "hidden",
+        }}
+      >
+        {element.url ? (
+          <img
+            src={element.url}
+            alt={element.alt}
+            style={{ objectFit: element.fit }}
+          />
+        ) : null}
+      </div>
+    );
   }
-  return <div className="canvas-element canvas-text-element" style={elementStyle(element)}><div style={textStyle(element)}>{element.text}</div></div>;
+  return (
+    <div
+      className="canvas-element canvas-text-element"
+      style={elementStyle(element)}
+    >
+      <div style={textStyle(element)}>{element.text}</div>
+    </div>
+  );
 }
 
 function markCanvasAsCustom(slideId: string, canvas: SlideCanvas): SlideCanvas {
@@ -837,43 +1103,99 @@ function EditorTopToolbar({
   return (
     <div className="editor-toolbar editor-toolbar-primary">
       <div className="toolbar-group mode-group" aria-label="Режим просмотра">
-        <button className={viewMode === "preview" ? "tool-active" : ""} type="button" onClick={onPreview} disabled={previewDisabled} title="Предпросмотр слайда">
+        <button
+          className={viewMode === "preview" ? "tool-active" : ""}
+          type="button"
+          onClick={onPreview}
+          disabled={previewDisabled}
+          title="Предпросмотр слайда"
+        >
           <Icon name="preview" />
           <span>Просмотр</span>
         </button>
-        <button className={viewMode === "edit" ? "tool-active" : ""} type="button" onClick={onEdit} title="Редактировать объекты">
+        <button
+          className={viewMode === "edit" ? "tool-active" : ""}
+          type="button"
+          onClick={onEdit}
+          title="Редактировать объекты"
+        >
           <Icon name="cursor" />
           <span>Правка</span>
         </button>
       </div>
       <div className="toolbar-group" aria-label="Инструменты">
-        <button className={tool === "select" && viewMode === "edit" ? "tool-active" : ""} type="button" onClick={() => setTool("select")} title="Выбрать объект">
+        <button
+          className={
+            tool === "select" && viewMode === "edit" ? "tool-active" : ""
+          }
+          type="button"
+          onClick={() => setTool("select")}
+          title="Выбрать объект"
+        >
           <Icon name="cursor" />
           <span>Выбрать</span>
         </button>
-        <button className={tool === "text" && viewMode === "edit" ? "tool-active" : ""} type="button" onClick={() => setTool("text")} title="Добавить текст">
+        <button
+          className={
+            tool === "text" && viewMode === "edit" ? "tool-active" : ""
+          }
+          type="button"
+          onClick={() => setTool("text")}
+          title="Добавить текст"
+        >
           <Icon name="text" />
           <span>Текст</span>
         </button>
-        <button className={tool === "shape" && viewMode === "edit" ? "tool-active" : ""} type="button" onClick={() => setTool("shape")} title="Добавить фигуру">
+        <button
+          className={
+            tool === "shape" && viewMode === "edit" ? "tool-active" : ""
+          }
+          type="button"
+          onClick={() => setTool("shape")}
+          title="Добавить фигуру"
+        >
           <Icon name="shape" />
           <span>Фигура</span>
         </button>
-        <button type="button" onClick={onUploadClick} disabled={!canUpload || busy} title="Загрузить изображение">
+        <button
+          type="button"
+          onClick={onUploadClick}
+          disabled={!canUpload || busy}
+          title="Загрузить изображение"
+        >
           <Icon name="image" />
           <span>Изображение</span>
         </button>
       </div>
       <div className="toolbar-spacer" />
-      <div className="toolbar-group toolbar-compact" aria-label="История изменений">
-        <button type="button" onClick={onUndo} disabled={undoDisabled} title="Отменить" aria-label="Отменить">
+      <div
+        className="toolbar-group toolbar-compact"
+        aria-label="История изменений"
+      >
+        <button
+          type="button"
+          onClick={onUndo}
+          disabled={undoDisabled}
+          title="Отменить"
+          aria-label="Отменить"
+        >
           <Icon name="undo" />
         </button>
-        <button type="button" onClick={onRedo} disabled={redoDisabled} title="Повторить" aria-label="Повторить">
+        <button
+          type="button"
+          onClick={onRedo}
+          disabled={redoDisabled}
+          title="Повторить"
+          aria-label="Повторить"
+        >
           <Icon name="redo" />
         </button>
       </div>
-      <Link className="toolbar-export" href={`/projects/${projectId}/export`} title="Экспортировать презентацию">
+      <Link
+        className="toolbar-export"
+        href={`/projects/${projectId}/export`}
+        title="Экспортировать презентацию"
+      >
         <Icon name="export" />
         <span>Экспорт</span>
       </Link>
@@ -924,23 +1246,70 @@ function ObjectFloatingMenu({
       <div className="object-menu-row">
         {element.type === "text" ? (
           <>
-            <button type="button" onClick={onEditText} disabled={element.locked} title="Редактировать текст">
+            <button
+              type="button"
+              onClick={onEditText}
+              disabled={element.locked}
+              title="Редактировать текст"
+            >
               <Icon name="text" />
               <span>Правка</span>
             </button>
-            <button className={element.bold ? "tool-active" : ""} type="button" onClick={() => onUpdate({ bold: !element.bold } as Partial<CanvasTextElement>)} disabled={element.locked} title="Полужирный">
+            <button
+              className={element.bold ? "tool-active" : ""}
+              type="button"
+              onClick={() =>
+                onUpdate({ bold: !element.bold } as Partial<CanvasTextElement>)
+              }
+              disabled={element.locked}
+              title="Полужирный"
+            >
               Ж
             </button>
-            <button className={element.italic ? "tool-active" : ""} type="button" onClick={() => onUpdate({ italic: !element.italic } as Partial<CanvasTextElement>)} disabled={element.locked} title="Курсив">
+            <button
+              className={element.italic ? "tool-active" : ""}
+              type="button"
+              onClick={() =>
+                onUpdate({
+                  italic: !element.italic,
+                } as Partial<CanvasTextElement>)
+              }
+              disabled={element.locked}
+              title="Курсив"
+            >
               К
             </button>
-            <button className={element.align === "left" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "left" } as Partial<CanvasTextElement>)} disabled={element.locked} title="Выровнять по левому краю">
+            <button
+              className={element.align === "left" ? "tool-active" : ""}
+              type="button"
+              onClick={() =>
+                onUpdate({ align: "left" } as Partial<CanvasTextElement>)
+              }
+              disabled={element.locked}
+              title="Выровнять по левому краю"
+            >
               <Icon name="alignLeft" />
             </button>
-            <button className={element.align === "center" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "center" } as Partial<CanvasTextElement>)} disabled={element.locked} title="Выровнять по центру">
+            <button
+              className={element.align === "center" ? "tool-active" : ""}
+              type="button"
+              onClick={() =>
+                onUpdate({ align: "center" } as Partial<CanvasTextElement>)
+              }
+              disabled={element.locked}
+              title="Выровнять по центру"
+            >
               <Icon name="alignCenter" />
             </button>
-            <button className={element.align === "right" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "right" } as Partial<CanvasTextElement>)} disabled={element.locked} title="Выровнять по правому краю">
+            <button
+              className={element.align === "right" ? "tool-active" : ""}
+              type="button"
+              onClick={() =>
+                onUpdate({ align: "right" } as Partial<CanvasTextElement>)
+              }
+              disabled={element.locked}
+              title="Выровнять по правому краю"
+            >
               <Icon name="alignRight" />
             </button>
           </>
@@ -948,14 +1317,35 @@ function ObjectFloatingMenu({
 
         {element.type === "image" ? (
           <>
-            <button type="button" onClick={onReplaceImage} disabled={!canUpload || busy || element.locked} title="Заменить изображение">
+            <button
+              type="button"
+              onClick={onReplaceImage}
+              disabled={!canUpload || busy || element.locked}
+              title="Заменить изображение"
+            >
               <Icon name="replace" />
               <span>Заменить</span>
             </button>
-            <button className={element.fit === "cover" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ fit: "cover" } as Partial<CanvasImageElement>)} disabled={element.locked} title="Заполнить рамку">
+            <button
+              className={element.fit === "cover" ? "tool-active" : ""}
+              type="button"
+              onClick={() =>
+                onUpdate({ fit: "cover" } as Partial<CanvasImageElement>)
+              }
+              disabled={element.locked}
+              title="Заполнить рамку"
+            >
               Заполнить
             </button>
-            <button className={element.fit === "contain" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ fit: "contain" } as Partial<CanvasImageElement>)} disabled={element.locked} title="Вписать изображение">
+            <button
+              className={element.fit === "contain" ? "tool-active" : ""}
+              type="button"
+              onClick={() =>
+                onUpdate({ fit: "contain" } as Partial<CanvasImageElement>)
+              }
+              disabled={element.locked}
+              title="Вписать изображение"
+            >
               Вписать
             </button>
           </>
@@ -972,10 +1362,20 @@ function ObjectFloatingMenu({
         <button type="button" onClick={onLayerUp} title="Переместить вперёд">
           <Icon name="front" />
         </button>
-        <button type="button" onClick={() => onUpdate({ locked: !element.locked })} title={element.locked ? "Разблокировать" : "Заблокировать"}>
+        <button
+          type="button"
+          onClick={() => onUpdate({ locked: !element.locked })}
+          title={element.locked ? "Разблокировать" : "Заблокировать"}
+        >
           <Icon name={element.locked ? "unlock" : "lock"} />
         </button>
-        <button className="danger-action" type="button" onClick={onDelete} disabled={element.locked} title="Удалить">
+        <button
+          className="danger-action"
+          type="button"
+          onClick={onDelete}
+          disabled={element.locked}
+          title="Удалить"
+        >
           <Icon name="trash" />
         </button>
       </div>
@@ -1006,24 +1406,58 @@ function CanvasElementView({
 
   if (element.type === "shape") {
     return (
-      <div className={`canvas-element ${selected ? "canvas-element-selected" : ""}`} style={style} onPointerDown={onPointerDown}>
-        <div className={`canvas-shape canvas-shape-${element.shape}`} style={shapeStyle(element)} />
-        {selected && !element.locked ? <button className="resize-handle" type="button" onPointerDown={onResizePointerDown} /> : null}
+      <div
+        className={`canvas-element ${selected ? "canvas-element-selected" : ""}`}
+        style={style}
+        onPointerDown={onPointerDown}
+      >
+        <div
+          className={`canvas-shape canvas-shape-${element.shape}`}
+          style={shapeStyle(element)}
+        />
+        {selected && !element.locked ? (
+          <button
+            className="resize-handle"
+            type="button"
+            onPointerDown={onResizePointerDown}
+          />
+        ) : null}
       </div>
     );
   }
 
   if (element.type === "image") {
     return (
-      <div className={`canvas-element ${selected ? "canvas-element-selected" : ""}`} style={{ ...style, borderRadius: 18, overflow: "hidden" }} onPointerDown={onPointerDown}>
-        {element.url ? <img src={element.url} alt={element.alt} draggable={false} style={{ objectFit: element.fit }} /> : null}
-        {selected && !element.locked ? <button className="resize-handle" type="button" onPointerDown={onResizePointerDown} /> : null}
+      <div
+        className={`canvas-element ${selected ? "canvas-element-selected" : ""}`}
+        style={{ ...style, borderRadius: 18, overflow: "hidden" }}
+        onPointerDown={onPointerDown}
+      >
+        {element.url ? (
+          <img
+            src={element.url}
+            alt={element.alt}
+            draggable={false}
+            style={{ objectFit: element.fit }}
+          />
+        ) : null}
+        {selected && !element.locked ? (
+          <button
+            className="resize-handle"
+            type="button"
+            onPointerDown={onResizePointerDown}
+          />
+        ) : null}
       </div>
     );
   }
 
   return (
-    <div className={`canvas-element canvas-text-element ${selected ? "canvas-element-selected" : ""}`} style={style} onPointerDown={onPointerDown}>
+    <div
+      className={`canvas-element canvas-text-element ${selected ? "canvas-element-selected" : ""}`}
+      style={style}
+      onPointerDown={onPointerDown}
+    >
       <div
         contentEditable={selected && editing && !element.locked}
         data-element-editor={element.id}
@@ -1041,7 +1475,13 @@ function CanvasElementView({
       >
         {element.text}
       </div>
-      {selected && !element.locked ? <button className="resize-handle" type="button" onPointerDown={onResizePointerDown} /> : null}
+      {selected && !element.locked ? (
+        <button
+          className="resize-handle"
+          type="button"
+          onPointerDown={onResizePointerDown}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1070,16 +1510,25 @@ function PropertiesPanel({
   return (
     <div className="properties-stack">
       <div className="properties-header">
-        <span>Свойства</span>
         <strong>{selected ? elementLabel(selected) : "Слайд"}</strong>
       </div>
 
-      <PropertySection title="Макет слайда" description="Выбери, как расположить материалы на слайде.">
+      <PropertySection>
         <label className="field">
           Макет
-          <select className="select" value={slide.layout} onChange={(event) => onChangeLayout(event.target.value as SlideLayout)}>
+          <select
+            className="select"
+            value={slide.layout}
+            onChange={(event) =>
+              onChangeLayout(event.target.value as SlideLayout)
+            }
+          >
             {slideLayoutOptions(slide.slideKind).map((option) => (
-              <option key={option.id} value={option.id} disabled={!layoutCanRender(option.id, slide)}>
+              <option
+                key={option.id}
+                value={option.id}
+                disabled={!layoutCanRender(option.id, slide)}
+              >
                 {option.label}
               </option>
             ))}
@@ -1089,16 +1538,34 @@ function PropertiesPanel({
 
       {selected ? (
         <>
-          <PropertySection title="Содержимое" description="Здесь можно изменить текст, фигуру или изображение.">
-            {selected.type === "text" ? <TextContentProperties selected={selected} onUpdate={onUpdate} /> : null}
-            {selected.type === "shape" ? <ShapeContentProperties selected={selected} onUpdate={onUpdate} /> : null}
-            {selected.type === "image" ? <ImageContentProperties selected={selected} onUpdate={onUpdate} /> : null}
+          <PropertySection
+            title="Содержимое"
+            description="Здесь можно изменить текст, фигуру или изображение."
+          >
+            {selected.type === "text" ? (
+              <TextContentProperties selected={selected} onUpdate={onUpdate} />
+            ) : null}
+            {selected.type === "shape" ? (
+              <ShapeContentProperties selected={selected} onUpdate={onUpdate} />
+            ) : null}
+            {selected.type === "image" ? (
+              <ImageContentProperties selected={selected} onUpdate={onUpdate} />
+            ) : null}
           </PropertySection>
 
-          <PropertySection title="Оформление" description="Настрой, как выглядит выбранный объект.">
-            {selected.type === "text" ? <TextStyleProperties selected={selected} onUpdate={onUpdate} /> : null}
-            {selected.type === "shape" ? <ShapeStyleProperties selected={selected} onUpdate={onUpdate} /> : null}
-            {selected.type === "image" ? <ImageStyleProperties selected={selected} onUpdate={onUpdate} /> : null}
+          <PropertySection
+            title="Оформление"
+            description="Настрой, как выглядит выбранный объект."
+          >
+            {selected.type === "text" ? (
+              <TextStyleProperties selected={selected} onUpdate={onUpdate} />
+            ) : null}
+            {selected.type === "shape" ? (
+              <ShapeStyleProperties selected={selected} onUpdate={onUpdate} />
+            ) : null}
+            {selected.type === "image" ? (
+              <ImageStyleProperties selected={selected} onUpdate={onUpdate} />
+            ) : null}
             <label className="field">
               Прозрачность
               <input
@@ -1108,37 +1575,82 @@ function PropertiesPanel({
                 step={0.05}
                 type="number"
                 value={selected.opacity}
-                onChange={(event) => onUpdate({ opacity: Number(event.target.value) })}
+                onChange={(event) =>
+                  onUpdate({ opacity: Number(event.target.value) })
+                }
               />
             </label>
           </PropertySection>
 
-          <PropertySection title="Положение" description="Укажи размер и точное место на слайде.">
+          <PropertySection
+            title="Положение"
+            description="Укажи размер и точное место на слайде."
+          >
             <div className="property-grid">
               <label className="field">
                 X
-                <input className="input" type="number" value={Math.round(selected.x)} onChange={(event) => onUpdate({ x: Number(event.target.value) })} />
+                <input
+                  className="input"
+                  type="number"
+                  value={Math.round(selected.x)}
+                  onChange={(event) =>
+                    onUpdate({ x: Number(event.target.value) })
+                  }
+                />
               </label>
               <label className="field">
                 Y
-                <input className="input" type="number" value={Math.round(selected.y)} onChange={(event) => onUpdate({ y: Number(event.target.value) })} />
+                <input
+                  className="input"
+                  type="number"
+                  value={Math.round(selected.y)}
+                  onChange={(event) =>
+                    onUpdate({ y: Number(event.target.value) })
+                  }
+                />
               </label>
               <label className="field">
                 Ширина
-                <input className="input" type="number" min={32} value={Math.round(selected.w)} onChange={(event) => onUpdate({ w: Number(event.target.value) })} />
+                <input
+                  className="input"
+                  type="number"
+                  min={32}
+                  value={Math.round(selected.w)}
+                  onChange={(event) =>
+                    onUpdate({ w: Number(event.target.value) })
+                  }
+                />
               </label>
               <label className="field">
                 Высота
-                <input className="input" type="number" min={24} value={Math.round(selected.h)} onChange={(event) => onUpdate({ h: Number(event.target.value) })} />
+                <input
+                  className="input"
+                  type="number"
+                  min={24}
+                  value={Math.round(selected.h)}
+                  onChange={(event) =>
+                    onUpdate({ h: Number(event.target.value) })
+                  }
+                />
               </label>
               <label className="field">
                 Поворот
-                <input className="input" type="number" value={Math.round(selected.rotation)} onChange={(event) => onUpdate({ rotation: Number(event.target.value) })} />
+                <input
+                  className="input"
+                  type="number"
+                  value={Math.round(selected.rotation)}
+                  onChange={(event) =>
+                    onUpdate({ rotation: Number(event.target.value) })
+                  }
+                />
               </label>
             </div>
           </PropertySection>
 
-          <PropertySection title="Слой" description="Перемести объект выше или ниже, либо заблокируй его.">
+          <PropertySection
+            title="Слой"
+            description="Перемести объект выше или ниже, либо заблокируй его."
+          >
             <div className="property-actions">
               <button type="button" onClick={onDuplicate}>
                 <Icon name="copy" />
@@ -1154,62 +1666,103 @@ function PropertiesPanel({
               </button>
             </div>
             <label className="field property-check">
-              <input type="checkbox" checked={selected.locked} onChange={(event) => onUpdate({ locked: event.target.checked })} />
+              <input
+                type="checkbox"
+                checked={selected.locked}
+                onChange={(event) => onUpdate({ locked: event.target.checked })}
+              />
               Заблокировать объект
             </label>
-            <button className="property-danger" type="button" onClick={onDelete} disabled={selected.locked}>
+            <button
+              className="property-danger"
+              type="button"
+              onClick={onDelete}
+              disabled={selected.locked}
+            >
               <Icon name="trash" />
               Удалить объект
             </button>
           </PropertySection>
         </>
-      ) : (
-        <div className="properties-empty">
-          <strong>Выбери объект на слайде</strong>
-          <p>Нажми на текст, изображение или фигуру. Справа появятся настройки.</p>
-        </div>
-      )}
+      ) : null}
 
-      <PropertySection title="Заметки докладчика" description="То, что ты расскажешь на этом слайде.">
+      <PropertySection className="property-section-fill">
         <label className="field">
-          Заметки
-          <textarea key={slide.id} className="textarea notes" defaultValue={slide.speakerNotes} onBlur={(event) => onSaveNotes(event.target.value)} />
+          Текст выступления
+          <textarea
+            key={slide.id}
+            className="textarea notes"
+            defaultValue={slide.speakerNotes}
+            onBlur={(event) => onSaveNotes(event.target.value)}
+          />
         </label>
       </PropertySection>
     </div>
   );
 }
 
-function PropertySection({ title, description, children }: { title: string; description: string; children: ReactNode }) {
+function PropertySection({
+  title,
+  description,
+  className = "",
+  children,
+}: {
+  title?: string;
+  description?: string;
+  className?: string;
+  children: ReactNode;
+}) {
   return (
-    <section className="property-section">
-      <div className="property-section-header">
-        <strong>{title}</strong>
-        <p>{description}</p>
-      </div>
+    <section className={`property-section ${className}`.trim()}>
+      {title || description ? (
+        <div className="property-section-header">
+          {title ? <strong>{title}</strong> : null}
+          {description ? <p>{description}</p> : null}
+        </div>
+      ) : null}
       {children}
     </section>
   );
 }
 
 function layoutCanRender(layout: SlideLayout, slide: Slide) {
-  const sequenceCount = Math.max(slide.visual.items.length, slide.bullets.length);
+  const sequenceCount = Math.max(
+    slide.visual.items.length,
+    slide.bullets.length,
+  );
   if (layout === "metrics") {
-    const text = [slide.title, slide.thesis, ...slide.bullets, ...slide.blocks.flatMap((block) => (block.type === "bullets" ? block.items : [block.content]))].join(" ");
+    const text = [
+      slide.title,
+      slide.thesis,
+      ...slide.bullets,
+      ...slide.blocks.flatMap((block) =>
+        block.type === "bullets" ? block.items : [block.content],
+      ),
+    ].join(" ");
     return hasMeasurableValue(text);
   }
   if (layout === "definition") return Boolean(slide.definition);
   if (layout === "comparison") {
-    return slide.visual.rows.filter((row) => row.left.trim() && row.right.trim()).length >= 2
-      && Boolean(slide.visual.leftLabel.trim() && slide.visual.rightLabel.trim());
+    return (
+      slide.visual.rows.filter((row) => row.left.trim() && row.right.trim())
+        .length >= 2 &&
+      Boolean(slide.visual.leftLabel.trim() && slide.visual.rightLabel.trim())
+    );
   }
-  if (layout === "myth-fact") return slide.visual.items.length >= 2 && slide.bullets.length >= 1;
-  if (layout === "question-answer") return Boolean(slide.thesis.trim() && slide.bullets.length >= 2);
+  if (layout === "myth-fact")
+    return slide.visual.items.length >= 2 && slide.bullets.length >= 1;
+  if (layout === "question-answer")
+    return Boolean(slide.thesis.trim() && slide.bullets.length >= 2);
   if (layout === "timeline" || layout === "process") {
-    return slide.visual.items.filter((item) => item.label.trim() && item.text.trim()).length >= 3;
+    return (
+      slide.visual.items.filter((item) => item.label.trim() && item.text.trim())
+        .length >= 3
+    );
   }
-  if (layout === "case-study" || layout === "problem-solution") return sequenceCount >= 3;
-  if (layout === "evidence") return Boolean(slide.thesis && slide.bullets.length >= 2);
+  if (layout === "case-study" || layout === "problem-solution")
+    return sequenceCount >= 3;
+  if (layout === "evidence")
+    return Boolean(slide.thesis && slide.bullets.length >= 2);
   return true;
 }
 
@@ -1225,53 +1778,168 @@ function visualWithoutImage(visual: SlideVisual): SlideVisual {
   };
 }
 
-function TextContentProperties({ selected, onUpdate }: { selected: CanvasTextElement; onUpdate: (patch: ElementPatch) => void }) {
+function TextContentProperties({
+  selected,
+  onUpdate,
+}: {
+  selected: CanvasTextElement;
+  onUpdate: (patch: ElementPatch) => void;
+}) {
   return (
     <label className="field">
       Текст
       <textarea
         className="textarea element-textarea"
         value={selected.text}
-        onChange={(event) => onUpdate({ text: event.target.value, runs: [{ text: event.target.value }] } as Partial<CanvasTextElement>)}
+        onChange={(event) =>
+          onUpdate({
+            text: event.target.value,
+            runs: [{ text: event.target.value }],
+          } as Partial<CanvasTextElement>)
+        }
       />
     </label>
   );
 }
 
-function TextStyleProperties({ selected, onUpdate }: { selected: CanvasTextElement; onUpdate: (patch: ElementPatch) => void }) {
+function TextStyleProperties({
+  selected,
+  onUpdate,
+}: {
+  selected: CanvasTextElement;
+  onUpdate: (patch: ElementPatch) => void;
+}) {
   return (
     <>
       <div className="property-grid">
         <label className="field">
           Размер
-          <input className="input" type="number" min={8} max={160} value={selected.fontSize} onChange={(event) => onUpdate({ fontSize: Number(event.target.value) } as Partial<CanvasTextElement>)} />
+          <input
+            className="input"
+            type="number"
+            min={8}
+            max={160}
+            value={selected.fontSize}
+            onChange={(event) =>
+              onUpdate({
+                fontSize: Number(event.target.value),
+              } as Partial<CanvasTextElement>)
+            }
+          />
         </label>
         <label className="field">
           Цвет
-          <input className="input color-input" type="color" value={selected.color} onChange={(event) => onUpdate({ color: event.target.value } as Partial<CanvasTextElement>)} />
+          <input
+            className="input color-input"
+            type="color"
+            value={selected.color}
+            onChange={(event) =>
+              onUpdate({
+                color: event.target.value,
+              } as Partial<CanvasTextElement>)
+            }
+          />
         </label>
       </div>
       <label className="field">
         Шрифт
-        <input className="input" value={selected.fontFamily} onChange={(event) => onUpdate({ fontFamily: event.target.value } as Partial<CanvasTextElement>)} />
+        <input
+          className="input"
+          value={selected.fontFamily}
+          onChange={(event) =>
+            onUpdate({
+              fontFamily: event.target.value,
+            } as Partial<CanvasTextElement>)
+          }
+        />
       </label>
       <div className="segmented segmented-five">
-        <button className={selected.bold ? "tool-active" : ""} type="button" onClick={() => onUpdate({ bold: !selected.bold } as Partial<CanvasTextElement>)} title="Полужирный">Ж</button>
-        <button className={selected.italic ? "tool-active" : ""} type="button" onClick={() => onUpdate({ italic: !selected.italic } as Partial<CanvasTextElement>)} title="Курсив">К</button>
-        <button className={selected.underline ? "tool-active" : ""} type="button" onClick={() => onUpdate({ underline: !selected.underline } as Partial<CanvasTextElement>)} title="Подчёркнутый">Ч</button>
-        <button className={selected.align === "left" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "left" } as Partial<CanvasTextElement>)} title="Выровнять по левому краю"><Icon name="alignLeft" /></button>
-        <button className={selected.align === "center" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "center" } as Partial<CanvasTextElement>)} title="Выровнять по центру"><Icon name="alignCenter" /></button>
-        <button className={selected.align === "right" ? "tool-active" : ""} type="button" onClick={() => onUpdate({ align: "right" } as Partial<CanvasTextElement>)} title="Выровнять по правому краю"><Icon name="alignRight" /></button>
+        <button
+          className={selected.bold ? "tool-active" : ""}
+          type="button"
+          onClick={() =>
+            onUpdate({ bold: !selected.bold } as Partial<CanvasTextElement>)
+          }
+          title="Полужирный"
+        >
+          Ж
+        </button>
+        <button
+          className={selected.italic ? "tool-active" : ""}
+          type="button"
+          onClick={() =>
+            onUpdate({ italic: !selected.italic } as Partial<CanvasTextElement>)
+          }
+          title="Курсив"
+        >
+          К
+        </button>
+        <button
+          className={selected.underline ? "tool-active" : ""}
+          type="button"
+          onClick={() =>
+            onUpdate({
+              underline: !selected.underline,
+            } as Partial<CanvasTextElement>)
+          }
+          title="Подчёркнутый"
+        >
+          Ч
+        </button>
+        <button
+          className={selected.align === "left" ? "tool-active" : ""}
+          type="button"
+          onClick={() =>
+            onUpdate({ align: "left" } as Partial<CanvasTextElement>)
+          }
+          title="Выровнять по левому краю"
+        >
+          <Icon name="alignLeft" />
+        </button>
+        <button
+          className={selected.align === "center" ? "tool-active" : ""}
+          type="button"
+          onClick={() =>
+            onUpdate({ align: "center" } as Partial<CanvasTextElement>)
+          }
+          title="Выровнять по центру"
+        >
+          <Icon name="alignCenter" />
+        </button>
+        <button
+          className={selected.align === "right" ? "tool-active" : ""}
+          type="button"
+          onClick={() =>
+            onUpdate({ align: "right" } as Partial<CanvasTextElement>)
+          }
+          title="Выровнять по правому краю"
+        >
+          <Icon name="alignRight" />
+        </button>
       </div>
     </>
   );
 }
 
-function ShapeContentProperties({ selected, onUpdate }: { selected: CanvasShapeElement; onUpdate: (patch: ElementPatch) => void }) {
+function ShapeContentProperties({
+  selected,
+  onUpdate,
+}: {
+  selected: CanvasShapeElement;
+  onUpdate: (patch: ElementPatch) => void;
+}) {
   return (
     <label className="field">
       Фигура
-      <select className="select" value={selected.shape} onChange={(event) => onUpdate({ shape: event.target.value as CanvasShapeElement["shape"] } as Partial<CanvasShapeElement>)}>
+      <select
+        className="select"
+        value={selected.shape}
+        onChange={(event) =>
+          onUpdate({
+            shape: event.target.value as CanvasShapeElement["shape"],
+          } as Partial<CanvasShapeElement>)
+        }
+      >
         <option value="rect">Прямоугольник</option>
         <option value="roundRect">Скруглённый прямоугольник</option>
         <option value="ellipse">Эллипс</option>
@@ -1281,41 +1949,102 @@ function ShapeContentProperties({ selected, onUpdate }: { selected: CanvasShapeE
   );
 }
 
-function ShapeStyleProperties({ selected, onUpdate }: { selected: CanvasShapeElement; onUpdate: (patch: ElementPatch) => void }) {
+function ShapeStyleProperties({
+  selected,
+  onUpdate,
+}: {
+  selected: CanvasShapeElement;
+  onUpdate: (patch: ElementPatch) => void;
+}) {
   return (
     <>
       <div className="property-grid">
         <label className="field">
           Заливка
-          <input className="input color-input" type="color" value={selected.fill} onChange={(event) => onUpdate({ fill: event.target.value } as Partial<CanvasShapeElement>)} />
+          <input
+            className="input color-input"
+            type="color"
+            value={selected.fill}
+            onChange={(event) =>
+              onUpdate({
+                fill: event.target.value,
+              } as Partial<CanvasShapeElement>)
+            }
+          />
         </label>
         <label className="field">
           Обводка
-          <input className="input color-input" type="color" value={selected.stroke} onChange={(event) => onUpdate({ stroke: event.target.value } as Partial<CanvasShapeElement>)} />
+          <input
+            className="input color-input"
+            type="color"
+            value={selected.stroke}
+            onChange={(event) =>
+              onUpdate({
+                stroke: event.target.value,
+              } as Partial<CanvasShapeElement>)
+            }
+          />
         </label>
       </div>
       <label className="field">
         Толщина обводки
-        <input className="input" type="number" min={0} max={24} value={selected.strokeWidth} onChange={(event) => onUpdate({ strokeWidth: Number(event.target.value) } as Partial<CanvasShapeElement>)} />
+        <input
+          className="input"
+          type="number"
+          min={0}
+          max={24}
+          value={selected.strokeWidth}
+          onChange={(event) =>
+            onUpdate({
+              strokeWidth: Number(event.target.value),
+            } as Partial<CanvasShapeElement>)
+          }
+        />
       </label>
     </>
   );
 }
 
-function ImageContentProperties({ selected, onUpdate }: { selected: CanvasImageElement; onUpdate: (patch: ElementPatch) => void }) {
+function ImageContentProperties({
+  selected,
+  onUpdate,
+}: {
+  selected: CanvasImageElement;
+  onUpdate: (patch: ElementPatch) => void;
+}) {
   return (
     <label className="field">
       Описание изображения
-      <input className="input" value={selected.alt} onChange={(event) => onUpdate({ alt: event.target.value } as Partial<CanvasImageElement>)} />
+      <input
+        className="input"
+        value={selected.alt}
+        onChange={(event) =>
+          onUpdate({ alt: event.target.value } as Partial<CanvasImageElement>)
+        }
+      />
     </label>
   );
 }
 
-function ImageStyleProperties({ selected, onUpdate }: { selected: CanvasImageElement; onUpdate: (patch: ElementPatch) => void }) {
+function ImageStyleProperties({
+  selected,
+  onUpdate,
+}: {
+  selected: CanvasImageElement;
+  onUpdate: (patch: ElementPatch) => void;
+}) {
   return (
     <label className="field">
       Размещение
-      <select className="select" value={selected.fit} onChange={(event) => onUpdate({ fit: event.target.value as CanvasImageElement["fit"] } as Partial<CanvasImageElement>)}>
+      <select
+        className="select"
+        value={selected.fit}
+        onChange={(event) =>
+          onUpdate({
+            fit: event.target.value as CanvasImageElement["fit"],
+          } as Partial<CanvasImageElement>)
+        }
+      >
         <option value="cover">Заполнить рамку</option>
         <option value="contain">Вписать целиком</option>
       </select>
@@ -1333,10 +2062,22 @@ function Icon({ name }: { name: IconName }) {
   };
 
   return (
-    <svg className="tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      {name === "cursor" ? <path {...common} d="M5 3l12 9-5 1.2 3 5.3-3 1.7-3-5.4-4 3.2z" /> : null}
+    <svg
+      className="tool-icon"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {name === "cursor" ? (
+        <path {...common} d="M5 3l12 9-5 1.2 3 5.3-3 1.7-3-5.4-4 3.2z" />
+      ) : null}
       {name === "text" ? <path {...common} d="M5 6h14M12 6v12M9 18h6" /> : null}
-      {name === "shape" ? <path {...common} d="M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" /> : null}
+      {name === "shape" ? (
+        <path
+          {...common}
+          d="M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"
+        />
+      ) : null}
       {name === "image" ? (
         <>
           <path {...common} d="M5 6h14v12H5z" />
@@ -1344,8 +2085,12 @@ function Icon({ name }: { name: IconName }) {
           <path {...common} d="M8.5 9.5h.1" />
         </>
       ) : null}
-      {name === "undo" ? <path {...common} d="M9 7H5v4M5 7l5 5a6 6 0 0 0 9 1" /> : null}
-      {name === "redo" ? <path {...common} d="M15 7h4v4M19 7l-5 5a6 6 0 0 1-9 1" /> : null}
+      {name === "undo" ? (
+        <path {...common} d="M9 7H5v4M5 7l5 5a6 6 0 0 0 9 1" />
+      ) : null}
+      {name === "redo" ? (
+        <path {...common} d="M15 7h4v4M19 7l-5 5a6 6 0 0 1-9 1" />
+      ) : null}
       {name === "preview" ? (
         <>
           <path {...common} d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" />
@@ -1369,19 +2114,43 @@ function Icon({ name }: { name: IconName }) {
           <path {...common} d="M6 7h12M10 7V5h4v2M8 7l1 12h6l1-12" />
         </>
       ) : null}
-      {name === "front" ? <path {...common} d="M8 8h8v8H8zM5 5h8M5 5v8M11 19h8M19 11v8" /> : null}
-      {name === "back" ? <path {...common} d="M8 8h8v8H8zM11 5h8M19 5v8M5 11v8h8" /> : null}
-      {name === "lock" ? <path {...common} d="M7 11h10v8H7zM9 11V8a3 3 0 0 1 6 0v3" /> : null}
-      {name === "unlock" ? <path {...common} d="M7 11h10v8H7zM9 11V8a3 3 0 0 1 5.4-1.8" /> : null}
-      {name === "replace" ? <path {...common} d="M7 7h8l-2-2M17 17H9l2 2M17 17a6 6 0 0 0 1-7M7 7a6 6 0 0 0-1 7" /> : null}
-      {name === "alignLeft" ? <path {...common} d="M5 7h12M5 12h8M5 17h12" /> : null}
-      {name === "alignCenter" ? <path {...common} d="M6 7h12M9 12h6M6 17h12" /> : null}
-      {name === "alignRight" ? <path {...common} d="M7 7h12M11 12h8M7 17h12" /> : null}
+      {name === "front" ? (
+        <path {...common} d="M8 8h8v8H8zM5 5h8M5 5v8M11 19h8M19 11v8" />
+      ) : null}
+      {name === "back" ? (
+        <path {...common} d="M8 8h8v8H8zM11 5h8M19 5v8M5 11v8h8" />
+      ) : null}
+      {name === "lock" ? (
+        <path {...common} d="M7 11h10v8H7zM9 11V8a3 3 0 0 1 6 0v3" />
+      ) : null}
+      {name === "unlock" ? (
+        <path {...common} d="M7 11h10v8H7zM9 11V8a3 3 0 0 1 5.4-1.8" />
+      ) : null}
+      {name === "replace" ? (
+        <path
+          {...common}
+          d="M7 7h8l-2-2M17 17H9l2 2M17 17a6 6 0 0 0 1-7M7 7a6 6 0 0 0-1 7"
+        />
+      ) : null}
+      {name === "alignLeft" ? (
+        <path {...common} d="M5 7h12M5 12h8M5 17h12" />
+      ) : null}
+      {name === "alignCenter" ? (
+        <path {...common} d="M6 7h12M9 12h6M6 17h12" />
+      ) : null}
+      {name === "alignRight" ? (
+        <path {...common} d="M7 7h12M11 12h8M7 17h12" />
+      ) : null}
     </svg>
   );
 }
 
-function floatingMenuStyle(element: CanvasElement, scale: number, canvasWidth: number, canvasHeight: number): CSSProperties {
+function floatingMenuStyle(
+  element: CanvasElement,
+  scale: number,
+  canvasWidth: number,
+  canvasHeight: number,
+): CSSProperties {
   const menuWidth = element.type === "text" ? 360 : 300;
   const menuHeight = element.type === "text" ? 92 : 84;
   const viewportWidth = canvasWidth * scale;
@@ -1419,7 +2188,11 @@ function projectStatusLabel(status: string) {
 }
 
 function editorError(error: unknown, fallback: string) {
-  if (error instanceof Error && /[А-Яа-яЁё]/.test(error.message) && !/<[^>]+>|\b(?:error|failed|invalid|internal)\b/i.test(error.message)) {
+  if (
+    error instanceof Error &&
+    /[А-Яа-яЁё]/.test(error.message) &&
+    !/<[^>]+>|\b(?:error|failed|invalid|internal)\b/i.test(error.message)
+  ) {
     return error.message;
   }
   return fallback;
@@ -1450,7 +2223,12 @@ function textStyle(element: CanvasTextElement): CSSProperties {
     textAlign: element.align,
     display: "flex",
     flexDirection: "column",
-    justifyContent: element.valign === "middle" ? "center" : element.valign === "bottom" ? "flex-end" : "flex-start",
+    justifyContent:
+      element.valign === "middle"
+        ? "center"
+        : element.valign === "bottom"
+          ? "flex-end"
+          : "flex-start",
     lineHeight: 1.14,
     outline: "none",
     overflow: "hidden",
@@ -1463,13 +2241,28 @@ function shapeStyle(element: CanvasShapeElement): CSSProperties {
     width: "100%",
     height: "100%",
     background: element.shape === "line" ? "transparent" : element.fill,
-    border: element.shape === "line" ? "0" : `${element.strokeWidth}px solid ${element.stroke}`,
-    borderRadius: element.shape === "roundRect" ? 18 : element.shape === "ellipse" ? "50%" : 0,
-    borderTop: element.shape === "line" ? `${Math.max(1, element.strokeWidth)}px solid ${element.stroke}` : undefined,
+    border:
+      element.shape === "line"
+        ? "0"
+        : `${element.strokeWidth}px solid ${element.stroke}`,
+    borderRadius:
+      element.shape === "roundRect"
+        ? 18
+        : element.shape === "ellipse"
+          ? "50%"
+          : 0,
+    borderTop:
+      element.shape === "line"
+        ? `${Math.max(1, element.strokeWidth)}px solid ${element.stroke}`
+        : undefined,
   };
 }
 
-function eventPoint(event: PointerEvent<HTMLElement>, stageElement: HTMLElement | null, scale: number) {
+function eventPoint(
+  event: PointerEvent<HTMLElement>,
+  stageElement: HTMLElement | null,
+  scale: number,
+) {
   const stage = stageElement || findStage(event.currentTarget);
   const rect = stage.getBoundingClientRect();
   const safeScale = scale > 0 ? scale : 1;
@@ -1488,7 +2281,10 @@ function nextZIndex(canvas: SlideCanvas) {
 }
 
 function titleFromCanvas(slide: Slide, canvas: SlideCanvas) {
-  const title = canvas.elements.find((element): element is CanvasTextElement => element.type === "text" && element.role === "title");
+  const title = canvas.elements.find(
+    (element): element is CanvasTextElement =>
+      element.type === "text" && element.role === "title",
+  );
   return title?.text.trim() || slide.title;
 }
 
@@ -1503,5 +2299,7 @@ function clamp(value: number, min: number, max: number) {
 
 function isTypingTarget(target: EventTarget) {
   const element = target as HTMLElement | null;
-  return Boolean(element?.closest("input, textarea, select, [contenteditable='true']"));
+  return Boolean(
+    element?.closest("input, textarea, select, [contenteditable='true']"),
+  );
 }

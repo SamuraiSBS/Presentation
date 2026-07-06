@@ -693,25 +693,11 @@ select {
   min-height: 0;
 }
 
-.slide-stage,
-.slide-text-panel {
+.slide-stage {
   display: grid;
   gap: 12px;
   min-width: 0;
   min-height: 0;
-}
-
-.slide-text-panel {
-  grid-template-rows: auto minmax(0, 1fr);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 12px;
-  background: var(--surface);
-}
-
-.slide-text-panel .textarea {
-  min-height: 0;
-  resize: none;
 }
 
 .slide-canvas {
@@ -1812,6 +1798,12 @@ select {
   margin-top: 12px;
 }
 
+.properties-stack {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100% - 12px);
+}
+
 .slide-thumb {
   display: grid;
   gap: 7px;
@@ -2078,8 +2070,7 @@ select {
   line-height: 1.15;
 }
 
-.property-section,
-.properties-empty {
+.property-section {
   display: grid;
   gap: 10px;
   border: 1px solid #3d4237;
@@ -2088,23 +2079,32 @@ select {
   background: #30342c;
 }
 
+.property-section-fill {
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.property-section-fill .field {
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.property-section-fill .textarea {
+  height: 100%;
+  min-height: 0;
+  resize: none;
+}
+
 .property-section-header {
   display: grid;
   gap: 4px;
 }
 
-.property-section-header strong,
-.properties-empty strong {
+.property-section-header strong {
   color: #fff;
   font-size: 13px;
   line-height: 1.2;
-}
-
-.properties-empty p {
-  margin: 0;
-  color: #c6cabf;
-  font-size: 13px;
-  line-height: 1.42;
 }
 
 .properties-panel .field {
@@ -2614,7 +2614,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 .toolbar-export { border: 0; color: var(--ink); }
 .canvas-frame { border-radius: var(--radius-editor); background: #dbc5aa; box-shadow: 0 10px 24px rgba(58,33,9,.16); }
 .object-floating-menu { border: 0; border-radius: var(--radius-editor); background: #432b18; }
-.property-section, .properties-empty { border: 0; border-radius: var(--radius-editor); background: #54371f; }
+.property-section { border: 0; border-radius: var(--radius-editor); background: #54371f; }
 .property-actions button, .property-danger { border-color: #7a5433; background: #352214; }
 
 .mobile-bottom-nav { display: none; }
