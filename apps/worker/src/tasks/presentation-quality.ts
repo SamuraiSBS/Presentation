@@ -12,6 +12,7 @@ import {
   type Slide,
   type Source,
 } from "@studydeck/shared";
+import { errorLogFields, logger } from "../observability.js";
 
 export type QualityProjectInput = {
   id: string;
@@ -582,7 +583,7 @@ export async function improvePresentationQuality(
       modelCritique = mergeCritiques(bestCritique, parseQualityCritique(await options.critique(best, bestCritique)));
       bestCritique = modelCritique.score < bestCritique.score ? modelCritique : bestCritique;
     } catch (error) {
-      console.warn("presentation quality model critique failed:", error);
+      logger.warn({ projectId: project.id, stage: "polishing", provider, ...errorLogFields(error) }, "presentation quality model critique failed");
     }
   }
 
@@ -610,13 +611,14 @@ export async function improvePresentationQuality(
       }
       if (bestCritique.score >= QUALITY_SCORE_THRESHOLD) break;
     } catch (error) {
-      console.warn("presentation quality repair failed:", error);
+      logger.warn({ projectId: project.id, stage: "polishing", provider, repairAttempts: attempts, ...errorLogFields(error) }, "presentation quality repair failed");
       break;
     }
   }
 
-  console.info("presentation quality", {
+  logger.info({
     projectId: project.id,
+    stage: "polishing",
     provider,
     beforeScore,
     afterScore: bestCritique.score,
@@ -624,16 +626,17 @@ export async function improvePresentationQuality(
     weakestDimensions: weakestDimensionNames(bestCritique),
     issueCounts: issueCountsRecord(bestCritique.issues),
     repairAttempts: attempts,
-  });
+  }, "presentation quality");
 
   if (bestCritique.score < QUALITY_SCORE_THRESHOLD) {
-    console.warn("presentation quality remains below threshold; saving best valid version", {
+    logger.warn({
       projectId: project.id,
+      stage: "polishing",
       provider,
       score: bestCritique.score,
       dimensions: dimensionScoresRecord(bestCritique.dimensions),
       issueCounts: issueCountsRecord(bestCritique.issues),
-    });
+    }, "presentation quality remains below threshold; saving best valid version");
   }
 
   return best;

@@ -1,4 +1,5 @@
 import type { Job } from "bullmq";
+import { errorLogFields, logger } from "../observability.js";
 
 export const GENERATION_PROGRESS_STAGES = [
   "queued",
@@ -106,7 +107,7 @@ export function classifyGenerationError(error: unknown): GenerationRetryClass {
 
 export function safeErrorSummary(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "Generation failed");
-  return message.replace(/\b(sk-[A-Za-z0-9_-]+|AQVN[A-Za-z0-9_-]+)\b/g, "[redacted]").slice(0, 500);
+  return errorLogFields(error).errorMessage || message.slice(0, 500);
 }
 
 export function logGenerationStage(input: {
@@ -121,7 +122,7 @@ export function logGenerationStage(input: {
     jobId: input.jobId ? String(input.jobId) : "",
     stage: input.stage,
     durationMs: Math.max(0, Math.round(input.durationMs)),
-    error: input.error ? safeErrorSummary(input.error) : undefined,
+    ...(input.error ? errorLogFields(input.error) : {}),
   };
-  console.info("generation stage", payload);
+  logger.info(payload, "generation stage");
 }
