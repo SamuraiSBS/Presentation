@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 type ExportProjectPayload = ProjectPayload & {
   presentation?: { document?: PresentationDocument } | null;
@@ -159,12 +160,18 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
                   {isCreatingDocx ? <LoaderCircle className="spin" size={19} /> : <Download size={19} />}
                   {isCreatingDocx ? "Собираем DOCX" : "Скачать DOCX"}
                 </Button>
-                <DropdownMenu>
+                <TooltipProvider delayDuration={350}>
+                  <DropdownMenu>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
                   <DropdownMenuTrigger asChild>
                     <Button variant="secondary" type="button" size="icon" aria-label="Действия с текстом">
-                      <MoreHorizontal size={19} />
+                      <MoreHorizontal size={19} aria-hidden="true" />
                     </Button>
                   </DropdownMenuTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>Действия с текстом</TooltipContent>
+                    </Tooltip>
                   <DropdownMenuContent align="start">
                     <DropdownMenuItem onSelect={copySpeech} disabled={!speechItems.length}>
                       <Clipboard size={16} />{copyState === "copied" ? "Текст скопирован" : "Скопировать текст"}
@@ -173,7 +180,8 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
                       <Download size={16} />Скачать DOCX
                     </DropdownMenuItem>
                   </DropdownMenuContent>
-                </DropdownMenu>
+                  </DropdownMenu>
+                </TooltipProvider>
               </div>
               {copyState === "failed" ? <p className="form-error" role="alert">Не удалось скопировать текст. Скачайте его в DOCX.</p> : null}
               {error ? <p className="form-error" role="alert">{error}</p> : null}

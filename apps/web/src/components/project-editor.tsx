@@ -11,6 +11,31 @@ import {
   useState,
 } from "react";
 import Link from "next/link";
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  Bold,
+  BringToFront,
+  Copy,
+  Eye,
+  Image,
+  Italic,
+  Lock,
+  MousePointer2,
+  Plus,
+  Redo2,
+  Replace,
+  SendToBack,
+  Square,
+  Trash2,
+  Type,
+  Underline,
+  Undo2,
+  Unlock,
+  Upload,
+  type LucideIcon,
+} from "lucide-react";
 import { RichTextField } from "@/components/editor/rich-text-field";
 import type {
   CanvasElement,
@@ -1112,7 +1137,35 @@ type IconName =
   | "alignLeft"
   | "alignCenter"
   | "alignRight"
-  | "plus";
+  | "plus"
+  | "bold"
+  | "italic"
+  | "underline";
+
+const editorIcons: Record<IconName, LucideIcon> = {
+  cursor: MousePointer2,
+  text: Type,
+  shape: Square,
+  image: Image,
+  undo: Undo2,
+  redo: Redo2,
+  preview: Eye,
+  export: Upload,
+  copy: Copy,
+  trash: Trash2,
+  front: BringToFront,
+  back: SendToBack,
+  lock: Lock,
+  unlock: Unlock,
+  replace: Replace,
+  alignLeft: AlignLeft,
+  alignCenter: AlignCenter,
+  alignRight: AlignRight,
+  plus: Plus,
+  bold: Bold,
+  italic: Italic,
+  underline: Underline,
+};
 
 function EditorTopToolbar({
   projectId,
@@ -2153,97 +2206,8 @@ function ImageStyleProperties({
 }
 
 function Icon({ name }: { name: IconName }) {
-  const common = {
-    fill: "none",
-    stroke: "currentColor",
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-    strokeWidth: 2,
-  };
-
-  return (
-    <svg
-      className="tool-icon"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      focusable="false"
-    >
-      {name === "cursor" ? (
-        <path {...common} d="M5 3l12 9-5 1.2 3 5.3-3 1.7-3-5.4-4 3.2z" />
-      ) : null}
-      {name === "text" ? <path {...common} d="M5 6h14M12 6v12M9 18h6" /> : null}
-      {name === "shape" ? (
-        <path
-          {...common}
-          d="M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"
-        />
-      ) : null}
-      {name === "image" ? (
-        <>
-          <path {...common} d="M5 6h14v12H5z" />
-          <path {...common} d="M8 15l3-3 2 2 2-3 3 4" />
-          <path {...common} d="M8.5 9.5h.1" />
-        </>
-      ) : null}
-      {name === "undo" ? (
-        <path {...common} d="M9 7H5v4M5 7l5 5a6 6 0 0 0 9 1" />
-      ) : null}
-      {name === "redo" ? (
-        <path {...common} d="M15 7h4v4M19 7l-5 5a6 6 0 0 1-9 1" />
-      ) : null}
-      {name === "preview" ? (
-        <>
-          <path {...common} d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" />
-          <path {...common} d="M12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6z" />
-        </>
-      ) : null}
-      {name === "export" ? (
-        <>
-          <path {...common} d="M12 4v10M8 8l4-4 4 4" />
-          <path {...common} d="M5 14v5h14v-5" />
-        </>
-      ) : null}
-      {name === "copy" ? (
-        <>
-          <path {...common} d="M8 8h10v10H8z" />
-          <path {...common} d="M6 16H5V5h11v1" />
-        </>
-      ) : null}
-      {name === "trash" ? (
-        <>
-          <path {...common} d="M6 7h12M10 7V5h4v2M8 7l1 12h6l1-12" />
-        </>
-      ) : null}
-      {name === "front" ? (
-        <path {...common} d="M8 8h8v8H8zM5 5h8M5 5v8M11 19h8M19 11v8" />
-      ) : null}
-      {name === "back" ? (
-        <path {...common} d="M8 8h8v8H8zM11 5h8M19 5v8M5 11v8h8" />
-      ) : null}
-      {name === "lock" ? (
-        <path {...common} d="M7 11h10v8H7zM9 11V8a3 3 0 0 1 6 0v3" />
-      ) : null}
-      {name === "unlock" ? (
-        <path {...common} d="M7 11h10v8H7zM9 11V8a3 3 0 0 1 5.4-1.8" />
-      ) : null}
-      {name === "replace" ? (
-        <path
-          {...common}
-          d="M7 7h8l-2-2M17 17H9l2 2M17 17a6 6 0 0 0 1-7M7 7a6 6 0 0 0-1 7"
-        />
-      ) : null}
-      {name === "alignLeft" ? (
-        <path {...common} d="M5 7h12M5 12h8M5 17h12" />
-      ) : null}
-      {name === "alignCenter" ? (
-        <path {...common} d="M6 7h12M9 12h6M6 17h12" />
-      ) : null}
-      {name === "alignRight" ? (
-        <path {...common} d="M7 7h12M11 12h8M7 17h12" />
-      ) : null}
-      {name === "plus" ? <path {...common} d="M12 5v14M5 12h14" /> : null}
-    </svg>
-  );
+  const Component = editorIcons[name];
+  return <Component className="tool-icon" aria-hidden="true" focusable="false" />;
 }
 
 function floatingMenuStyle(

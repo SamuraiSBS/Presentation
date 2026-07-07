@@ -2772,7 +2772,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 .ui-button:focus-visible,
 .ui-tabs-trigger:focus-visible,
 .ui-dropdown-item:focus-visible,
-.ui-dialog-close:focus-visible {
+.ui-dialog-close:focus-visible,
+.ui-tooltip-content:focus-visible {
   outline: 0;
   box-shadow: var(--focus-ring);
 }
@@ -3001,6 +3002,33 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 
 .ui-dropdown-inset {
   padding-left: 28px;
+}
+
+.ui-tooltip-content {
+  z-index: calc(var(--z-dropdown) + 1);
+  max-width: 260px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, var(--ink));
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.25;
+  box-shadow: var(--shadow-raised);
+  transform-origin: var(--radix-tooltip-content-transform-origin);
+  animation: tooltip-in 140ms var(--ease-out);
+}
+
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 /* Editor chrome only: generated canvas and theme variables are untouched. */
