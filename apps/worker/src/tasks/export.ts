@@ -271,10 +271,21 @@ async function renderCanvasImage(slide: any, element: CanvasImageElement) {
   slide.addImage({
     data,
     ...box,
-    sizing: { type: element.fit, ...box },
+    sizing: { type: exportImageFit(element, box), ...box },
     rotate: element.rotation,
     transparency: opacityToTransparency(element.opacity),
   });
+}
+
+function exportImageFit(
+  element: Pick<CanvasImageElement, "fit" | "sourceWidth" | "sourceHeight">,
+  box: { w: number; h: number },
+) {
+  if (!element.sourceWidth || !element.sourceHeight) return element.fit;
+  const imageRatio = element.sourceWidth / element.sourceHeight;
+  const boxRatio = box.w / box.h;
+  const cropFactor = Math.max(imageRatio / boxRatio, boxRatio / imageRatio);
+  return element.fit === "cover" && cropFactor > 2.15 ? "contain" : element.fit;
 }
 
 async function imageDataForCanvasElement(element: CanvasImageElement) {

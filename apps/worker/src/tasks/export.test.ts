@@ -148,6 +148,7 @@ describe("createPptx", () => {
               sourceTitle: "Example",
               provider: "tavily",
               contentType: "image/jpeg",
+              warnings: [],
             },
           },
           highlights: [],

@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
+import sharp from "sharp";
 import type { PresentationDocument } from "@studydeck/shared";
 import {
   buildSlideImageQuery,
   chooseImageCandidate,
   enrichPresentationImages,
+  processPresentationImage,
   shouldSearchForSlideImage,
   tavilyResponseToImageCandidates,
 } from "./image-search.js";
@@ -205,6 +207,83 @@ describe("image search helpers", () => {
     ]);
     expect(enriched.slides[0].visual.image?.objectKey).toMatch(/\.webp$/);
     expect(enriched.slides[0].visual.image?.sourceUrl).toBe("https://cdn.example.com/classroom.webp");
+  });
+
+  it("resizes and normalizes oversized presentation images before upload", async () => {
+    const source = await sharp({
+      create: {
+        width: 1800,
+        height: 1200,
+        channels: 3,
+        background: "#db7d35",
+      },
+    }).png().toBuffer();
+
+    const processed = await processPresentationImage(source, {
+      contentType: "image/png",
+      maxBytes: 350_000,
+      maxWidth: 960,
+      maxHeight: 540,
+    });
+
+    expect(processed.contentType).toBe("image/jpeg");
+    expect(processed.extension).toBe("jpg");
+    expect(processed.width).toBeLessThanOrEqual(960);
+    expect(processed.height).toBeLessThanOrEqual(540);
+    expect(processed.byteSize).toBe(processed.buffer.length);
+    expect(processed.buffer.length).toBeLessThanOrEqual(350_000);
+    expect(processed.warnings.some((warning) => warning.includes("resized from 1800x1200"))).toBe(true);
+  });
+
+  it("stores processed image metadata on enriched slides", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    const uploaded: Array<{ key: string; size: number; contentType: string }> = [];
+    const source = await sharp({
+      create: {
+        width: 1200,
+        height: 900,
+        channels: 3,
+        background: "#4d8fba",
+      },
+    }).jpeg({ quality: 95 }).toBuffer();
+
+    const enriched = await enrichPresentationImages(
+      { id: "project-1", title: "AI in education", prompt: "Explain practical AI in school" },
+      { ...presentation, slides: [presentation.slides[0]] },
+      {
+        searchImages: async () => [{ url: "https://cdn.example.com/classroom.png", description: "Classroom", sourceTitle: "Image source" }],
+        downloadImage: async () => processPresentationImage(source, {
+          contentType: "image/jpeg",
+          maxBytes: 200_000,
+          maxWidth: 800,
+          maxHeight: 600,
+        }),
+        putObject: async (key, buffer, contentType) => {
+          uploaded.push({ key, size: buffer.length, contentType });
+        },
+      },
+    );
+
+    const image = enriched.slides[0].visual.image;
+    expect(image?.contentType).toBe("image/jpeg");
+    expect(image?.width).toBeLessThanOrEqual(800);
+    expect(image?.height).toBeLessThanOrEqual(600);
+    expect(image?.byteSize).toBe(uploaded[0].size);
+    expect(uploaded[0].key).toMatch(/\.jpg$/);
+    expect(uploaded[0].contentType).toBe("image/jpeg");
+  });
+
+  it("keeps a small original image when processing fails safely", async () => {
+    const processed = await processPresentationImage(Buffer.from("not actually an image"), {
+      contentType: "image/webp",
+      maxBytes: 100_000,
+    });
+
+    expect(processed.contentType).toBe("image/webp");
+    expect(processed.extension).toBe("webp");
+    expect(processed.byteSize).toBe("not actually an image".length);
+    expect(processed.warnings[0]).toContain("processing failed; kept original");
   });
 });
 

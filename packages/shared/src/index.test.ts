@@ -5,6 +5,7 @@ import {
   createProjectInputSchema,
   deckStorySchema,
   designBriefSchema,
+  diagramGraphSpecSchema,
   diagramSpecSchema,
   ensureEditableCanvas,
   generatePresentationInputSchema,
@@ -369,6 +370,10 @@ describe("shared contracts", () => {
               sourceTitle: "Article",
               provider: "tavily",
               contentType: "image/jpeg",
+              width: 1280,
+              height: 720,
+              byteSize: 420000,
+              warnings: ["resized from 2400x1350"],
             },
           },
           blocks: [{ type: "callout", content: "Body." }],
@@ -380,6 +385,65 @@ describe("shared contracts", () => {
     });
 
     expect(parsed.slides[0].visual.image?.objectKey).toBe("projects/project-1/images/slide-1.jpg");
+    expect(parsed.slides[0].visual.image?.width).toBe(1280);
+    expect(parsed.slides[0].visual.image?.byteSize).toBe(420000);
+  });
+
+  it("accepts graph diagram specs and renders a static canvas fallback", () => {
+    const graph = diagramGraphSpecSchema.parse({
+      layoutDirection: "LR",
+      nodes: [
+        { id: "research", label: "Research", detail: "Collect evidence" },
+        { id: "draft", label: "Draft", detail: "Shape the argument" },
+        { id: "present", label: "Present", detail: "Explain out loud" },
+      ],
+      edges: [
+        { source: "research", target: "draft", label: "feeds" },
+        { source: "draft", target: "present", label: "becomes" },
+      ],
+      fallback: "Research feeds drafting, then the student presents the argument.",
+    });
+    const presentation = presentationSchema.parse({
+      id: "presentation-graph",
+      title: "Graph deck",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Workflow"],
+      speechScript: [{ slideOrder: 1, slideTitle: "Workflow", text: "Narration." }],
+      slides: [
+        {
+          id: "slide-graph",
+          order: 1,
+          title: "Workflow",
+          slideKind: "content",
+          layout: "process",
+          thesis: "A clear graph keeps the study workflow readable.",
+          bullets: ["Research", "Draft", "Present"],
+          visual: { type: "mind_map", graph },
+          blocks: [{ type: "callout", content: "Workflow." }],
+          speakerNotes: "Notes.",
+          timingSeconds: 45,
+          sourceRefs: [],
+        },
+      ],
+    });
+
+    const canvas = buildSlideCanvas(presentation.slides[0], resolvePresentationTheme(presentation), {
+      designDirection: {
+        slideOrder: 1,
+        visualRole: "sequence",
+        layoutIntent: "diagram",
+        imageStrategy: "diagram",
+        visualPrompt: "Workflow graph",
+      },
+    });
+
+    expect(canvas.elements.some((element) => element.id === "slide-graph-graph-node-0")).toBe(true);
+    expect(canvas.elements.some((element) => element.id === "slide-graph-graph-edge-0")).toBe(true);
+    expect(canvas.elements.some((element) => element.type === "image")).toBe(false);
   });
 
   it("accepts varied slide layouts", () => {

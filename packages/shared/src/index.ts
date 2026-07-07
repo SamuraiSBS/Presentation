@@ -295,6 +295,10 @@ export const slideVisualImageSchema = z.object({
   sourceTitle: z.string().default(""),
   provider: z.literal("tavily").default("tavily"),
   contentType: z.string().default(""),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+  byteSize: z.number().int().nonnegative().optional(),
+  warnings: z.array(z.string().trim().min(1).max(180)).max(6).default([]),
 });
 export type SlideVisualImage = z.infer<typeof slideVisualImageSchema>;
 
@@ -318,6 +322,30 @@ export const mermaidDiagramSpecSchema = z.object({
 });
 export type MermaidDiagramSpec = z.infer<typeof mermaidDiagramSpecSchema>;
 
+export const diagramGraphNodeSchema = z.object({
+  id: z.string().trim().min(1).max(80),
+  label: z.string().trim().min(1).max(120),
+  detail: z.string().trim().max(180).default(""),
+});
+export type DiagramGraphNode = z.infer<typeof diagramGraphNodeSchema>;
+
+export const diagramGraphEdgeSchema = z.object({
+  id: z.string().trim().min(1).max(80).optional(),
+  source: z.string().trim().min(1).max(80),
+  target: z.string().trim().min(1).max(80),
+  label: z.string().trim().max(120).default(""),
+});
+export type DiagramGraphEdge = z.infer<typeof diagramGraphEdgeSchema>;
+
+export const diagramGraphSpecSchema = z.object({
+  layoutDirection: z.enum(["LR", "TB"]).default("LR"),
+  nodes: z.array(diagramGraphNodeSchema).min(2).max(10),
+  edges: z.array(diagramGraphEdgeSchema).max(16).default([]),
+  fallback: z.string().trim().max(1200).default(""),
+  title: z.string().trim().max(90).default(""),
+});
+export type DiagramGraphSpec = z.infer<typeof diagramGraphSpecSchema>;
+
 export const slideVisualSchema = z.object({
   type: visualTypeSchema.default("none"),
   title: z.string().trim().max(100).default(""),
@@ -328,6 +356,7 @@ export const slideVisualSchema = z.object({
   rows: z.array(slideVisualRowSchema).max(8).default([]),
   image: slideVisualImageSchema.optional(),
   diagram: mermaidDiagramSpecSchema.optional(),
+  graph: diagramGraphSpecSchema.optional(),
 });
 export type SlideVisual = z.infer<typeof slideVisualSchema>;
 
@@ -377,6 +406,9 @@ export const canvasImageElementSchema = canvasElementBaseSchema.extend({
   alt: z.string().default(""),
   contentType: z.string().default(""),
   fit: z.enum(["contain", "cover"]).default("cover"),
+  sourceWidth: z.number().int().positive().optional(),
+  sourceHeight: z.number().int().positive().optional(),
+  byteSize: z.number().int().nonnegative().optional(),
 });
 export type CanvasImageElement = z.infer<typeof canvasImageElementSchema>;
 
@@ -1528,6 +1560,10 @@ function addDirectedDiagramCanvas(
 ) {
   const visualType = slide.visual?.type || "none";
   const sceneText = `${slide.title} ${slide.thesis} ${direction?.visualPrompt || ""}`;
+  if (slide.visual?.graph?.nodes.length) {
+    addGraphCanvas(slide, theme, elements);
+    return;
+  }
   if (
     visualType === "process_diagram" ||
     slide.layout === "process" ||
@@ -1555,6 +1591,81 @@ function addDirectedDiagramCanvas(
     return;
   }
   addPanelGridCanvas(slide, theme, elements, items.map((_, index) => String(index + 1).padStart(2, "0")));
+}
+
+function addGraphCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  addSlideTitle(slide, theme, elements);
+  const graph = slide.visual?.graph;
+  if (!graph?.nodes.length) return;
+
+  const nodes = graph.nodes.slice(0, 8);
+  const direction = graph.layoutDirection || "LR";
+  const left = 100;
+  const top = 190;
+  const width = 1080;
+  const height = 360;
+  const nodeWidth = direction === "TB" ? 520 : Math.max(188, Math.min(300, (width - (nodes.length - 1) * 22) / nodes.length));
+  const nodeHeight = direction === "TB" ? Math.max(74, Math.min(108, (height - (nodes.length - 1) * 16) / nodes.length)) : 126;
+  const positions = new Map<string, { x: number; y: number; w: number; h: number }>();
+
+  nodes.forEach((node, index) => {
+    const x = direction === "TB" ? left + (width - nodeWidth) / 2 : left + index * (nodeWidth + 22);
+    const y = direction === "TB" ? top + index * (nodeHeight + 16) : top + (index % 2 === 0 ? 0 : 92);
+    positions.set(node.id, { x, y, w: nodeWidth, h: nodeHeight });
+  });
+
+  graph.edges.slice(0, 12).forEach((edge, index) => {
+    const source = positions.get(edge.source);
+    const target = positions.get(edge.target);
+    if (!source || !target) return;
+    const x1 = direction === "TB" ? source.x + source.w / 2 : source.x + source.w;
+    const y1 = direction === "TB" ? source.y + source.h : source.y + source.h / 2;
+    const x2 = direction === "TB" ? target.x + target.w / 2 : target.x;
+    const y2 = direction === "TB" ? target.y : target.y + target.h / 2;
+    const x = Math.min(x1, x2);
+    const y = Math.min(y1, y2);
+    const w = Math.max(2, Math.abs(x2 - x1));
+    const h = Math.max(2, Math.abs(y2 - y1));
+    elements.push(shapeElement(`${slide.id}-graph-edge-${index}`, "line", x, y, w, h, 1, theme.colors.line, theme.colors.accent, 3, 0.75));
+    if (edge.label) {
+      elements.push(textElement(`${slide.id}-graph-edge-${index}-label`, edge.label, x + w / 2 - 70, y + h / 2 - 15, 140, 30, 3, {
+        role: "caption",
+        fontSize: MIN_GENERATED_CAPTION_FONT_SIZE,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.muted,
+        align: "center",
+        valign: "middle",
+      }));
+    }
+  });
+
+  nodes.forEach((node, index) => {
+    const box = positions.get(node.id);
+    if (!box) return;
+    elements.push(
+      shapeElement(`${slide.id}-graph-node-${index}`, "roundRect", box.x, box.y, box.w, box.h, 2, theme.colors.surface, theme.colors.accent, 2, 1),
+      textElement(`${slide.id}-graph-node-${index}-label`, node.label, box.x + 18, box.y + 18, box.w - 36, node.detail ? 34 : box.h - 36, 4, {
+        role: "body",
+        fontSize: 20,
+        autoFit: false,
+        fontFamily: theme.fonts.heading,
+        color: theme.colors.text,
+        bold: true,
+        align: "center",
+        valign: "middle",
+      }),
+    );
+    if (node.detail) {
+      elements.push(textElement(`${slide.id}-graph-node-${index}-detail`, node.detail, box.x + 18, box.y + 58, box.w - 36, box.h - 74, 4, {
+        role: "caption",
+        fontSize: MIN_GENERATED_CAPTION_FONT_SIZE,
+        autoFit: false,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.muted,
+        align: "center",
+      }));
+    }
+  });
 }
 
 function addPremiumSplitImageCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], fullBleed: boolean) {
@@ -3176,6 +3287,9 @@ function imageElement(
     alt: image.alt || "",
     contentType: image.contentType || "",
     fit,
+    sourceWidth: image.width,
+    sourceHeight: image.height,
+    byteSize: image.byteSize,
   };
 }
 
@@ -3186,10 +3300,11 @@ function quoteText(slide: Slide) {
 
 function sequenceItems(slide: Slide) {
   const visualItems = (slide.visual?.items || []).map((item) => item.label || item.text).filter(Boolean);
-  const diagramItems = splitCanvasSentences(slide.visual?.diagram?.fallback || "").slice(0, 5);
+  const graphItems = (slide.visual?.graph?.nodes || []).map((node) => node.detail || node.label).filter(Boolean);
+  const diagramItems = splitCanvasSentences(slide.visual?.graph?.fallback || slide.visual?.diagram?.fallback || "").slice(0, 5);
   const blockItems = (slide.blocks || []).flatMap((block) => (block.type === "bullets" ? block.items : [block.content]));
   const bullets = slide.bullets || [];
-  return (visualItems.length ? visualItems : diagramItems.length ? diagramItems : bullets.length ? bullets : blockItems.length ? blockItems : [slide.thesis || slide.title]).filter(Boolean);
+  return (visualItems.length ? visualItems : graphItems.length ? graphItems : diagramItems.length ? diagramItems : bullets.length ? bullets : blockItems.length ? blockItems : [slide.thesis || slide.title]).filter(Boolean);
 }
 
 function uniqueCanvasItems(items: string[]) {
@@ -3327,6 +3442,7 @@ function slideBodyText(slide: Slide) {
     slide.thesis,
     ...(slide.bullets || []),
     slide.definition ? `${slide.definition.term}: ${slide.definition.text}` : "",
+    slide.visual?.graph?.fallback || "",
     slide.visual?.diagram?.fallback || "",
     ...(slide.blocks || []).flatMap((block) => (block.type === "bullets" ? block.items : [block.content])),
   ]

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { DesignBriefSlideDirection, PresentationDocument, SlideVisualImage } from "@studydeck/shared";
+import sharp from "sharp";
 import { putObjectBuffer } from "../storage.js";
 
 type ProjectInput = {
@@ -32,6 +33,27 @@ type DownloadedImage = {
   buffer: Buffer;
   contentType: string;
   extension: string;
+  width?: number;
+  height?: number;
+  byteSize?: number;
+  warnings?: string[];
+};
+
+type ProcessPresentationImageOptions = {
+  contentType?: string;
+  maxBytes?: number;
+  maxWidth?: number;
+  maxHeight?: number;
+};
+
+export type ProcessedPresentationImage = {
+  buffer: Buffer;
+  contentType: string;
+  extension: string;
+  width?: number;
+  height?: number;
+  byteSize: number;
+  warnings: string[];
 };
 
 type ImageSearchDependencies = {
@@ -93,6 +115,10 @@ export async function enrichPresentationImages(
             sourceTitle: candidate.sourceTitle,
             provider: "tavily",
             contentType: downloaded.contentType,
+            width: downloaded.width,
+            height: downloaded.height,
+            byteSize: downloaded.byteSize ?? downloaded.buffer.length,
+            warnings: downloaded.warnings || [],
           };
         } catch (error) {
           lastDownloadError = error;
@@ -297,9 +323,10 @@ async function downloadRemoteImage(url: string): Promise<DownloadedImage> {
       throw new Error(`Unsupported image content type: ${contentType || "unknown"}`);
     }
 
-    const maxBytes = clampNumber(Number(process.env.PRESENTATION_IMAGE_MAX_BYTES || 5_000_000), 100_000, 20_000_000);
+    const maxBytes = presentationImageMaxBytes();
+    const downloadMaxBytes = presentationImageDownloadMaxBytes(maxBytes);
     const contentLength = Number(response.headers.get("content-length") || 0);
-    if (contentLength > maxBytes) {
+    if (contentLength > downloadMaxBytes) {
       throw new Error(`Image is too large: ${contentLength} bytes`);
     }
 
@@ -307,14 +334,101 @@ async function downloadRemoteImage(url: string): Promise<DownloadedImage> {
     if (!buffer.length) {
       throw new Error("Image response is empty");
     }
-    if (buffer.length > maxBytes) {
+    if (buffer.length > downloadMaxBytes) {
       throw new Error(`Image is too large: ${buffer.length} bytes`);
     }
 
-    return { buffer, contentType, extension };
+    return processPresentationImage(buffer, { contentType, maxBytes });
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function processPresentationImage(
+  buffer: Buffer,
+  options: ProcessPresentationImageOptions = {},
+): Promise<ProcessedPresentationImage> {
+  const maxBytes = options.maxBytes ?? presentationImageMaxBytes();
+  const maxWidth = options.maxWidth ?? presentationImageMaxDimension("PRESENTATION_IMAGE_MAX_WIDTH", 1920);
+  const maxHeight = options.maxHeight ?? presentationImageMaxDimension("PRESENTATION_IMAGE_MAX_HEIGHT", 1080);
+  const inputContentType = cleanText(options.contentType || "").split(";")[0].toLowerCase();
+  const warnings: string[] = [];
+
+  try {
+    const source = sharp(buffer, { limitInputPixels: 48_000_000, failOn: "none" });
+    const metadata = await source.metadata();
+    const width = metadata.width;
+    const height = metadata.height;
+    const hasAlpha = Boolean(metadata.hasAlpha);
+    const resized = source.rotate().resize({
+      width: maxWidth,
+      height: maxHeight,
+      fit: "inside",
+      withoutEnlargement: true,
+    });
+
+    if ((width && width > maxWidth) || (height && height > maxHeight)) {
+      warnings.push(`resized from ${width || "unknown"}x${height || "unknown"}`);
+    }
+
+    const format = hasAlpha ? "png" : "jpeg";
+    const attempts = format === "jpeg" ? [82, 72, 62, 52] : [undefined];
+    let best: Buffer | null = null;
+    let bestMetadata: sharp.Metadata | null = null;
+
+    for (const quality of attempts) {
+      const candidate = format === "jpeg"
+        ? await resized.clone().jpeg({ quality, mozjpeg: true }).toBuffer()
+        : await resized.clone().png({ compressionLevel: 9, palette: true }).toBuffer();
+      best = candidate;
+      bestMetadata = await sharp(candidate).metadata();
+      if (candidate.length <= maxBytes) break;
+    }
+
+    if (!best || !bestMetadata) {
+      throw new Error("Image processing produced no output");
+    }
+
+    if (best.length > maxBytes) {
+      if (buffer.length <= maxBytes) {
+        warnings.push("processed image exceeded max bytes; kept original");
+        return originalImageResult(buffer, inputContentType, warnings);
+      }
+      throw new Error(`Processed image is too large: ${best.length} bytes`);
+    }
+
+    if (best.length > buffer.length && buffer.length <= maxBytes && inputContentType) {
+      warnings.push("processed image was larger; kept original");
+      return originalImageResult(buffer, inputContentType, warnings);
+    }
+
+    return {
+      buffer: best,
+      contentType: format === "png" ? "image/png" : "image/jpeg",
+      extension: format === "png" ? "png" : "jpg",
+      width: bestMetadata.width,
+      height: bestMetadata.height,
+      byteSize: best.length,
+      warnings,
+    };
+  } catch (error) {
+    if (buffer.length <= maxBytes) {
+      warnings.push(`processing failed; kept original: ${error instanceof Error ? error.message : "unknown error"}`);
+      return originalImageResult(buffer, inputContentType, warnings);
+    }
+    throw error;
+  }
+}
+
+function originalImageResult(buffer: Buffer, contentType: string, warnings: string[]): ProcessedPresentationImage {
+  const safeContentType = contentType && extensionFromContentType(contentType) ? contentType : "image/jpeg";
+  return {
+    buffer,
+    contentType: safeContentType,
+    extension: extensionFromContentType(safeContentType) || "jpg",
+    byteSize: buffer.length,
+    warnings,
+  };
 }
 
 function normalizeTavilyImage(image: TavilyImage): Omit<ImageCandidate, "sourceTitle"> | null {
@@ -350,6 +464,22 @@ function extensionFromContentType(contentType: string) {
   if (contentType === "image/png") return "png";
   if (contentType === "image/webp") return "webp";
   return "";
+}
+
+function presentationImageMaxBytes() {
+  return clampNumber(Number(process.env.PRESENTATION_IMAGE_MAX_BYTES || 5_000_000), 100_000, 20_000_000);
+}
+
+function presentationImageDownloadMaxBytes(finalMaxBytes: number) {
+  return clampNumber(
+    Number(process.env.PRESENTATION_IMAGE_DOWNLOAD_MAX_BYTES || finalMaxBytes * 3),
+    finalMaxBytes,
+    40_000_000,
+  );
+}
+
+function presentationImageMaxDimension(envName: string, fallback: number) {
+  return clampNumber(Number(process.env[envName] || fallback), 320, 4096);
 }
 
 function isPresentationImagesEnabled(dependencies: ImageSearchDependencies) {

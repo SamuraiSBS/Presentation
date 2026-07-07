@@ -9,6 +9,7 @@ import {
   type SlideBlock,
   type SlideKind,
   type SlideVisual,
+  diagramGraphSpecSchema,
   mermaidDiagramSpecSchema,
 } from "@studydeck/shared";
 
@@ -354,9 +355,10 @@ function normalizeVisual(value: unknown, title: string, _bullets: string[], _sli
   const completeRows = rows.filter((row) => row.left && row.right);
   const type = usefulVisualType(requestedType, items, completeRows);
   const diagram = mermaidDiagramSpecSchema.safeParse(candidate.diagram);
+  const graph = diagramGraphSpecSchema.safeParse(candidate.graph);
 
   if (type === "none") {
-    return { ...empty, description, ...(image ? { image } : {}), ...(diagram.success ? { diagram: diagram.data } : {}) };
+    return { ...empty, description, ...(image ? { image } : {}), ...(diagram.success ? { diagram: diagram.data } : {}), ...(graph.success ? { graph: graph.data } : {}) };
   }
 
   return {
@@ -369,6 +371,7 @@ function normalizeVisual(value: unknown, title: string, _bullets: string[], _sli
     rows: isRowVisual(type) ? completeRows : [],
     ...(image ? { image } : {}),
     ...(diagram.success ? { diagram: diagram.data } : {}),
+    ...(graph.success ? { graph: graph.data } : {}),
   };
 }
 
@@ -387,7 +390,23 @@ function normalizeVisualImage(value: unknown): SlideVisual["image"] | undefined 
     sourceTitle: sanitizeDisplayText(candidate.sourceTitle),
     provider: "tavily",
     contentType: sanitizeDisplayText(candidate.contentType),
+    width: positiveInteger(candidate.width),
+    height: positiveInteger(candidate.height),
+    byteSize: nonNegativeInteger(candidate.byteSize),
+    warnings: Array.isArray(candidate.warnings)
+      ? candidate.warnings.map(sanitizeDisplayText).filter(Boolean).slice(0, 6)
+      : [],
   };
+}
+
+function positiveInteger(value: unknown) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : undefined;
+}
+
+function nonNegativeInteger(value: unknown) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 0 ? number : undefined;
 }
 
 function normalizeVisualTitle(value: unknown, slideTitle: string) {
