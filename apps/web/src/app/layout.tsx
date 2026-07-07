@@ -3,6 +3,7 @@ import "@fontsource-variable/nunito";
 import "./globals.css";
 import { AppHeader } from "@/components/app-header";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
+import { AppQueryProvider } from "@/components/query-provider";
 
 export const metadata: Metadata = {
   title: "StudyDeck AI",
@@ -19,9 +20,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ru">
       <body>
-        <AppHeader />
-        <div className="app-content">{children}</div>
-        <MobileBottomNav />
+        <AppQueryProvider>
+          <AppHeader />
+          <div className="app-content">{children}</div>
+          <MobileBottomNav />
+        </AppQueryProvider>
       </body>
     </html>
   );

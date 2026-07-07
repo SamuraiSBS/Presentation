@@ -1,4 +1,4 @@
-import { ProjectScriptReview } from "@/components/project-script-review";
+import { ProjectScriptReviewQuery } from "@/components/project-script-review-query";
 import { internalFetch } from "@/lib/internal-api";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +9,7 @@ export default async function ProjectScriptPage({ params }: { params: Promise<{ 
 
   return (
     <main className="page">
-      <ProjectScriptReview initialProject={project} />
+      <ProjectScriptReviewQuery initialProject={project} />
     </main>
   );
 }

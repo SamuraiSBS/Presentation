@@ -27,6 +27,7 @@
   --z-sticky: 30;
   --z-dropdown: 40;
   --z-mobile-nav: 50;
+  --z-dialog: 80;
 }
 
 * {
@@ -2749,6 +2750,258 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 @keyframes export-progress { from { transform: translateX(-110%); } to { transform: translateX(275%); } }
 .spin { animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius);
+  font-weight: 850;
+  line-height: 1;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    transform var(--motion-fast) var(--ease-out),
+    background var(--motion-base) var(--ease-out),
+    box-shadow var(--motion-base) var(--ease-out),
+    opacity var(--motion-base) var(--ease-out);
+}
+
+.ui-button:focus-visible,
+.ui-tabs-trigger:focus-visible,
+.ui-dropdown-item:focus-visible,
+.ui-dialog-close:focus-visible {
+  outline: 0;
+  box-shadow: var(--focus-ring);
+}
+
+.ui-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.ui-button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.ui-button-default {
+  background: var(--orange);
+  color: var(--ink);
+}
+
+.ui-button-secondary,
+.ui-button-ghost {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.ui-button-ghost {
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+}
+
+.ui-button-danger {
+  background: var(--error);
+  color: #fff;
+}
+
+.ui-button-size-default {
+  min-height: 40px;
+  padding: 0 14px;
+}
+
+.ui-button-size-sm {
+  min-height: 34px;
+  padding: 0 11px;
+  font-size: 13px;
+}
+
+.ui-button-size-icon {
+  width: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+}
+
+.ui-progress {
+  position: relative;
+  height: 7px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #efd8bd;
+}
+
+.ui-progress-indicator {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--orange);
+  transition: transform 450ms var(--ease-out);
+}
+
+.ui-tabs-list {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px;
+  background: color-mix(in srgb, var(--surface-2) 72%, var(--surface));
+}
+
+.ui-tabs-trigger {
+  min-height: 36px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 14px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.ui-tabs-trigger[data-state="active"] {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 3px 10px rgba(111, 61, 14, 0.08);
+}
+
+.ui-tabs-content {
+  margin-top: 18px;
+}
+
+.ui-dialog-overlay {
+  position: fixed;
+  z-index: var(--z-dialog);
+  inset: 0;
+  background: rgba(39, 27, 16, 0.42);
+  backdrop-filter: blur(5px);
+}
+
+.ui-dialog-content {
+  position: fixed;
+  z-index: calc(var(--z-dialog) + 1);
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: min(calc(100vw - 32px), 480px);
+  gap: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-major);
+  padding: 24px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 22px 60px rgba(58, 33, 9, 0.22);
+  transform: translate(-50%, -50%);
+}
+
+.ui-dialog-header {
+  display: grid;
+  gap: 8px;
+}
+
+.ui-dialog-title {
+  margin: 0;
+  padding-right: 34px;
+  font-size: 22px;
+  line-height: 1.15;
+}
+
+.ui-dialog-description {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.ui-dialog-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.ui-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.ui-dropdown-content {
+  z-index: var(--z-dropdown);
+  min-width: 210px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-editor);
+  padding: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-raised);
+}
+
+.ui-dropdown-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  border-radius: 10px;
+  padding: 7px 9px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ui-dropdown-item[data-highlighted] {
+  outline: 0;
+  background: var(--orange-soft);
+  color: var(--orange-deep);
+}
+
+.ui-dropdown-item[data-disabled] {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.ui-dropdown-label {
+  padding: 7px 9px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.ui-dropdown-separator {
+  height: 1px;
+  margin: 6px -6px;
+  background: var(--line);
+}
+
+.ui-dropdown-indicator {
+  display: grid;
+  place-items: center;
+  width: 16px;
+}
+
+.ui-dropdown-chevron {
+  margin-left: auto;
+}
+
+.ui-dropdown-inset {
+  padding-left: 28px;
+}
 
 /* Editor chrome only: generated canvas and theme variables are untouched. */
 .editor-top h1 { letter-spacing: -.02em; }
