@@ -166,6 +166,63 @@ describe("createPptx", () => {
     expect(slideXml).toContain("The slide remains exportable");
   });
 
+  it("exports Mermaid diagram fallback text when no renderer is available", async () => {
+    const buffer = await createPptx({
+      id: "presentation-diagram",
+      title: "Diagram fallback deck",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      generatedText: "Slide 1: Diagram fallback\nProcess explanation.",
+      sources: [],
+      outline: ["Diagram fallback"],
+      narrativePlan: [],
+      speechScript: [{ slideOrder: 1, slideTitle: "Diagram fallback", text: "Narration." }],
+      slides: [
+        {
+          id: "slide-1",
+          order: 1,
+          title: "Diagram fallback",
+          slideKind: "content",
+          layout: "bullets",
+          thesis: "A process can be explained as a short chain.",
+          bullets: ["Input", "Processing", "Result"],
+          definition: null,
+          keyConcepts: [],
+          visual: {
+            type: "process_diagram",
+            title: "Process chain",
+            description: "Simple process diagram",
+            leftLabel: "",
+            rightLabel: "",
+            items: [],
+            rows: [],
+            diagram: {
+              kind: "flowchart",
+              source: "flowchart LR\n    A[Input] --> B[Processing] --> C[Result]",
+              fallback: "Input leads to processing. Processing leads to result.",
+              title: "Process chain",
+              caption: "Simple process",
+              safety: "safe",
+            },
+          },
+          highlights: [],
+          blocks: [{ type: "callout", content: "Process explanation." }],
+          speakerNotes: "Narration.",
+          timingSeconds: 45,
+          sourceRefs: [],
+        },
+      ],
+    });
+
+    const zip = await JSZip.loadAsync(buffer);
+    const slideXml = await zip.file("ppt/slides/slide1.xml")?.async("string");
+
+    expect(slideXml).toContain("Input leads to processing");
+    expect(slideXml).toContain("Process chain");
+  });
+
   it("keeps legacy case-study slides readable in pptx exports", async () => {
     const buffer = await createPptx({
       id: "presentation-legacy-case",

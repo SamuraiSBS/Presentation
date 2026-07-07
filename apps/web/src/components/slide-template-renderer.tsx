@@ -8,6 +8,7 @@ import {
   type PresentationTheme,
   type SlideBlock,
 } from "@studydeck/shared";
+import { MermaidDiagram } from "@/components/editor/mermaid-diagram";
 
 type Slide = PresentationDocument["slides"][number];
 
@@ -487,6 +488,16 @@ function VisualBlock({ slide }: { slide: Slide }) {
 
   if (isImageOnlyVisual(visual.type)) {
     return imageFigure ? <section className="visual-card visual-image-card">{imageFigure}</section> : null;
+  }
+
+  if (visual.diagram) {
+    return (
+      <section className={`visual-card visual-${visual.type} visual-mermaid-card`}>
+        {imageFigure}
+        {visualTitle ? <strong>{visualTitle}</strong> : null}
+        <MermaidDiagram diagram={visual.diagram} />
+      </section>
+    );
   }
 
   if (visual.rows.length && ["comparison_diagram", "before_after_table", "pros_cons_table", "cause_effect_diagram"].includes(visual.type)) {

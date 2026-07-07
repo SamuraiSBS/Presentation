@@ -9,6 +9,7 @@ import {
   type SlideBlock,
   type SlideKind,
   type SlideVisual,
+  mermaidDiagramSpecSchema,
 } from "@studydeck/shared";
 
 type ProjectWithPresentation = {
@@ -352,9 +353,10 @@ function normalizeVisual(value: unknown, title: string, _bullets: string[], _sli
     : [];
   const completeRows = rows.filter((row) => row.left && row.right);
   const type = usefulVisualType(requestedType, items, completeRows);
+  const diagram = mermaidDiagramSpecSchema.safeParse(candidate.diagram);
 
   if (type === "none") {
-    return { ...empty, description, ...(image ? { image } : {}) };
+    return { ...empty, description, ...(image ? { image } : {}), ...(diagram.success ? { diagram: diagram.data } : {}) };
   }
 
   return {
@@ -366,6 +368,7 @@ function normalizeVisual(value: unknown, title: string, _bullets: string[], _sli
     items: type === "image" || type === "illustration" ? [] : items,
     rows: isRowVisual(type) ? completeRows : [],
     ...(image ? { image } : {}),
+    ...(diagram.success ? { diagram: diagram.data } : {}),
   };
 }
 

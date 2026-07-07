@@ -11,6 +11,7 @@ import {
   useState,
 } from "react";
 import Link from "next/link";
+import { RichTextField } from "@/components/editor/rich-text-field";
 import type {
   CanvasElement,
   CanvasImageElement,
@@ -199,8 +200,11 @@ export function ProjectEditor({
 
   async function saveSlide(next: {
     title?: string;
+    thesis?: string;
+    bullets?: string[];
     layout?: SlideLayout;
     visual?: SlideVisual;
+    blocks?: Slide["blocks"];
     canvas?: SlideCanvas;
     speakerNotes?: string;
   }) {
@@ -221,6 +225,46 @@ export function ProjectEditor({
         ),
       );
     }
+  }
+
+  function updateLocalSlide(patch: Partial<Slide>) {
+    setProject((current) => {
+      const document = current.presentation?.document;
+      if (!document) return current;
+      const slides = document.slides.map((item, index) =>
+        index === active ? { ...item, ...patch } : item,
+      );
+      const speechScript = document.speechScript.map((item) =>
+        item.slideOrder === slide?.order
+          ? {
+              ...item,
+              slideTitle: patch.title ?? item.slideTitle,
+              text: patch.speakerNotes ?? item.text,
+            }
+          : item,
+      );
+      return {
+        ...current,
+        presentation: {
+          ...current.presentation,
+          document: ensureEditableCanvas({ ...document, speechScript, slides }),
+        },
+      };
+    });
+  }
+
+  function saveSlideText(patch: {
+    title?: string;
+    thesis?: string;
+    bullets?: string[];
+    speakerNotes?: string;
+  }) {
+    if (!slide) return;
+    const nextSlide: Slide = { ...slide, ...patch };
+    const blocks = blocksFromSlideText(nextSlide);
+    const payload = { ...patch, blocks };
+    updateLocalSlide({ ...patch, blocks });
+    void saveSlide(payload);
   }
 
   function setLocalCanvas(next: SlideCanvas) {
@@ -931,7 +975,7 @@ export function ProjectEditor({
             onLayerUp={() => moveLayer("up")}
             onLayerDown={() => moveLayer("down")}
             onChangeLayout={applySlideLayout}
-            onSaveNotes={(speakerNotes) => void saveSlide({ speakerNotes })}
+            onSaveText={saveSlideText}
           />
         </aside>
       </section>
@@ -1067,7 +1111,8 @@ type IconName =
   | "replace"
   | "alignLeft"
   | "alignCenter"
-  | "alignRight";
+  | "alignRight"
+  | "plus";
 
 function EditorTopToolbar({
   projectId,
@@ -1495,7 +1540,7 @@ function PropertiesPanel({
   onLayerUp,
   onLayerDown,
   onChangeLayout,
-  onSaveNotes,
+  onSaveText,
 }: {
   selected: CanvasElement | null;
   slide: Slide;
@@ -1505,7 +1550,7 @@ function PropertiesPanel({
   onLayerUp: () => void;
   onLayerDown: () => void;
   onChangeLayout: (layout: SlideLayout) => void;
-  onSaveNotes: (speakerNotes: string) => void;
+  onSaveText: (patch: { title?: string; thesis?: string; bullets?: string[]; speakerNotes?: string }) => void;
 }) {
   return (
     <div className="properties-stack">
@@ -1534,6 +1579,59 @@ function PropertiesPanel({
             ))}
           </select>
         </label>
+      </PropertySection>
+
+      <PropertySection title="РўРµРєСЃС‚ СЃР»Р°Р№РґР°">
+        <label className="field">
+          Р—Р°РіРѕР»РѕРІРѕРє
+          <RichTextField
+            key={`${slide.id}-title`}
+            value={slide.title}
+            multiline={false}
+            toolbar={false}
+            onSave={(title) => title && onSaveText({ title })}
+          />
+        </label>
+        <label className="field">
+          РљРѕСЂРѕС‚РєРёР№ С‚РµР·РёСЃ
+          <RichTextField
+            key={`${slide.id}-thesis`}
+            value={slide.thesis}
+            multiline
+            toolbar
+            onSave={(thesis) => onSaveText({ thesis })}
+          />
+        </label>
+        <div className="field">
+          РџСѓРЅРєС‚С‹
+          <div className="bullet-editor-list">
+            {slide.bullets.map((bullet, index) => (
+              <RichTextField
+                className="bullet-rich-field"
+                key={`${slide.id}-bullet-${index}`}
+                value={bullet}
+                multiline={false}
+                toolbar={false}
+                onSave={(value) => {
+                  const bullets = [...slide.bullets];
+                  if (value) bullets[index] = value;
+                  else bullets.splice(index, 1);
+                  onSaveText({ bullets });
+                }}
+              />
+            ))}
+            {slide.bullets.length < 5 ? (
+              <button
+                className="property-add-button"
+                type="button"
+                onClick={() => onSaveText({ bullets: [...slide.bullets, "РќРѕРІС‹Р№ РїСѓРЅРєС‚"] })}
+              >
+                <Icon name="plus" />
+                Р”РѕР±Р°РІРёС‚СЊ
+              </button>
+            ) : null}
+          </div>
+        </div>
       </PropertySection>
 
       {selected ? (
@@ -1689,11 +1787,13 @@ function PropertiesPanel({
       <PropertySection className="property-section-fill">
         <label className="field">
           Текст выступления
-          <textarea
-            key={slide.id}
-            className="textarea notes"
-            defaultValue={slide.speakerNotes}
-            onBlur={(event) => onSaveNotes(event.target.value)}
+          <RichTextField
+            className="notes-rich-field"
+            key={`${slide.id}-notes`}
+            value={slide.speakerNotes}
+            multiline
+            toolbar
+            onSave={(speakerNotes) => onSaveText({ speakerNotes })}
           />
         </label>
       </PropertySection>
@@ -2141,6 +2241,7 @@ function Icon({ name }: { name: IconName }) {
       {name === "alignRight" ? (
         <path {...common} d="M7 7h12M11 12h8M7 17h12" />
       ) : null}
+      {name === "plus" ? <path {...common} d="M12 5v14M5 12h14" /> : null}
     </svg>
   );
 }
@@ -2286,6 +2387,14 @@ function titleFromCanvas(slide: Slide, canvas: SlideCanvas) {
       element.type === "text" && element.role === "title",
   );
   return title?.text.trim() || slide.title;
+}
+
+function blocksFromSlideText(slide: Slide): Slide["blocks"] {
+  const bullets = slide.bullets.map((item) => item.trim()).filter(Boolean);
+  if (bullets.length) return [{ type: "bullets", items: bullets }];
+  const thesis = slide.thesis.trim();
+  if (thesis) return [{ type: "callout", content: thesis }];
+  return slide.blocks;
 }
 
 function cloneCanvas(canvas: SlideCanvas): SlideCanvas {

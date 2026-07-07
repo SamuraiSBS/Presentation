@@ -22,6 +22,7 @@ import {
   type SlideNarrative,
   type SlideTextPlan,
   type SlideVisual,
+  type MermaidDiagramSpec,
   type Source,
   PREMIUM_PRESENTATION_THEME_IDS,
   SLIDE_LAYOUT_DEFINITIONS,
@@ -33,6 +34,7 @@ import {
   qualityCritiqueSchema,
   researchBriefSchema,
   resolvePresentationTheme,
+  mermaidDiagramSpecSchema,
   slideBlueprintSchema,
   slideNarrativeSchema,
   slideTextPlanSchema,
@@ -2429,6 +2431,9 @@ export function buildGenerationPrompt(
     "- visual.items contains concrete steps/nodes; visual.rows with left/right columns is for tables and comparisons.",
     "- comparison/table visuals must include meaningful left and right values for each row;",
     "- process, timeline, mind_map, and schema visuals must include at least two concrete items;",
+    "- for useful academic diagrams, visual may include diagram: { kind, source, fallback, title, caption, safety }; use Mermaid only for processes, cause/effect chains, classifications, timelines, and simple flowcharts;",
+    "- diagram.kind must be flowchart, sequence, timeline, or mindmap; diagram.source must be valid Mermaid without HTML, script, URLs, event handlers, or unsafe markup; labels should preferably be Russian;",
+    "- diagram.fallback must restate the same structure as plain text so web and exports remain readable if Mermaid rendering fails;",
     "- visual.description must describe a concrete, searchable image for the real subject of the matching narration section in Russian or English;",
     "- every slide must have a different visual.description concept so later image search can choose different pictures;",
     "- do not put URLs or image provider names into visual.description; describe the desired scene, object, person, place, chart, or illustration only.",
@@ -3477,9 +3482,10 @@ function normalizeVisual(
     : [];
   const completeRows = rows.filter((row) => row.left && row.right);
   const type = usefulVisualType(requestedType, items, completeRows);
+  const diagram = normalizeMermaidDiagram(candidate, type, title, thesis, items, completeRows);
 
   if (type === "none") {
-    return { ...emptyVisual(), description };
+    return { ...emptyVisual(), description, ...(diagram ? { diagram } : {}) };
   }
 
   return {
@@ -3490,7 +3496,97 @@ function normalizeVisual(
     rightLabel: sanitizeScreenText(candidate.rightLabel) || defaultRightLabel(type),
     items: type === "image" || type === "illustration" ? [] : items,
     rows: isRowVisual(type) ? completeRows : [],
+    ...(diagram ? { diagram } : {}),
   };
+}
+
+function normalizeMermaidDiagram(
+  candidate: Partial<SlideVisual>,
+  type: SlideVisual["type"],
+  title: string,
+  thesis: string,
+  items: SlideVisual["items"],
+  rows: SlideVisual["rows"],
+): MermaidDiagramSpec | null {
+  const existing = mermaidDiagramSpecSchema.safeParse(candidate.diagram);
+  if (existing.success) return existing.data;
+  if (!["process_diagram", "cause_effect_diagram", "timeline", "mind_map", "schema", "comparison_diagram"].includes(type)) return null;
+
+  const generated = buildMermaidDiagram(type, title, thesis, items, rows);
+  const parsed = generated ? mermaidDiagramSpecSchema.safeParse(generated) : null;
+  return parsed?.success ? parsed.data : null;
+}
+
+function buildMermaidDiagram(
+  type: SlideVisual["type"],
+  title: string,
+  thesis: string,
+  items: SlideVisual["items"],
+  rows: SlideVisual["rows"],
+): MermaidDiagramSpec | null {
+  const fallback = [thesis, ...items.map((item) => [item.label, item.text].filter(Boolean).join(": "))].filter(Boolean).join("\n");
+  if (type === "timeline" && items.length >= 2) {
+    return {
+      kind: "timeline",
+      title,
+      caption: thesis,
+      fallback,
+      safety: "safe",
+      source: ["timeline", `    title ${safeMermaidText(title)}`, ...items.slice(0, 6).map((item) => `    ${safeMermaidText(item.label)} : ${safeMermaidText(item.text || item.label)}`)].join("\n"),
+    };
+  }
+
+  if (type === "mind_map" && items.length >= 2) {
+    return {
+      kind: "mindmap",
+      title,
+      caption: thesis,
+      fallback,
+      safety: "safe",
+      source: ["mindmap", `  root((${safeMermaidText(title)}))`, ...items.slice(0, 6).map((item) => `    ${safeMermaidText(item.label || item.text)}`)].join("\n"),
+    };
+  }
+
+  if (type === "comparison_diagram" && rows.length >= 1) {
+    return {
+      kind: "flowchart",
+      title,
+      caption: thesis,
+      fallback: rows.map((row) => [row.label, row.left, row.right].filter(Boolean).join(": ")).join("\n"),
+      safety: "safe",
+      source: [
+        "flowchart LR",
+        `    A[${safeMermaidText(title)}]`,
+        ...rows.slice(0, 4).flatMap((row, index) => [
+          `    A --> L${index}[${safeMermaidText(row.left || row.label)}]`,
+          `    A --> R${index}[${safeMermaidText(row.right || row.label)}]`,
+        ]),
+      ].join("\n"),
+    };
+  }
+
+  if (items.length < 2) return null;
+  const arrow = type === "cause_effect_diagram" ? "-->|влияет|" : "-->";
+  return {
+    kind: "flowchart",
+    title,
+    caption: thesis,
+    fallback,
+    safety: "safe",
+    source: [
+      "flowchart LR",
+      ...items.slice(0, 6).map((item, index) => `    N${index}[${safeMermaidText(item.label || item.text)}]`),
+      ...items.slice(0, 5).map((_, index) => `    N${index} ${arrow} N${index + 1}`),
+    ].join("\n"),
+  };
+}
+
+function safeMermaidText(value: string) {
+  return sanitizeScreenText(value)
+    .replace(/[<>{}[\]|"`]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80) || "Идея";
 }
 
 function normalizeVisualType(value: unknown): SlideVisual["type"] {

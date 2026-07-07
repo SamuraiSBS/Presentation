@@ -183,11 +183,18 @@ export class ProjectsService {
     if (!slide) throw new NotFoundException("Slide not found");
 
     if (input.title !== undefined) slide.title = input.title;
+    if (input.thesis !== undefined) slide.thesis = input.thesis;
+    if (input.bullets !== undefined) slide.bullets = input.bullets;
     if (input.layout !== undefined) slide.layout = input.layout;
     if (input.visual !== undefined) slide.visual = input.visual;
     if (input.blocks !== undefined) slide.blocks = input.blocks;
     if (input.canvas !== undefined) slide.canvas = slideCanvasSchema.parse(input.canvas);
     if (input.speakerNotes !== undefined) slide.speakerNotes = input.speakerNotes;
+    const scriptItem = document.speechScript.find((item) => item.slideOrder === slide.order);
+    if (scriptItem) {
+      if (input.title !== undefined) scriptItem.slideTitle = input.title;
+      if (input.speakerNotes !== undefined) scriptItem.text = input.speakerNotes;
+    }
 
     return this.prisma.presentation.update({
       where: { projectId },

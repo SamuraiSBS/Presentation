@@ -1245,6 +1245,7 @@ function definitionText(slide: ReturnType<typeof presentationSchema.parse>["slid
 function visualText(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
   const visual = slide.visual;
   if (!visual || visual.type === "none") return "";
+  if (visual.diagram?.fallback) return [visual.diagram.title || visual.title || visual.type, visual.diagram.fallback].filter(Boolean).join(": ");
   const rows = visual.rows.map((row) => [row.label, row.left, row.right].filter(Boolean).join(": ")).filter(Boolean);
   const items = visual.items.map((item) => [item.label, item.text].filter(Boolean).join(": ")).filter(Boolean);
   const content = (rows.length ? rows : items).slice(0, 4).join("; ");

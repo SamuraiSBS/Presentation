@@ -1629,6 +1629,54 @@ select {
   font-family: var(--slide-heading-font);
 }
 
+.visual-mermaid-card {
+  align-content: stretch;
+  overflow: hidden;
+}
+
+.mermaid-diagram,
+.mermaid-fallback {
+  display: grid;
+  align-items: center;
+  min-height: 260px;
+  max-height: 100%;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--slide-surface) 86%, transparent);
+  color: var(--slide-text);
+  overflow: auto;
+}
+
+.mermaid-diagram {
+  padding: 10px;
+}
+
+.mermaid-diagram > div {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+
+.mermaid-diagram svg {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: 360px;
+}
+
+.mermaid-diagram p,
+.mermaid-fallback p {
+  margin: 6px 0 0;
+  color: var(--slide-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.mermaid-fallback {
+  align-content: center;
+  gap: 8px;
+  padding: 16px;
+}
+
 .visual-image {
   display: grid;
   overflow: hidden;
@@ -2096,6 +2144,11 @@ select {
   resize: none;
 }
 
+.property-section-fill .notes-rich-field {
+  min-height: 0;
+  height: 100%;
+}
+
 .property-section-header {
   display: grid;
   gap: 4px;
@@ -2125,6 +2178,103 @@ select {
 
 .properties-panel .textarea {
   min-height: 120px;
+}
+
+.rich-text-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rich-text-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.rich-text-toolbar button,
+.property-add-button {
+  display: inline-grid;
+  place-items: center;
+  min-height: 30px;
+  border: 1px solid #4a4f42;
+  border-radius: 8px;
+  padding: 0 8px;
+  background: #24271f;
+  color: #fff;
+  cursor: pointer;
+}
+
+.rich-text-toolbar button.active {
+  border-color: var(--orange);
+  background: color-mix(in srgb, var(--orange) 24%, #24271f);
+}
+
+.rich-text-content {
+  min-height: 46px;
+  border: 1px solid #dfc3a4;
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: #fffefb;
+  color: var(--ink);
+  line-height: 1.42;
+  outline: none;
+  overflow: auto;
+}
+
+.rich-text-content:focus {
+  border-color: var(--orange-bright);
+  box-shadow: var(--focus-ring);
+}
+
+.rich-text-content p,
+.rich-text-content ul {
+  margin: 0;
+}
+
+.rich-text-content p + p,
+.rich-text-content ul + p,
+.rich-text-content p + ul {
+  margin-top: 7px;
+}
+
+.rich-text-content ul {
+  padding-left: 18px;
+}
+
+.rich-text-content .is-editor-empty:first-child::before {
+  float: left;
+  height: 0;
+  color: #866343;
+  content: attr(data-placeholder);
+  pointer-events: none;
+}
+
+.rich-text-singleline {
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+.notes-rich-field .rich-text-content {
+  height: 100%;
+  min-height: 180px;
+}
+
+.bullet-editor-list {
+  display: grid;
+  gap: 6px;
+}
+
+.bullet-rich-field .rich-text-content {
+  min-height: 40px;
+}
+
+.property-add-button {
+  display: inline-flex;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  font-weight: 850;
 }
 
 .element-textarea {

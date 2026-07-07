@@ -13,6 +13,7 @@ import {
   generationJobKindSchema,
   generationProgressStageSchema,
   hasCustomSlideCanvas,
+  mermaidDiagramSpecSchema,
   planLimits,
   PREMIUM_PRESENTATION_THEMES,
   PREMIUM_PRESENTATION_THEME_IDS,
@@ -50,6 +51,25 @@ describe("shared contracts", () => {
 
   it("keeps free plan export limited to pdf", () => {
     expect(planLimits.free.exports).toEqual(["pdf"]);
+  });
+
+  it("accepts safe Mermaid diagram specs and rejects unsafe markup", () => {
+    const parsed = mermaidDiagramSpecSchema.parse({
+      kind: "flowchart",
+      title: "Процесс",
+      source: "flowchart LR\n    A[Тема] --> B[Вывод]",
+      fallback: "Тема ведет к выводу.",
+      safety: "safe",
+    });
+
+    expect(parsed.kind).toBe("flowchart");
+    expect(() =>
+      mermaidDiagramSpecSchema.parse({
+        kind: "flowchart",
+        source: "flowchart LR\n    A[<script>alert(1)</script>] --> B[OK]",
+        fallback: "Unsafe",
+      }),
+    ).toThrow();
   });
 
   it("keeps the legacy two-column layout readable but hides it from new selections", () => {

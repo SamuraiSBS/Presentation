@@ -298,6 +298,26 @@ export const slideVisualImageSchema = z.object({
 });
 export type SlideVisualImage = z.infer<typeof slideVisualImageSchema>;
 
+const mermaidDiagramSourceSchema = z
+  .string()
+  .trim()
+  .max(3000)
+  .refine((value) => !/<\/?[a-z][\s\S]*>/i.test(value), "Mermaid source cannot contain HTML")
+  .refine((value) => !/\b(?:script|javascript:|onerror|onload|iframe|foreignObject)\b/i.test(value), "Mermaid source contains unsafe content");
+
+export const mermaidDiagramKindSchema = z.enum(["flowchart", "sequence", "timeline", "mindmap"]);
+export type MermaidDiagramKind = z.infer<typeof mermaidDiagramKindSchema>;
+
+export const mermaidDiagramSpecSchema = z.object({
+  kind: mermaidDiagramKindSchema,
+  source: mermaidDiagramSourceSchema,
+  fallback: z.string().trim().max(1200).default(""),
+  title: z.string().trim().max(90).default(""),
+  caption: z.string().trim().max(160).default(""),
+  safety: z.enum(["safe", "fallback"]).default("safe"),
+});
+export type MermaidDiagramSpec = z.infer<typeof mermaidDiagramSpecSchema>;
+
 export const slideVisualSchema = z.object({
   type: visualTypeSchema.default("none"),
   title: z.string().trim().max(100).default(""),
@@ -307,6 +327,7 @@ export const slideVisualSchema = z.object({
   items: z.array(slideVisualItemSchema).max(8).default([]),
   rows: z.array(slideVisualRowSchema).max(8).default([]),
   image: slideVisualImageSchema.optional(),
+  diagram: mermaidDiagramSpecSchema.optional(),
 });
 export type SlideVisual = z.infer<typeof slideVisualSchema>;
 
@@ -605,6 +626,9 @@ export type VisualStrategy = z.infer<typeof visualStrategySchema>;
 export const diagramSpecSchema = z.object({
   slideOrder: z.number().int().positive(),
   kind: z.enum(["process", "comparison", "cause_effect", "timeline", "mind_map", "none"]).default("none"),
+  mermaidKind: mermaidDiagramKindSchema.optional(),
+  mermaidSource: mermaidDiagramSourceSchema.optional(),
+  fallback: z.string().trim().max(1200).default(""),
   title: z.string().trim().max(90).default(""),
   nodes: z.array(z.string().trim().min(1).max(80)).max(8).default([]),
   links: z
@@ -1238,6 +1262,8 @@ export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
 
 export const updateSlideInputSchema = z.object({
   title: z.string().min(1).max(160).optional(),
+  thesis: z.string().max(360).optional(),
+  bullets: z.array(z.string().trim().min(1).max(1000)).max(5).optional(),
   layout: slideLayoutSchema.optional(),
   visual: slideVisualSchema.optional(),
   blocks: z.array(slideBlockSchema).optional(),
@@ -3160,9 +3186,10 @@ function quoteText(slide: Slide) {
 
 function sequenceItems(slide: Slide) {
   const visualItems = (slide.visual?.items || []).map((item) => item.label || item.text).filter(Boolean);
+  const diagramItems = splitCanvasSentences(slide.visual?.diagram?.fallback || "").slice(0, 5);
   const blockItems = (slide.blocks || []).flatMap((block) => (block.type === "bullets" ? block.items : [block.content]));
   const bullets = slide.bullets || [];
-  return (visualItems.length ? visualItems : bullets.length ? bullets : blockItems.length ? blockItems : [slide.thesis || slide.title]).filter(Boolean);
+  return (visualItems.length ? visualItems : diagramItems.length ? diagramItems : bullets.length ? bullets : blockItems.length ? blockItems : [slide.thesis || slide.title]).filter(Boolean);
 }
 
 function uniqueCanvasItems(items: string[]) {
@@ -3300,11 +3327,19 @@ function slideBodyText(slide: Slide) {
     slide.thesis,
     ...(slide.bullets || []),
     slide.definition ? `${slide.definition.term}: ${slide.definition.text}` : "",
+    slide.visual?.diagram?.fallback || "",
     ...(slide.blocks || []).flatMap((block) => (block.type === "bullets" ? block.items : [block.content])),
   ]
     .filter(Boolean)
     .join(" ");
   return sentencePreview(text || slide.title, 360);
+}
+
+function splitCanvasSentences(value: string) {
+  return cleanCanvasText(value)
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function sentencePreview(value: string, maxLength: number) {

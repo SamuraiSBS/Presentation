@@ -147,12 +147,14 @@ export const demoProject = {
   },
 };
 
-export function updateDemoSlide(slideId: string, input: { title?: string; blocks?: SlideBlock[]; canvas?: SlideCanvas; speakerNotes?: string }) {
+export function updateDemoSlide(slideId: string, input: { title?: string; thesis?: string; bullets?: string[]; blocks?: SlideBlock[]; canvas?: SlideCanvas; speakerNotes?: string }) {
   const nextSlides = demoPresentation.slides.map((slide) =>
     slide.id === slideId
       ? {
           ...slide,
           title: input.title ?? slide.title,
+          thesis: input.thesis ?? slide.thesis,
+          bullets: input.bullets ?? slide.bullets,
           blocks: input.blocks ?? slide.blocks,
           canvas: input.canvas ?? slide.canvas,
           speakerNotes: input.speakerNotes ?? slide.speakerNotes,
