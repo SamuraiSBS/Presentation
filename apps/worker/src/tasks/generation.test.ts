@@ -33,6 +33,35 @@ describe("prepareGenerationSources", () => {
     vi.mocked(searchWebSources).mockReset();
   });
 
+  it("uses existing extracted sources without network search", async () => {
+    const sources = await prepareGenerationSources({
+      id: "project-with-notes",
+      prompt: "AI in education",
+      mode: "standard",
+      speechDraft: null,
+      sources: [{
+        id: "source-1",
+        label: "Lecture notes",
+        type: "TXT",
+        size: 200,
+        objectKey: null,
+        url: null,
+        excerpt: "AI helps universities personalize feedback and automate routine checks.",
+        text: "",
+      }],
+    });
+
+    expect(searchWebSources).not.toHaveBeenCalled();
+    expect(sources).toEqual([
+      expect.objectContaining({
+        id: "source-1",
+        label: "Lecture notes",
+        type: "TXT",
+        excerpt: "AI helps universities personalize feedback and automate routine checks.",
+      }),
+    ]);
+  });
+
   it("uses accepted speech text when no uploaded or web sources are available", async () => {
     vi.mocked(searchWebSources).mockResolvedValue([]);
 
@@ -55,5 +84,17 @@ describe("prepareGenerationSources", () => {
       }),
     ]);
     expect(sources[0].excerpt).toContain("Карибский кризис был противостоянием СССР и США");
+  });
+
+  it("fails clearly when no source or accepted speech fallback exists", async () => {
+    vi.mocked(searchWebSources).mockResolvedValue([]);
+
+    await expect(prepareGenerationSources({
+      id: "project-empty",
+      prompt: "Short topic",
+      mode: "with_sources",
+      speechDraft: "",
+      sources: [],
+    })).rejects.toThrow("No source material was found for generation");
   });
 });

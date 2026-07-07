@@ -18,7 +18,7 @@ import {
   type PresentationTheme,
   type SlideCanvas,
 } from "@studydeck/shared";
-import { captureExportError, errorLogFields, logger } from "../observability.js";
+import { captureExportError, errorLogFields, logger, type TraceCarrier, withTraceSpan } from "../observability.js";
 import { getPrisma } from "../prisma.js";
 import { putObjectBuffer, readObjectBuffer } from "../storage.js";
 
@@ -50,7 +50,14 @@ type ExportTheme = PresentationTheme & {
   };
 };
 
-export async function handleExportJob(job: Job<{ exportId: string; projectId: string; type: "pdf" | "pptx" }>) {
+type ExportJobData = {
+  exportId: string;
+  projectId: string;
+  type: "pdf" | "pptx";
+  traceContext?: TraceCarrier;
+};
+
+export async function handleExportJob(job: Job<ExportJobData>) {
   const prisma = getPrisma();
   const { exportId, projectId, type } = job.data;
   await prisma.export.update({ where: { id: exportId }, data: { status: "processing" } });
@@ -59,7 +66,13 @@ export async function handleExportJob(job: Job<{ exportId: string; projectId: st
     const presentationRow = await prisma.presentation.findUniqueOrThrow({ where: { projectId } });
     const presentation = presentationSchema.parse(presentationRow.document);
     const key = `projects/${projectId}/exports/${exportId}.${type}`;
-    const buffer = type === "pptx" ? await createPptx(presentation) : await createPdf(presentation);
+    const buffer = await withTraceSpan("generation.export", {
+      "studydeck.project_id": projectId,
+      "studydeck.job_id": String(job.id || ""),
+      "studydeck.export_id": exportId,
+      "studydeck.export_type": type,
+      "studydeck.stage": "export",
+    }, () => type === "pptx" ? createPptx(presentation) : createPdf(presentation), job.data.traceContext);
     const contentType =
       type === "pptx"
         ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"

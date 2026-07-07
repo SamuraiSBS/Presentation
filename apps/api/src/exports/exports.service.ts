@@ -6,6 +6,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Queue } from "bullmq";
 import path from "node:path";
 import { type ExportType, planLimits } from "@studydeck/shared";
+import { injectTraceContext, withTraceSpan } from "../observability.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 @Injectable()
@@ -19,19 +20,29 @@ export class ExportsService {
   private s3Client?: S3Client;
 
   async enqueue(userId: string, projectId: string, type: ExportType) {
-    const project = await this.prisma.project.findFirst({
-      where: { id: projectId, userId },
-      include: { user: true, presentation: true },
+    return withTraceSpan("api.export.enqueue", {
+      "studydeck.project_id": projectId,
+      "studydeck.stage": "generation.export",
+      "studydeck.export_type": type,
+    }, async () => {
+      const project = await this.prisma.project.findFirst({
+        where: { id: projectId, userId },
+        include: { user: true, presentation: true },
+      });
+      if (!project) throw new NotFoundException("Project not found");
+      if (!project.presentation) throw new BadRequestException("Generate the presentation before export");
+
+      const allowed = planLimits[project.user.planCode].exports;
+      if (!(allowed as readonly string[]).includes(type)) throw new BadRequestException("This export type is not included in your plan");
+
+      const created = await this.prisma.export.create({ data: { projectId, type } });
+      const queueJob = await this.exportsQueue.add(
+        "export-presentation",
+        { exportId: created.id, projectId, type, traceContext: injectTraceContext() },
+        { attempts: 2 },
+      );
+      return { ...created, queueJobId: queueJob.id };
     });
-    if (!project) throw new NotFoundException("Project not found");
-    if (!project.presentation) throw new BadRequestException("Generate the presentation before export");
-
-    const allowed = planLimits[project.user.planCode].exports;
-    if (!(allowed as readonly string[]).includes(type)) throw new BadRequestException("This export type is not included in your plan");
-
-    const created = await this.prisma.export.create({ data: { projectId, type } });
-    const queueJob = await this.exportsQueue.add("export-presentation", { exportId: created.id, projectId, type }, { attempts: 2 });
-    return { ...created, queueJobId: queueJob.id };
   }
 
   async get(userId: string, exportId: string) {

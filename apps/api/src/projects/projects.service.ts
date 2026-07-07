@@ -19,6 +19,7 @@ import {
   slideCanvasSchema,
 } from "@studydeck/shared";
 import { generationJobOptions } from "../jobs/job-options.js";
+import { injectTraceContext, withTraceSpan } from "../observability.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 const activePresentationJobStatuses = ["queued", "active"] as const;
@@ -42,27 +43,35 @@ export class ProjectsService {
   }
 
   async create(userId: string, input: CreateProjectInput) {
-    const user = await this.prisma.user.upsert({
-      where: { id: userId },
-      create: { id: userId },
-      update: {},
-    });
-    const limit = planLimits[user.planCode];
-    if (input.slideCount > limit.maxSlides) {
-      throw new BadRequestException(`Your plan allows up to ${limit.maxSlides} slides`);
-    }
+    return withTraceSpan("api.project.create", {
+      "studydeck.stage": "project_create",
+      "studydeck.slide_count": input.slideCount,
+      "studydeck.mode": input.mode,
+    }, async () => {
+      const user = await this.prisma.user.upsert({
+        where: { id: userId },
+        create: { id: userId },
+        update: {},
+      });
+      const limit = planLimits[user.planCode];
+      if (input.slideCount > limit.maxSlides) {
+        throw new BadRequestException(`Your plan allows up to ${limit.maxSlides} slides`);
+      }
 
-    return this.prisma.project.create({
-      data: {
-        userId,
-        title: input.title,
-        prompt: promptWithGenerationBrief(input.prompt, input.generationBrief),
-        scenario: input.scenario,
-        level: input.level,
-        mode: input.mode,
-        slideCount: input.slideCount,
-      },
-      include: { sources: true, presentation: true },
+      const project = await this.prisma.project.create({
+        data: {
+          userId,
+          title: input.title,
+          prompt: promptWithGenerationBrief(input.prompt, input.generationBrief),
+          scenario: input.scenario,
+          level: input.level,
+          mode: input.mode,
+          slideCount: input.slideCount,
+        },
+        include: { sources: true, presentation: true },
+      });
+
+      return project;
     });
   }
 
@@ -77,16 +86,26 @@ export class ProjectsService {
   }
 
   async enqueueNarration(userId: string, id: string) {
-    const project = await this.getOwned(userId, id);
-    await this.prisma.project.update({ where: { id: project.id }, data: { status: "script_queued", error: null } });
-    const job = await this.prisma.generationJob.create({
-      data: { projectId: project.id, kind: "narration", status: "queued" },
+    return withTraceSpan("api.generation.enqueue", {
+      "studydeck.project_id": id,
+      "studydeck.stage": "generation.speech",
+      "studydeck.job_kind": "narration",
+    }, async () => {
+      const project = await this.getOwned(userId, id);
+      await this.prisma.project.update({ where: { id: project.id }, data: { status: "script_queued", error: null } });
+      const job = await this.prisma.generationJob.create({
+        data: { projectId: project.id, kind: "narration", status: "queued" },
+      });
+      const queueJob = await this.generationQueue.add(
+        "generate-narration",
+        { projectId: project.id, userId, traceContext: injectTraceContext() },
+        generationJobOptions(),
+      );
+
+      await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
+
+      return { projectId: project.id, jobId: job.id, queueJobId: queueJob.id, status: "script_queued" };
     });
-    const queueJob = await this.generationQueue.add("generate-narration", { projectId: project.id, userId }, generationJobOptions());
-
-    await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
-
-    return { projectId: project.id, jobId: job.id, queueJobId: queueJob.id, status: "script_queued" };
   }
 
   async updateNarrationDraft(userId: string, id: string, input: UpdateNarrationInput) {
@@ -113,6 +132,11 @@ export class ProjectsService {
   }
 
   async enqueueGeneration(userId: string, id: string, input: GeneratePresentationInput = {}) {
+    return withTraceSpan("api.generation.enqueue", {
+      "studydeck.project_id": id,
+      "studydeck.stage": "generation.slides",
+      "studydeck.job_kind": "presentation",
+    }, async () => {
     let project = await this.getOwned(userId, id);
     if (input.speechDraft !== undefined) {
       project = await this.updateNarrationDraft(userId, id, { speechDraft: input.speechDraft, accept: false });
@@ -163,7 +187,11 @@ export class ProjectsService {
     const job = await this.prisma.generationJob.create({
       data: { projectId: project.id, kind: "presentation", status: "queued" },
     });
-    const queueJob = await this.generationQueue.add("generate-presentation", { projectId: project.id, userId }, generationJobOptions());
+    const queueJob = await this.generationQueue.add(
+      "generate-presentation",
+      { projectId: project.id, userId, traceContext: injectTraceContext() },
+      generationJobOptions(),
+    );
 
     await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
     await this.prisma.usageCounter.update({
@@ -172,6 +200,7 @@ export class ProjectsService {
     });
 
     return { projectId: project.id, jobId: job.id, queueJobId: queueJob.id, status: "queued" };
+    });
   }
 
   async updateSlide(userId: string, projectId: string, slideId: string, input: UpdateSlideInput) {

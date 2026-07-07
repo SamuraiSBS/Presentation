@@ -1,10 +1,11 @@
 import "dotenv/config";
 import { Worker } from "bullmq";
-import { captureExportError, captureGenerationError, initSentry, logger } from "./observability.js";
+import { captureExportError, captureGenerationError, initSentry, initTracing, logger } from "./observability.js";
 import { createRedisConnection } from "./queue.js";
 import { handleExportJob } from "./tasks/export.js";
 import { handleGenerationJob } from "./tasks/generation.js";
 
+initTracing();
 initSentry();
 
 const connection = createRedisConnection();

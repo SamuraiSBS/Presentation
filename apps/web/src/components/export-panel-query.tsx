@@ -125,11 +125,11 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
               {error ? <p className="form-error" role="alert">{error}</p> : null}
               <div className="export-actions">
                 {livePptx?.status === "ready" ? (
-                  <Button className="export-primary-action" type="button" onClick={() => downloadPresentation(livePptx)}>
+                  <Button className="export-primary-action" data-testid="export-pptx-action" type="button" onClick={() => downloadPresentation(livePptx)}>
                     <Download size={19} aria-hidden="true" />Скачать PPTX
                   </Button>
                 ) : (
-                  <Button className="export-primary-action" type="button" onClick={startPptxExport} disabled={requestExport.isPending || pptxPending}>
+                  <Button className="export-primary-action" data-testid="export-pptx-action" type="button" onClick={startPptxExport} disabled={requestExport.isPending || pptxPending}>
                     {requestExport.isPending || pptxPending ? <LoaderCircle className="spin" size={19} /> : livePptx?.status === "failed" ? <RefreshCw size={19} /> : <Presentation size={19} />}
                     {pptxPending ? "Готовим PPTX" : livePptx?.status === "failed" ? "Попробовать ещё раз" : "Подготовить PPTX"}
                   </Button>

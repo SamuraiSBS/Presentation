@@ -11,6 +11,7 @@ type RichTextFieldProps = {
   onSave: (value: string) => void;
   placeholder?: string;
   className?: string;
+  testId?: string;
   multiline?: boolean;
   toolbar?: boolean;
 };
@@ -20,6 +21,7 @@ export function RichTextField({
   onSave,
   placeholder = "",
   className = "",
+  testId,
   multiline = true,
   toolbar = true,
 }: RichTextFieldProps) {
@@ -63,7 +65,7 @@ export function RichTextField({
   if (!editor) return null;
 
   return (
-    <div className={`rich-text-field ${className}`.trim()}>
+    <div className={`rich-text-field ${className}`.trim()} data-testid={testId}>
       {toolbar ? (
         <div className="rich-text-toolbar">
           <button

@@ -1,4 +1,8 @@
 import * as Sentry from "@sentry/node";
+import { context, propagation, SpanStatusCode, trace, type Attributes } from "@opentelemetry/api";
+import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-node";
 import pino from "pino";
 
 type CaptureContext = {
@@ -38,6 +42,11 @@ export const logger = pino({
 });
 
 let initialized = false;
+let tracingInitialized = false;
+let tracingSdk: NodeSDK | undefined;
+
+export type TraceCarrier = Record<string, string>;
+type TraceAttributes = Record<string, string | number | boolean | undefined | null>;
 
 export function initSentry(serviceName = "studydeck-worker") {
   const dsn = process.env.SENTRY_DSN?.trim();
@@ -55,6 +64,62 @@ export function initSentry(serviceName = "studydeck-worker") {
   });
   initialized = true;
   return true;
+}
+
+export function initTracing(serviceName = "studydeck-worker") {
+  if (tracingInitialized || !tracingEnabled()) return false;
+
+  try {
+    tracingSdk = new NodeSDK({
+      serviceName,
+      traceExporter: new ConsoleSpanExporter(),
+      instrumentations: [getNodeAutoInstrumentations()],
+    });
+    tracingSdk.start();
+    tracingInitialized = true;
+    logger.info({ serviceName }, "opentelemetry tracing enabled");
+    return true;
+  } catch (error) {
+    logger.warn({ ...errorLogFields(error) }, "opentelemetry tracing could not be initialized");
+    return false;
+  }
+}
+
+export function tracingEnabled() {
+  return ["1", "true", "yes"].includes(String(process.env.OTEL_TRACING_ENABLED || "").toLowerCase());
+}
+
+export async function withTraceSpan<T>(
+  name: string,
+  attributes: TraceAttributes,
+  fn: () => Promise<T>,
+  carrier?: TraceCarrier,
+): Promise<T> {
+  if (!tracingEnabled()) return fn();
+
+  const tracer = trace.getTracer("studydeck-worker");
+  const parentContext = carrier ? propagation.extract(context.active(), carrier) : context.active();
+  const startedAt = Date.now();
+  return tracer.startActiveSpan(name, { attributes: safeTraceAttributes(attributes) }, parentContext, async (span) => {
+    try {
+      return await fn();
+    } catch (error) {
+      span.recordException(error instanceof Error ? error : String(error));
+      span.setStatus({ code: SpanStatusCode.ERROR, message: error instanceof Error ? error.name : "UnknownError" });
+      throw error;
+    } finally {
+      span.setAttribute("studydeck.duration_ms", Date.now() - startedAt);
+      span.end();
+    }
+  });
+}
+
+function safeTraceAttributes(attributes: TraceAttributes): Attributes {
+  return Object.fromEntries(
+    Object.entries(attributes)
+      .filter(([, value]) => value !== undefined && value !== null)
+      .map(([key, value]) => [key, value]),
+  ) as Attributes;
 }
 
 function redactSentryEvent(event: Sentry.ErrorEvent) {

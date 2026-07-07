@@ -3,9 +3,10 @@ import { ValidationPipe } from "@nestjs/common";
 import { HttpAdapterHost, NestFactory } from "@nestjs/core";
 import { ConfigService } from "@nestjs/config";
 import { AppModule } from "./app.module.js";
-import { initSentry, logger } from "./observability.js";
+import { initSentry, initTracing, logger } from "./observability.js";
 import { SentryExceptionFilter } from "./sentry-exception.filter.js";
 
+initTracing();
 initSentry();
 
 async function bootstrap() {

@@ -1,5 +1,6 @@
 param(
-  [int]$Port = 3020
+  [int]$Port = 3020,
+  [switch]$DemoPreview
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,6 +46,9 @@ if (Test-Path '.env') {
 $env:INTERNAL_API_URL = 'http://localhost:4000'
 $env:NEXTAUTH_URL = "http://localhost:$Port"
 $env:PUBLIC_APP_URL = "http://localhost:$Port"
+if ($DemoPreview) {
+  $env:NEXT_PUBLIC_DEMO_PREVIEW = 'true'
+}
 
 Write-Host 'Building the small shared package once...'
 npm run build -w @studydeck/shared

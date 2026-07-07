@@ -832,7 +832,7 @@ export function ProjectEditor({
   }
 
   return (
-    <section className="editor-workspace">
+    <section className="editor-workspace" data-testid="project-editor">
       <div className="editor-top">
         <div>
           <span className="status">{projectStatusLabel(project.status)}</span>
@@ -1640,6 +1640,7 @@ function PropertiesPanel({
           <RichTextField
             key={`${slide.id}-title`}
             value={slide.title}
+            testId="slide-title-editor"
             multiline={false}
             toolbar={false}
             onSave={(title) => title && onSaveText({ title })}
@@ -1844,6 +1845,7 @@ function PropertiesPanel({
             className="notes-rich-field"
             key={`${slide.id}-notes`}
             value={slide.speakerNotes}
+            testId="slide-notes-editor"
             multiline
             toolbar
             onSave={(speakerNotes) => onSaveText({ speakerNotes })}

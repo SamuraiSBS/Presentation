@@ -1,6 +1,6 @@
 import type { Job } from "bullmq";
 import { auditSlideCanvas, ensureEditableCanvas, type Source } from "@studydeck/shared";
-import { captureGenerationError } from "../observability.js";
+import { captureGenerationError, type TraceCarrier, withTraceSpan } from "../observability.js";
 import { getPrisma } from "../prisma.js";
 import { readObjectBuffer } from "../storage.js";
 import { extractTextFromSource } from "./extract.js";
@@ -15,9 +15,15 @@ import {
 import { generateNarrationDraft, generatePresentationFromNarration } from "./presentation.js";
 import { searchWebSources } from "./web-search.js";
 
-export async function handleGenerationJob(job: Job<{ projectId: string; userId: string }>) {
+type GenerationJobData = {
+  projectId: string;
+  userId: string;
+  traceContext?: TraceCarrier;
+};
+
+export async function handleGenerationJob(job: Job<GenerationJobData>) {
   const prisma = getPrisma();
-  const { projectId } = job.data;
+  const { projectId, traceContext } = job.data;
   const kind = job.name === "generate-narration" ? "narration" : "presentation";
 
   await prisma.project.update({
@@ -44,12 +50,22 @@ export async function handleGenerationJob(job: Job<{ projectId: string; userId: 
   try {
     const project = await prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { sources: true } });
     await setStage("researching");
-    const sources = await prepareGenerationSources(project);
+    const sources = await withTraceSpan("generation.research", {
+      "studydeck.project_id": projectId,
+      "studydeck.job_id": String(job.id || ""),
+      "studydeck.stage": "research",
+      "studydeck.provider": process.env.WEB_SEARCH_PROVIDER || "tavily",
+    }, () => prepareGenerationSources(project), traceContext);
     finishStage("researching");
 
     if (kind === "narration") {
       await setStage("drafting_speech");
-      const draft = await generateNarrationDraft(project, sources);
+      const draft = await withTraceSpan("generation.speech", {
+        "studydeck.project_id": projectId,
+        "studydeck.job_id": String(job.id || ""),
+        "studydeck.stage": "speech",
+        "studydeck.provider": process.env.AI_PROVIDER || "demo",
+      }, () => generateNarrationDraft(project, sources), traceContext);
       finishStage("drafting_speech");
       await setStage("saving");
       await prisma.project.update({
@@ -73,12 +89,23 @@ export async function handleGenerationJob(job: Job<{ projectId: string; userId: 
     if (!project.speechDraft?.trim()) {
       throw new Error("No accepted speech text was found for presentation generation");
     }
+    const speechDraft = project.speechDraft;
 
     await setStage("building_slides");
-    const generatedPresentation = await generatePresentationFromNarration(project, sources, project.speechDraft);
+    const generatedPresentation = await withTraceSpan("generation.slides", {
+      "studydeck.project_id": projectId,
+      "studydeck.job_id": String(job.id || ""),
+      "studydeck.stage": "slides",
+      "studydeck.provider": process.env.AI_PROVIDER || "demo",
+    }, () => generatePresentationFromNarration(project, sources, speechDraft), traceContext);
     finishStage("building_slides");
     await setStage("selecting_visuals");
-    const presentationWithImages = await enrichPresentationImages(project, generatedPresentation);
+    const presentationWithImages = await withTraceSpan("generation.visuals", {
+      "studydeck.project_id": projectId,
+      "studydeck.job_id": String(job.id || ""),
+      "studydeck.stage": "visuals",
+      "studydeck.provider": process.env.PRESENTATION_IMAGES_ENABLED === "false" ? "disabled" : process.env.WEB_SEARCH_PROVIDER || "tavily",
+    }, () => enrichPresentationImages(project, generatedPresentation), traceContext);
     finishStage("selecting_visuals");
     await setStage("polishing");
     const presentation = ensureEditableCanvas(presentationWithImages);

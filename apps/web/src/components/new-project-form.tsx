@@ -99,6 +99,7 @@ export function NewProjectForm() {
                 <span className="wizard-question">О чём будет презентация?</span>
                 <textarea
                   className="textarea topic-input"
+                  data-testid="new-project-topic"
                   value={topic}
                   onChange={(event) => setTopic(event.target.value)}
                   placeholder="Например: как AI меняет высшее образование"
