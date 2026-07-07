@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { DesignBriefSlideDirection, PresentationDocument, SlideVisualImage } from "@studydeck/shared";
 import sharp from "sharp";
+import { captureGenerationError, errorLogFields, logger } from "../observability.js";
 import { putObjectBuffer } from "../storage.js";
 
 type ProjectInput = {
@@ -80,7 +81,7 @@ export async function enrichPresentationImages(
   const searchImages = dependencies.searchImages || searchTavilyImages;
   const downloadImage = dependencies.downloadImage || downloadRemoteImage;
   const putObject = dependencies.putObject || putObjectBuffer;
-  const warn = dependencies.warn || ((message, error) => console.warn(message, error));
+  const warn = dependencies.warn || ((message, error) => logger.warn({ ...errorLogFields(error) }, message));
 
   const slides = [];
   for (const slide of presentation.slides) {
@@ -136,7 +137,12 @@ export async function enrichPresentationImages(
           }
         : slide);
     } catch (error) {
-      warn(`Slide image lookup failed for slide ${slide.order}`, error);
+      captureGenerationError(error, {
+        projectId: project.id,
+        stage: "selecting_visuals",
+        provider: "tavily",
+      });
+      warn(`slide image lookup failed for slide ${slide.order}`, error);
       slides.push(slide);
     }
   }

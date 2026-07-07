@@ -18,6 +18,7 @@ import {
   type PresentationTheme,
   type SlideCanvas,
 } from "@studydeck/shared";
+import { captureExportError, errorLogFields, logger } from "../observability.js";
 import { getPrisma } from "../prisma.js";
 import { putObjectBuffer, readObjectBuffer } from "../storage.js";
 
@@ -68,6 +69,13 @@ export async function handleExportJob(job: Job<{ exportId: string; projectId: st
     await prisma.export.update({ where: { id: exportId }, data: { status: "ready", objectKey: key } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Export failed";
+    captureExportError(error, {
+      projectId,
+      jobId: job.id,
+      exportId,
+      exportType: type,
+      stage: "render_or_upload",
+    });
     await prisma.export.update({ where: { id: exportId }, data: { status: "failed", error: message } });
     throw error;
   }
@@ -295,7 +303,7 @@ async function imageDataForCanvasElement(element: CanvasImageElement) {
     const contentType = element.contentType || contentTypeFromObjectKey(element.objectKey);
     return `data:${contentType};base64,${buffer.toString("base64")}`;
   } catch (error) {
-    console.warn(`Could not read canvas image ${element.objectKey}:`, error);
+    logger.warn({ objectKey: element.objectKey, ...errorLogFields(error) }, "could not read canvas image");
     return null;
   }
 }
@@ -1040,7 +1048,7 @@ async function pdfSlideImageSrc(slide: ReturnType<typeof presentationSchema.pars
     const contentType = image.contentType || contentTypeFromObjectKey(image.objectKey);
     return `data:${contentType};base64,${buffer.toString("base64")}`;
   } catch (error) {
-    console.warn(`Could not read PDF slide image ${image.objectKey}:`, error);
+    logger.warn({ objectKey: image.objectKey, ...errorLogFields(error) }, "could not read pdf slide image");
     return image.url;
   }
 }
@@ -1161,7 +1169,7 @@ async function pdfImageSrc(element: CanvasImageElement) {
     const contentType = element.contentType || contentTypeFromObjectKey(element.objectKey);
     return `data:${contentType};base64,${buffer.toString("base64")}`;
   } catch (error) {
-    console.warn(`Could not read PDF image ${element.objectKey}:`, error);
+    logger.warn({ objectKey: element.objectKey, ...errorLogFields(error) }, "could not read pdf image");
     return element.url;
   }
 }
@@ -1272,7 +1280,7 @@ async function readSlideImageData(slide: ReturnType<typeof presentationSchema.pa
     const contentType = image.contentType || contentTypeFromObjectKey(image.objectKey);
     return `data:${contentType};base64,${buffer.toString("base64")}`;
   } catch (error) {
-    console.warn(`Could not read slide image ${image.objectKey}:`, error);
+    logger.warn({ objectKey: image.objectKey, ...errorLogFields(error) }, "could not read slide image");
     return null;
   }
 }

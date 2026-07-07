@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { generateText, Output } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
+import { captureGenerationError, errorLogFields, logger } from "../observability.js";
 import {
   type DesignBrief,
   type DeckStory,
@@ -507,7 +508,8 @@ export async function generatePresentation(project: ProjectInput, sources: Sourc
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       errors.push(`${provider}: ${message}`);
-      console.warn(`${provider} generation failed:`, error);
+      captureGenerationError(error, { projectId: project.id, stage: "ai_generation", provider });
+      logger.warn({ projectId: project.id, stage: "ai_generation", provider, ...errorLogFields(error) }, "ai generation failed");
     }
   }
 
@@ -556,7 +558,8 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       errors.push(`${provider}: ${message}`);
-      console.warn(`${provider} narration generation failed:`, error);
+      captureGenerationError(error, { projectId: project.id, stage: "drafting_speech", provider });
+      logger.warn({ projectId: project.id, stage: "drafting_speech", provider, ...errorLogFields(error) }, "ai narration generation failed");
     }
   }
 
@@ -592,7 +595,8 @@ export async function generatePresentationFromNarration(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       errors.push(`${provider}: ${message}`);
-      console.warn(`${provider} presentation generation failed:`, error);
+      captureGenerationError(error, { projectId: project.id, stage: "building_slides", provider });
+      logger.warn({ projectId: project.id, stage: "building_slides", provider, ...errorLogFields(error) }, "ai presentation generation failed");
     }
   }
 
@@ -778,7 +782,7 @@ async function generateWithYandex(project: ProjectInput, sources: Source[]) {
       yandexApiKey: apiKey,
     });
   } catch (error) {
-    console.warn("yandex structured presentation generation failed; using narration fallback document:", error);
+    logger.warn({ projectId: project.id, stage: "building_slides", provider: "yandex", ...errorLogFields(error) }, "structured presentation generation failed; using narration fallback document");
     parsed = {};
   }
   return finalizeGeneratedPresentation(
@@ -830,7 +834,7 @@ async function generateYandexPresentationFromNarration(project: ProjectInput, so
       yandexApiKey: apiKey,
     });
   } catch (error) {
-    console.warn("yandex structured presentation generation failed; using narration fallback document:", error);
+    logger.warn({ projectId: project.id, stage: "building_slides", provider: "yandex", ...errorLogFields(error) }, "structured presentation generation failed; using narration fallback document");
     parsed = {};
   }
   return finalizeGeneratedPresentation(
@@ -918,7 +922,7 @@ async function generateDesignBriefWithProvider(
       ...options,
     });
   } catch (error) {
-    console.warn(`${provider} design brief generation failed, using deterministic art direction:`, error);
+    logger.warn({ projectId: project.id, stage: "design_brief", provider, ...errorLogFields(error) }, "design brief generation failed; using deterministic art direction");
     return buildDesignBrief(project, researchBrief, narrativePlan);
   }
 }
@@ -1095,11 +1099,12 @@ function isUnknownSchema(schema: z.ZodType<unknown, z.ZodTypeDef, unknown>) {
 }
 
 function logStructuredGenerationAttempt(provider: AiGenerationMode, schemaName: string, attempt: number) {
-  console.info("AI structured generation", {
+  logger.info({
+    stage: "ai_provider_call",
     provider,
     schemaName,
     retry: attempt,
-  });
+  }, "ai structured generation");
 }
 
 async function generateAndValidate<T>({
@@ -1282,12 +1287,14 @@ function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, n
 }
 
 function logStructuredGenerationValidationFailure(provider: AiGenerationMode | undefined, schemaName: string, attempt: number, error: unknown) {
-  console.warn("AI structured generation validation failed", {
+  logger.warn({
+    stage: "ai_provider_call",
     provider,
     schemaName,
     retry: attempt,
-    reason: formatStructuredGenerationError(error),
-  });
+    errorName: error instanceof Error ? error.name : typeof error,
+    errorMessage: formatStructuredGenerationError(error),
+  }, "ai structured generation validation failed");
 }
 
 function formatStructuredGenerationError(error: unknown) {
@@ -2594,7 +2601,7 @@ async function finalizeGeneratedPresentation(
       const repaired = await repair(presentation, issues);
       presentation = applySlideTextRepairs(presentation, repaired, project);
     } catch (error) {
-      console.warn(`${generationMode} slide text review failed, using narration fallback:`, error);
+      logger.warn({ projectId: project.id, stage: "polishing", generationMode, ...errorLogFields(error) }, "slide text review failed; using narration fallback");
     }
 
     issues = findSlideTextIssues(presentation);
@@ -2607,15 +2614,16 @@ async function finalizeGeneratedPresentation(
   }
 
   if (issues.length) {
-    console.warn("AI generation quality check found unresolved slide text issues; continuing with quality repair", {
+    logger.warn({
       projectId: project.id,
+      stage: "polishing",
       generationMode,
       issues: issues.map((issue) => ({
         slideOrder: issue.slideOrder,
         fields: issue.fields,
         reasons: issue.reasons,
       })),
-    });
+    }, "ai generation quality check found unresolved slide text issues; continuing with quality repair");
   }
 
   try {
@@ -2627,11 +2635,12 @@ async function finalizeGeneratedPresentation(
     } else if (!isRepairablePresentationQualityError(error)) {
       throw error;
     } else {
-      console.warn("AI generation quality check found repairable presentation issues; continuing with quality repair", {
+      logger.warn({
         projectId: project.id,
+        stage: "polishing",
         generationMode,
-        error,
-      });
+        ...errorLogFields(error),
+      }, "ai generation quality check found repairable presentation issues; continuing with quality repair");
     }
   }
 

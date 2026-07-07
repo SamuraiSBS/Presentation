@@ -1,5 +1,6 @@
 import type { Job } from "bullmq";
 import { auditSlideCanvas, ensureEditableCanvas, type Source } from "@studydeck/shared";
+import { captureGenerationError } from "../observability.js";
 import { getPrisma } from "../prisma.js";
 import { readObjectBuffer } from "../storage.js";
 import { extractTextFromSource } from "./extract.js";
@@ -111,6 +112,12 @@ export async function handleGenerationJob(job: Job<{ projectId: string; userId: 
       job.discard();
     }
     logGenerationStage({ projectId, jobId: job.id, stage: "failed", durationMs: 0, error });
+    captureGenerationError(error, {
+      projectId,
+      jobId: job.id,
+      stage: "failed",
+      provider: process.env.AI_PROVIDER,
+    });
     if (!willRetry) {
       await prisma.project.update({ where: { id: projectId }, data: { status: "failed", error: message } });
     }
@@ -185,7 +192,17 @@ export async function prepareGenerationSources(project: {
   if (!sources.length || project.mode === "with_sources") {
     const prisma = getPrisma();
     await prisma.source.deleteMany({ where: { projectId: project.id, type: "WEB" } });
-    const webSources = await searchWebSources(project.prompt);
+    let webSources: Source[];
+    try {
+      webSources = await searchWebSources(project.prompt);
+    } catch (error) {
+      captureGenerationError(error, {
+        projectId: project.id,
+        stage: "researching",
+        provider: process.env.WEB_SEARCH_PROVIDER || "tavily",
+      });
+      throw error;
+    }
 
     for (const source of webSources) {
       const created = await prisma.source.create({
