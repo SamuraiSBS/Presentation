@@ -251,6 +251,33 @@ describe("shared contracts", () => {
         ],
       }),
     ).toThrow();
+
+    expect(() =>
+      presentationSchema.parse({
+        id: "presentation-generic-filler",
+        title: "Generic filler deck",
+        scenario: "lesson",
+        level: "beginner",
+        slideCount: 1,
+        generationMode: "demo",
+        generatedText: "Draft",
+        sources: [],
+        outline: ["Unsafe"],
+        speechScript: [{ slideOrder: 1, slideTitle: "Unsafe", text: "This is a complete spoken note for the slide." }],
+        slides: [
+          {
+            id: "slide-1",
+            order: 1,
+            title: "\u0413\u043b\u0430\u0432\u043d\u044b\u0435 \u0444\u0430\u043a\u0442\u043e\u0440\u044b \u0437\u0430\u0434\u0430\u044e\u0442 \u043b\u043e\u0433\u0438\u043a\u0443 \u043e\u0431\u044a\u044f\u0441\u043d\u0435\u043d\u0438\u044f.",
+            layout: "statement",
+            blocks: [{ type: "callout", content: "Concrete detail stays on the slide." }],
+            speakerNotes: "This is a complete spoken note for the slide.",
+            timingSeconds: 45,
+            sourceRefs: [],
+          },
+        ],
+      }),
+    ).toThrow(/generic educational filler/);
   });
 
   it("parses visual strategy and diagram artifacts with defaults", () => {
@@ -1524,6 +1551,7 @@ describe("shared contracts", () => {
     expect(upgraded.elements.find((element) => element.id === "slide-summary-summary-support-0")).toMatchObject({ fontSize: 24, h: 55 });
     expect(upgraded.elements.find((element) => element.id === "slide-summary-summary-final-label")).toMatchObject({ x: 94, y: 558, w: 270, h: 68, fontSize: 24 });
     expect(upgraded.elements.find((element) => element.id === "slide-summary-summary-final-bg")).toMatchObject({ y: 536, h: 112 });
+    expect(auditSlideCanvas(upgraded)).toEqual([]);
 
     const currentMarked = ensureEditableCanvas({
       ...parsed,

@@ -180,6 +180,7 @@ describe("presentation quality checks", () => {
     ]);
 
     expect(isGenericTitle("\u0412\u0432\u0435\u0434\u0435\u043d\u0438\u0435")).toBe(true);
+    expect(hasMetaSlideLanguage("\u0413\u043b\u0430\u0432\u043d\u044b\u0435 \u0444\u0430\u043a\u0442\u043e\u0440\u044b \u0437\u0430\u0434\u0430\u044e\u0442 \u043b\u043e\u0433\u0438\u043a\u0443 \u043e\u0431\u044a\u044f\u0441\u043d\u0435\u043d\u0438\u044f.")).toBe(true);
     expect(hasMetaSlideLanguage("\u041d\u0430 \u044d\u0442\u043e\u043c \u0441\u043b\u0430\u0439\u0434\u0435 \u0432\u0438\u0434\u043d\u0430 \u043c\u044b\u0441\u043b\u044c.")).toBe(true);
     expect(hasMetaSlideLanguage("Пример нужен для того, чтобы общая мысль стала ближе к реальной жизни.")).toBe(true);
     expect(hasMetaSlideLanguage("Главная мысль показывает, к чему приводит вся история темы.")).toBe(true);
@@ -229,6 +230,37 @@ describe("presentation quality checks", () => {
 
     const issues = findGenericTextIssues(presentation);
     expect(issues.map((issue) => issue.field)).toEqual(expect.arrayContaining(["title", "thesis"]));
+  });
+
+  it("detects generic explanation filler across visible slide fields", () => {
+    const base = makePresentation();
+    const bad = "\u0413\u043b\u0430\u0432\u043d\u044b\u0435 \u0444\u0430\u043a\u0442\u043e\u0440\u044b \u0437\u0430\u0434\u0430\u044e\u0442 \u043b\u043e\u0433\u0438\u043a\u0443 \u043e\u0431\u044a\u044f\u0441\u043d\u0435\u043d\u0438\u044f.";
+    const presentation = {
+      ...base,
+      slides: [{
+        ...base.slides[0],
+        title: bad,
+        thesis: bad,
+        bullets: [bad],
+        blocks: [{ type: "callout" as const, content: bad }],
+      }, ...base.slides.slice(1)],
+    };
+
+    const fields = findGenericTextIssues(presentation).map((issue) => issue.field);
+    expect(fields).toEqual(expect.arrayContaining(["title", "thesis", "bullets.0", "blocks.0.content"]));
+  });
+
+  it("detects generic explanation filler in narration and speech script", () => {
+    const base = makePresentation();
+    const bad = "\u0413\u043b\u0430\u0432\u043d\u044b\u0435 \u0444\u0430\u043a\u0442\u043e\u0440\u044b \u0437\u0430\u0434\u0430\u044e\u0442 \u043b\u043e\u0433\u0438\u043a\u0443 \u043e\u0431\u044a\u044f\u0441\u043d\u0435\u043d\u0438\u044f.";
+    const presentation = {
+      ...base,
+      slides: [{ ...base.slides[0], speakerNotes: `${bad} The rest stays concrete.` }, ...base.slides.slice(1)],
+      speechScript: [{ ...base.speechScript[0], text: `${bad} The rest stays concrete.` }, ...base.speechScript.slice(1)],
+    };
+
+    const fields = findNarrationMetaIssues(presentation).map((issue) => issue.field);
+    expect(fields).toEqual(expect.arrayContaining(["speakerNotes", "speechScript"]));
   });
 
   it("detects duplicated titles", () => {

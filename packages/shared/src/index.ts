@@ -76,6 +76,10 @@ const unsupportedGeneratedTextPatterns = [
 ];
 
 const genericEducationalFillerPatterns = [
+  /(?:главн[\p{L}\p{N}_]*\s+)?(?:фактор[\p{L}\p{N}_]*|факт[\p{L}\p{N}_]*|детал[\p{L}\p{N}_]+)\s+(?:зада[её]т|задают|стро[\p{L}\p{N}_]+|формир[\p{L}\p{N}_]+)\s+логик[\p{L}\p{N}_]+\s+объяснен[\p{L}\p{N}_]*/iu,
+  /(?:связь\s+между\s+)?(?:факт[\p{L}\p{N}_]+|детал[\p{L}\p{N}_]+|фактор[\p{L}\p{N}_]+)\s+дела[\p{L}\p{N}_]+\s+(?:тем[\p{L}\p{N}_]+|материал|объяснен[\p{L}\p{N}_]+)\s+понятн[\p{L}\p{N}_]*/iu,
+  /помога[\p{L}\p{N}_]+\s+объясн[\p{L}\p{N}_]+/iu,
+  /станов[\p{L}\p{N}_]+\s+смысл[\p{L}\p{N}_]+/iu,
   /тема\s+становится\s+понятнее/i,
   /важно\s+понять\s+основные\s+моменты/i,
   /это\s+важно\s+для\s+понимания\s+темы/i,
@@ -1735,7 +1739,10 @@ function addPremiumCardsCanvas(slide: Slide, theme: PresentationTheme, elements:
 }
 
 function finalizeGeneratedElements(elements: CanvasElement[], theme: PresentationTheme) {
-  return sortCanvasElements(clampCanvasElements(repairUnsafeGeneratedElements(linkContainedElements(addStandaloneTextBackplates(elements, theme)))));
+  const withBackplates = addStandaloneTextBackplates(elements, theme);
+  const linked = linkContainedElements(withBackplates);
+  const clamped = clampCanvasElements(repairUnsafeGeneratedElements(linked));
+  return sortCanvasElements(syncGroupedTextContainers(syncTextBackplates(clamped)));
 }
 
 export function auditSlideCanvas(canvas: SlideCanvas) {
@@ -1866,26 +1873,83 @@ function addStandaloneTextBackplates(elements: CanvasElement[], theme: Presentat
       return;
     }
 
-    const paddingX = element.role === "title" ? 26 : 18;
-    const paddingY = element.role === "title" ? 16 : 12;
+    const fittedElement = fitCanvasTextElement(element);
+    const paddingX = fittedElement.role === "title" ? 26 : 18;
+    const paddingY = fittedElement.role === "title" ? 16 : 12;
     const backplate = shapeElement(
-      `${element.id}-backplate`,
+      `${fittedElement.id}-backplate`,
       "roundRect",
-      element.x - paddingX,
-      element.y - paddingY,
-      element.w + paddingX * 2,
-      element.h + paddingY * 2,
-      Math.max(1, element.zIndex - 1),
+      fittedElement.x - paddingX,
+      fittedElement.y - paddingY,
+      fittedElement.w + paddingX * 2,
+      fittedElement.h + paddingY * 2,
+      Math.max(1, fittedElement.zIndex - 1),
       theme.colors.surface,
       theme.colors.line,
       1,
       0.92,
       true,
     );
-    result.push(backplate, fitCanvasTextElement(element));
+    result.push(backplate, fittedElement);
   });
 
   return result;
+}
+
+function syncTextBackplates(elements: CanvasElement[]) {
+  const textByBackplateId = new Map(
+    elements
+      .filter((element): element is CanvasTextElement => element.type === "text")
+      .map((element) => [`${element.id}-backplate`, element]),
+  );
+
+  return elements.map((element) => {
+    if (element.type !== "shape") return element;
+    const text = textByBackplateId.get(element.id);
+    if (!text) return element;
+    const paddingX = text.role === "title" ? 26 : 18;
+    const paddingY = text.role === "title" ? 16 : 12;
+    const left = Math.min(text.x, Math.max(0, text.x - paddingX));
+    const top = Math.min(text.y, Math.max(0, text.y - paddingY));
+    const right = Math.max(text.x + text.w, Math.min(1280, text.x + text.w + paddingX));
+    const bottom = Math.max(text.y + text.h, Math.min(720, text.y + text.h + paddingY));
+    return {
+      ...element,
+      x: left,
+      y: top,
+      w: right - left,
+      h: bottom - top,
+    };
+  });
+}
+
+function syncGroupedTextContainers(elements: CanvasElement[]) {
+  const textsByGroupId = new Map<string, CanvasTextElement[]>();
+  elements.forEach((element) => {
+    if (element.type !== "text" || !element.groupId) return;
+    textsByGroupId.set(element.groupId, [...(textsByGroupId.get(element.groupId) || []), element]);
+  });
+
+  return elements.map((element) => {
+    if (element.type !== "shape" || !element.groupId) return element;
+    const texts = textsByGroupId.get(element.groupId);
+    if (!texts?.length) return element;
+    const left = Math.min(element.x, ...texts.map((text) => text.x));
+    const top = Math.min(element.y, ...texts.map((text) => text.y));
+    const right = Math.max(element.x + element.w, ...texts.map((text) => text.x + text.w));
+    const bottom = Math.max(element.y + element.h, ...texts.map((text) => text.y + text.h));
+    const x = Math.max(0, Math.min(left, ...texts.map((text) => text.x)));
+    const y = Math.max(0, Math.min(top, ...texts.map((text) => text.y)));
+    const safeRight = Math.min(1280, Math.max(right, ...texts.map((text) => text.x + text.w)));
+    const safeBottom = Math.min(720, Math.max(bottom, ...texts.map((text) => text.y + text.h)));
+    return {
+      ...element,
+      x,
+      y,
+      w: safeRight - x,
+      h: safeBottom - y,
+    };
+  });
 }
 
 function linkContainedElements(elements: CanvasElement[]) {

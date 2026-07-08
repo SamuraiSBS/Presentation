@@ -10,6 +10,20 @@ Production-oriented SaaS implementation for generating study presentations from 
 - `packages/shared`: shared Zod contracts and TypeScript types.
 - `prisma`: Postgres schema for auth, projects, sources, presentations, jobs, exports and billing.
 
+## Preferred libraries
+
+StudyDeck now has a preferred library map for future implementation work:
+
+- AI generation: `ai`, `@ai-sdk/openai`, OpenAI/Yandex provider code, Tavily and `zod`.
+- Background jobs: BullMQ.
+- Editing and visuals: Tiptap, Mermaid and `sharp`.
+- Frontend data/UI: TanStack Query, local shadcn-style UI components, Radix UI and `lucide-react`.
+- Observability: Sentry, `pino` and OpenTelemetry.
+- Testing: Vitest and Playwright.
+
+Agent-ready implementation prompts and short Russian explanations are in
+`plans/library-implementation-prompts/`.
+
 ## Local Setup
 
 1. Copy `.env.example` to `.env`.

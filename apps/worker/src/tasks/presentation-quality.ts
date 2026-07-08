@@ -64,6 +64,12 @@ export const BANNED_QUALITY_PHRASES = [
   "\u043d\u0430 \u044d\u0442\u043e\u043c \u0441\u043b\u0430\u0439\u0434\u0435",
   "\u044d\u0442\u043e\u0442 \u0441\u043b\u0430\u0439\u0434",
   "\u043c\u0430\u0442\u0435\u0440\u0438\u0430\u043b \u0440\u0430\u0441\u043a\u0440\u044b\u0432\u0430\u0435\u0442\u0441\u044f",
+  "\u0437\u0430\u0434\u0430\u044e\u0442 \u043b\u043e\u0433\u0438\u043a\u0443 \u043e\u0431\u044a\u044f\u0441\u043d\u0435\u043d\u0438\u044f",
+  "\u043b\u043e\u0433\u0438\u043a\u0430 \u043e\u0431\u044a\u044f\u0441\u043d\u0435\u043d\u0438\u044f",
+  "\u0441\u0432\u044f\u0437\u044c \u043c\u0435\u0436\u0434\u0443 \u0444\u0430\u043a\u0442\u0430\u043c\u0438",
+  "\u0434\u0435\u043b\u0430\u0435\u0442 \u0442\u0435\u043c\u0443 \u043f\u043e\u043d\u044f\u0442\u043d\u0435\u0435",
+  "\u043f\u043e\u043c\u043e\u0433\u0430\u0435\u0442 \u043e\u0431\u044a\u044f\u0441\u043d\u0438\u0442\u044c",
+  "\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u0441\u044f \u0441\u043c\u044b\u0441\u043b\u043e\u043c",
   "\u0433\u043b\u0430\u0432\u043d\u0430\u044f \u0438\u0434\u0435\u044f \u0441\u0432\u044f\u0437\u0430\u043d\u0430",
   "\u043a\u043e\u043d\u0442\u0435\u043a\u0441\u0442, \u043f\u0440\u0438\u0447\u0438\u043d\u044b \u0438 \u043f\u043e\u0441\u043b\u0435\u0434\u0441\u0442\u0432\u0438\u044f",
   "\u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u0439 \u0440\u0430\u0437\u0434\u0435\u043b",
@@ -74,6 +80,14 @@ export const BANNED_QUALITY_PHRASES = [
   "\u043f\u0440\u0438\u043c\u0435\u0440 \u043d\u0443\u0436\u0435\u043d",
   "\u0432\u0441\u044f \u0438\u0441\u0442\u043e\u0440\u0438\u044f \u0442\u0435\u043c\u044b",
   "\u0442\u0435\u043a\u0441\u0442 \u043d\u0430 \u0441\u043b\u0430\u0439\u0434\u0435",
+];
+
+const GENERIC_EXPLANATION_FILLER_PATTERNS = [
+  /(?:главн[\p{L}\p{N}_]*\s+)?(?:фактор[\p{L}\p{N}_]*|факт[\p{L}\p{N}_]*|детал[\p{L}\p{N}_]+)\s+(?:зада[её]т|задают|стро[\p{L}\p{N}_]+|формир[\p{L}\p{N}_]+)\s+логик[\p{L}\p{N}_]+\s+объяснен[\p{L}\p{N}_]*/iu,
+  /(?:связь\s+между\s+)?(?:факт[\p{L}\p{N}_]+|детал[\p{L}\p{N}_]+|фактор[\p{L}\p{N}_]+)\s+дела[\p{L}\p{N}_]+\s+(?:тем[\p{L}\p{N}_]+|материал|объяснен[\p{L}\p{N}_]+)\s+понятн[\p{L}\p{N}_]*/iu,
+  /(?:помога[\p{L}\p{N}_]+|позволя[\p{L}\p{N}_]+)\s+объясн[\p{L}\p{N}_]+/iu,
+  /станов[\p{L}\p{N}_]+\s+(?:главн[\p{L}\p{N}_]*\s+)?смысл[\p{L}\p{N}_]+/iu,
+  /важн[\p{L}\p{N}_]+\s+для\s+понимания\s+тем[\p{L}\p{N}_]+/iu,
 ];
 
 const GENERIC_TITLE_PHRASES = [
@@ -96,6 +110,7 @@ export function isGenericTitle(title: string) {
 export function hasMetaSlideLanguage(text: string) {
   const normalized = normalizeQualityText(text);
   return BANNED_QUALITY_PHRASES.some((phrase) => normalized.includes(normalizeQualityText(phrase)))
+    || GENERIC_EXPLANATION_FILLER_PATTERNS.some((pattern) => pattern.test(text))
     || /(?:^|[^\p{L}])главн(?:ая|ую|ой)\s+мысл/iu.test(text)
     || /(?:^|[^\p{L}])общ(?:ая|ую|ей)\s+мысл/iu.test(text)
     || /(?:^|[^\p{L}])пример\s+нужен/iu.test(text)

@@ -23,6 +23,28 @@ Recent product areas to preserve:
 - The web app has local demo-preview behavior for non-POST project reads unless `NEXT_PUBLIC_DEMO_PREVIEW=false`.
 - Slide rendering/export depends on the richer shared presentation contract: themes, layouts, visuals, narrative plan, speech script, and source refs.
 
+## Preferred Library Use
+
+Use the installed project libraries instead of introducing parallel alternatives:
+
+- AI generation: use `ai`, `@ai-sdk/openai`, existing OpenAI/Yandex provider code, and shared Zod schemas. Preserve Yandex support and demo fallback when changing generation.
+- Contracts and validation: keep shared request/response and presentation data in `packages/shared` with `zod`; import shared types from apps instead of duplicating shapes.
+- Research and visuals: use Tavily for web/image search, `sharp` for presentation image processing, and Mermaid diagram specs for generated academic diagrams before considering heavier graph tools.
+- Background work: use existing BullMQ queues/workers for generation, extraction, image, and export jobs.
+- Web data flow: use `@tanstack/react-query` for project/job/export polling and mutations instead of ad hoc repeated fetch state.
+- Text editing: use Tiptap for editable slide text and speech/script surfaces; do not build a full visual canvas editor unless explicitly requested.
+- UI primitives: use the local `apps/web/src/components/ui/*` components, Radix primitives, and `lucide-react` icons for app controls.
+- Observability: use Sentry for captured errors, `pino` for structured logs, and OpenTelemetry only behind env-gated tracing.
+- Testing: use Vitest for deterministic unit/integration tests and Playwright for browser E2E. Keep AI/search network calls mocked or env-gated by default.
+
+Detailed implementation handoff prompts live under `plans/library-implementation-prompts/`, grouped by class:
+
+- `01-ai-generation`
+- `02-editor-visuals`
+- `03-frontend-ui`
+- `04-observability`
+- `05-testing`
+
 ## Local Environment
 
 The repo is a Node.js npm workspaces project.
