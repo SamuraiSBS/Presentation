@@ -1634,9 +1634,9 @@ function PropertiesPanel({
         </label>
       </PropertySection>
 
-      <PropertySection title="РўРµРєСЃС‚ СЃР»Р°Р№РґР°">
+      <PropertySection title="Текст слайда">
         <label className="field">
-          Р—Р°РіРѕР»РѕРІРѕРє
+          Заголовок
           <RichTextField
             key={`${slide.id}-title`}
             value={slide.title}
@@ -1647,7 +1647,7 @@ function PropertiesPanel({
           />
         </label>
         <label className="field">
-          РљРѕСЂРѕС‚РєРёР№ С‚РµР·РёСЃ
+          Короткий тезис
           <RichTextField
             key={`${slide.id}-thesis`}
             value={slide.thesis}
@@ -1657,7 +1657,7 @@ function PropertiesPanel({
           />
         </label>
         <div className="field">
-          РџСѓРЅРєС‚С‹
+          Пункты
           <div className="bullet-editor-list">
             {slide.bullets.map((bullet, index) => (
               <RichTextField
@@ -1678,10 +1678,10 @@ function PropertiesPanel({
               <button
                 className="property-add-button"
                 type="button"
-                onClick={() => onSaveText({ bullets: [...slide.bullets, "РќРѕРІС‹Р№ РїСѓРЅРєС‚"] })}
+                onClick={() => onSaveText({ bullets: [...slide.bullets, "Новый пункт"] })}
               >
                 <Icon name="plus" />
-                Р”РѕР±Р°РІРёС‚СЊ
+                Добавить
               </button>
             ) : null}
           </div>
