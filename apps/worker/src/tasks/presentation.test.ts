@@ -814,8 +814,12 @@ describe("generatePresentation fallback behavior", () => {
     expect(imageDirections.length).toBeLessThanOrEqual(Math.floor(directions.length * 0.4));
     expect(directions.some((direction) => direction.imageStrategy === "diagram")).toBe(true);
     expect(directions.some((direction) => direction.imageStrategy === "none")).toBe(true);
+    expect(directions[0]?.sceneTextMode).toBe("hero_phrase");
+    expect(directions.at(-1)?.sceneTextMode).toBe("takeaway");
+    expect(new Set(directions.map((direction) => direction.sceneTextMode)).size).toBeGreaterThanOrEqual(3);
     for (let index = 2; index < directions.length; index += 1) {
       expect(new Set(directions.slice(index - 2, index + 1).map((item) => item.layoutIntent)).size).toBeGreaterThan(1);
+      expect(new Set(directions.slice(index - 2, index + 1).map((item) => item.sceneTextMode)).size).toBeGreaterThan(1);
     }
   });
 
@@ -1038,6 +1042,7 @@ describe("generatePresentation fallback behavior", () => {
       expect(bodies[2].messages[1].text).toContain("Slide text plans");
       expect(bodies[2].messages[1].text).toContain("Do not output raw CSS");
       expect(bodies[2].messages[1].text).toContain("Choose imageStrategy independently for every slide");
+      expect(bodies[2].messages[1].text).toContain("Choose sceneTextMode for every slide");
       expect(bodies[2].messages[1].text).toContain("Never request a random stock image");
       expect(bodies[2].messages[1].text).toContain("20-40 percent");
       expect(bodies[3].json_object).toBe(true);
@@ -1051,6 +1056,7 @@ describe("generatePresentation fallback behavior", () => {
       expect(presentation.generatedText).toBe(presentationText);
       expect(presentation.designBrief?.slideDirections).toHaveLength(2);
       expect(presentation.designBrief?.slideDirections[0].imageStrategy).toBe("real_photo");
+      expect(presentation.designBrief?.slideDirections[0].sceneTextMode).toBe("visual_labels");
       expect(presentation.presentationTheme?.themeId).toBe("editorialMagazine");
       expect(presentation.slides[0].thesis).toContain("Внешний успех");
       expect(presentation.slides[1].bullets).toContain("Нужны принципы");

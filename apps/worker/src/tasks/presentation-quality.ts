@@ -139,11 +139,14 @@ export function hasUnsupportedSpecificity(text: string, sources: Source[]) {
 }
 
 export function isVisibleTextTooLong(slide: Slide) {
+  const visibleText = [slide.title, slide.thesis, ...slide.bullets, ...slide.blocks.flatMap((block) => block.type === "bullets" ? block.items : [block.content])].join(" ");
   return wordCount(slide.title) > 12
     || slide.title.length > 90
     || sentenceCount(slide.thesis) > 1
     || wordCount(slide.thesis) > 28
     || slide.thesis.length > 220
+    || wordCount(visibleText) > 78
+    || sentenceCount(visibleText) > 7
     || slide.bullets.some((bullet) => wordCount(bullet) > 18 || bullet.length > 130)
     || slide.blocks.some((block) => {
       const values = block.type === "bullets" ? block.items : [block.content];
@@ -386,6 +389,31 @@ export function findLayoutRhythmIssues(presentation: PresentationDocument): Qual
     }
   }
 
+  const directions = presentation.designBrief?.slideDirections || [];
+  for (let index = 0; index < directions.length - 2; index += 1) {
+    const run = directions.slice(index, index + 3);
+    if (run.every((direction) => direction.layoutIntent === run[0].layoutIntent)) {
+      issues.push({
+        slideId: presentation.slides.find((slide) => slide.order === run[2].slideOrder)?.id,
+        severity: "minor",
+        category: "bad_visual",
+        field: "designBrief.slideDirections.layoutIntent",
+        message: `Design layoutIntent ${run[0].layoutIntent} repeats on three adjacent slides.`,
+        repairInstruction: "Change one affected design direction to create a stronger visual rhythm.",
+      });
+    }
+    if (run[0].sceneTextMode && run.every((direction) => direction.sceneTextMode === run[0].sceneTextMode)) {
+      issues.push({
+        slideId: presentation.slides.find((slide) => slide.order === run[2].slideOrder)?.id,
+        severity: "minor",
+        category: "bad_visual",
+        field: "designBrief.slideDirections.sceneTextMode",
+        message: `Scene text mode ${run[0].sceneTextMode} repeats on three adjacent slides.`,
+        repairInstruction: "Alternate phrase-led, talk, visual-label, and takeaway slide modes.",
+      });
+    }
+  }
+
   const counts = new Map<string, number>();
   presentation.slides.forEach((slide) => counts.set(slide.layout, (counts.get(slide.layout) || 0) + 1));
   const limit = Math.ceil(presentation.slides.length * 0.6);
@@ -404,20 +432,32 @@ export function findLayoutRhythmIssues(presentation: PresentationDocument): Qual
 }
 
 export function findVisualDescriptionIssues(presentation: PresentationDocument): QualityIssue[] {
-  return presentation.slides.flatMap((slide) => {
+  const slideIssues = presentation.slides.flatMap((slide) => {
     const description = normalizeQualityText(slide.visual.description);
     if (description && description.split(" ").length >= 4 && !BANNED_QUALITY_PHRASES.some((phrase) => description.includes(normalizeQualityText(phrase)))) {
       return [];
     }
     return [{
       slideId: slide.id,
-      severity: slide.visual.type === "none" ? "minor" : "major",
+      severity: slide.visual.type === "none" ? "minor" as const : "major" as const,
       category: "bad_visual" as const,
       field: "visual.description",
       message: "Visual description is missing, too generic, or not searchable.",
       repairInstruction: "Describe a concrete searchable visual tied to this slide topic.",
     }];
   });
+  const designIssues = (presentation.designBrief?.slideDirections || []).flatMap((direction) => {
+    if (direction.imageStrategy !== "real_photo" || !isGenericRealPhotoPrompt(direction.visualPrompt)) return [];
+    return [{
+      slideId: presentation.slides.find((slide) => slide.order === direction.slideOrder)?.id,
+      severity: "major" as const,
+      category: "bad_visual" as const,
+      field: "designBrief.slideDirections.visualPrompt",
+      message: "Realistic image prompt is generic instead of a concrete documentary subject.",
+      repairInstruction: "Use a specific person, place, object, event, document, or environment, or switch imageStrategy to diagram/none.",
+    }];
+  });
+  return [...slideIssues, ...designIssues];
 }
 
 export function findDuplicateSlideIssues(presentation: PresentationDocument): QualityIssue[] {
@@ -930,6 +970,16 @@ function jaccardSimilarity(left: string[], right: string[]) {
 
 function hasPreciseFact(value: string) {
   return /(?:^|[^\p{L}\p{N}])(?:\d{4}|\d{1,3}(?:[.,]\d+)?\s*(?:%|\u043c\u043b\u043d|\u043c\u043b\u0440\u0434|\u043b\u0435\u0442|\u0433\u043e\u0434(?:\u0430|\u043e\u0432)?))(?=$|[^\p{L}\p{N}])/iu.test(value);
+}
+
+function isGenericRealPhotoPrompt(value: string) {
+  const normalized = normalizeQualityText(value);
+  if (!normalized) return true;
+  if (/\b(?:educational|presentation|generic|abstract|stock|high quality|realistic|editorial|opening)\s+(?:image|photo|visual|picture)\b/i.test(normalized)) return true;
+  if (/\b(?:image|photo|visual|picture)\s+for\b/i.test(normalized)) return true;
+  if (/(?:РѕР±СЂР°Р·РѕРІР°С‚РµР»СЊРЅ|РїСЂРµР·РµРЅС‚Р°С†|СЃР»Р°Р№Рґ|РєР°С‡РµСЃС‚РІРµРЅРЅ|СЂРµР°Р»РёСЃС‚РёС‡РЅ)\s+(?:РёР·РѕР±СЂР°Р¶РµРЅ|С„РѕС‚Рѕ|РєР°СЂС‚РёРЅ|РІРёР·СѓР°Р»)/iu.test(normalized)) return true;
+  const words = normalized.split(/\s+/).filter((word) => !/^(?:a|an|the|of|for|and|or|photo|image|visual|picture|documentary|authentic|real|realistic|clear|editorial)$/.test(word));
+  return words.length < 3;
 }
 
 function sentenceCount(value: string) {

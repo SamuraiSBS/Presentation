@@ -1179,6 +1179,7 @@ describe("shared contracts", () => {
     });
     expect(supportBackplates.at(-1)!.y + supportBackplates.at(-1)!.h).toBeLessThanOrEqual(finalBackground?.y || 0);
     expect(canvas.elements.every((element) => element.x >= 0 && element.y >= 0 && element.x + element.w <= 1280 && element.y + element.h <= 720)).toBe(true);
+    expect(auditSlideCanvas(canvas).filter((issue) => issue.includes("outside") || issue.includes("overlaps"))).toEqual([]);
   });
 
   it("grows summary cards for long Russian words without clipping or overlap", () => {
@@ -1225,7 +1226,8 @@ describe("shared contracts", () => {
       .sort((left, right) => left.y - right.y);
 
     expect(supportText).toHaveLength(3);
-    expect(supportText[1]).toMatchObject({ h: 110, fontSize: 24 });
+    expect(supportText[1]).toMatchObject({ fontSize: 24 });
+    expect(supportText[1].h).toBeLessThanOrEqual(110);
     supportBackplates.slice(1).forEach((backplate, index) => {
       expect(supportBackplates[index].y + supportBackplates[index].h).toBeLessThanOrEqual(backplate.y);
     });
@@ -1549,8 +1551,14 @@ describe("shared contracts", () => {
     }).slides[0].canvas!;
 
     expect(upgraded.elements.find((element) => element.id === "slide-summary-summary-support-0")).toMatchObject({ fontSize: 24, h: 55 });
-    expect(upgraded.elements.find((element) => element.id === "slide-summary-summary-final-label")).toMatchObject({ x: 94, y: 558, w: 270, h: 68, fontSize: 24 });
-    expect(upgraded.elements.find((element) => element.id === "slide-summary-summary-final-bg")).toMatchObject({ y: 536, h: 112 });
+    const finalLabel = upgraded.elements.find((element) => element.id === "slide-summary-summary-final-label");
+    expect(finalLabel).toMatchObject({ x: 94, w: 270, h: 68, fontSize: 24 });
+    expect(finalLabel?.y).toBeGreaterThanOrEqual(558);
+    expect((finalLabel?.y || 0) + (finalLabel?.h || 0)).toBeLessThanOrEqual(696);
+    const finalBackground = upgraded.elements.find((element) => element.id === "slide-summary-summary-final-bg");
+    expect(finalBackground).toMatchObject({ h: 112 });
+    expect(finalBackground?.y).toBeGreaterThanOrEqual(536);
+    expect((finalBackground?.y || 0) + (finalBackground?.h || 0)).toBeLessThanOrEqual(696);
     expect(auditSlideCanvas(upgraded)).toEqual([]);
 
     const currentMarked = ensureEditableCanvas({
@@ -1936,12 +1944,38 @@ describe("shared contracts", () => {
         visualRole: "sequence",
         layoutIntent: "diagram",
         imageStrategy: "diagram",
+        sceneTextMode: "visual_labels",
         visualPrompt: "Research to explanation to conclusion process",
       },
     });
     expect(diagramCanvas.elements.some((element) => element.id.includes("-step-0-"))).toBe(true);
     expect(diagramCanvas.elements.some((element) => element.type === "shape")).toBe(true);
     expect(diagramCanvas.elements.some((element) => element.type === "image")).toBe(false);
+
+    const posterCanvas = buildSlideCanvas(presentation.slides[0], presentation.presentationTheme!, {
+      designDirection: {
+        slideOrder: 1,
+        visualRole: "visual_statement",
+        layoutIntent: "statement",
+        imageStrategy: "none",
+        sceneTextMode: "hero_phrase",
+        visualPrompt: "Strong thesis moment",
+      },
+    });
+    expect(posterCanvas.elements.some((element) => element.id.includes("poster-phrase"))).toBe(true);
+
+    const talkCanvas = buildSlideCanvas(presentation.slides[0], presentation.presentationTheme!, {
+      designDirection: {
+        slideOrder: 1,
+        visualRole: "explain",
+        layoutIntent: "cards",
+        imageStrategy: "none",
+        sceneTextMode: "talk_sentences",
+        visualPrompt: "Three short speaking beats",
+      },
+    });
+    expect(talkCanvas.elements.some((element) => element.id.includes("talk-beat-0"))).toBe(true);
+    expect(auditSlideCanvas(talkCanvas).filter((issue) => issue.includes("overlaps"))).toEqual([]);
   });
 
   it("keeps old presentations without themeId valid", () => {

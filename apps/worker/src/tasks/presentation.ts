@@ -1249,11 +1249,13 @@ function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, n
       layoutIntent === "timeline" || layoutIntent === "diagram" || layoutIntent === "comparison" ? "diagram" :
       (layoutIntent === "full_bleed_image" || layoutIntent === "split_image_text") ? "real_photo" :
       "none";
+    const sceneTextMode = buildSceneTextMode(order, project.slideCount, visualRole, layoutIntent, imageStrategy);
     return {
       slideOrder: order,
       visualRole,
       layoutIntent,
       imageStrategy,
+      sceneTextMode,
       visualPrompt: buildDeterministicVisualPrompt(project, plan, imageStrategy, layoutIntent),
     };
   });
@@ -1268,6 +1270,13 @@ function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, n
       ...current,
       layoutIntent: replacement,
       imageStrategy: replacement === "diagram" ? "diagram" : "none",
+      sceneTextMode: buildSceneTextMode(
+        current.slideOrder,
+        project.slideCount,
+        current.visualRole,
+        replacement,
+        replacement === "diagram" ? "diagram" : "none",
+      ),
       visualPrompt: buildDeterministicVisualPrompt(
         project,
         narrativePlan[index] || buildFallbackNarrativeItem(project, current.slideOrder),
@@ -1354,17 +1363,59 @@ function buildDeterministicVisualPrompt(
   return `Text-led emphasis on ${subject}`;
 }
 
+function completeVisualPrompt(
+  project: ProjectInput,
+  plan: SlideNarrative,
+  imageStrategy: DesignBrief["slideDirections"][number]["imageStrategy"],
+  layoutIntent: DesignBrief["slideDirections"][number]["layoutIntent"],
+  value: string,
+) {
+  const prompt = cleanText(value);
+  if (prompt && !isWeakVisualPrompt(prompt)) return prompt;
+  return buildDeterministicVisualPrompt(project, plan, imageStrategy, layoutIntent);
+}
+
+function isWeakVisualPrompt(value: string) {
+  const normalized = cleanText(value).toLowerCase();
+  if (!normalized || normalized === "..." || normalized.length < 16) return true;
+  return /\b(?:educational|presentation|generic|abstract|stock|high quality|realistic|editorial|opening)\s+(?:image|photo|visual|picture)\b/i.test(normalized)
+    || /\b(?:image|photo|visual|picture)\s+for\b/i.test(normalized)
+    || /(?:РѕР±СЂР°Р·РѕРІР°С‚РµР»СЊРЅ|РїСЂРµР·РµРЅС‚Р°С†|СЃР»Р°Р№Рґ|РєР°С‡РµСЃС‚РІРµРЅРЅ|СЂРµР°Р»РёСЃС‚РёС‡РЅ)\s+(?:РёР·РѕР±СЂР°Р¶РµРЅ|С„РѕС‚Рѕ|РєР°СЂС‚РёРЅ|РІРёР·СѓР°Р»)/iu.test(normalized);
+}
+
+function buildSceneTextMode(
+  order: number,
+  slideCount: number,
+  visualRole: DesignBrief["slideDirections"][number]["visualRole"],
+  layoutIntent: DesignBrief["slideDirections"][number]["layoutIntent"],
+  imageStrategy: DesignBrief["slideDirections"][number]["imageStrategy"],
+): DesignBrief["slideDirections"][number]["sceneTextMode"] {
+  if (order === 1 || visualRole === "hero" || layoutIntent === "quote_spread") return "hero_phrase";
+  if (order === slideCount || visualRole === "summary" || layoutIntent === "summary") return "takeaway";
+  if (
+    imageStrategy === "real_photo" ||
+    imageStrategy === "diagram" ||
+    layoutIntent === "diagram" ||
+    layoutIntent === "timeline" ||
+    layoutIntent === "comparison" ||
+    layoutIntent === "evidence_board"
+  ) return "visual_labels";
+  return order % 4 === 0 ? "hero_phrase" : "talk_sentences";
+}
+
 function balanceDeterministicVisualDirections(
   directions: DesignBrief["slideDirections"],
   project: ProjectInput,
   narrativePlan: SlideNarrative[],
   hasGroundedVisualContext: boolean,
 ) {
-  if (!hasGroundedVisualContext || directions.length < 3) return directions;
+  if (!hasGroundedVisualContext || directions.length < 3) {
+    return diversifySceneTextModes(directions, project, narrativePlan);
+  }
 
   const minimumImages = Math.ceil(directions.length * 0.2);
   const maximumImages = Math.max(minimumImages, Math.floor(directions.length * 0.4));
-  const imageStrategies = new Set(["real_photo", "generated_illustration"]);
+  const imageStrategies = new Set(["real_photo"]);
   let imageCount = directions.filter((direction) => imageStrategies.has(direction.imageStrategy)).length;
   const balanced = [...directions];
 
@@ -1385,7 +1436,8 @@ function balanceDeterministicVisualDirections(
       ...direction,
       layoutIntent: direction.visualRole === "hero" ? "full_bleed_image" : "split_image_text",
       imageStrategy: "real_photo",
-      visualPrompt: buildDeterministicVisualPrompt(project, plan, "real_photo", direction.layoutIntent),
+      sceneTextMode: "visual_labels",
+      visualPrompt: buildDeterministicVisualPrompt(project, plan, "real_photo", direction.visualRole === "hero" ? "full_bleed_image" : "split_image_text"),
     };
     imageCount += 1;
   }
@@ -1398,11 +1450,50 @@ function balanceDeterministicVisualDirections(
       ...direction,
       layoutIntent: direction.visualRole === "hero" ? "statement" : "cards",
       imageStrategy: "none",
-      visualPrompt: buildDeterministicVisualPrompt(project, plan, "none", direction.layoutIntent),
+      sceneTextMode: direction.visualRole === "hero" ? "hero_phrase" : "talk_sentences",
+      visualPrompt: buildDeterministicVisualPrompt(project, plan, "none", direction.visualRole === "hero" ? "statement" : "cards"),
     };
     imageCount -= 1;
   }
 
+  return diversifySceneTextModes(balanced, project, narrativePlan);
+}
+
+function diversifySceneTextModes(
+  directions: DesignBrief["slideDirections"],
+  project: ProjectInput,
+  narrativePlan: SlideNarrative[],
+) {
+  const balanced = [...directions];
+  for (let index = 2; index < balanced.length; index += 1) {
+    const current = balanced[index];
+    const previous = balanced[index - 1];
+    const beforePrevious = balanced[index - 2];
+    if (current.sceneTextMode !== previous.sceneTextMode || current.sceneTextMode !== beforePrevious.sceneTextMode) continue;
+    const replacement = current.visualRole === "summary"
+      ? "takeaway"
+      : current.sceneTextMode === "visual_labels"
+        ? "talk_sentences"
+        : current.sceneTextMode === "talk_sentences"
+          ? "hero_phrase"
+          : "talk_sentences";
+    const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, current.slideOrder);
+    const nextLayout = replacement === "takeaway"
+      ? "summary"
+      : replacement === "hero_phrase"
+        ? "statement"
+        : replacement === "talk_sentences"
+          ? "cards"
+          : current.layoutIntent;
+    const nextImageStrategy = "none" as const;
+    balanced[index] = {
+      ...current,
+      sceneTextMode: replacement,
+      layoutIntent: nextLayout,
+      imageStrategy: nextImageStrategy,
+      visualPrompt: buildDeterministicVisualPrompt(project, plan, nextImageStrategy, nextLayout),
+    };
+  }
   return balanced;
 }
 
@@ -2086,12 +2177,15 @@ function buildDesignBriefPrompt(
     "Choose visualRole as a scene role: hero, problem, context, explain, compare, sequence, evidence, quote, visual_statement, or summary.",
     "Choose layoutIntent as an art-direction intent: full_bleed_image, split_image_text, statement, cards, timeline, diagram, comparison, evidence_board, quote_spread, or summary.",
     "Build Gamma-like visual rhythm while preserving university clarity: strong cover, short text-led moments, image-led scenes only when grounded, diagrams for explanation, evidence support, and a strong final takeaway.",
-    "Do not repeat the same layoutIntent three times in a row. Do not make every slide a card grid.",
-    "Choose imageStrategy independently for every slide: real_photo, generated_illustration, diagram, or none.",
+    "Visible slide text should alternate between one strong phrase, 3-4 short sentence-like fragments, and diagram/photo labels. Full explanation belongs in narration and speaker notes.",
+    "Do not repeat the same layoutIntent or sceneTextMode three times in a row. Do not make every slide a card grid.",
+    "Choose sceneTextMode for every slide: hero_phrase, talk_sentences, visual_labels, or takeaway.",
+    "Use hero_phrase for the cover, title-like claims, quote spreads, and transition moments; use talk_sentences for 3-4 short spoken beats; use visual_labels for diagrams/photos; use takeaway for the final slide.",
+    "Choose imageStrategy independently for every slide: real_photo, diagram, or none. Keep generated_illustration schema-compatible if seen, but do not select it in this version.",
     "Use real_photo only for a concrete, searchable person, place, object, company, event, artwork, historical scene, laboratory object, product, or environment that makes the idea more memorable.",
     "Use diagram for processes, comparisons, causes and effects, concept maps, timelines, structures, and systems. Diagram slides must be understandable from deterministic shapes and labels without an external image.",
     "Use none for strong theses, abstract claims, thinly sourced topics, reflective moments, and the final takeaway. Never request a random stock image merely to fill space.",
-    "Across most decks, keep real_photo and generated_illustration together near 20-40 percent of slides; explanation-heavy slides should prefer diagrams, and images must not appear on every slide.",
+    "Across grounded decks, keep real_photo near 20-40 percent of slides; explanation-heavy slides should prefer diagrams, and images must not appear on every slide.",
     "Keep density low or medium: brief visible slides, richer speaker notes, and a balanced images_and_diagrams rhythm.",
     "For real_photo or generated_illustration, visualPrompt must be a short, concrete, searchable subject describing visible people, place, object, action, or event. Do not write generic phrases such as 'educational presentation image'.",
     "For diagram, visualPrompt must name the specific process, comparison, causal chain, timeline, or structure to draw. For none, describe the text-led emphasis briefly.",
@@ -2115,6 +2209,7 @@ function buildDesignBriefPrompt(
           visualRole: "hero",
           layoutIntent: "full_bleed_image",
           imageStrategy: "real_photo",
+          sceneTextMode: "hero_phrase",
           visualPrompt: "...",
         },
       ],
@@ -2540,7 +2635,7 @@ function normalizePresentation(
   const narrationOutline = narrationSections.map((section) => section.title);
   const outline = narrationOutline.length === project.slideCount ? narrationOutline : normalizeOutline(input.outline);
   const rawSlides = Array.isArray(input.slides) ? input.slides : [];
-  const normalizedDesignBrief = normalizeDesignBrief(input.designBrief || designBrief, project, publicSources, narrativePlan);
+  const normalizedDesignBrief = normalizeDesignBrief(designBrief || input.designBrief, project, publicSources, narrativePlan);
   const slides = rawSlides
     .slice(0, project.slideCount)
     .map((slide, index) => normalizeSlide(slide, index + 1, publicSources, project, narrationSections[index]));
@@ -2672,9 +2767,21 @@ async function finalizeGeneratedPresentation(
   if (blockingFinalIssues.length && !isDemoMode(generationMode)) {
     throw new Error(`AI generation quality check failed: unresolved visible slide text: ${blockingFinalIssues.map((issue) => `slide ${issue.slideOrder} ${issue.reasons.join(", ")}`).join("; ")}`);
   }
-  return finalIssues.length
+  const finalPresentation = finalIssues.length
     ? presentationSchema.parse({ ...improved, qualityCritique: buildQualityCritique(improved, finalIssues) })
     : improved;
+  return preserveAcceptedGeneratedText(finalPresentation, generatedText);
+}
+
+function preserveAcceptedGeneratedText(presentation: PresentationDocument, acceptedGeneratedText: string) {
+  const accepted = cleanGeneratedText(acceptedGeneratedText);
+  if (!accepted) return presentation;
+  const compact = (value: string) => cleanGeneratedText(value).replace(/\n{2,}/g, "\n");
+  if (compact(presentation.generatedText) !== compact(accepted)) return presentation;
+  return presentationSchema.parse({
+    ...presentation,
+    generatedText: accepted,
+  });
 }
 
 function repairPresentationNarrationLocally(
@@ -3314,23 +3421,44 @@ function ensureDesignBriefDirections(brief: DesignBrief, project: ProjectInput, 
         ...direction,
         layoutIntent: "summary" as const,
         imageStrategy: "none" as const,
-        visualPrompt: buildDeterministicVisualPrompt(project, plan, "none", "summary"),
+        sceneTextMode: "takeaway" as const,
+        visualPrompt: completeVisualPrompt(project, plan, "none", "summary", direction.visualPrompt),
       };
     }
-    if (direction.imageStrategy !== "real_photo" && direction.imageStrategy !== "generated_illustration") {
-      return direction;
+    if (direction.imageStrategy === "generated_illustration") {
+      return {
+        ...direction,
+        layoutIntent: direction.visualRole === "hero" ? "statement" as const : "cards" as const,
+        imageStrategy: "none" as const,
+        sceneTextMode: direction.visualRole === "hero" ? "hero_phrase" as const : "talk_sentences" as const,
+        visualPrompt: completeVisualPrompt(project, plan, "none", direction.visualRole === "hero" ? "statement" : "cards", direction.visualPrompt),
+      };
+    }
+    if (direction.imageStrategy !== "real_photo") {
+      return {
+        ...direction,
+        sceneTextMode: buildSceneTextMode(direction.slideOrder, project.slideCount, direction.visualRole, direction.layoutIntent, direction.imageStrategy),
+        visualPrompt: completeVisualPrompt(project, plan, direction.imageStrategy, direction.layoutIntent, direction.visualPrompt),
+      };
     }
     imageCount += 1;
-    if (imageCount <= maximumImages) return direction;
+    if (imageCount <= maximumImages) {
+      return {
+        ...direction,
+        sceneTextMode: "visual_labels" as const,
+        visualPrompt: completeVisualPrompt(project, plan, "real_photo", direction.layoutIntent, direction.visualPrompt),
+      };
+    }
     return {
       ...direction,
       layoutIntent: direction.visualRole === "hero" ? "statement" as const : "cards" as const,
       imageStrategy: "none" as const,
-      visualPrompt: buildDeterministicVisualPrompt(project, plan, "none", direction.layoutIntent),
+      sceneTextMode: direction.visualRole === "hero" ? "hero_phrase" as const : "talk_sentences" as const,
+      visualPrompt: completeVisualPrompt(project, plan, "none", direction.visualRole === "hero" ? "statement" : "cards", direction.visualPrompt),
     };
   });
 
-  return designBriefSchema.parse({ ...normalized, slideDirections });
+  return designBriefSchema.parse({ ...normalized, slideDirections: diversifySceneTextModes(slideDirections, project, narrativePlan) });
 }
 
 function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], project: ProjectInput, narrationSection?: NarrationSection): Slide {
@@ -4609,7 +4737,7 @@ function parseJsonText(text: string) {
 }
 
 function normalizeGeneratedText(value: string, project: ProjectInput) {
-  const text = cleanMultilineText(value);
+  const text = cleanGeneratedText(value);
   if (!text || text.startsWith("{") || !/Слайд\s+1\s*:/i.test(text)) {
     return buildFallbackGeneratedText(project);
   }
@@ -4637,8 +4765,19 @@ function normalizeGeneratedText(value: string, project: ProjectInput) {
   return sanitized;
 }
 
+function cleanGeneratedText(value: unknown) {
+  return String(value || "")
+    .replace(/\u0000/g, "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function sanitizeGeneratedText(value: string) {
-  return cleanMultilineText(value)
+  return cleanGeneratedText(value)
     .split("\n")
     .map((line) => {
       const text = line.trim();
@@ -4856,9 +4995,10 @@ const designBriefJsonSchema = {
           visualRole: { type: "string", enum: ["hero", "problem", "context", "explain", "compare", "sequence", "evidence", "quote", "visual_statement", "reflect", "summary"] },
           layoutIntent: { type: "string", enum: ["full_bleed_image", "split_image_text", "statement", "cards", "timeline", "diagram", "comparison", "evidence_board", "quote_spread", "metric", "summary"] },
           imageStrategy: { type: "string", enum: ["real_photo", "generated_illustration", "diagram", "none"] },
+          sceneTextMode: { type: "string", enum: ["hero_phrase", "talk_sentences", "visual_labels", "takeaway"] },
           visualPrompt: { type: "string" },
         },
-        required: ["slideOrder", "visualRole", "layoutIntent", "imageStrategy", "visualPrompt"],
+        required: ["slideOrder", "visualRole", "layoutIntent", "imageStrategy", "sceneTextMode", "visualPrompt"],
       },
     },
   },
@@ -4938,7 +5078,7 @@ const qualityCritiqueJsonSchema = {
           message: { type: "string" },
           repairInstruction: { type: "string" },
         },
-        required: ["severity", "category", "message"],
+        required: ["slideId", "severity", "category", "field", "message", "repairInstruction"],
       },
     },
   },
@@ -4961,6 +5101,7 @@ const qualityRepairJsonSchema = {
           slideTitle: { type: "string" },
           text: { type: "string" },
         },
+        required: ["slideOrder", "slideTitle", "text"],
       },
     },
     slides: {
@@ -4981,6 +5122,7 @@ const qualityRepairJsonSchema = {
           bullets: { type: "array", items: { type: "string" } },
           speakerNotes: { type: "string" },
         },
+        required: ["slideId", "slideOrder", "title", "layout", "thesis", "bullets", "speakerNotes"],
       },
     },
   },

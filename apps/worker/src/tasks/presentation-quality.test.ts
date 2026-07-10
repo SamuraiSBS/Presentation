@@ -4,9 +4,11 @@ import {
   applyQualityRepairs,
   critiquePresentationDeterministically,
   findGenericTextIssues,
+  findLayoutRhythmIssues,
   findLongSlideTextIssues,
   findNarrationMetaIssues,
   findRepeatedTitleIssues,
+  findVisualDescriptionIssues,
   hasMetaSlideLanguage,
   hasRepeatedSentenceStart,
   hasUnsupportedSpecificity,
@@ -146,6 +148,44 @@ describe("presentation quality checks", () => {
     const presentation = makePresentation({ slides: slides as any });
 
     expect(scoreVisualRhythm(presentation).score).toBeLessThan(78);
+  });
+
+  it("flags repeated scene text modes and generic real-photo prompts", () => {
+    const presentation = makePresentation({
+      designBrief: {
+        themeId: "academicClean",
+        mood: "serious",
+        audienceFit: "University report",
+        visualMetaphor: "Modern visual story",
+        colorIntent: "Readable contrast",
+        typographyIntent: "Clear academic type",
+        layoutPrinciples: ["Alternate modern scene text modes."],
+        imageStrategy: "Use concrete documentary photos only when grounded.",
+        rhythm: {
+          titleStyle: "academic",
+          density: "medium",
+          imageFrequency: "balanced",
+          sectionBreaks: true,
+        },
+        slideDirections: [1, 2, 3].map((order) => ({
+          slideOrder: order,
+          visualRole: order === 1 ? "hero" as const : "explain" as const,
+          layoutIntent: "split_image_text" as const,
+          imageStrategy: "real_photo" as const,
+          sceneTextMode: "visual_labels" as const,
+          visualPrompt: "educational presentation image",
+        })),
+      },
+      slides: [1, 2, 3].map((order) => makeSlide(order, `Concrete topic ${order}`, `Concrete thesis ${order} explains a useful point.`, [`Grounded point ${order}`])) as any,
+    });
+
+    expect(findLayoutRhythmIssues(presentation)).toContainEqual(expect.objectContaining({
+      field: "designBrief.slideDirections.sceneTextMode",
+    }));
+    expect(findVisualDescriptionIssues(presentation)).toContainEqual(expect.objectContaining({
+      field: "designBrief.slideDirections.visualPrompt",
+      severity: "major",
+    }));
   });
 
   it("penalizes missing canvas and repairs export readiness without changing custom canvas", async () => {

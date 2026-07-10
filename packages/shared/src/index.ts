@@ -578,11 +578,15 @@ const legacyThemeToPremiumThemeId: Record<PresentationThemePreset, string> = {
   minimal: "academicClean",
 };
 
+export const sceneTextModeSchema = z.enum(["hero_phrase", "talk_sentences", "visual_labels", "takeaway"]);
+export type SceneTextMode = z.infer<typeof sceneTextModeSchema>;
+
 export const designBriefSlideDirectionSchema = z.object({
   slideOrder: z.number().int().positive(),
   visualRole: z.enum(["hero", "problem", "context", "explain", "compare", "sequence", "evidence", "quote", "visual_statement", "reflect", "summary"]),
   layoutIntent: z.enum(["full_bleed_image", "split_image_text", "statement", "cards", "timeline", "diagram", "comparison", "evidence_board", "quote_spread", "metric", "summary"]),
   imageStrategy: z.enum(["real_photo", "generated_illustration", "diagram", "none"]),
+  sceneTextMode: sceneTextModeSchema.optional(),
   visualPrompt: z.string().default(""),
 });
 export type DesignBriefSlideDirection = z.infer<typeof designBriefSlideDirectionSchema>;
@@ -1511,7 +1515,8 @@ function addPremiumDirectedCanvas(
   elements: CanvasElement[],
   direction?: DesignBriefSlideDirection,
 ) {
-  if (slide.slideKind === "summary" || direction?.layoutIntent === "summary") {
+  const mode = sceneTextModeForSlide(slide, direction);
+  if (slide.slideKind === "summary" || direction?.layoutIntent === "summary" || mode === "takeaway") {
     addSummaryCanvas(slide, theme, elements);
     return true;
   }
@@ -1519,6 +1524,14 @@ function addPremiumDirectedCanvas(
   const intent = direction?.layoutIntent;
   if ((intent === "full_bleed_image" || intent === "split_image_text") && slide.visual?.image) {
     addPremiumSplitImageCanvas(slide, theme, elements, intent === "full_bleed_image");
+    return true;
+  }
+  if (mode === "talk_sentences" && (intent === "cards" || intent === "statement" || intent === "metric")) {
+    addModernTalkCanvas(slide, theme, elements);
+    return true;
+  }
+  if (mode === "hero_phrase" && (!intent || intent === "cards" || intent === "statement" || intent === "metric")) {
+    addModernHeroPhraseCanvas(slide, theme, elements);
     return true;
   }
   if (intent === "cards" || (theme.themeId === "startupPitch" && slide.layout === "bullets")) {
@@ -1549,11 +1562,16 @@ function addPremiumDirectedCanvas(
     addMetricsCanvas(slide, theme, elements);
     return true;
   }
-  if (intent === "statement") {
-    addStatementCanvas(slide, theme, elements);
-    return true;
-  }
   return false;
+}
+
+function sceneTextModeForSlide(slide: Slide, direction?: DesignBriefSlideDirection): SceneTextMode {
+  if (direction?.sceneTextMode) return direction.sceneTextMode;
+  if (slide.slideKind === "title" || direction?.visualRole === "hero") return "hero_phrase";
+  if (slide.slideKind === "summary" || direction?.visualRole === "summary" || direction?.layoutIntent === "summary") return "takeaway";
+  if (direction?.imageStrategy === "diagram" || direction?.layoutIntent === "diagram" || direction?.layoutIntent === "timeline") return "visual_labels";
+  if (direction?.layoutIntent === "quote_spread") return "hero_phrase";
+  return "talk_sentences";
 }
 
 function addDirectedDiagramCanvas(
@@ -1701,6 +1719,87 @@ function addPremiumSplitImageCanvas(slide: Slide, theme: PresentationTheme, elem
   addMiniPointRow(slide, theme, elements, 84, Math.max(548, bodyY + bodyHeight + 36), { rightBoundary: 672, maxBottom: 680 });
 }
 
+function addModernHeroPhraseCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  const image = slide.visual?.image;
+  if (image) {
+    elements.push(
+      imageElement(`${slide.id}-poster-image`, image, 0, 0, 1280, 720, 1, 0.34, "cover"),
+      shapeElement(`${slide.id}-poster-wash`, "rect", 0, 0, 1280, 720, 2, theme.colors.background, theme.colors.background, 0, 0.78),
+    );
+  }
+
+  const phrase = slide.thesis || quoteText(slide) || slide.title;
+  const support = uniqueCanvasItems(sequenceItems(slide).filter((item) => !isDuplicateCanvasText(item, phrase))).slice(0, 2);
+  elements.push(
+    shapeElement(`${slide.id}-poster-rule`, "rect", 92, 118, 132, 6, 3, theme.colors.accent, theme.colors.accent, 0, 1),
+    textElement(`${slide.id}-poster-title`, slide.title, 92, 156, 470, 52, 5, {
+      role: "caption",
+      fontSize: 24,
+      autoFit: false,
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.muted,
+      bold: true,
+    }),
+    textElement(`${slide.id}-poster-phrase`, phrase, 92, 238, 880, 230, 5, {
+      role: "title",
+      fontSize: fittedFontSize(phrase, 62, 34, 230),
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.text,
+      bold: true,
+      valign: "middle",
+    }),
+  );
+  if (support.length) {
+    addMiniPointRow({ ...slide, bullets: support }, theme, elements, 92, 548, { rightBoundary: 1020, maxBottom: 680 });
+  }
+}
+
+function addModernTalkCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  const beats = talkBeats(slide).slice(0, 4);
+  const thesis = slide.thesis || beats[0] || slideBodyText(slide);
+  elements.push(
+    shapeElement(`${slide.id}-talk-accent`, "rect", 78, 116, 7, 486, 2, theme.colors.accent, theme.colors.accent, 0, 1),
+    textElement(`${slide.id}-talk-title`, slide.title, 112, 70, 1030, 82, 4, {
+      role: "title",
+      fontSize: fittedFontSize(slide.title, 42, 28, 82),
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.text,
+      bold: true,
+    }),
+    textElement(`${slide.id}-talk-thesis`, thesis, 112, 182, 480, 190, 4, {
+      role: "body",
+      fontSize: fittedFontSize(thesis, 36, 24, 190),
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.text,
+      bold: true,
+      valign: "middle",
+    }),
+  );
+
+  beats.forEach((beat, index) => {
+    const y = 174 + index * 136;
+    elements.push(
+      textElement(`${slide.id}-talk-number-${index}`, String(index + 1).padStart(2, "0"), 670, y + 4, 54, 34, 4, {
+        role: "caption",
+        fontSize: 22,
+        autoFit: false,
+        fontFamily: theme.fonts.heading,
+        color: theme.colors.accent,
+        bold: true,
+        align: "center",
+      }),
+      shapeElement(`${slide.id}-talk-line-${index}`, "rect", 748, y + 20, 358, 2, 2, theme.colors.line, theme.colors.line, 0, 1),
+      textElement(`${slide.id}-talk-beat-${index}`, beat, 670, y + 60, 454, 66, 4, {
+        role: "body",
+        fontSize: fittedFontSize(beat, 23, MIN_GENERATED_BODY_FONT_SIZE, 56),
+        autoFit: false,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.muted,
+      }),
+    );
+  });
+}
+
 function addPremiumCardsCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
   addSlideTitle(slide, theme, elements);
   const items = uniqueCanvasItems(sequenceItems(slide)).slice(0, 4);
@@ -1818,6 +1917,7 @@ function isAllowedCanvasOverlap(left: CanvasElement, right: CanvasElement) {
     if (right.type === "shape" && left.type === "text") return shapeContainsElement(right, left);
   }
   if (isTextBackplatePair(left, right) || isTextBackplatePair(right, left)) return true;
+  if (isTextBackplateBehindText(left, right) || isTextBackplateBehindText(right, left)) return true;
   if (isDecorativeRuleBehindText(left, right) || isDecorativeRuleBehindText(right, left)) return true;
   if (isSoftBackgroundBehindText(left, right) || isSoftBackgroundBehindText(right, left)) return true;
   if (left.type === "shape" && right.type === "shape") return true;
@@ -1834,7 +1934,15 @@ function shapeContainsElement(shape: CanvasShapeElement, element: CanvasElement)
 }
 
 function isTextBackplatePair(shape: CanvasElement, text: CanvasElement) {
-  return shape.type === "shape" && text.type === "text" && shape.id === `${text.id}-backplate`;
+  return shape.id === `${text.id}-backplate` || text.id === `${shape.id}-backplate`;
+}
+
+function isTextBackplateBehindText(background: CanvasElement, text: CanvasElement) {
+  return background.type === "shape"
+    && text.type === "text"
+    && background.id.endsWith("-backplate")
+    && background.zIndex < text.zIndex
+    && background.opacity <= 0.96;
 }
 
 function isDecorativeRuleBehindText(shape: CanvasElement, text: CanvasElement) {
@@ -1843,7 +1951,7 @@ function isDecorativeRuleBehindText(shape: CanvasElement, text: CanvasElement) {
 
 function isSoftBackgroundBehindText(background: CanvasElement, text: CanvasElement) {
   if (text.type !== "text" || background.zIndex >= text.zIndex) return false;
-  if (background.type === "image") return background.opacity <= 0.4;
+  if (background.type === "image") return background.opacity <= 0.4 || /bg|background/i.test(background.id);
   return background.type === "shape" && /wash|bg|background/i.test(background.id) && background.opacity >= 0.55;
 }
 
@@ -1956,6 +2064,7 @@ function linkContainedElements(elements: CanvasElement[]) {
   const containers = elements
     .filter((element): element is CanvasShapeElement =>
       element.type === "shape" &&
+      !element.id.endsWith("-backplate") &&
       element.shape !== "line" &&
       element.w <= 1200 &&
       element.h <= 420 &&
@@ -2622,7 +2731,7 @@ function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: Canv
   addSlideTitle(slide, theme, elements);
   const items = sequenceItems(slide).slice(0, 5);
   const mainConclusion = slide.thesis || items[0] || slideBodyText(slide);
-  const supportingItems = items.filter((item) => item !== mainConclusion).slice(0, 3).map((item) => compactSummaryPoint(item, 7));
+  const supportingItems = items.filter((item) => item !== mainConclusion).slice(0, 3).map((item) => compactSummaryPoint(item, 5));
   const finalThoughtSource = items.filter((item) => item !== mainConclusion).slice(3, 4)[0];
   const finalThought = finalThoughtSource ? compactSummaryPoint(finalThoughtSource, 14) : "";
   const conclusionFontSize = fittedFontSize(mainConclusion, 44, 25, 230);
@@ -2655,7 +2764,7 @@ function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: Canv
   let supportY = 264;
   let supportBottom = supportY;
   supportingItems.forEach((item, index) => {
-    const itemHeight = Math.max(55, estimatedTextHeight(item, READABLE_PLAQUE_FONT_SIZE, 362));
+    const itemHeight = Math.min(110, Math.max(55, estimatedTextHeight(item, READABLE_PLAQUE_FONT_SIZE, 362)));
     const y = supportY;
     elements.push(
       shapeElement(`${slide.id}-summary-support-${index}-dot`, "ellipse", 792, y + 8, 12, 12, 3, theme.colors.accentAlt, theme.colors.accentAlt, 0, 1),
@@ -2668,7 +2777,7 @@ function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: Canv
       }),
     );
     supportBottom = y + itemHeight + PLAQUE_PADDING_Y;
-    supportY += itemHeight + 28;
+    supportY += itemHeight + 48;
   });
 
   const finalThoughtY = Math.max(536, supportBottom + 12);
@@ -3369,6 +3478,18 @@ function sequenceItems(slide: Slide) {
   const blockItems = (slide.blocks || []).flatMap((block) => (block.type === "bullets" ? block.items : [block.content]));
   const bullets = slide.bullets || [];
   return (visualItems.length ? visualItems : graphItems.length ? graphItems : diagramItems.length ? diagramItems : bullets.length ? bullets : blockItems.length ? blockItems : [slide.thesis || slide.title]).filter(Boolean);
+}
+
+function talkBeats(slide: Slide) {
+  const candidates = [
+    ...uniqueCanvasItems(sequenceItems(slide)),
+    ...splitCanvasSentences(slide.thesis || ""),
+    ...splitCanvasSentences(slideBodyText(slide)),
+  ];
+  return uniqueCanvasItems(candidates)
+    .map((item) => compactSummaryPoint(item, 13) || sentencePreview(item, 96))
+    .filter(Boolean)
+    .slice(0, 4);
 }
 
 function uniqueCanvasItems(items: string[]) {
