@@ -1887,6 +1887,65 @@ describe("shared contracts", () => {
     expect(auditSlideCanvas(canvas)).toEqual([]);
   });
 
+  it("rebuilds unmarked StudyDeck editorial canvases instead of applying legacy text backplates", () => {
+    const theme = PREMIUM_PRESENTATION_THEMES.studydeckEditorial;
+    const parsed = presentationSchema.parse({
+      id: "presentation-editorial-rebuild",
+      title: "Editorial rebuild",
+      scenario: "university_report",
+      level: "university_student",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Conclusion"],
+      presentationTheme: theme,
+      speechScript: [{ slideOrder: 1, slideTitle: "Conclusion", text: "Narration." }],
+      slides: [{
+        id: "slide-editorial-rebuild",
+        order: 1,
+        title: "Conclusion",
+        slideKind: "summary",
+        layout: "summary",
+        thesis: "A concise conclusion with a clear hierarchy.",
+        bullets: ["First supporting idea.", "Second supporting idea."],
+        visual: { type: "none" },
+        blocks: [],
+        speakerNotes: "Narration.",
+        timingSeconds: 45,
+        sourceRefs: [],
+        canvas: {
+          version: 3,
+          width: 1280,
+          height: 720,
+          background: theme.colors.text,
+          elements: [{
+            id: "slide-editorial-rebuild-editorial-title-backplate",
+            type: "shape",
+            shape: "roundRect",
+            x: 48,
+            y: 48,
+            w: 600,
+            h: 96,
+            rotation: 0,
+            zIndex: 4,
+            opacity: 1,
+            locked: true,
+            fill: theme.colors.surface,
+            stroke: theme.colors.line,
+            strokeWidth: 1,
+          }],
+        },
+      }],
+    });
+
+    const canvas = ensureEditableCanvas(parsed).slides[0].canvas!;
+
+    expect(canvas.version).toBe(3);
+    expect(canvas.elements.some((element) => element.id.endsWith("-backplate"))).toBe(false);
+    expect(canvas.elements.some((element) => element.id.endsWith("-editorial-footer-order"))).toBe(true);
+    expect(auditSlideCanvas(canvas)).toEqual([]);
+  });
+
   it("resolves premium themes from themeId and falls back for unknown IDs", () => {
     const fallback = resolvePresentationTheme({
       presentationTheme: {

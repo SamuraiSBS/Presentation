@@ -3631,13 +3631,16 @@ function normalizeVisual(
 ): SlideVisual {
   const candidate = value && typeof value === "object" ? (value as Partial<SlideVisual>) : {};
   const requestedType = normalizeVisualType(candidate.type);
-  const description = sanitizeScreenText(candidate.description) || imageConcept(project, order, title, thesis, bullets, slideKind);
+  const description = shortenSentence(
+    sanitizeScreenText(candidate.description) || imageConcept(project, order, title, thesis, bullets, slideKind),
+    260,
+  );
   const rows = Array.isArray(candidate.rows)
     ? candidate.rows
         .map((row) => ({
-          label: sanitizeScreenText(row?.label),
-          left: sanitizeScreenText(row?.left),
-          right: sanitizeScreenText(row?.right),
+          label: shortenSentence(sanitizeScreenText(row?.label), 80),
+          left: shortenSentence(sanitizeScreenText(row?.left), 160),
+          right: shortenSentence(sanitizeScreenText(row?.right), 160),
         }))
         .filter((row) => row.label || row.left || row.right)
         .slice(0, 8)
@@ -3645,8 +3648,8 @@ function normalizeVisual(
   const items = Array.isArray(candidate.items)
     ? candidate.items
         .map((item) => ({
-          label: sanitizeScreenText(item?.label),
-          text: sanitizeScreenText(item?.text),
+          label: shortenSentence(sanitizeScreenText(item?.label), 100),
+          text: shortenSentence(sanitizeScreenText(item?.text), 180),
         }))
         .filter((item) => item.label || item.text)
         .slice(0, 8)
@@ -3663,8 +3666,8 @@ function normalizeVisual(
     type,
     title: normalizeVisualTitle(candidate.title, title),
     description,
-    leftLabel: sanitizeScreenText(candidate.leftLabel) || defaultLeftLabel(type),
-    rightLabel: sanitizeScreenText(candidate.rightLabel) || defaultRightLabel(type),
+    leftLabel: shortenSentence(sanitizeScreenText(candidate.leftLabel) || defaultLeftLabel(type), 80),
+    rightLabel: shortenSentence(sanitizeScreenText(candidate.rightLabel) || defaultRightLabel(type), 80),
     items: type === "image" || type === "illustration" ? [] : items,
     rows: isRowVisual(type) ? completeRows : [],
     ...(diagram ? { diagram } : {}),
@@ -3785,7 +3788,7 @@ function emptyVisual(): SlideVisual {
 function normalizeVisualTitle(value: unknown, slideTitle: string) {
   const title = sanitizeScreenText(value);
   if (!title || isGenericVisualTitle(title) || isDuplicateDisplayText(title, slideTitle)) return "";
-  return title;
+  return shortenSentence(title, 100);
 }
 
 function isGenericVisualTitle(title: string) {
@@ -3889,7 +3892,10 @@ function buildFallbackBlocks(project: ProjectInput, order = 1, thesis = "", bull
 
 function fallbackVisual(order: number, title: string, thesis: string, bullets: string[], slideKind: SlideKind, project: ProjectInput): SlideVisual {
   const layout = CONTENT_LAYOUT_CYCLE[(order - 2 + CONTENT_LAYOUT_CYCLE.length) % CONTENT_LAYOUT_CYCLE.length];
-  const items = bullets.slice(0, 4).map((label) => ({ label, text: "" }));
+  const items = bullets.slice(0, 4).map((text) => ({
+    label: shortenSentence(text, 100),
+    text: shortenSentence(text, 180),
+  }));
   const description = imageConcept(project, order, title, thesis, bullets, slideKind);
 
   if (slideKind === "title" || slideKind === "section") {

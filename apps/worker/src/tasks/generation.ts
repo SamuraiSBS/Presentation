@@ -108,7 +108,13 @@ export async function handleGenerationJob(job: Job<GenerationJobData>) {
     }, () => enrichPresentationImages(project, generatedPresentation), traceContext);
     finishStage("selecting_visuals");
     await setStage("polishing");
-    const presentation = ensureEditableCanvas(presentationWithImages);
+    // The model may return a schema-valid but geometrically unsafe canvas. A
+    // generated presentation is not user-edited yet, so rebuild its canvas
+    // from the validated slide content before running the layout audit.
+    const presentation = ensureEditableCanvas({
+      ...presentationWithImages,
+      slides: presentationWithImages.slides.map((slide) => ({ ...slide, canvas: undefined })),
+    });
     const unsafeCanvases = presentation.slides.flatMap((slide) =>
       (slide.canvas ? auditSlideCanvas(slide.canvas) : ["canvas is missing"])
         .map((issue) => `slide ${slide.order}: ${issue}`),

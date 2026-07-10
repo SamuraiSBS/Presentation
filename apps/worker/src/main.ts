@@ -10,8 +10,20 @@ initSentry();
 
 const connection = createRedisConnection();
 
-const generationWorker = new Worker("generation", handleGenerationJob, { connection, concurrency: 2 });
-const exportWorker = new Worker("exports", handleExportJob, { connection, concurrency: 2 });
+// Generation can legitimately wait several minutes for provider and image-search calls.
+// Keep its BullMQ lease beyond those calls so it is not incorrectly retried as stalled.
+const generationWorker = new Worker("generation", handleGenerationJob, {
+  connection,
+  concurrency: 2,
+  lockDuration: 10 * 60_000,
+  lockRenewTime: 60_000,
+});
+const exportWorker = new Worker("exports", handleExportJob, {
+  connection,
+  concurrency: 2,
+  lockDuration: 10 * 60_000,
+  lockRenewTime: 60_000,
+});
 
 generationWorker.on("failed", (job, error) => {
   captureGenerationError(error, {

@@ -1395,10 +1395,14 @@ export function ensureEditableCanvas(document: PresentationDocument): Presentati
       const hasExplicitCustomCanvas = slide.canvas?.elements.some(
         (element) => element.id === `${slide.id}-custom-canvas-marker`,
       );
+      const shouldRebuildEditorialCanvas = theme.themeId === STUDYDECK_EDITORIAL_THEME_ID
+        && !hasExplicitCustomCanvas;
       return {
         ...slide,
         canvas: hasExplicitCustomCanvas
           ? slide.canvas
+          : shouldRebuildEditorialCanvas
+          ? generatedCanvas
           : hasCustomSlideCanvas(slide, theme, generatedCanvas)
           ? upgradeCustomCanvas(slide.canvas!, generatedCanvas, theme)
           : generatedCanvas,
@@ -2368,7 +2372,7 @@ function finalizeGeneratedElements(elements: CanvasElement[], theme: Presentatio
   const withBackplates = addStandaloneTextBackplates(elements, theme);
   const linked = linkContainedElements(withBackplates);
   const clamped = clampCanvasElements(repairUnsafeGeneratedElements(linked));
-  return sortCanvasElements(syncGroupedTextContainers(syncTextBackplates(clamped)));
+  return sortCanvasElements(clampCanvasElements(syncGroupedTextContainers(syncTextBackplates(clamped))));
 }
 
 export function auditSlideCanvas(canvas: SlideCanvas) {
@@ -2447,6 +2451,7 @@ function isAllowedCanvasOverlap(left: CanvasElement, right: CanvasElement) {
   if (isTextBackplateBehindText(left, right) || isTextBackplateBehindText(right, left)) return true;
   if (isDecorativeRuleBehindText(left, right) || isDecorativeRuleBehindText(right, left)) return true;
   if (isSoftBackgroundBehindText(left, right) || isSoftBackgroundBehindText(right, left)) return true;
+  if (isEditorialFieldBehindForeground(left, right) || isEditorialFieldBehindForeground(right, left)) return true;
   if (left.type === "shape" && right.type === "shape") return true;
   if (left.type === "image" && right.type === "shape") return right.opacity >= 0.65 && right.zIndex > left.zIndex;
   if (right.type === "image" && left.type === "shape") return left.opacity >= 0.65 && left.zIndex > right.zIndex;
@@ -2482,6 +2487,13 @@ function isSoftBackgroundBehindText(background: CanvasElement, text: CanvasEleme
   return background.type === "shape" && /wash|bg|background/i.test(background.id) && background.opacity >= 0.55;
 }
 
+function isEditorialFieldBehindForeground(background: CanvasElement, foreground: CanvasElement) {
+  return background.type === "shape"
+    && /-editorial-field(?:-|$)/.test(background.id)
+    && background.opacity <= 0.25
+    && background.zIndex < foreground.zIndex;
+}
+
 function addStandaloneTextBackplates(elements: CanvasElement[], theme: PresentationTheme) {
   const resizedElements = reflowTextPlaques(resizeTextPlaques(elements));
   const containers = resizedElements.filter((element): element is CanvasShapeElement =>
@@ -2508,7 +2520,11 @@ function addStandaloneTextBackplates(elements: CanvasElement[], theme: Presentat
       return;
     }
 
-    const fittedElement = fitCanvasTextElement(element);
+    // Editorial support rows have deliberately fixed slots. Expanding a long
+    // sentence here makes adjacent rows overlap and can push the footer out.
+    const fittedElement = /-editorial-support-\d+$/.test(element.id)
+      ? element
+      : fitCanvasTextElement(element);
     const paddingX = fittedElement.role === "title" ? 26 : 18;
     const paddingY = fittedElement.role === "title" ? 16 : 12;
     const backplate = shapeElement(

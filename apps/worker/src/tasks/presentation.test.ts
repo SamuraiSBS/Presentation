@@ -146,7 +146,8 @@ function mockYandexTwoStep(
     if (rewrittenNarrationText && callCount === 3) return yandexTextResponse(rewrittenNarrationText);
     const offset = rewrittenNarrationText ? 1 : 0;
     if (callCount === 3 + offset) return yandexTextResponse(JSON.stringify(designBriefForTitles(narrativePlan.map((item) => item.slideTitle))));
-    return yandexTextResponse(JSON.stringify(callCount === 4 + offset || repairJson === undefined ? json : repairJson));
+    const response = callCount === 4 + offset || repairJson === undefined ? json : repairJson;
+    return yandexTextResponse(typeof response === "string" ? response : JSON.stringify(response));
   };
 }
 
@@ -2217,6 +2218,41 @@ describe("generatePresentation fallback behavior", () => {
       expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(6);
       expect(presentation.speechScript[0].text).toContain("Новая волна российского кино");
       expect(presentation.speechScript[0].text).not.toContain("Добавлю несколько деталей");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("keeps the narration fallback schema-valid when the structured deck response is truncated", async () => {
+    process.env.AI_PROVIDER = "yandex";
+    process.env.OPENAI_API_KEY = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
+    process.env.YANDEX_MODEL_URI = "";
+    process.env.ALLOW_DEMO_GENERATION = "false";
+
+    const titles = ["Porsche origin", "Engineering choices", "Lasting legacy"];
+    const originalFetch = global.fetch;
+    mockYandexTwoStep(narrationForSlides(titles), "{");
+
+    try {
+      const presentation = await generatePresentation(
+        {
+          id: "project-1",
+          title: "Porsche 911 heritage and innovation across generations of sports car engineering and design history worldwide",
+          prompt: "Create a presentation about the Porsche 911.",
+          scenario: "school_report",
+          level: "8-11 class",
+          mode: "with_sources",
+          slideCount: 3,
+        },
+        [],
+      );
+
+      expect(presentation.slides).toHaveLength(3);
+      expect(presentation.slides[2].visual.items).toHaveLength(3);
+      expect(presentation.slides[2].visual.items.every((item) => item.label.length <= 100 && item.text.length <= 180)).toBe(true);
+      expect(() => presentationSchema.parse(presentation)).not.toThrow();
     } finally {
       global.fetch = originalFetch;
     }
