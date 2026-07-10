@@ -102,6 +102,24 @@ describe("image search helpers", () => {
     expect(selected?.url).toBe("https://images.example.org/new.jpg");
   });
 
+  it("rejects unrelated image candidates when a concrete brand is requested", () => {
+    const selected = chooseImageCandidate(
+      [
+        { url: "https://cdn.example.com/lions.jpg", description: "Two lions walking in grass", sourceTitle: "Wildlife" },
+        { url: "https://cdn.example.com/bmw-m3.jpg", description: "BMW M3 on a race circuit", sourceTitle: "BMW motorsport" },
+      ],
+      new Set(),
+      new Set(),
+      {
+        query: "BMW M3 official documentary photograph",
+        slideTitle: "Популярные модели BMW M",
+        projectTitle: "BMW M: история и модели",
+      },
+    );
+
+    expect(selected?.url).toBe("https://cdn.example.com/bmw-m3.jpg");
+  });
+
   it("searches concrete real-photo slides and skips diagram slides", async () => {
     process.env.PRESENTATION_IMAGES_ENABLED = "true";
     const presentation = fixturePresentation();
@@ -189,7 +207,7 @@ describe("image search helpers", () => {
       { ...presentation, slides: [presentation.slides[0]] },
       {
         searchImages: async () => [
-          { url: "https://bad.example.com/page", description: "Bad result", sourceTitle: "" },
+          { url: "https://bad.example.com/page", description: "AI classroom result", sourceTitle: "" },
           { url: "https://cdn.example.com/classroom.webp", description: "Classroom", sourceTitle: "Image source" },
         ],
         downloadImage: async (url) => {

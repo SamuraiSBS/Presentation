@@ -901,6 +901,26 @@ const PRESENTATION_THEME_PRESETS = {
 } satisfies Record<PresentationThemePreset, PresentationTheme>;
 
 export const PREMIUM_PRESENTATION_THEMES = {
+  studydeckEditorial: {
+    preset: "minimal",
+    themeId: "studydeckEditorial",
+    mood: "serious",
+    colors: {
+      background: "#F7F7F5",
+      surface: "#FFFFFF",
+      surfaceAlt: "#ECEBE7",
+      text: "#191714",
+      muted: "#5F5A54",
+      accent: "#FF8A00",
+      accentAlt: "#7B3DFF",
+      line: "#D7D4CE",
+    },
+    fonts: {
+      heading: "Georgia",
+      body: "Arial",
+      tone: "bookish",
+    },
+  },
   editorialMagazine: {
     preset: "history",
     themeId: "editorialMagazine",
@@ -1052,7 +1072,7 @@ export function resolvePremiumPresentationTheme(themeId: string | undefined, fal
   return PREMIUM_PRESENTATION_THEMES[themeId as PremiumPresentationThemeId] || fallback;
 }
 
-export function resolveThemeFromDesignBrief(brief: DesignBrief, fallback: PresentationTheme = PREMIUM_PRESENTATION_THEMES.academicClean): PresentationTheme {
+export function resolveThemeFromDesignBrief(brief: DesignBrief, fallback: PresentationTheme = PREMIUM_PRESENTATION_THEMES.studydeckEditorial): PresentationTheme {
   return resolvePremiumPresentationTheme(brief.themeId, fallback);
 }
 
@@ -1331,6 +1351,10 @@ const MIN_GENERATED_CAPTION_FONT_SIZE = 18;
 const PLAQUE_PADDING_X = 18;
 const PLAQUE_PADDING_Y = 12;
 const CANVAS_SAFE_BOTTOM = 680;
+const STUDYDECK_EDITORIAL_THEME_ID = "studydeckEditorial";
+const EDITORIAL_MARGIN_X = 72;
+const EDITORIAL_CONTENT_WIDTH = 1136;
+const EDITORIAL_GUTTER = 24;
 
 export const planLimits = {
   free: {
@@ -1388,6 +1412,10 @@ type BuildSlideCanvasOptions = {
 };
 
 export function buildSlideCanvas(slide: Slide, theme: PresentationTheme, options: BuildSlideCanvasOptions = {}): SlideCanvas {
+  if (theme.themeId === STUDYDECK_EDITORIAL_THEME_ID) {
+    return buildStudyDeckEditorialCanvas(slide, theme, options.designDirection);
+  }
+
   const visual = slide.visual || { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] };
   const background = theme.colors.background;
   const backgroundStyle = slideBackgroundStyle(slide, theme);
@@ -1465,6 +1493,505 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme, options
   addFallbackImageCanvas(slide, elements);
 
   return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: finalizeGeneratedElements(elements, theme) };
+}
+
+function buildStudyDeckEditorialCanvas(
+  slide: Slide,
+  theme: PresentationTheme,
+  direction?: DesignBriefSlideDirection,
+): SlideCanvas {
+  const dark = slide.slideKind === "title" || slide.slideKind === "section" || slide.slideKind === "summary";
+  const background = dark ? theme.colors.text : theme.colors.background;
+  const foreground = dark ? theme.colors.background : theme.colors.text;
+  const muted = dark ? theme.colors.line : theme.colors.muted;
+  const elements: CanvasElement[] = [];
+
+  if (slide.slideKind === "title") {
+    addEditorialCoverCanvas(slide, theme, elements, foreground, muted);
+  } else if (slide.slideKind === "section") {
+    addEditorialSectionCanvas(slide, theme, elements, foreground, muted);
+  } else if (slide.slideKind === "summary" || direction?.layoutIntent === "summary") {
+    addEditorialSummaryCanvas(slide, theme, elements, foreground, muted);
+  } else if (slide.visual?.image) {
+    addEditorialImageCanvas(slide, theme, elements);
+  } else if (direction?.layoutIntent === "comparison" || slide.layout === "comparison" || slide.layout === "two-column") {
+    addEditorialComparisonCanvas(slide, theme, elements);
+  } else if (
+    direction?.imageStrategy === "diagram" ||
+    direction?.layoutIntent === "diagram" ||
+    direction?.layoutIntent === "timeline" ||
+    slide.layout === "timeline" ||
+    slide.layout === "process" ||
+    slide.visual?.graph?.nodes.length
+  ) {
+    addEditorialDiagramCanvas(slide, theme, elements);
+  } else if (
+    direction?.sceneTextMode === "hero_phrase" ||
+    direction?.layoutIntent === "statement" ||
+    direction?.layoutIntent === "quote_spread" ||
+    slide.layout === "statement" ||
+    slide.layout === "quote"
+  ) {
+    addEditorialStatementCanvas(slide, theme, elements);
+  } else {
+    addEditorialNarrativeCanvas(slide, theme, elements);
+  }
+
+  return {
+    version: 3,
+    width: 1280,
+    height: 720,
+    background,
+    backgroundStyle: { type: "solid", color: background },
+    elements: finalizeEditorialElements(elements),
+  };
+}
+
+function addEditorialCoverCanvas(
+  slide: Slide,
+  theme: PresentationTheme,
+  elements: CanvasElement[],
+  foreground: string,
+  muted: string,
+) {
+  const image = slide.visual?.image;
+  const textWidth = image ? 552 : 920;
+  elements.push(
+    shapeElement(`${slide.id}-editorial-accent`, "rect", EDITORIAL_MARGIN_X, 112, 86, 7, 3, theme.colors.accent, theme.colors.accent, 0, 1),
+    textElement(`${slide.id}-editorial-title`, slide.title, EDITORIAL_MARGIN_X, 154, textWidth, 238, 5, {
+      role: "title",
+      fontSize: fittedFontSize(slide.title, image ? 64 : 72, 42, 238),
+      fontFamily: theme.fonts.heading,
+      color: foreground,
+      bold: true,
+      valign: "middle",
+    }),
+    textElement(`${slide.id}-editorial-body`, slide.thesis || slideBodyText(slide), EDITORIAL_MARGIN_X, 426, image ? 526 : 760, 118, 5, {
+      role: "body",
+      fontSize: fittedFontSize(slide.thesis || slideBodyText(slide), 30, 24, 118),
+      fontFamily: theme.fonts.body,
+      color: muted,
+      valign: "middle",
+    }),
+  );
+
+  if (image) {
+    elements.push(
+      shapeElement(`${slide.id}-editorial-divider`, "rect", 681, 64, 3, 592, 3, theme.colors.accent, theme.colors.accent, 0, 1),
+      imageElement(`${slide.id}-editorial-image`, image, 720, 0, 560, 720, 2, 1, "cover"),
+    );
+  } else {
+    elements.push(
+      shapeElement(`${slide.id}-editorial-field`, "rect", 930, 0, 350, 720, 1, theme.colors.accentAlt, theme.colors.accentAlt, 0, 0.18),
+      shapeElement(`${slide.id}-editorial-field-accent`, "rect", 1010, 118, 198, 198, 2, theme.colors.accent, theme.colors.accent, 0, 0.92),
+    );
+  }
+  addEditorialFooter(slide, theme, elements, foreground, muted, EDITORIAL_MARGIN_X, image ? 552 : EDITORIAL_CONTENT_WIDTH);
+}
+
+function addEditorialSectionCanvas(
+  slide: Slide,
+  theme: PresentationTheme,
+  elements: CanvasElement[],
+  foreground: string,
+  muted: string,
+) {
+  const image = slide.visual?.image;
+  if (image) {
+    elements.push(imageElement(`${slide.id}-editorial-image`, image, 744, 0, 536, 720, 2, 1, "cover"));
+  } else {
+    elements.push(shapeElement(`${slide.id}-editorial-field`, "rect", 872, 0, 408, 720, 1, theme.colors.accentAlt, theme.colors.accentAlt, 0, 0.2));
+  }
+  elements.push(
+    shapeElement(`${slide.id}-editorial-accent`, "rect", EDITORIAL_MARGIN_X, 132, 92, 7, 3, theme.colors.accent, theme.colors.accent, 0, 1),
+    textElement(`${slide.id}-editorial-title`, slide.title, EDITORIAL_MARGIN_X, 174, image ? 580 : 700, 196, 5, {
+      role: "title",
+      fontSize: fittedFontSize(slide.title, 60, 40, 196),
+      fontFamily: theme.fonts.heading,
+      color: foreground,
+      bold: true,
+      valign: "middle",
+    }),
+    textElement(`${slide.id}-editorial-body`, slide.thesis || slideBodyText(slide), EDITORIAL_MARGIN_X, 408, image ? 548 : 672, 116, 5, {
+      role: "body",
+      fontSize: fittedFontSize(slide.thesis || slideBodyText(slide), 30, 24, 116),
+      fontFamily: theme.fonts.body,
+      color: muted,
+    }),
+  );
+  addEditorialFooter(slide, theme, elements, foreground, muted, EDITORIAL_MARGIN_X, image ? 580 : EDITORIAL_CONTENT_WIDTH);
+}
+
+function addEditorialImageCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  const image = slide.visual?.image;
+  if (!image) return;
+  const imageOnRight = slide.order % 2 === 0;
+  const imageX = imageOnRight ? 704 : 0;
+  const textX = imageOnRight ? EDITORIAL_MARGIN_X : 648;
+  const textWidth = 520;
+  const thesis = slide.thesis || slideBodyText(slide);
+  const support = editorialSupportItems(slide, thesis, 2);
+
+  elements.push(
+    imageElement(`${slide.id}-editorial-image`, image, imageX, 0, 576, 720, 2, 1, "cover"),
+    shapeElement(`${slide.id}-editorial-accent`, "rect", textX, 58, 68, 6, 3, theme.colors.accent, theme.colors.accent, 0, 1),
+    textElement(`${slide.id}-editorial-title`, slide.title, textX, 88, textWidth, 124, 5, {
+      role: "title",
+      fontSize: fittedFontSize(slide.title, 48, 34, 124),
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.text,
+      bold: true,
+    }),
+    textElement(`${slide.id}-editorial-thesis`, thesis, textX, 244, textWidth, 170, 5, {
+      role: "body",
+      fontSize: fittedFontSize(thesis, 32, 26, 170),
+      fontFamily: theme.fonts.body,
+      color: theme.colors.text,
+      bold: true,
+      valign: "middle",
+    }),
+  );
+
+  support.forEach((item, index) => {
+    const y = 456 + index * 94;
+    elements.push(
+      shapeElement(`${slide.id}-editorial-support-${index}-rule`, "rect", textX, y, 44, 3, 3, index ? theme.colors.accentAlt : theme.colors.accent, index ? theme.colors.accentAlt : theme.colors.accent, 0, 1),
+      textElement(`${slide.id}-editorial-support-${index}`, item, textX, y + 16, textWidth, 64, 5, {
+        role: "body",
+        fontSize: 23,
+        autoFit: false,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.muted,
+      }),
+    );
+  });
+  addEditorialFooter(slide, theme, elements, theme.colors.text, theme.colors.muted, textX, textWidth);
+}
+
+function addEditorialNarrativeCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  const thesis = slide.thesis || slideBodyText(slide);
+  const support = editorialSupportItems(slide, thesis, 3);
+  addEditorialContentTitle(slide, theme, elements);
+  elements.push(
+    textElement(`${slide.id}-editorial-thesis`, thesis, EDITORIAL_MARGIN_X, 214, 520, 264, 5, {
+      role: "title",
+      fontSize: fittedFontSize(thesis, 44, 30, 264),
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.text,
+      bold: true,
+      valign: "middle",
+    }),
+    shapeElement(`${slide.id}-editorial-divider`, "rect", 640, 204, 2, 330, 2, theme.colors.line, theme.colors.line, 0, 1),
+  );
+
+  support.forEach((item, index) => {
+    const y = 208 + index * 112;
+    elements.push(
+      shapeElement(`${slide.id}-editorial-support-${index}-dot`, "ellipse", 704, y + 6, 16, 16, 3, index === 1 ? theme.colors.accentAlt : theme.colors.accent, index === 1 ? theme.colors.accentAlt : theme.colors.accent, 0, 1),
+      textElement(`${slide.id}-editorial-support-${index}`, item, 744, y, 440, 82, 5, {
+        role: "body",
+        fontSize: 25,
+        autoFit: false,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.muted,
+      }),
+    );
+  });
+  addEditorialFooter(slide, theme, elements, theme.colors.text, theme.colors.muted);
+}
+
+function addEditorialStatementCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  const phrase = slide.thesis || quoteText(slide) || slide.title;
+  const support = editorialSupportItems(slide, phrase, 2);
+  elements.push(
+    textElement(`${slide.id}-editorial-title`, slide.title, EDITORIAL_MARGIN_X, 62, EDITORIAL_CONTENT_WIDTH, 68, 5, {
+      role: "body",
+      fontSize: 28,
+      fontFamily: theme.fonts.body,
+      color: theme.colors.muted,
+      bold: true,
+    }),
+    shapeElement(`${slide.id}-editorial-accent`, "rect", EDITORIAL_MARGIN_X, 156, 94, 7, 3, theme.colors.accent, theme.colors.accent, 0, 1),
+    textElement(`${slide.id}-editorial-phrase`, phrase, 112, 196, 1056, 270, 5, {
+      role: "title",
+      fontSize: fittedFontSize(phrase, 58, 36, 270),
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.text,
+      bold: true,
+      align: "center",
+      valign: "middle",
+    }),
+  );
+  support.forEach((item, index) => {
+    const width = support.length === 1 ? 720 : 500;
+    const x = support.length === 1 ? 280 : 112 + index * 556;
+    elements.push(
+      shapeElement(`${slide.id}-editorial-support-${index}-rule`, "rect", x, 528, width, 2, 3, index ? theme.colors.accentAlt : theme.colors.accent, index ? theme.colors.accentAlt : theme.colors.accent, 0, 1),
+      textElement(`${slide.id}-editorial-support-${index}`, item, x, 550, width, 66, 5, {
+        role: "body",
+        fontSize: 23,
+        autoFit: false,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.muted,
+        align: "center",
+      }),
+    );
+  });
+  addEditorialFooter(slide, theme, elements, theme.colors.text, theme.colors.muted);
+}
+
+function addEditorialComparisonCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  const rows = comparisonRows(slide).slice(0, 3);
+  const leftLabel = cleanCanvasText(slide.visual?.leftLabel) || "Первая сторона";
+  const rightLabel = cleanCanvasText(slide.visual?.rightLabel) || "Вторая сторона";
+  addEditorialContentTitle(slide, theme, elements);
+  elements.push(
+    textElement(`${slide.id}-editorial-comparison-intro`, slide.thesis, EDITORIAL_MARGIN_X, 158, EDITORIAL_CONTENT_WIDTH, 62, 5, {
+      role: "body",
+      fontSize: 26,
+      fontFamily: theme.fonts.body,
+      color: theme.colors.muted,
+    }),
+    textElement(`${slide.id}-editorial-comparison-left-label`, leftLabel, EDITORIAL_MARGIN_X, 248, 504, 48, 5, {
+      role: "body",
+      fontSize: 28,
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.accent,
+      bold: true,
+    }),
+    textElement(`${slide.id}-editorial-comparison-right-label`, rightLabel, 704, 248, 504, 48, 5, {
+      role: "body",
+      fontSize: 28,
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.accentAlt,
+      bold: true,
+    }),
+    shapeElement(`${slide.id}-editorial-comparison-divider`, "rect", 639, 246, 2, 352, 2, theme.colors.line, theme.colors.line, 0, 1),
+  );
+  rows.forEach((row, index) => {
+    const y = 328 + index * 92;
+    elements.push(
+      textElement(`${slide.id}-editorial-comparison-left-${index}`, row.left, EDITORIAL_MARGIN_X, y, 504, 64, 5, {
+        role: "body",
+        fontSize: 23,
+        autoFit: false,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.text,
+      }),
+      textElement(`${slide.id}-editorial-comparison-right-${index}`, row.right, 704, y, 504, 64, 5, {
+        role: "body",
+        fontSize: 23,
+        autoFit: false,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.text,
+      }),
+    );
+    if (index < rows.length - 1) {
+      elements.push(
+        shapeElement(`${slide.id}-editorial-comparison-left-rule-${index}`, "rect", EDITORIAL_MARGIN_X, y + 72, 504, 1, 2, theme.colors.line, theme.colors.line, 0, 1),
+        shapeElement(`${slide.id}-editorial-comparison-right-rule-${index}`, "rect", 704, y + 72, 504, 1, 2, theme.colors.line, theme.colors.line, 0, 1),
+      );
+    }
+  });
+  addEditorialFooter(slide, theme, elements, theme.colors.text, theme.colors.muted);
+}
+
+function addEditorialDiagramCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  const thesis = slide.thesis || slideBodyText(slide);
+  const groupId = `group:${slide.id}-editorial-visual-field`;
+  addEditorialContentTitle(slide, theme, elements);
+  elements.push(
+    textElement(`${slide.id}-editorial-thesis`, thesis, EDITORIAL_MARGIN_X, 194, 322, 326, 5, {
+      role: "body",
+      fontSize: fittedFontSize(thesis, 34, 26, 326),
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.text,
+      bold: true,
+      valign: "middle",
+    }),
+    { ...shapeElement(`${slide.id}-editorial-visual-field`, "roundRect", 448, 166, 760, 440, 2, theme.colors.surfaceAlt, theme.colors.surfaceAlt, 0, 1), groupId },
+  );
+
+  if (slide.visual?.graph?.nodes.length) {
+    addEditorialGraphVisual(slide, theme, elements, groupId);
+  } else {
+    addEditorialSequenceVisual(slide, theme, elements, groupId);
+  }
+  addEditorialFooter(slide, theme, elements, theme.colors.text, theme.colors.muted);
+}
+
+function addEditorialGraphVisual(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], groupId: string) {
+  const graph = slide.visual?.graph;
+  if (!graph) return;
+  const nodes = graph.nodes.slice(0, 5);
+  const horizontal = graph.layoutDirection !== "TB";
+  const nodeWidth = horizontal ? Math.max(120, (680 - Math.max(0, nodes.length - 1) * EDITORIAL_GUTTER) / Math.max(1, nodes.length)) : 560;
+  const startX = horizontal ? 488 : 548;
+  const startY = horizontal ? 270 : 202;
+  nodes.forEach((node, index) => {
+    const x = horizontal ? startX + index * (nodeWidth + EDITORIAL_GUTTER) : startX;
+    const y = horizontal ? startY : startY + index * 76;
+    elements.push(
+      shapeElement(`${slide.id}-editorial-node-${index}-dot`, "ellipse", x, y, 36, 36, 4, index % 2 ? theme.colors.accentAlt : theme.colors.accent, index % 2 ? theme.colors.accentAlt : theme.colors.accent, 0, 1),
+      textElement(`${slide.id}-editorial-node-${index}-label`, node.label, horizontal ? x : x + 58, horizontal ? y + 58 : y - 2, horizontal ? nodeWidth : 490, horizontal ? 68 : 40, 5, {
+        role: "body",
+        fontSize: 23,
+        autoFit: false,
+        fontFamily: theme.fonts.heading,
+        color: theme.colors.text,
+        bold: true,
+        groupId,
+      }),
+    );
+    if (node.detail && horizontal) {
+      elements.push(textElement(`${slide.id}-editorial-node-${index}-detail`, compactSummaryPoint(node.detail, 9), x, y + 130, nodeWidth, 50, 5, {
+        role: "caption",
+        fontSize: 19,
+        autoFit: false,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.muted,
+        groupId,
+      }));
+    }
+    if (index < nodes.length - 1) {
+      elements.push(shapeElement(
+        `${slide.id}-editorial-node-${index}-connector`,
+        "rect",
+        horizontal ? x + 42 : x + 16,
+        horizontal ? y + 16 : y + 42,
+        horizontal ? Math.max(12, nodeWidth - 52 + EDITORIAL_GUTTER) : 3,
+        horizontal ? 3 : 30,
+        3,
+        theme.colors.line,
+        theme.colors.line,
+        0,
+        1,
+      ));
+    }
+  });
+}
+
+function addEditorialSequenceVisual(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], groupId: string) {
+  const items = uniqueCanvasItems(sequenceItems(slide)).slice(0, 4);
+  const safeItems = items.length >= 2 ? items : editorialSupportItems(slide, slide.thesis, 3);
+  const count = Math.max(1, safeItems.length);
+  const columnWidth = Math.min(188, (672 - Math.max(0, count - 1) * EDITORIAL_GUTTER) / count);
+  const startX = 492;
+  safeItems.forEach((item, index) => {
+    const x = startX + index * (columnWidth + EDITORIAL_GUTTER);
+    elements.push(
+      textElement(`${slide.id}-editorial-step-${index}-number`, String(index + 1).padStart(2, "0"), x, 226, columnWidth, 46, 5, {
+        role: "body",
+        fontSize: 30,
+        fontFamily: theme.fonts.heading,
+        color: index % 2 ? theme.colors.accentAlt : theme.colors.accent,
+        bold: true,
+        groupId,
+      }),
+      shapeElement(`${slide.id}-editorial-step-${index}-rule`, "rect", x, 292, columnWidth, 3, 4, theme.colors.line, theme.colors.line, 0, 1),
+      textElement(`${slide.id}-editorial-step-${index}-text`, compactSummaryPoint(item, 11), x, 326, columnWidth, 176, 5, {
+        role: "body",
+        fontSize: 23,
+        autoFit: false,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.text,
+        groupId,
+      }),
+    );
+  });
+}
+
+function addEditorialSummaryCanvas(
+  slide: Slide,
+  theme: PresentationTheme,
+  elements: CanvasElement[],
+  foreground: string,
+  muted: string,
+) {
+  const conclusion = slide.thesis || slideBodyText(slide);
+  const support = editorialSupportItems(slide, conclusion, 3);
+  elements.push(
+    textElement(`${slide.id}-editorial-title`, slide.title, EDITORIAL_MARGIN_X, 62, 720, 62, 5, {
+      role: "body",
+      fontSize: 28,
+      fontFamily: theme.fonts.body,
+      color: muted,
+      bold: true,
+    }),
+    shapeElement(`${slide.id}-editorial-accent`, "rect", EDITORIAL_MARGIN_X, 154, 96, 7, 3, theme.colors.accent, theme.colors.accent, 0, 1),
+    textElement(`${slide.id}-editorial-conclusion`, conclusion, EDITORIAL_MARGIN_X, 196, 708, 334, 5, {
+      role: "title",
+      fontSize: fittedFontSize(conclusion, 52, 34, 334),
+      fontFamily: theme.fonts.heading,
+      color: foreground,
+      bold: true,
+      valign: "middle",
+    }),
+  );
+  support.forEach((item, index) => {
+    const y = 190 + index * 126;
+    elements.push(
+      shapeElement(`${slide.id}-editorial-support-${index}-rule`, "rect", 884, y, 44, 4, 3, index === 1 ? theme.colors.accentAlt : theme.colors.accent, index === 1 ? theme.colors.accentAlt : theme.colors.accent, 0, 1),
+      textElement(`${slide.id}-editorial-support-${index}`, item, 884, y + 22, 324, 80, 5, {
+        role: "body",
+        fontSize: 24,
+        autoFit: false,
+        fontFamily: theme.fonts.body,
+        color: muted,
+      }),
+    );
+  });
+  addEditorialFooter(slide, theme, elements, foreground, muted);
+}
+
+function addEditorialContentTitle(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  elements.push(
+    shapeElement(`${slide.id}-editorial-accent`, "rect", EDITORIAL_MARGIN_X, 48, 64, 6, 3, theme.colors.accent, theme.colors.accent, 0, 1),
+    textElement(`${slide.id}-editorial-title`, slide.title, EDITORIAL_MARGIN_X, 70, EDITORIAL_CONTENT_WIDTH, 82, 5, {
+      role: "title",
+      fontSize: fittedFontSize(slide.title, 46, 34, 82),
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.text,
+      bold: true,
+    }),
+  );
+}
+
+function addEditorialFooter(
+  slide: Slide,
+  theme: PresentationTheme,
+  elements: CanvasElement[],
+  foreground: string,
+  muted: string,
+  x = EDITORIAL_MARGIN_X,
+  width = EDITORIAL_CONTENT_WIDTH,
+) {
+  elements.push(
+    shapeElement(`${slide.id}-editorial-footer-line`, "rect", x, 668, width, 1, 3, muted, muted, 0, 0.72),
+    textElement(`${slide.id}-editorial-footer-order`, String(slide.order).padStart(2, "0"), x + width - 48, 680, 48, 24, 5, {
+      role: "caption",
+      fontSize: 18,
+      autoFit: false,
+      fontFamily: theme.fonts.body,
+      color: foreground,
+      bold: true,
+      align: "right",
+    }),
+  );
+}
+
+function editorialSupportItems(slide: Slide, reference: string, limit: number) {
+  return uniqueCanvasItems([
+    ...(slide.bullets || []),
+    ...(slide.visual?.items || []).map((item) => [item.label, item.text].filter(Boolean).join(": ")),
+  ])
+    .filter((item) => !isDuplicateCanvasText(item, reference) && !isDuplicateCanvasText(item, slide.title))
+    .map((item) => compactSummaryPoint(item, 12) || item)
+    .slice(0, limit);
+}
+
+function finalizeEditorialElements(elements: CanvasElement[]) {
+  return sortCanvasElements(clampCanvasElements(repairUnsafeGeneratedElements(elements)));
 }
 
 function addPremiumHeroCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], direction?: DesignBriefSlideDirection) {
@@ -2503,6 +3030,13 @@ function backgroundElements(slide: Slide, theme: PresentationTheme): CanvasEleme
 }
 
 export function slideBackgroundStyle(slide: Pick<Slide, "order" | "slideKind">, theme: PresentationTheme): CanvasBackgroundStyle {
+  if (theme.themeId === STUDYDECK_EDITORIAL_THEME_ID) {
+    const color = slide.slideKind === "title" || slide.slideKind === "section" || slide.slideKind === "summary"
+      ? theme.colors.text
+      : theme.colors.background;
+    return { type: "solid", color };
+  }
+
   const variant = slideBackgroundVariant(slide);
   const dark = theme.mood === "dark";
   const configurations: Record<string, { angle: number; blobs: Array<{ x: number; y: number; size: number; color: string; opacity: number; blur: number }> }> = {

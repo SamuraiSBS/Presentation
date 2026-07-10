@@ -760,7 +760,7 @@ describe("generatePresentation fallback behavior", () => {
     expectNoForbiddenSlideText(visibleText);
   });
 
-  it("stores a deterministic dark theme for heavy topics in demo generation", async () => {
+  it("stores the stable StudyDeck editorial theme across topics", async () => {
     process.env.AI_PROVIDER = "";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "";
@@ -779,8 +779,9 @@ describe("generatePresentation fallback behavior", () => {
       [{ id: "src-1", label: "Prompt", type: "PROMPT", excerpt: "Материал о тяжелой теме." }],
     );
 
-    expect(presentation.presentationTheme?.preset).toBe("moody");
-    expect(presentation.presentationTheme?.mood).toBe("dark");
+    expect(presentation.presentationTheme?.themeId).toBe("studydeckEditorial");
+    expect(presentation.presentationTheme?.preset).toBe("minimal");
+    expect(presentation.presentationTheme?.mood).toBe("serious");
   });
 
   it("builds one directed scene per slide without triple layout repetition", async () => {
@@ -810,8 +811,8 @@ describe("generatePresentation fallback behavior", () => {
     const imageDirections = directions.filter((direction) =>
       direction.imageStrategy === "real_photo" || direction.imageStrategy === "generated_illustration",
     );
-    expect(imageDirections.length).toBeGreaterThanOrEqual(Math.ceil(directions.length * 0.2));
-    expect(imageDirections.length).toBeLessThanOrEqual(Math.floor(directions.length * 0.4));
+    expect(imageDirections.length).toBeGreaterThanOrEqual(Math.ceil((directions.length - 1) * 0.5));
+    expect(imageDirections.length).toBeLessThanOrEqual(Math.ceil((directions.length - 1) * 0.7));
     expect(directions.some((direction) => direction.imageStrategy === "diagram")).toBe(true);
     expect(directions.some((direction) => direction.imageStrategy === "none")).toBe(true);
     expect(directions[0]?.sceneTextMode).toBe("hero_phrase");
@@ -1044,7 +1045,8 @@ describe("generatePresentation fallback behavior", () => {
       expect(bodies[2].messages[1].text).toContain("Choose imageStrategy independently for every slide");
       expect(bodies[2].messages[1].text).toContain("Choose sceneTextMode for every slide");
       expect(bodies[2].messages[1].text).toContain("Never request a random stock image");
-      expect(bodies[2].messages[1].text).toContain("20-40 percent");
+      expect(bodies[2].messages[1].text).toContain("50-70 percent");
+      expect(bodies[2].messages[1].text).toContain("Never place text over an image");
       expect(bodies[3].json_object).toBe(true);
       expect(bodies[3].json_schema).toBeUndefined();
       expect(bodies[3].messages[1].text).toContain(presentationText);

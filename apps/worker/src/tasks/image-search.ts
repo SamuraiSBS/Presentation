@@ -30,6 +30,12 @@ export type ImageCandidate = {
   sourceTitle: string;
 };
 
+type ImageCandidateContext = {
+  query?: string;
+  slideTitle?: string;
+  projectTitle?: string;
+};
+
 type DownloadedImage = {
   buffer: Buffer;
   contentType: string;
@@ -98,7 +104,11 @@ export async function enrichPresentationImages(
       let lastDownloadError: unknown;
 
       while (!image) {
-        const candidate = chooseImageCandidate(candidates, usedUrls, usedDomains);
+        const candidate = chooseImageCandidate(candidates, usedUrls, usedDomains, {
+          query,
+          slideTitle: slide.title,
+          projectTitle: project.title,
+        });
         if (!candidate) break;
 
         try {
@@ -161,11 +171,11 @@ export function buildSlideImageQuery(
   const subject = shorten(cleanText(direction?.visualPrompt || slide.visual.description || slide.title), 120);
   const medium = direction?.imageStrategy === "generated_illustration"
     ? "clear editorial illustration"
-    : "authentic documentary photo";
+    : "official documentary photograph";
   const parts = [
     subject,
-    shorten(slide.title, 56),
-    shorten(project.title, 48),
+    shorten(project.title, 72),
+    shorten(slide.title, 64),
     medium,
   ]
     .map(cleanText)
@@ -256,8 +266,14 @@ export function tavilyResponseToImageCandidates(payload: TavilyImageResponse): I
   return uniqueByUrl(candidates);
 }
 
-export function chooseImageCandidate(candidates: ImageCandidate[], usedUrls = new Set<string>(), usedDomains = new Set<string>()) {
-  for (const candidate of candidates) {
+export function chooseImageCandidate(
+  candidates: ImageCandidate[],
+  usedUrls = new Set<string>(),
+  usedDomains = new Set<string>(),
+  context: ImageCandidateContext = {},
+) {
+  const ranked = rankImageCandidates(candidates, context);
+  for (const candidate of ranked) {
     const url = normalizeUrl(candidate.url);
     const domain = url ? new URL(url).hostname.replace(/^www\./, "") : "";
     if (!url || usedUrls.has(url) || (domain && usedDomains.has(domain))) {
@@ -269,7 +285,7 @@ export function chooseImageCandidate(candidates: ImageCandidate[], usedUrls = ne
     return { ...candidate, url };
   }
 
-  for (const candidate of candidates) {
+  for (const candidate of ranked) {
     const url = normalizeUrl(candidate.url);
     if (!url || usedUrls.has(url)) {
       continue;
@@ -280,6 +296,60 @@ export function chooseImageCandidate(candidates: ImageCandidate[], usedUrls = ne
   }
 
   return null;
+}
+
+function rankImageCandidates(candidates: ImageCandidate[], context: ImageCandidateContext) {
+  if (!cleanText(context.query || context.slideTitle || context.projectTitle)) return candidates;
+  return candidates
+    .map((candidate, index) => ({ candidate, index, score: imageCandidateRelevance(candidate, context) }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map((entry) => entry.candidate);
+}
+
+function imageCandidateRelevance(candidate: ImageCandidate, context: ImageCandidateContext) {
+  const queryText = [context.query, context.slideTitle, context.projectTitle].map(cleanText).filter(Boolean).join(" ");
+  const candidateText = [candidate.description, candidate.sourceTitle, safeDecodedUrl(candidate.url)].map(cleanText).filter(Boolean).join(" ");
+  const queryTokens = meaningfulImageTokens(queryText);
+  const candidateTokens = new Set(meaningfulImageTokens(candidateText));
+  const brandTokens = [...new Set(
+    [context.projectTitle, context.query]
+      .map(cleanText)
+      .join(" ")
+      .match(/\b[A-ZА-ЯЁ0-9][A-ZА-ЯЁ0-9-]{1,11}\b/g) || [],
+  )]
+    .map((token) => token.toLowerCase())
+    .filter((token) => token.length >= 2 && !/^\d+$/.test(token) && !GENERIC_BRAND_TOKENS.has(token));
+  const brandMatches = brandTokens.filter((token) => candidateTokens.has(token)).length;
+  const tokenMatches = queryTokens.filter((token) => candidateTokens.has(token)).length;
+  if (brandTokens.length && brandMatches === 0) return 0;
+  return brandMatches * 12 + tokenMatches * 3;
+}
+
+function meaningfulImageTokens(value: string) {
+  return [...new Set(
+    cleanText(value)
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+      .split(/\s+/)
+      .filter((token) => token.length >= 2 && !IMAGE_RELEVANCE_STOP_WORDS.has(token)),
+  )];
+}
+
+const IMAGE_RELEVANCE_STOP_WORDS = new Set([
+  ...GENERIC_VISUAL_PROMPT_WORDS,
+  "official", "documentary", "photograph", "authentic", "scene", "showing", "from", "with", "that", "this",
+  "для", "как", "или", "при", "это", "этот", "эта", "эти", "сцена", "показывает", "фотография",
+]);
+
+const GENERIC_BRAND_TOKENS = new Set(["ai", "api", "ui", "ux", "it", "vr", "ar", "ml", "llm"]);
+
+function safeDecodedUrl(value: string) {
+  try {
+    return decodeURIComponent(new URL(value).pathname.replace(/[\/_-]+/g, " "));
+  } catch {
+    return "";
+  }
 }
 
 async function searchTavilyImages(query: string): Promise<ImageCandidate[]> {

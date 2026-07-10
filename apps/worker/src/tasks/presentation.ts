@@ -25,6 +25,7 @@ import {
   type SlideVisual,
   type MermaidDiagramSpec,
   type Source,
+  PREMIUM_PRESENTATION_THEMES,
   PREMIUM_PRESENTATION_THEME_IDS,
   SLIDE_LAYOUT_DEFINITIONS,
   deckStorySchema,
@@ -1213,8 +1214,8 @@ function buildResearchVocabulary(project: ProjectInput, sources: Source[]) {
 }
 
 function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, narrativePlan: SlideNarrative[]): DesignBrief {
-  const theme = resolvePresentationTheme(project);
-  const themeId = theme.themeId || "academicClean";
+  const theme = PREMIUM_PRESENTATION_THEMES.studydeckEditorial;
+  const themeId = theme.themeId || "studydeckEditorial";
   const hasGroundedVisualContext = researchBrief.facts.some((fact) => fact.confidence !== "low");
   let directions: DesignBrief["slideDirections"] = Array.from({ length: project.slideCount }, (_, index) => {
     const order = index + 1;
@@ -1234,7 +1235,7 @@ function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, n
       "explain";
     const concreteScene = isConcreteVisualScene(sceneText);
     const layoutIntent: DesignBrief["slideDirections"][number]["layoutIntent"] =
-      visualRole === "hero" && concreteScene && hasGroundedVisualContext ? "full_bleed_image" :
+      visualRole === "hero" && concreteScene && hasGroundedVisualContext ? "split_image_text" :
       visualRole === "hero" ? "statement" :
       visualRole === "summary" ? "summary" :
       visualRole === "compare" ? "comparison" :
@@ -1242,12 +1243,12 @@ function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, n
       visualRole === "evidence" ? "evidence_board" :
       visualRole === "quote" ? "quote_spread" :
       visualRole === "problem" || visualRole === "visual_statement" ? "statement" :
-      visualRole === "context" && concreteScene && hasGroundedVisualContext ? "split_image_text" :
+      (visualRole === "context" || visualRole === "explain" || visualRole === "evidence") && concreteScene && hasGroundedVisualContext ? "split_image_text" :
       visualRole === "explain" && (isExplanationHeavyScene(sceneText) || order % 3 === 0) ? "diagram" :
       "cards";
     const imageStrategy: DesignBrief["slideDirections"][number]["imageStrategy"] =
       layoutIntent === "timeline" || layoutIntent === "diagram" || layoutIntent === "comparison" ? "diagram" :
-      (layoutIntent === "full_bleed_image" || layoutIntent === "split_image_text") ? "real_photo" :
+      layoutIntent === "split_image_text" ? "real_photo" :
       "none";
     const sceneTextMode = buildSceneTextMode(order, project.slideCount, visualRole, layoutIntent, imageStrategy);
     return {
@@ -1296,15 +1297,16 @@ function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, n
     typographyIntent: `Use ${theme.fonts.tone} typography: ${theme.fonts.heading} for headings and ${theme.fonts.body} for body text.`,
     rhythm: {
       titleStyle: theme.fonts.tone === "bookish" ? "editorial" : theme.fonts.tone === "strict" ? "academic" : "bold",
-      density: project.slideCount >= 10 ? "medium" : "low",
-      imageFrequency: project.mode === "with_sources" ? "balanced" : "rare",
+      density: "low",
+      imageFrequency: "frequent",
       sectionBreaks: project.slideCount >= 6,
     },
     visualDirection: `${researchBrief.topic}: ${researchBrief.angle}`,
     layoutPrinciples: [
       "Use a title opener, varied content layouts, and a clear summary slide.",
       "Keep visible text short and reserve full explanation for speaker notes.",
-      "Mix images, schemes, diagrams, and text-led slides for a polished university presentation.",
+      "Use a real photo or explanatory diagram on almost every content slide.",
+      "Keep every photo in its own 35-60 percent grid column and never put text over an image.",
       `Support ${Math.max(1, narrativePlan.length)} planned story beats with distinct visual rhythm.`,
     ],
     imageStrategy: "Use concrete visual descriptions only when they are grounded in the topic or source excerpts.",
@@ -1413,8 +1415,9 @@ function balanceDeterministicVisualDirections(
     return diversifySceneTextModes(directions, project, narrativePlan);
   }
 
-  const minimumImages = Math.ceil(directions.length * 0.2);
-  const maximumImages = Math.max(minimumImages, Math.floor(directions.length * 0.4));
+  const visualSlideCount = Math.max(1, directions.length - 1);
+  const minimumImages = Math.ceil(visualSlideCount * 0.5);
+  const maximumImages = Math.max(minimumImages, Math.ceil(visualSlideCount * 0.7));
   const imageStrategies = new Set(["real_photo"]);
   let imageCount = directions.filter((direction) => imageStrategies.has(direction.imageStrategy)).length;
   const balanced = [...directions];
@@ -1434,10 +1437,10 @@ function balanceDeterministicVisualDirections(
 
     balanced[index] = {
       ...direction,
-      layoutIntent: direction.visualRole === "hero" ? "full_bleed_image" : "split_image_text",
+      layoutIntent: "split_image_text",
       imageStrategy: "real_photo",
       sceneTextMode: "visual_labels",
-      visualPrompt: buildDeterministicVisualPrompt(project, plan, "real_photo", direction.visualRole === "hero" ? "full_bleed_image" : "split_image_text"),
+      visualPrompt: buildDeterministicVisualPrompt(project, plan, "real_photo", "split_image_text"),
     };
     imageCount += 1;
   }
@@ -1446,14 +1449,35 @@ function balanceDeterministicVisualDirections(
     const direction = balanced[index];
     if (!imageStrategies.has(direction.imageStrategy)) continue;
     const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, direction.slideOrder);
+    const replacementLayout = direction.visualRole === "hero" ? "statement" as const : "diagram" as const;
+    const replacementStrategy = direction.visualRole === "hero" ? "none" as const : "diagram" as const;
     balanced[index] = {
       ...direction,
-      layoutIntent: direction.visualRole === "hero" ? "statement" : "cards",
-      imageStrategy: "none",
-      sceneTextMode: direction.visualRole === "hero" ? "hero_phrase" : "talk_sentences",
-      visualPrompt: buildDeterministicVisualPrompt(project, plan, "none", direction.visualRole === "hero" ? "statement" : "cards"),
+      layoutIntent: replacementLayout,
+      imageStrategy: replacementStrategy,
+      sceneTextMode: direction.visualRole === "hero" ? "hero_phrase" : "visual_labels",
+      visualPrompt: buildDeterministicVisualPrompt(project, plan, replacementStrategy, replacementLayout),
     };
     imageCount -= 1;
+  }
+
+  if (!balanced.some((direction) => direction.imageStrategy === "diagram")) {
+    const diagramIndex = balanced.findIndex((direction) =>
+      direction.visualRole !== "hero" &&
+      direction.visualRole !== "summary" &&
+      direction.imageStrategy !== "real_photo",
+    );
+    if (diagramIndex >= 0) {
+      const direction = balanced[diagramIndex];
+      const plan = narrativePlan[diagramIndex] || buildFallbackNarrativeItem(project, direction.slideOrder);
+      balanced[diagramIndex] = {
+        ...direction,
+        layoutIntent: "diagram",
+        imageStrategy: "diagram",
+        sceneTextMode: "visual_labels",
+        visualPrompt: buildDeterministicVisualPrompt(project, plan, "diagram", "diagram"),
+      };
+    }
   }
 
   return diversifySceneTextModes(balanced, project, narrativePlan);
@@ -1485,13 +1509,20 @@ function diversifySceneTextModes(
         : replacement === "talk_sentences"
           ? "cards"
           : current.layoutIntent;
-    const nextImageStrategy = "none" as const;
+    const nextImageStrategy = current.imageStrategy;
+    const preservedVisualLayout = current.imageStrategy === "real_photo" || current.imageStrategy === "diagram";
     balanced[index] = {
       ...current,
       sceneTextMode: replacement,
-      layoutIntent: nextLayout,
+      layoutIntent: preservedVisualLayout ? current.layoutIntent : nextLayout,
       imageStrategy: nextImageStrategy,
-      visualPrompt: buildDeterministicVisualPrompt(project, plan, nextImageStrategy, nextLayout),
+      visualPrompt: completeVisualPrompt(
+        project,
+        plan,
+        nextImageStrategy,
+        preservedVisualLayout ? current.layoutIntent : nextLayout,
+        current.visualPrompt,
+      ),
     };
   }
   return balanced;
@@ -2145,15 +2176,7 @@ function buildDesignBriefPrompt(
   deckStory: DeckStory,
   slideTextPlans: SlideTextPlan[],
 ) {
-  const themeIds = [
-    "editorialMagazine",
-    "academicClean",
-    "darkLecture",
-    "timelineDocumentary",
-    "scienceBoard",
-    "startupPitch",
-    "softClassroom",
-  ].join(", ");
+  const themeIds = ["studydeckEditorial"].join(", ");
   return [
     "Create a StudyDeck DesignBrief JSON. You are choosing art direction, not drawing the slides.",
     `User topic and request: ${project.prompt}`,
@@ -2164,34 +2187,28 @@ function buildDesignBriefPrompt(
     `Allowed themeId values: ${themeIds}.`,
     STUDENT_CREATION_BRIEF_LINES,
     "Choose one stable themeId. Do not invent custom theme IDs.",
-    "Theme selection guide:",
-    "- history/date-heavy topic -> timelineDocumentary;",
-    "- biology/chemistry/physics/medicine/ecology -> scienceBoard;",
-    "- business/product/economics/project defense -> startupPitch;",
-    "- serious tech/analysis/dark topics -> darkLecture;",
-    "- university report with no special domain -> academicClean;",
-    "- creative/culture/literature/biography -> editorialMagazine;",
-    "- younger or friendly explanation -> softClassroom.",
+    "Use studydeckEditorial for every deck. The palette is a stable StudyDeck identity; topic variety comes from imagery and composition, not random colors.",
     "Return exactly one slideDirections item for every slide order.",
     "Do not output raw CSS, HTML, coordinates, pixel sizes, or layout code.",
     "Choose visualRole as a scene role: hero, problem, context, explain, compare, sequence, evidence, quote, visual_statement, or summary.",
-    "Choose layoutIntent as an art-direction intent: full_bleed_image, split_image_text, statement, cards, timeline, diagram, comparison, evidence_board, quote_spread, or summary.",
+    "Choose layoutIntent as an art-direction intent: split_image_text, statement, cards, timeline, diagram, comparison, evidence_board, quote_spread, or summary.",
     "Build Gamma-like visual rhythm while preserving university clarity: strong cover, short text-led moments, image-led scenes only when grounded, diagrams for explanation, evidence support, and a strong final takeaway.",
     "Visible slide text should alternate between one strong phrase, 3-4 short sentence-like fragments, and diagram/photo labels. Full explanation belongs in narration and speaker notes.",
-    "Do not repeat the same layoutIntent or sceneTextMode three times in a row. Do not make every slide a card grid.",
+    "Do not repeat the same layoutIntent three times in a row. Do not make every slide a card grid.",
     "Choose sceneTextMode for every slide: hero_phrase, talk_sentences, visual_labels, or takeaway.",
     "Use hero_phrase for the cover, title-like claims, quote spreads, and transition moments; use talk_sentences for 3-4 short spoken beats; use visual_labels for diagrams/photos; use takeaway for the final slide.",
     "Choose imageStrategy independently for every slide: real_photo, diagram, or none. Keep generated_illustration schema-compatible if seen, but do not select it in this version.",
     "Use real_photo only for a concrete, searchable person, place, object, company, event, artwork, historical scene, laboratory object, product, or environment that makes the idea more memorable.",
     "Use diagram for processes, comparisons, causes and effects, concept maps, timelines, structures, and systems. Diagram slides must be understandable from deterministic shapes and labels without an external image.",
     "Use none for strong theses, abstract claims, thinly sourced topics, reflective moments, and the final takeaway. Never request a random stock image merely to fill space.",
-    "Across grounded decks, keep real_photo near 20-40 percent of slides; explanation-heavy slides should prefer diagrams, and images must not appear on every slide.",
-    "Keep density low or medium: brief visible slides, richer speaker notes, and a balanced images_and_diagrams rhythm.",
+    "Across grounded decks, use a real_photo on roughly 50-70 percent of non-summary slides and a diagram on most remaining explanatory slides.",
+    "Every real photo must occupy 35-60 percent of the slide in a separate grid column. Never place text over an image.",
+    "Keep density low: one strong claim and no more than three short supporting points. Full explanation belongs in speaker notes.",
     "For real_photo or generated_illustration, visualPrompt must be a short, concrete, searchable subject describing visible people, place, object, action, or event. Do not write generic phrases such as 'educational presentation image'.",
     "For diagram, visualPrompt must name the specific process, comparison, causal chain, timeline, or structure to draw. For none, describe the text-led emphasis briefly.",
     "Required JSON shape:",
     JSON.stringify({
-      themeId: "academicClean",
+      themeId: "studydeckEditorial",
       mood: "serious",
       audienceFit: "...",
       visualMetaphor: "...",
@@ -2207,7 +2224,7 @@ function buildDesignBriefPrompt(
         {
           slideOrder: 1,
           visualRole: "hero",
-          layoutIntent: "full_bleed_image",
+          layoutIntent: "split_image_text",
           imageStrategy: "real_photo",
           sceneTextMode: "hero_phrase",
           visualPrompt: "...",
@@ -3412,7 +3429,7 @@ function ensureDesignBriefDirections(brief: DesignBrief, project: ProjectInput, 
     });
   }
 
-  const maximumImages = Math.max(1, Math.floor(project.slideCount * 0.4));
+  const maximumImages = Math.max(1, Math.ceil(Math.max(1, project.slideCount - 1) * 0.7));
   let imageCount = 0;
   const slideDirections = normalized.slideDirections.map((direction) => {
     const plan = narrativePlan[direction.slideOrder - 1] || buildFallbackNarrativeItem(project, direction.slideOrder);
@@ -4960,13 +4977,7 @@ const designBriefJsonSchema = {
     themeId: {
       type: "string",
       enum: [
-        "editorialMagazine",
-        "academicClean",
-        "darkLecture",
-        "timelineDocumentary",
-        "scienceBoard",
-        "startupPitch",
-        "softClassroom",
+        "studydeckEditorial",
       ],
     },
     mood: { type: "string", enum: ["dark", "light", "playful", "serious", "neutral"] },

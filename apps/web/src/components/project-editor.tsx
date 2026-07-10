@@ -1070,7 +1070,7 @@ function ReadonlyCanvasElement({ element }: { element: CanvasElement }) {
         className="canvas-element"
         style={{
           ...elementStyle(element),
-          borderRadius: 18,
+          borderRadius: element.id.includes("-editorial-") ? 0 : 18,
           overflow: "hidden",
         }}
       >
@@ -1528,7 +1528,7 @@ function CanvasElementView({
     return (
       <div
         className={`canvas-element ${selected ? "canvas-element-selected" : ""}`}
-        style={{ ...style, borderRadius: 18, overflow: "hidden" }}
+        style={{ ...style, borderRadius: element.id.includes("-editorial-") ? 0 : 18, overflow: "hidden" }}
         onPointerDown={onPointerDown}
       >
         {element.url ? (

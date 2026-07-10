@@ -1819,7 +1819,7 @@ describe("shared contracts", () => {
   });
 
   it("accepts all premium presentation themes", () => {
-    expect(PREMIUM_PRESENTATION_THEME_IDS).toHaveLength(7);
+    expect(PREMIUM_PRESENTATION_THEME_IDS).toHaveLength(8);
 
     for (const themeId of PREMIUM_PRESENTATION_THEME_IDS) {
       const theme = presentationThemeSchema.parse(PREMIUM_PRESENTATION_THEMES[themeId]);
@@ -1829,6 +1829,62 @@ describe("shared contracts", () => {
         expect(color).toMatch(/^#[0-9A-F]{6}$/);
       }
     }
+  });
+
+  it("builds StudyDeck editorial slides with large separate image columns", () => {
+    const theme = PREMIUM_PRESENTATION_THEMES.studydeckEditorial;
+    const slide = presentationSchema.parse({
+      id: "presentation-editorial",
+      title: "Editorial deck",
+      scenario: "university_report",
+      level: "university_student",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Engineering becomes identity"],
+      presentationTheme: theme,
+      speechScript: [{ slideOrder: 2, slideTitle: "Engineering becomes identity", text: "Narration." }],
+      slides: [{
+        id: "slide-editorial",
+        order: 2,
+        title: "Engineering becomes identity",
+        slideKind: "content",
+        layout: "image-focus",
+        thesis: "A clear product idea connects engineering decisions with a recognizable identity.",
+        bullets: ["The image carries context.", "The text keeps one central claim."],
+        visual: {
+          type: "image",
+          image: {
+            url: "https://cdn.example.com/editorial.jpg",
+            objectKey: "projects/project-1/images/editorial.jpg",
+            alt: "Engineering team reviewing a vehicle",
+          },
+        },
+        blocks: [],
+        speakerNotes: "Narration.",
+        timingSeconds: 45,
+        sourceRefs: [],
+      }],
+    }).slides[0];
+
+    const canvas = buildSlideCanvas(slide, theme, {
+      designDirection: {
+        slideOrder: 2,
+        visualRole: "context",
+        layoutIntent: "split_image_text",
+        imageStrategy: "real_photo",
+        sceneTextMode: "visual_labels",
+        visualPrompt: "Engineering team reviewing a vehicle",
+      },
+    });
+    const image = canvas.elements.find((element) => element.id === "slide-editorial-editorial-image");
+
+    expect(canvas.version).toBe(3);
+    expect(canvas.backgroundStyle).toEqual({ type: "solid", color: theme.colors.background });
+    expect(image).toMatchObject({ type: "image", w: 576, h: 720, fit: "cover" });
+    expect((image?.w || 0) / canvas.width).toBeCloseTo(0.45, 2);
+    expect(canvas.elements.some((element) => element.id.endsWith("-backplate"))).toBe(false);
+    expect(auditSlideCanvas(canvas)).toEqual([]);
   });
 
   it("resolves premium themes from themeId and falls back for unknown IDs", () => {
