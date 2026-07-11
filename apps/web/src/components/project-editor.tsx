@@ -17,16 +17,19 @@ import {
   AlignRight,
   Bold,
   BringToFront,
+  Check,
   Copy,
   Eye,
   Image,
   Italic,
+  LayoutTemplate,
   Lock,
   MousePointer2,
   Plus,
   Redo2,
   Replace,
   SendToBack,
+  Settings2,
   Square,
   Trash2,
   Type,
@@ -69,6 +72,9 @@ type ProjectPayload = {
 
 type Tool = "select" | "text" | "shape";
 type ViewMode = "preview" | "edit";
+type SimpleEditorTab = "text" | "image" | "layout";
+type MobileEditorSection = "slides" | "edit" | "preview";
+type SaveStatus = "idle" | "saving" | "saved" | "error";
 type ElementPatch = Partial<CanvasElement> & Record<string, unknown>;
 type DragState =
   | {
@@ -104,6 +110,11 @@ export function ProjectEditor({
   const [selectedId, setSelectedId] = useState("");
   const [tool, setTool] = useState<Tool>("select");
   const [viewMode, setViewMode] = useState<ViewMode>("preview");
+  const [advancedMode, setAdvancedMode] = useState(false);
+  const [simpleTab, setSimpleTab] = useState<SimpleEditorTab>("text");
+  const [mobileSection, setMobileSection] =
+    useState<MobileEditorSection>("preview");
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
   const [undoStack, setUndoStack] = useState<SlideCanvas[]>([]);
@@ -125,9 +136,12 @@ export function ProjectEditor({
     slide?.canvas || (slide && theme ? buildSlideCanvas(slide, theme) : null);
   const selected =
     canvas?.elements.find((element) => element.id === selectedId) || null;
+  const primaryImage = canvas?.elements.find(
+    (element): element is CanvasImageElement => element.type === "image",
+  );
   const canvasWidth = canvas?.width ?? CANVAS_WIDTH;
   const canvasHeight = canvas?.height ?? CANVAS_HEIGHT;
-  const showObjectCanvas = viewMode === "edit";
+  const showObjectCanvas = advancedMode && viewMode === "edit";
   const canUpload =
     project.id !== "demo" || process.env.NEXT_PUBLIC_DEMO_PREVIEW === "false";
 
@@ -137,6 +151,10 @@ export function ProjectEditor({
     setRedoStack([]);
     setTool("select");
     setViewMode("preview");
+    setAdvancedMode(false);
+    setSimpleTab("text");
+    setMobileSection("preview");
+    setSaveStatus("idle");
     setEditingTextId("");
     setImageReplaceTargetId("");
   }, [active]);
@@ -234,6 +252,7 @@ export function ProjectEditor({
     speakerNotes?: string;
   }) {
     if (!slide) return;
+    setSaveStatus("saving");
     const response = await fetch(
       `/api/projects/${project.id}/slides/${slide.id}`,
       {
@@ -243,13 +262,16 @@ export function ProjectEditor({
       },
     );
     if (!response.ok) {
+      setSaveStatus("error");
       setActionError(
         editorError(
           new Error(await response.text()),
           "Не получилось сохранить изменения. Попробуй ещё раз.",
         ),
       );
+      return;
     }
+    setSaveStatus("saved");
   }
 
   function updateLocalSlide(patch: Partial<Slide>) {
@@ -838,11 +860,17 @@ export function ProjectEditor({
           <span className="status">{projectStatusLabel(project.status)}</span>
           <h1>{presentation.title}</h1>
         </div>
+        <SaveIndicator status={saveStatus} />
       </div>
 
       {actionError ? <p className="form-error">{actionError}</p> : null}
 
-      <section className="power-editor" onKeyDown={onKeyDown} tabIndex={0}>
+      <section
+        className="power-editor"
+        data-mobile-section={mobileSection}
+        onKeyDown={onKeyDown}
+        tabIndex={0}
+      >
         <aside className="slide-rail">
           <strong>Слайды</strong>
           <div className="slide-rail-list">
@@ -851,7 +879,11 @@ export function ProjectEditor({
                 className={`slide-thumb ${index === active ? "slide-thumb-active" : ""}`}
                 key={item.id}
                 type="button"
-                onClick={() => setActive(index)}
+                aria-current={index === active ? "step" : undefined}
+                onClick={() => {
+                  setActive(index);
+                  setMobileSection("preview");
+                }}
               >
                 <span>{String(index + 1).padStart(2, "0")}</span>
                 <strong>{item.title}</strong>
@@ -869,8 +901,22 @@ export function ProjectEditor({
               setViewMode("edit");
             }}
             viewMode={showObjectCanvas ? "edit" : "preview"}
-            onPreview={() => setViewMode("preview")}
-            onEdit={() => setViewMode("edit")}
+            advancedMode={advancedMode}
+            onPreview={() => {
+              setViewMode("preview");
+              setMobileSection("preview");
+            }}
+            onOpenAdvanced={() => {
+              setAdvancedMode(true);
+              setViewMode("edit");
+              setMobileSection("edit");
+            }}
+            onCloseAdvanced={() => {
+              setAdvancedMode(false);
+              setViewMode("preview");
+              setSelectedId("");
+              setEditingTextId("");
+            }}
             previewDisabled={false}
             busy={busy}
             canUpload={canUpload}
@@ -985,25 +1031,56 @@ export function ProjectEditor({
               theme={theme}
               scale={canvasScale}
               frameRef={frameRef}
+              onSelectElement={(element) => {
+                if (element.type === "text") setSimpleTab("text");
+                if (element.type === "image") setSimpleTab("image");
+                if (element.type === "text" || element.type === "image") {
+                  setMobileSection("edit");
+                }
+              }}
             />
           )}
 
         </main>
 
         <aside className="properties-panel">
-          <PropertiesPanel
-            selected={showObjectCanvas ? selected : null}
-            slide={slide}
-            onUpdate={updateSelected}
-            onDuplicate={duplicateSelected}
-            onDelete={deleteSelected}
-            onLayerUp={() => moveLayer("up")}
-            onLayerDown={() => moveLayer("down")}
-            onChangeLayout={applySlideLayout}
-            onSaveText={saveSlideText}
-          />
+          {advancedMode ? (
+            <PropertiesPanel
+              selected={showObjectCanvas ? selected : null}
+              slide={slide}
+              onUpdate={updateSelected}
+              onDuplicate={duplicateSelected}
+              onDelete={deleteSelected}
+              onLayerUp={() => moveLayer("up")}
+              onLayerDown={() => moveLayer("down")}
+              onChangeLayout={applySlideLayout}
+              onSaveText={saveSlideText}
+            />
+          ) : (
+            <SimplePropertiesPanel
+              activeTab={simpleTab}
+              slide={slide}
+              image={primaryImage}
+              busy={busy}
+              canUpload={canUpload}
+              onChangeTab={setSimpleTab}
+              onChangeLayout={applySlideLayout}
+              onSaveText={saveSlideText}
+              onUploadClick={() => {
+                setImageReplaceTargetId(primaryImage?.id || "");
+                fileInputRef.current?.click();
+              }}
+            />
+          )}
         </aside>
       </section>
+      <MobileEditorNav
+        section={mobileSection}
+        onChange={(section) => {
+          setMobileSection(section);
+          if (section === "preview") setViewMode("preview");
+        }}
+      />
     </section>
   );
 }
@@ -1013,11 +1090,13 @@ function TemplatePreviewFrame({
   theme,
   scale,
   frameRef,
+  onSelectElement,
 }: {
   slide: Slide;
   theme?: PresentationTheme;
   scale: number;
   frameRef: RefObject<HTMLDivElement | null>;
+  onSelectElement: (element: CanvasElement) => void;
 }) {
   const canvas =
     slide.canvas || (theme ? buildSlideCanvas(slide, theme) : null);
@@ -1044,7 +1123,11 @@ function TemplatePreviewFrame({
             {sortCanvasElements(canvas.elements)
               .filter((element) => element.opacity > 0)
               .map((element) => (
-                <ReadonlyCanvasElement element={element} key={element.id} />
+                <ReadonlyCanvasElement
+                  element={element}
+                  key={element.id}
+                  onSelect={onSelectElement}
+                />
               ))}
           </div>
         </div>
@@ -1053,10 +1136,31 @@ function TemplatePreviewFrame({
   );
 }
 
-function ReadonlyCanvasElement({ element }: { element: CanvasElement }) {
+function ReadonlyCanvasElement({
+  element,
+  onSelect,
+}: {
+  element: CanvasElement;
+  onSelect: (element: CanvasElement) => void;
+}) {
+  const interactive = element.type === "text" || element.type === "image";
+  const interactiveProps = interactive
+    ? {
+        className: "canvas-element canvas-element-preview-action",
+        onClick: () => onSelect(element),
+        onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onSelect(element);
+          }
+        },
+        role: "button",
+        tabIndex: 0,
+      }
+    : { className: "canvas-element" };
   if (element.type === "shape") {
     return (
-      <div className="canvas-element" style={elementStyle(element)}>
+      <div {...interactiveProps} style={elementStyle(element)}>
         <div
           className={`canvas-shape canvas-shape-${element.shape}`}
           style={shapeStyle(element)}
@@ -1067,7 +1171,7 @@ function ReadonlyCanvasElement({ element }: { element: CanvasElement }) {
   if (element.type === "image") {
     return (
       <div
-        className="canvas-element"
+        {...interactiveProps}
         style={{
           ...elementStyle(element),
           borderRadius: element.id.includes("-editorial-") ? 0 : 18,
@@ -1086,7 +1190,8 @@ function ReadonlyCanvasElement({ element }: { element: CanvasElement }) {
   }
   return (
     <div
-      className="canvas-element canvas-text-element"
+      {...interactiveProps}
+      className={`${interactiveProps.className} canvas-text-element`}
       style={elementStyle(element)}
     >
       <div style={textStyle(element)}>{element.text}</div>
@@ -1138,6 +1243,7 @@ type IconName =
   | "alignCenter"
   | "alignRight"
   | "plus"
+  | "settings"
   | "bold"
   | "italic"
   | "underline";
@@ -1162,6 +1268,7 @@ const editorIcons: Record<IconName, LucideIcon> = {
   alignCenter: AlignCenter,
   alignRight: AlignRight,
   plus: Plus,
+  settings: Settings2,
   bold: Bold,
   italic: Italic,
   underline: Underline,
@@ -1172,8 +1279,10 @@ function EditorTopToolbar({
   tool,
   setTool,
   viewMode,
+  advancedMode,
   onPreview,
-  onEdit,
+  onOpenAdvanced,
+  onCloseAdvanced,
   previewDisabled,
   busy,
   canUpload,
@@ -1187,8 +1296,10 @@ function EditorTopToolbar({
   tool: Tool;
   setTool: (tool: Tool) => void;
   viewMode: ViewMode;
+  advancedMode: boolean;
   onPreview: () => void;
-  onEdit: () => void;
+  onOpenAdvanced: () => void;
+  onCloseAdvanced: () => void;
   previewDisabled: boolean;
   busy: boolean;
   canUpload: boolean;
@@ -1212,61 +1323,63 @@ function EditorTopToolbar({
           <span>Просмотр</span>
         </button>
         <button
-          className={viewMode === "edit" ? "tool-active" : ""}
+          className={advancedMode ? "tool-active" : ""}
           type="button"
-          onClick={onEdit}
-          title="Редактировать объекты"
+          onClick={advancedMode ? onCloseAdvanced : onOpenAdvanced}
+          title={advancedMode ? "Вернуться к простой правке" : "Точная правка объектов"}
         >
-          <Icon name="cursor" />
-          <span>Правка</span>
+          <Icon name={advancedMode ? "preview" : "settings"} />
+          <span>{advancedMode ? "Простой режим" : "Точная правка"}</span>
         </button>
       </div>
-      <div className="toolbar-group" aria-label="Инструменты">
-        <button
-          className={
-            tool === "select" && viewMode === "edit" ? "tool-active" : ""
-          }
-          type="button"
-          onClick={() => setTool("select")}
-          title="Выбрать объект"
-        >
-          <Icon name="cursor" />
-          <span>Выбрать</span>
-        </button>
-        <button
-          className={
-            tool === "text" && viewMode === "edit" ? "tool-active" : ""
-          }
-          type="button"
-          onClick={() => setTool("text")}
-          title="Добавить текст"
-        >
-          <Icon name="text" />
-          <span>Текст</span>
-        </button>
-        <button
-          className={
-            tool === "shape" && viewMode === "edit" ? "tool-active" : ""
-          }
-          type="button"
-          onClick={() => setTool("shape")}
-          title="Добавить фигуру"
-        >
-          <Icon name="shape" />
-          <span>Фигура</span>
-        </button>
-        <button
-          type="button"
-          onClick={onUploadClick}
-          disabled={!canUpload || busy}
-          title="Загрузить изображение"
-        >
-          <Icon name="image" />
-          <span>Изображение</span>
-        </button>
-      </div>
+      {advancedMode ? (
+        <div className="toolbar-group" aria-label="Инструменты">
+          <button
+            className={
+              tool === "select" && viewMode === "edit" ? "tool-active" : ""
+            }
+            type="button"
+            onClick={() => setTool("select")}
+            title="Выбрать объект"
+          >
+            <Icon name="cursor" />
+            <span>Выбрать</span>
+          </button>
+          <button
+            className={
+              tool === "text" && viewMode === "edit" ? "tool-active" : ""
+            }
+            type="button"
+            onClick={() => setTool("text")}
+            title="Добавить текст"
+          >
+            <Icon name="text" />
+            <span>Текст</span>
+          </button>
+          <button
+            className={
+              tool === "shape" && viewMode === "edit" ? "tool-active" : ""
+            }
+            type="button"
+            onClick={() => setTool("shape")}
+            title="Добавить фигуру"
+          >
+            <Icon name="shape" />
+            <span>Фигура</span>
+          </button>
+          <button
+            type="button"
+            onClick={onUploadClick}
+            disabled={!canUpload || busy}
+            title="Загрузить изображение"
+          >
+            <Icon name="image" />
+            <span>Изображение</span>
+          </button>
+        </div>
+      ) : null}
       <div className="toolbar-spacer" />
-      <div
+      {advancedMode ? <div
         className="toolbar-group toolbar-compact"
         aria-label="История изменений"
       >
@@ -1288,7 +1401,7 @@ function EditorTopToolbar({
         >
           <Icon name="redo" />
         </button>
-      </div>
+      </div> : null}
       <Link
         className="toolbar-export"
         href={`/projects/${projectId}/export`}
@@ -1853,6 +1966,272 @@ function PropertiesPanel({
         </label>
       </PropertySection>
     </div>
+  );
+}
+
+function SimplePropertiesPanel({
+  activeTab,
+  slide,
+  image,
+  busy,
+  canUpload,
+  onChangeTab,
+  onChangeLayout,
+  onSaveText,
+  onUploadClick,
+}: {
+  activeTab: SimpleEditorTab;
+  slide: Slide;
+  image?: CanvasImageElement;
+  busy: boolean;
+  canUpload: boolean;
+  onChangeTab: (tab: SimpleEditorTab) => void;
+  onChangeLayout: (layout: SlideLayout) => void;
+  onSaveText: (patch: {
+    title?: string;
+    thesis?: string;
+    bullets?: string[];
+    speakerNotes?: string;
+  }) => void;
+  onUploadClick: () => void;
+}) {
+  return (
+    <div className="simple-properties">
+      <div className="simple-properties-header">
+        <div>
+          <strong>Правка слайда</strong>
+          <p>Меняй только то, что нужно перед защитой.</p>
+        </div>
+      </div>
+      <div className="simple-tabs" role="tablist" aria-label="Правка слайда">
+        <SimpleTab
+          active={activeTab === "text"}
+          icon={<Type aria-hidden="true" />}
+          id="text"
+          label="Текст"
+          onClick={() => onChangeTab("text")}
+        />
+        <SimpleTab
+          active={activeTab === "image"}
+          icon={<Image aria-hidden="true" />}
+          id="image"
+          label="Картинка"
+          onClick={() => onChangeTab("image")}
+        />
+        <SimpleTab
+          active={activeTab === "layout"}
+          icon={<LayoutTemplate aria-hidden="true" />}
+          id="layout"
+          label="Макет"
+          onClick={() => onChangeTab("layout")}
+        />
+      </div>
+
+      {activeTab === "text" ? (
+        <div className="simple-tab-panel" role="tabpanel">
+          <label className="field">
+            Заголовок
+            <RichTextField
+              key={`${slide.id}-simple-title`}
+              value={slide.title}
+              testId="slide-title-editor"
+              multiline={false}
+              toolbar={false}
+              onSave={(title) => title && onSaveText({ title })}
+            />
+          </label>
+          <label className="field">
+            Короткий тезис
+            <RichTextField
+              key={`${slide.id}-simple-thesis`}
+              value={slide.thesis}
+              multiline
+              toolbar
+              onSave={(thesis) => onSaveText({ thesis })}
+            />
+          </label>
+          <div className="field">
+            Пункты
+            <div className="bullet-editor-list">
+              {slide.bullets.map((bullet, index) => (
+                <RichTextField
+                  className="bullet-rich-field"
+                  key={`${slide.id}-simple-bullet-${index}`}
+                  value={bullet}
+                  multiline={false}
+                  toolbar={false}
+                  onSave={(value) => {
+                    const bullets = [...slide.bullets];
+                    if (value) bullets[index] = value;
+                    else bullets.splice(index, 1);
+                    onSaveText({ bullets });
+                  }}
+                />
+              ))}
+              {slide.bullets.length < 5 ? (
+                <button
+                  className="property-add-button"
+                  type="button"
+                  onClick={() =>
+                    onSaveText({ bullets: [...slide.bullets, "Новый пункт"] })
+                  }
+                >
+                  <Icon name="plus" />
+                  Добавить пункт
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <details className="speaker-notes-details">
+            <summary>Текст выступления</summary>
+            <RichTextField
+              className="notes-rich-field"
+              key={`${slide.id}-simple-notes`}
+              value={slide.speakerNotes}
+              testId="slide-notes-editor"
+              multiline
+              toolbar
+              onSave={(speakerNotes) => onSaveText({ speakerNotes })}
+            />
+          </details>
+        </div>
+      ) : null}
+
+      {activeTab === "image" ? (
+        <div className="simple-tab-panel" role="tabpanel">
+          {image?.url ? (
+            <img
+              className="simple-image-preview"
+              src={image.url}
+              alt={image.alt || "Изображение на слайде"}
+            />
+          ) : (
+            <div className="simple-empty-state">
+              <Image aria-hidden="true" />
+              <strong>На этом слайде нет изображения</strong>
+              <p>Макет и текст можно изменить во вкладках рядом.</p>
+            </div>
+          )}
+          <button
+            className="button simple-upload-button"
+            type="button"
+            onClick={onUploadClick}
+            disabled={!image || !canUpload || busy}
+          >
+            <Upload aria-hidden="true" />
+            {busy ? "Загружаем…" : "Заменить файлом"}
+          </button>
+          <p className="simple-helper">PNG, JPG или WebP с устройства.</p>
+        </div>
+      ) : null}
+
+      {activeTab === "layout" ? (
+        <div className="simple-tab-panel" role="tabpanel">
+          <p className="simple-helper">Выбери подачу, не меняя содержание.</p>
+          <div className="layout-choice-list">
+            {slideLayoutOptions(slide.slideKind).map((option) => (
+              <button
+                className={`layout-choice ${slide.layout === option.id ? "layout-choice-active" : ""}`}
+                key={option.id}
+                type="button"
+                disabled={!layoutCanRender(option.id, slide)}
+                onClick={() => onChangeLayout(option.id)}
+              >
+                <span className={`layout-choice-preview layout-choice-preview-${option.id}`} aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+                <span>{option.label}</span>
+                {slide.layout === option.id ? <Check aria-label="Выбрано" /> : null}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SimpleTab({
+  active,
+  icon,
+  id,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  icon: ReactNode;
+  id: SimpleEditorTab;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-controls={`simple-editor-${id}`}
+      aria-selected={active}
+      className={active ? "simple-tab simple-tab-active" : "simple-tab"}
+      id={`simple-editor-tab-${id}`}
+      role="tab"
+      type="button"
+      onClick={onClick}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function SaveIndicator({ status }: { status: SaveStatus }) {
+  if (status === "idle") return null;
+  const label =
+    status === "saving"
+      ? "Сохраняем…"
+      : status === "saved"
+        ? "Сохранено"
+        : "Не удалось сохранить";
+  return (
+    <span className={`save-indicator save-indicator-${status}`} role="status">
+      {status === "saved" ? <Check aria-hidden="true" /> : null}
+      {label}
+    </span>
+  );
+}
+
+function MobileEditorNav({
+  section,
+  onChange,
+}: {
+  section: MobileEditorSection;
+  onChange: (section: MobileEditorSection) => void;
+}) {
+  return (
+    <nav className="mobile-editor-nav" aria-label="Навигация редактора">
+      <button
+        className={section === "slides" ? "mobile-editor-nav-active" : ""}
+        type="button"
+        onClick={() => onChange("slides")}
+      >
+        <LayoutTemplate aria-hidden="true" />
+        Слайды
+      </button>
+      <button
+        className={section === "edit" ? "mobile-editor-nav-active" : ""}
+        type="button"
+        onClick={() => onChange("edit")}
+      >
+        <Settings2 aria-hidden="true" />
+        Правка
+      </button>
+      <button
+        className={section === "preview" ? "mobile-editor-nav-active" : ""}
+        type="button"
+        onClick={() => onChange("preview")}
+      >
+        <Eye aria-hidden="true" />
+        Просмотр
+      </button>
+    </nav>
   );
 }
 
