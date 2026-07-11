@@ -1,18 +1,30 @@
 import { existsSync } from "node:fs";
 import JSZip from "jszip";
+import sharp from "sharp";
 import { PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS } from "@studydeck/shared";
 import { describe, expect, it, vi } from "vitest";
-import { createPdf, createPptx, renderPdfHtml } from "./export.js";
+// @ts-expect-error Vitest must use the TypeScript source, not a stale local JS emit.
+import { createPdf, createPptx, fitPptxImage, renderPdfHtml } from "./export.ts";
 
 vi.mock("../storage.js", () => ({
   readObjectBuffer: vi.fn(async () => Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+3MxZ5wAAAABJRU5ErkJggg==",
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
     "base64",
   )),
   putObjectBuffer: vi.fn(),
 }));
 
 describe("createPptx", () => {
+  it("prepares cover and contain images without relying on PptxGenJS sizing", async () => {
+    const data = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+    const cover = await fitPptxImage(data, { x: 0, y: 0, w: 2.5, h: 5 }, "cover");
+    const contain = await fitPptxImage(data, { x: 6.65, y: 0.72, w: 5.95, h: 5.75 }, "contain");
+    const coverData = Buffer.from(cover.data.slice(cover.data.indexOf(",") + 1), "base64");
+
+    await expect(sharp(coverData).metadata()).resolves.toMatchObject({ width: 240, height: 480 });
+    expect(contain).toMatchObject({ x: 6.75, y: 0.72, w: 5.75, h: 5.75 });
+  });
+
   it("creates a wide deck without visible source text", async () => {
     const buffer = await createPptx({
       id: "presentation-1",
@@ -282,7 +294,6 @@ describe("createPptx", () => {
     const slideXml = await zip.file("ppt/slides/slide1.xml")?.async("string");
     const notesXml = await zip.file("ppt/notesSlides/notesSlide1.xml")?.async("string");
 
-    expect(slideXml).toContain("<a:srcRect");
     expect(slideXml).not.toContain("<a:normAutofit");
     expect(slideXml).toMatch(/<a:alpha val="40000"\/>/);
     const mediaNames = Object.keys(zip.files).filter((name) => name.startsWith("ppt/media/") && !zip.files[name].dir);
@@ -293,7 +304,29 @@ describe("createPptx", () => {
       const data = await zip.file(name)?.async("nodebuffer");
       expect(data?.subarray(0, 8).toString("hex"), name).toBe("89504e470d0a1a0a");
     }
+    const pngMetadata = await Promise.all(
+      pngNames.map(async (name) => sharp(await zip.file(name)?.async("nodebuffer")).metadata()),
+    );
+    expect(pngMetadata).toContainEqual(expect.objectContaining({ width: 240, height: 160 }));
     expect(notesXml).toContain("Canvas parity narration");
+  });
+
+  it("preserves image proportions in title and template image regions", async () => {
+    const buffer = await createPptx(legacyImageDeck());
+    const zip = await JSZip.loadAsync(buffer);
+    const titleXml = await zip.file("ppt/slides/slide1.xml")?.async("string");
+    const contentXml = await zip.file("ppt/slides/slide2.xml")?.async("string");
+
+    const mediaNames = Object.keys(zip.files).filter((name) => name.startsWith("ppt/media/") && !zip.files[name].dir);
+    const mediaMetadata = await Promise.all(
+      mediaNames.map(async (name) => sharp(await zip.file(name)?.async("nodebuffer")).metadata()),
+    );
+
+    // The full-bleed image is pre-cropped to the slide ratio before PptxGenJS
+    // receives it. `fitPptxImage` separately verifies contain placement.
+    expect(mediaMetadata).toContainEqual(expect.objectContaining({ width: 1280, height: 720 }));
+    expect(titleXml).not.toContain("<a:srcRect");
+    expect(contentXml).not.toContain('prst="ellipse"');
   });
 
   it("renders the same rich canvas source into PDF HTML", async () => {
@@ -532,6 +565,55 @@ function richCanvasDeck() {
         ],
       },
     })),
+  };
+}
+
+function legacyImageDeck() {
+  const deck = canvasDeck();
+  const [baseSlide] = deck.slides;
+  const image = {
+    url: "https://cdn.example.com/test-image.png",
+    objectKey: "projects/p/slides/legacy-image.png",
+    alt: "A square fixture image",
+    query: "test image",
+    sourceTitle: "Fixture",
+    provider: "tavily" as const,
+    contentType: "image/png",
+    warnings: [],
+  };
+
+  return {
+    ...deck,
+    slideCount: 2,
+    outline: ["Image cover", "Image contain"],
+    speechScript: [
+      { slideOrder: 1, slideTitle: "Image cover", text: "Cover narration." },
+      { slideOrder: 2, slideTitle: "Image contain", text: "Contain narration." },
+    ],
+    slides: [
+      {
+        ...baseSlide,
+        id: "title-image-slide",
+        order: 1,
+        title: "Image cover",
+        slideKind: "title" as const,
+        layout: "hero" as const,
+        canvas: undefined,
+        visual: { ...baseSlide.visual, image },
+        speakerNotes: "Cover narration.",
+      },
+      {
+        ...baseSlide,
+        id: "content-image-slide",
+        order: 2,
+        title: "Image contain",
+        slideKind: "content" as const,
+        layout: "image-focus" as const,
+        canvas: undefined,
+        visual: { ...baseSlide.visual, image },
+        speakerNotes: "Contain narration.",
+      },
+    ],
   };
 }
 

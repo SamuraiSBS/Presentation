@@ -78,7 +78,12 @@ export class ProjectsService {
   async getOwned(userId: string, id: string) {
     const project = await this.prisma.project.findFirst({
       where: { id, userId },
-      include: { sources: true, presentation: true, jobs: { orderBy: { createdAt: "desc" }, take: 1 }, exports: true },
+      include: {
+        sources: true,
+        presentation: true,
+        jobs: { orderBy: { createdAt: "desc" }, take: 1 },
+        exports: { orderBy: { createdAt: "desc" } },
+      },
     });
 
     if (!project) throw new NotFoundException("Project not found");

@@ -122,7 +122,10 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
     const imageData = await readSlideImageData(item);
 
     if (imageData && (item.slideKind === "title" || item.slideKind === "section")) {
-      slide.addImage({ data: imageData, x: 0, y: 0, w: 13.333, h: 7.5 });
+      await addFittedImage(slide, imageData, { x: 0, y: 0, w: WIDE_LAYOUT.width, h: WIDE_LAYOUT.height }, {
+        fit: "cover",
+        altText: item.visual.image?.alt,
+      });
       slide.addShape(pptx.ShapeType.rect, {
         x: 0,
         y: 0,
@@ -160,7 +163,7 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
       });
     } else {
       renderSlideBackground(pptx, slide, item, theme);
-      renderContentSlide(pptx, slide, item, imageData, theme);
+      await renderContentSlide(pptx, slide, item, imageData, theme);
     }
 
     slide.addNotes(item.speakerNotes);
@@ -169,7 +172,7 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
   return pptx.write({ outputType: "nodebuffer" }) as Promise<Buffer>;
 }
 
-function renderContentSlide(
+async function renderContentSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
   slide: any,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
@@ -179,7 +182,8 @@ function renderContentSlide(
   const layout = item.layout;
 
   if (imageData && layout !== "image-focus") {
-    return renderDefaultContentSlide(slide, item, imageData, theme);
+    await renderDefaultContentSlide(slide, item, imageData, theme);
+    return;
   }
 
   if (layout === "statement") return renderStatementSlide(slide, item, theme);
@@ -187,7 +191,10 @@ function renderContentSlide(
   if (layout === "definition") return renderDefinitionSlide(pptx, slide, item, theme);
   if (layout === "timeline" || layout === "process") return renderSequenceSlide(pptx, slide, item, theme);
   if (layout === "comparison" || layout === "two-column") return renderComparisonSlide(pptx, slide, item, theme);
-  if (layout === "image-focus" && imageData) return renderImageFocusSlide(slide, item, imageData, theme);
+  if (layout === "image-focus" && imageData) {
+    await renderImageFocusSlide(slide, item, imageData, theme);
+    return;
+  }
   if (layout === "case-study") return renderThreePanelSlide(pptx, slide, item, ["Ситуация", "Действие", "Результат"], theme);
   if (layout === "question-answer") return renderQuestionAnswerSlide(pptx, slide, item, theme);
   if (layout === "myth-fact") return renderMythFactSlide(pptx, slide, item, theme);
@@ -195,7 +202,7 @@ function renderContentSlide(
   if (layout === "evidence") return renderEvidenceSlide(pptx, slide, item, theme);
   if (layout === "problem-solution") return renderProblemSolutionSlide(pptx, slide, item, theme);
   if (layout === "explain-example") return renderExplainExampleSlide(pptx, slide, item, theme);
-  renderDefaultContentSlide(slide, item, imageData, theme);
+  await renderDefaultContentSlide(slide, item, imageData, theme);
 }
 
 async function renderCanvasSlide(
@@ -206,7 +213,7 @@ async function renderCanvasSlide(
 ) {
   slide.background = { color: pptxColor(canvas.background || theme.colors.background) };
   if (canvas.backgroundStyle?.type === "gradient") {
-    slide.addImage({ data: await canvasBackgroundPngData(canvas), x: 0, y: 0, w: WIDE_LAYOUT.width, h: WIDE_LAYOUT.height });
+    await addFittedImage(slide, await canvasBackgroundPngData(canvas), { x: 0, y: 0, w: WIDE_LAYOUT.width, h: WIDE_LAYOUT.height }, { fit: "cover" });
   }
   for (const element of sortCanvasElements(canvas.elements)) {
     if (element.opacity <= 0) continue;
@@ -275,7 +282,7 @@ function renderCanvasShape(
     rotate: element.rotation,
     line: {
       color: pptxColor(element.stroke),
-      width: element.strokeWidth,
+      width: pixelsToPoints(element.strokeWidth),
       transparency: opacityToTransparency(element.opacity),
     },
   };
@@ -289,24 +296,70 @@ async function renderCanvasImage(slide: any, element: CanvasImageElement) {
   const data = await imageDataForCanvasElement(element);
   if (!data) return;
   const box = canvasBox(element);
-  slide.addImage({
-    data,
-    ...box,
-    sizing: { type: exportImageFit(element, box), ...box },
+  await addFittedImage(slide, data, box, {
+    fit: element.fit,
     rotate: element.rotation,
     transparency: opacityToTransparency(element.opacity),
+    altText: element.alt,
   });
 }
 
-function exportImageFit(
-  element: Pick<CanvasImageElement, "fit" | "sourceWidth" | "sourceHeight">,
-  box: { w: number; h: number },
+async function addFittedImage(
+  slide: any,
+  data: string,
+  box: { x: number; y: number; w: number; h: number },
+  options: {
+    fit: CanvasImageElement["fit"];
+    rotate?: number;
+    transparency?: number;
+    altText?: string;
+  },
 ) {
-  if (!element.sourceWidth || !element.sourceHeight) return element.fit;
-  const imageRatio = element.sourceWidth / element.sourceHeight;
-  const boxRatio = box.w / box.h;
-  const cropFactor = Math.max(imageRatio / boxRatio, boxRatio / imageRatio);
-  return element.fit === "cover" && cropFactor > 2.15 ? "contain" : element.fit;
+  const fitted = await fitPptxImage(data, box, options.fit);
+  slide.addImage({
+    ...fitted,
+    rotate: options.rotate,
+    transparency: options.transparency,
+    altText: options.altText || "",
+  });
+}
+
+export async function fitPptxImage(
+  data: string,
+  box: { x: number; y: number; w: number; h: number },
+  fit: CanvasImageElement["fit"],
+) {
+  try {
+    const commaIndex = data.indexOf(",");
+    if (commaIndex < 0) return { data, ...box };
+    const source = Buffer.from(data.slice(commaIndex + 1), "base64");
+    const metadata = await sharp(source).metadata();
+    if (!metadata.width || !metadata.height) return { data, ...box };
+
+    if (fit === "cover") {
+      const width = Math.max(1, Math.round(box.w * 96));
+      const height = Math.max(1, Math.round(box.h * 96));
+      const fitted = await sharp(source)
+        .resize(width, height, { fit: "cover", position: "centre" })
+        .png()
+        .toBuffer();
+      return { data: `data:image/png;base64,${fitted.toString("base64")}`, ...box };
+    }
+
+    const scale = Math.min(box.w / metadata.width, box.h / metadata.height);
+    const width = metadata.width * scale;
+    const height = metadata.height * scale;
+    return {
+      data,
+      x: box.x + (box.w - width) / 2,
+      y: box.y + (box.h - height) / 2,
+      w: width,
+      h: height,
+    };
+  } catch (error) {
+    logger.warn({ ...errorLogFields(error) }, "could not fit PPTX image; using the original image box");
+    return { data, ...box };
+  }
 }
 
 async function imageDataForCanvasElement(element: CanvasImageElement) {
@@ -599,7 +652,7 @@ function renderComparisonSlide(
   });
 }
 
-function renderImageFocusSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number], imageData: string, theme: ExportTheme) {
+async function renderImageFocusSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number], imageData: string, theme: ExportTheme) {
   renderSlideTitle(slide, item.title, theme, { width: 5.5, fontSize: 28 });
   slide.addText(item.thesis || slideBodyText(item), {
     x: 0.82,
@@ -611,7 +664,10 @@ function renderImageFocusSlide(slide: any, item: ReturnType<typeof presentationS
     color: theme.pptx.muted,
     fit: "shrink",
   });
-  slide.addImage({ data: imageData, x: 6.65, y: 0.72, w: 5.95, h: 5.75, rounding: true });
+  await addFittedImage(slide, imageData, { x: 6.65, y: 0.72, w: 5.95, h: 5.75 }, {
+    fit: "contain",
+    altText: item.visual.image?.alt,
+  });
   const attribution = imageAttribution(item);
   if (attribution) {
     slide.addText(attribution, { x: 6.65, y: 6.58, w: 5.95, h: 0.24, fontFace: theme.fonts.body, fontSize: 7, color: theme.pptx.muted, align: "right", fit: "shrink" });
@@ -751,7 +807,7 @@ function renderExplainExampleSlide(
   slide.addText(items[2] || item.bullets[1] || "Пример помогает понять идею, но не заменяет точное определение.", { x: 6.0, y: 4.5, w: 5.3, h: 1.05, fontFace: theme.fonts.body, fontSize: 14, color: theme.pptx.muted, fit: "shrink" });
 }
 
-function renderDefaultContentSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number], imageData: string | null, theme: ExportTheme) {
+async function renderDefaultContentSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number], imageData: string | null, theme: ExportTheme) {
   const hasSideImage = Boolean(imageData);
   renderSlideTitle(slide, item.title, theme, { centered: !hasSideImage, width: hasSideImage ? 5.5 : 11.9, fontSize: hasSideImage ? 28 : 34 });
 
@@ -770,7 +826,10 @@ function renderDefaultContentSlide(slide: any, item: ReturnType<typeof presentat
   });
 
   if (imageData) {
-    slide.addImage({ data: imageData, x: 6.72, y: 0.68, w: 5.9, h: 5.85, rounding: true });
+    await addFittedImage(slide, imageData, { x: 6.72, y: 0.68, w: 5.9, h: 5.85 }, {
+      fit: "contain",
+      altText: item.visual.image?.alt,
+    });
     const attribution = imageAttribution(item);
     if (attribution) {
       slide.addText(attribution, {
