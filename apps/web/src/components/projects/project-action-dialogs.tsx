@@ -7,6 +7,7 @@ import { formatResetDate } from "@/lib/project-ui";
 import { ApiClientError, useDeleteProject, useDuplicateProject, useUpdateProject } from "@/lib/project-queries";
 import { useLeaveProject } from "@/lib/collaboration-queries";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select } from "@/components/ui/select";
 
 export type ProjectDialogKind = "rename" | "move" | "duplicate" | "delete" | "leave";
 
@@ -52,7 +53,7 @@ export function ProjectActionDialogs({ kind, onOpenChange, project, folders, usa
           <DialogDescription>{descriptionFor(kind, usage)}</DialogDescription>
         </DialogHeader>
         {kind === "rename" || kind === "duplicate" ? <label className="field"><span>Название</span><input className="input" value={title} maxLength={140} onChange={(event) => setTitle(event.target.value)} autoFocus /></label> : null}
-        {kind === "move" || kind === "duplicate" ? <label className="field"><span>Папка</span><select className="input" value={folderId} onChange={(event) => setFolderId(event.target.value)}><option value="">Без папки</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select></label> : null}
+        {kind === "move" || kind === "duplicate" ? <label className="field"><span>Папка</span><Select className="input" value={folderId} onValueChange={setFolderId} ariaLabel="Папка" options={[{ value: "", label: "Без папки" }, ...folders.map((folder) => ({ value: folder.id, label: folder.name }))]} /></label> : null}
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         <div className="dialog-actions"><button className="ghost" type="button" onClick={() => onOpenChange(false)}>Отмена</button><button className={kind === "delete" || kind === "leave" ? "button button-danger" : "button"} type="button" onClick={() => void submit()} disabled={busy || copyBlocked || ((kind === "rename" || kind === "duplicate") && title.trim().length < 2)}>{busy ? "Сохраняем…" : actionFor(kind)}</button></div>
       </DialogContent>

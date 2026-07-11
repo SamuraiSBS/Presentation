@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import type { FolderSummary, UsageSummary } from "@/lib/account-types";
+import { Select } from "@/components/ui/select";
 
 const scopes = [{ value: "all", label: "Все" }, { value: "mine", label: "Мои" }, { value: "shared", label: "Доступные мне" }];
 
@@ -36,9 +37,9 @@ export function ProjectsToolbar({ folders, usage, initialQuery }: { folders: Fol
       </div>
       <label className="projects-search"><Search size={18} aria-hidden="true" /><span className="sr-only">Поиск</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Найти по названию" /></label>
       <div className="projects-filters">
-        <label><span className="sr-only">Статус</span><select defaultValue={initial.get("status") || ""} onChange={(event) => update("status", event.target.value)}><option value="">Все статусы</option><option value="draft">Черновики</option><option value="generating">Создаются</option><option value="ready">Готовые</option><option value="failed">С ошибкой</option></select></label>
-        <label><span className="sr-only">Папка</span><select defaultValue={initial.get("folderId") || ""} onChange={(event) => update("folderId", event.target.value)}><option value="">Все папки</option><option value="none">Без папки</option>{folders.map((folder) => <option value={folder.id} key={folder.id}>{folder.name}</option>)}</select></label>
-        <label><span className="sr-only">Сортировка</span><select defaultValue={initial.get("sort") || "updated_desc"} onChange={(event) => update("sort", event.target.value)}><option value="updated_desc">Недавно изменённые</option><option value="created_desc">Сначала новые</option><option value="title_asc">По названию</option></select></label>
+        <Select ariaLabel="Статус" value={initial.get("status") || ""} onValueChange={(value) => update("status", value)} options={[{ value: "", label: "Все статусы" }, { value: "draft", label: "Черновики" }, { value: "generating", label: "Создаются" }, { value: "ready", label: "Готовые" }, { value: "failed", label: "С ошибкой" }]} />
+        <Select ariaLabel="Папка" value={initial.get("folderId") || ""} onValueChange={(value) => update("folderId", value)} options={[{ value: "", label: "Все папки" }, { value: "none", label: "Без папки" }, ...folders.map((folder) => ({ value: folder.id, label: folder.name }))]} />
+        <Select ariaLabel="Сортировка" value={initial.get("sort") || "updated_desc"} onValueChange={(value) => update("sort", value)} options={[{ value: "updated_desc", label: "Недавно изменённые" }, { value: "created_desc", label: "Сначала новые" }, { value: "title_asc", label: "По названию" }]} />
       </div>
       <span className="toolbar-usage">{usage.used}/{usage.limit} в этом месяце</span>
     </section>

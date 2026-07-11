@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import { RichTextField } from "@/components/editor/rich-text-field";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select } from "@/components/ui/select";
 import type {
   CanvasElement,
   CanvasImageElement,
@@ -2383,20 +2384,13 @@ function ShapeContentProperties({
   return (
     <label className="field">
       Фигура
-      <select
+      <Select
         className="select"
         value={selected.shape}
-        onChange={(event) =>
-          onUpdate({
-            shape: event.target.value as CanvasShapeElement["shape"],
-          } as Partial<CanvasShapeElement>)
-        }
-      >
-        <option value="rect">Прямоугольник</option>
-        <option value="roundRect">Скруглённый прямоугольник</option>
-        <option value="ellipse">Эллипс</option>
-        <option value="line">Линия</option>
-      </select>
+        onValueChange={(value) => onUpdate({ shape: value as CanvasShapeElement["shape"] } as Partial<CanvasShapeElement>)}
+        ariaLabel="Фигура"
+        options={[{ value: "rect", label: "Прямоугольник" }, { value: "roundRect", label: "Скруглённый прямоугольник" }, { value: "ellipse", label: "Эллипс" }, { value: "line", label: "Линия" }]}
+      />
     </label>
   );
 }
@@ -2488,18 +2482,13 @@ function ImageStyleProperties({
   return (
     <label className="field">
       Размещение
-      <select
+      <Select
         className="select"
         value={selected.fit}
-        onChange={(event) =>
-          onUpdate({
-            fit: event.target.value as CanvasImageElement["fit"],
-          } as Partial<CanvasImageElement>)
-        }
-      >
-        <option value="cover">Заполнить рамку</option>
-        <option value="contain">Вписать целиком</option>
-      </select>
+        onValueChange={(value) => onUpdate({ fit: value as CanvasImageElement["fit"] } as Partial<CanvasImageElement>)}
+        ariaLabel="Размещение изображения"
+        options={[{ value: "cover", label: "Заполнить рамку" }, { value: "contain", label: "Вписать целиком" }]}
+      />
     </label>
   );
 }
