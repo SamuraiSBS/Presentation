@@ -6,6 +6,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Queue } from "bullmq";
 import path from "node:path";
 import { type ExportType, planLimits } from "@studydeck/shared";
+import { ProjectAccessService } from "../access/project-access.service.js";
 import { injectTraceContext, withTraceSpan } from "../observability.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -15,6 +16,7 @@ export class ExportsService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     @InjectQueue("exports") private readonly exportsQueue: Queue,
+    private readonly access: ProjectAccessService,
   ) {}
 
   private s3Client?: S3Client;
@@ -25,11 +27,12 @@ export class ExportsService {
       "studydeck.stage": "generation.export",
       "studydeck.export_type": type,
     }, async () => {
-      const project = await this.prisma.project.findFirst({
-        where: { id: projectId, userId },
+      const access = await this.access.requireViewer(userId, projectId);
+      const project = await this.prisma.project.findUnique({
+        where: { id: projectId },
         include: { user: true, presentation: true },
       });
-      if (!project) throw new NotFoundException("Project not found");
+      if (!project || project.userId !== access.project.userId) throw new NotFoundException("Project not found");
       if (!project.presentation) throw new BadRequestException("Generate the presentation before export");
 
       const allowed = planLimits[project.user.planCode].exports;
@@ -41,18 +44,20 @@ export class ExportsService {
         { exportId: created.id, projectId, type, traceContext: injectTraceContext() },
         { attempts: 2 },
       );
+      await this.prisma.export.update({ where: { id: created.id }, data: { queueJobId: queueJob.id } });
       return { ...created, queueJobId: queueJob.id };
     });
   }
 
-  async get(userId: string, exportId: string) {
-    const item = await this.prisma.export.findFirst({ where: { id: exportId, project: { userId } } });
+  async get(userId: string, projectId: string, exportId: string) {
+    await this.access.requireViewer(userId, projectId);
+    const item = await this.prisma.export.findFirst({ where: { id: exportId, projectId } });
     if (!item) throw new NotFoundException("Export not found");
     return item;
   }
 
-  async getDownloadUrl(userId: string, exportId: string) {
-    const item = await this.get(userId, exportId);
+  async getDownloadUrl(userId: string, projectId: string, exportId: string) {
+    const item = await this.get(userId, projectId, exportId);
     if (item.status !== "ready" || !item.objectKey) throw new BadRequestException("Export is not ready");
 
     const url = await getSignedUrl(

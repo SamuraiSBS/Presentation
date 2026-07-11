@@ -4,6 +4,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { ConfigService } from "@nestjs/config";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { planLimits } from "@studydeck/shared";
+import { ProjectAccessService } from "../access/project-access.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 @Injectable()
@@ -13,10 +14,13 @@ export class SourcesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly access: ProjectAccessService,
   ) {}
 
   async upload(userId: string, projectId: string, files: Express.Multer.File[]) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId }, include: { user: true } });
+    const access = await this.access.requireEditor(userId, projectId);
+    const project = await this.prisma.project.findUnique({ where: { id: projectId }, include: { user: true } });
+    if (project && project.userId !== access.project.userId) throw new NotFoundException("Project not found");
     if (!project) throw new NotFoundException("Project not found");
     if (!files.length) throw new BadRequestException("No files uploaded");
 

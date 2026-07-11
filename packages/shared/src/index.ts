@@ -1,5 +1,133 @@
 import { z } from "zod";
 
+export const adminPeriodSchema = z.enum(["today", "7d", "30d", "month", "all", "custom"]);
+export type AdminPeriod = z.infer<typeof adminPeriodSchema>;
+
+export const adminTimeRangeSchema = z.object({
+  period: adminPeriodSchema.default("30d"),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+}).superRefine((value, context) => {
+  if (value.period === "custom" && (!value.from || !value.to)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Для произвольного периода нужны from и to" });
+  }
+});
+export type AdminTimeRange = z.infer<typeof adminTimeRangeSchema>;
+
+export const adminListQuerySchema = z.object({
+  period: adminPeriodSchema.default("30d"),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  search: z.string().trim().max(160).optional(),
+  status: z.string().trim().max(80).optional(),
+  provider: z.string().trim().max(80).optional(),
+  model: z.string().trim().max(160).optional(),
+  plan: z.enum(["free", "student", "pro"]).optional(),
+  category: z.string().trim().max(80).optional(),
+  measurement: z.enum(["provider_reported", "calculated"]).optional(),
+  severity: z.enum(["info", "warn", "error", "critical"]).optional(),
+  service: z.enum(["web", "api", "worker"]).optional(),
+  userId: z.string().trim().max(80).optional(),
+  projectId: z.string().trim().max(80).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  sort: z.string().trim().max(80).optional(),
+  direction: z.enum(["asc", "desc"]).default("desc"),
+});
+export type AdminListQuery = z.infer<typeof adminListQuerySchema>;
+
+export const adminMoneySchema = z.object({
+  source: z.string().nullable(),
+  sourceCurrency: z.string().nullable(),
+  rubAtEvent: z.string().nullable(),
+  rubCurrent: z.string().nullable(),
+  complete: z.boolean(),
+});
+export type AdminMoney = z.infer<typeof adminMoneySchema>;
+
+export const adminMetricSchema = z.object({
+  value: z.string(),
+  previous: z.string().nullable(),
+  changePercent: z.string().nullable(),
+  complete: z.boolean().default(true),
+});
+
+export const adminOverviewSchema = z.object({
+  range: z.object({ from: z.string().datetime().nullable(), to: z.string().datetime(), timeZone: z.literal("Europe/Moscow") }),
+  localAccess: z.boolean(),
+  users: z.object({ total: z.number().int(), new: z.number().int(), active: z.number().int() }),
+  revenue: z.object({ grossRub: z.string(), refundsRub: z.string(), feesRub: z.string(), netRub: z.string(), activeSubscriptions: z.number().int() }),
+  costs: z.object({ totalRubAtEvent: z.string(), totalRubCurrent: z.string(), unknownCount: z.number().int(), trackedSince: z.string().datetime().nullable() }),
+  errors: z.object({ total: z.number().int(), critical: z.number().int(), generationFailureRate: z.string() }),
+  trend: z.array(z.object({ date: z.string(), revenueRub: z.string(), costRub: z.string(), errors: z.number().int() })),
+  incidents: z.array(z.object({ id: z.string(), severity: z.string(), message: z.string(), service: z.string(), occurredAt: z.string().datetime(), fingerprint: z.string() })),
+  failedGenerations: z.array(z.object({ id: z.string(), projectId: z.string(), projectTitle: z.string(), kind: z.string(), error: z.string().nullable(), updatedAt: z.string().datetime() })),
+});
+export type AdminOverview = z.infer<typeof adminOverviewSchema>;
+
+export const adminUserRowSchema = z.object({
+  id: z.string(),
+  name: z.string().nullable(),
+  image: z.string().nullable(),
+  telegramId: z.string().nullable(),
+  telegramUsername: z.string().nullable(),
+  planCode: z.enum(["free", "student", "pro"]),
+  effectivePlanCode: z.enum(["free", "student", "pro"]),
+  subscriptionStatus: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  lastSeenAt: z.string().datetime().nullable(),
+  blockedAt: z.string().datetime().nullable(),
+  projects: z.number().int(),
+  generations: z.number().int(),
+  errors: z.number().int(),
+  aiCostRub: z.string().nullable(),
+  totalCostRub: z.string().nullable(),
+  revenueRub: z.string(),
+  marginRub: z.string().nullable(),
+});
+export type AdminUserRow = z.infer<typeof adminUserRowSchema>;
+
+export const adminUsersResponseSchema = z.object({
+  items: z.array(adminUserRowSchema),
+  page: z.number().int(),
+  pageSize: z.number().int(),
+  total: z.number().int(),
+});
+export type AdminUsersResponse = z.infer<typeof adminUsersResponseSchema>;
+
+export const adminUserDetailSchema = z.object({
+  user: adminUserRowSchema.extend({
+    email: z.string().nullable(),
+    updatedAt: z.string().datetime(),
+    blockReason: z.string().nullable(),
+    planOverride: z.enum(["free", "student", "pro"]).nullable(),
+    planOverrideStartsAt: z.string().datetime().nullable(),
+    planOverrideExpiresAt: z.string().datetime().nullable(),
+    planOverrideReason: z.string().nullable(),
+  }),
+  totals: z.object({ slides: z.number().int(), exports: z.number().int(), payments: z.number().int(), activity: z.number().int() }),
+  projects: z.array(z.object({ id: z.string(), title: z.string(), status: z.string(), slideCount: z.number().int(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() })),
+  generations: z.array(z.object({ id: z.string(), projectId: z.string(), projectTitle: z.string(), kind: z.string(), status: z.string(), progressLabel: z.string(), error: z.string().nullable(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() })),
+  costs: z.array(z.object({ id: z.string(), category: z.string(), provider: z.string(), sourceCost: z.string().nullable(), sourceCurrency: z.string().nullable(), rubCostAtEvent: z.string().nullable(), measurement: z.string(), occurredAt: z.string().datetime() })),
+  payments: z.array(z.object({ id: z.string(), type: z.string(), status: z.string(), grossAmount: z.string(), feeAmount: z.string(), netAmount: z.string(), currency: z.string(), netRubAtEvent: z.string().nullable(), occurredAt: z.string().datetime() })),
+  errors: z.array(z.object({ id: z.string(), severity: z.string(), service: z.string(), message: z.string(), fingerprint: z.string(), occurredAt: z.string().datetime() })),
+  activity: z.array(z.object({ id: z.string(), type: z.string(), occurredAt: z.string().datetime(), projectId: z.string().nullable(), metadata: z.record(z.unknown()).nullable() })),
+  audit: z.array(z.object({ id: z.string(), action: z.string(), reason: z.string().nullable(), occurredAt: z.string().datetime(), actorUserId: z.string() })),
+  sensitiveContentHidden: z.literal(true),
+});
+export type AdminUserDetail = z.infer<typeof adminUserDetailSchema>;
+
+export const adminReasonSchema = z.object({ reason: z.string().trim().min(3).max(500) });
+export const adminPlanOverrideSchema = adminReasonSchema.extend({
+  plan: z.enum(["free", "student", "pro"]),
+  startsAt: z.string().datetime().optional(),
+  expiresAt: z.string().datetime().nullable().optional(),
+});
+export type AdminPlanOverrideInput = z.infer<typeof adminPlanOverrideSchema>;
+
+export const adminActionResultSchema = z.object({ ok: z.literal(true), message: z.string(), auditId: z.string().optional() });
+export type AdminActionResult = z.infer<typeof adminActionResultSchema>;
+
 export const planCodeSchema = z.enum(["free", "student", "pro"]);
 export type PlanCode = z.infer<typeof planCodeSchema>;
 
@@ -25,6 +153,15 @@ export const projectStatusSchema = z.enum([
   "failed",
 ]);
 export type ProjectStatus = z.infer<typeof projectStatusSchema>;
+
+export const projectAccessRoleSchema = z.enum(["owner", "editor", "viewer"]);
+export type ProjectAccessRole = z.infer<typeof projectAccessRoleSchema>;
+
+export const projectMemberRoleSchema = z.enum(["editor", "viewer"]);
+export type ProjectMemberRole = z.infer<typeof projectMemberRoleSchema>;
+
+export const folderColorSchema = z.enum(["orange", "green", "purple", "blue", "neutral"]);
+export type FolderColor = z.infer<typeof folderColorSchema>;
 
 export const jobStatusSchema = z.enum(["queued", "active", "completed", "failed"]);
 export type JobStatus = z.infer<typeof jobStatusSchema>;
@@ -1301,7 +1438,7 @@ function stableThemeHash(value: string) {
 }
 
 export const generationBriefSchema = z.object({
-  audience: z.enum(["university_student"]).default("university_student"),
+  audience: z.enum(["school_student", "university_student"]).default("university_student"),
   speechStyle: z.enum(["easy_professional"]).default("easy_professional"),
   slideDensity: z.enum(["brief_slides_full_speech"]).default("brief_slides_full_speech"),
   visualStrategy: z.enum(["images_and_diagrams"]).default("images_and_diagrams"),
@@ -1320,7 +1457,81 @@ export const createProjectInputSchema = z.object({
 });
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
 
+export const folderNameSchema = z.string().trim().min(1).max(80);
+
+export const createFolderInputSchema = z
+  .object({
+    name: folderNameSchema,
+    color: folderColorSchema.default("orange"),
+  })
+  .strict();
+export type CreateFolderInput = z.infer<typeof createFolderInputSchema>;
+
+export const updateFolderInputSchema = z
+  .object({
+    name: folderNameSchema.optional(),
+    color: folderColorSchema.optional(),
+    sortOrder: z.number().int().min(0).max(1_000_000).optional(),
+  })
+  .strict()
+  .refine((value) => Object.values(value).some((item) => item !== undefined), {
+    message: "At least one folder field is required",
+  });
+export type UpdateFolderInput = z.infer<typeof updateFolderInputSchema>;
+
+const optionalFolderIdSchema = z.string().trim().min(1).max(128).nullable().optional();
+
+export const updateProjectMetadataInputSchema = z
+  .object({
+    title: z.string().trim().min(1).max(140).optional(),
+    folderId: optionalFolderIdSchema,
+  })
+  .strict()
+  .refine((value) => value.title !== undefined || value.folderId !== undefined, {
+    message: "At least one project field is required",
+  });
+export type UpdateProjectMetadataInput = z.infer<typeof updateProjectMetadataInputSchema>;
+
+export const duplicateProjectInputSchema = z
+  .object({
+    title: z.string().trim().min(1).max(140).optional(),
+    folderId: optionalFolderIdSchema,
+  })
+  .strict();
+export type DuplicateProjectInput = z.infer<typeof duplicateProjectInputSchema>;
+
+export const createProjectInvitationInputSchema = z
+  .object({
+    role: projectMemberRoleSchema,
+  })
+  .strict();
+export type CreateProjectInvitationInput = z.infer<typeof createProjectInvitationInputSchema>;
+
+export const updateProjectMemberInputSchema = z
+  .object({
+    role: projectMemberRoleSchema,
+  })
+  .strict();
+export type UpdateProjectMemberInput = z.infer<typeof updateProjectMemberInputSchema>;
+
+const emptyStringToUndefined = (value: unknown) =>
+  typeof value === "string" && value.trim() === "" ? undefined : value;
+
+export const projectListQuerySchema = z
+  .object({
+    scope: z.enum(["all", "mine", "shared"]).default("all"),
+    folderId: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(128).optional()),
+    status: z.preprocess(emptyStringToUndefined, projectStatusSchema.optional()),
+    search: z.preprocess(emptyStringToUndefined, z.string().trim().max(140).optional()),
+    sort: z.enum(["updated_desc", "created_desc", "title_asc"]).default("updated_desc"),
+    cursor: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(500).optional()),
+    limit: z.coerce.number().int().min(1).max(100).default(24),
+  })
+  .strict();
+export type ProjectListQuery = z.infer<typeof projectListQuerySchema>;
+
 export const updateSlideInputSchema = z.object({
+  expectedRevision: z.number().int().min(1),
   title: z.string().min(1).max(160).optional(),
   thesis: z.string().max(360).optional(),
   bullets: z.array(z.string().trim().min(1).max(1000)).max(5).optional(),
@@ -1344,6 +1555,100 @@ export type GeneratePresentationInput = z.infer<typeof generatePresentationInput
 export const exportTypeSchema = z.enum(["pdf", "pptx"]);
 export type ExportType = z.infer<typeof exportTypeSchema>;
 
+export const exportStatusSchema = z.enum(["queued", "processing", "ready", "failed"]);
+export type ExportStatus = z.infer<typeof exportStatusSchema>;
+
+export const isoDateTimeSchema = z
+  .union([z.string().datetime({ offset: true }), z.date()])
+  .transform((value) => (value instanceof Date ? value.toISOString() : value));
+
+export const userIdentitySummarySchema = z.object({
+  id: z.string(),
+  name: z.string().nullable(),
+  image: z.string().nullable(),
+});
+export type UserIdentitySummary = z.infer<typeof userIdentitySummarySchema>;
+
+export const projectSummarySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  status: projectStatusSchema,
+  slideCount: z.number().int().nonnegative(),
+  updatedAt: isoDateTimeSchema,
+  createdAt: isoDateTimeSchema,
+  error: z.string().nullable(),
+  accessRole: projectAccessRoleSchema,
+  owner: userIdentitySummarySchema,
+  folder: z
+    .object({
+      id: z.string(),
+      name: z.string(),
+      color: folderColorSchema,
+    })
+    .nullable(),
+  hasPresentation: z.boolean(),
+  latestExport: z
+    .object({
+      id: z.string(),
+      type: exportTypeSchema,
+      status: exportStatusSchema,
+    })
+    .nullable(),
+  memberCount: z.number().int().nonnegative(),
+});
+export type ProjectSummary = z.infer<typeof projectSummarySchema>;
+
+export const folderSummarySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  color: folderColorSchema,
+  sortOrder: z.number().int(),
+  projectCount: z.number().int().nonnegative(),
+  owner: userIdentitySummarySchema,
+  isShared: z.boolean(),
+});
+export type FolderSummary = z.infer<typeof folderSummarySchema>;
+
+export const projectMemberSchema = z.object({
+  id: z.string(),
+  role: projectMemberRoleSchema,
+  createdAt: isoDateTimeSchema,
+  user: userIdentitySummarySchema.extend({
+    telegramUsername: z.string().nullable(),
+  }),
+});
+export type ProjectMember = z.infer<typeof projectMemberSchema>;
+
+export const usageSummarySchema = z.object({
+  planCode: planCodeSchema,
+  period: z.string().regex(/^\d{4}-\d{2}$/),
+  limit: z.number().int().nonnegative(),
+  used: z.number().int().nonnegative(),
+  remaining: z.number().int().nonnegative(),
+  resetsAt: isoDateTimeSchema,
+  exhausted: z.boolean(),
+});
+export type UsageSummary = z.infer<typeof usageSummarySchema>;
+
+export const dashboardSummarySchema = z.object({
+  user: userIdentitySummarySchema.extend({
+    telegramUsername: z.string().nullable(),
+    planCode: planCodeSchema,
+  }),
+  usage: usageSummarySchema,
+  stats: z.object({
+    presentationsCreated: z.number().int().nonnegative(),
+    slidesCreated: z.number().int().nonnegative(),
+    readyPresentations: z.number().int().nonnegative(),
+    savedHoursMin: z.number().nonnegative(),
+    savedHoursMax: z.number().nonnegative(),
+  }),
+  recentProjects: z.array(projectSummarySchema).max(5),
+  activeProjects: z.array(projectSummarySchema),
+  sharedProjects: z.array(projectSummarySchema).max(5),
+});
+export type DashboardSummary = z.infer<typeof dashboardSummarySchema>;
+
 const READABLE_BODY_FONT_SIZE = 30;
 const READABLE_PLAQUE_FONT_SIZE = 24;
 const MIN_GENERATED_BODY_FONT_SIZE = 22;
@@ -1358,10 +1663,10 @@ const EDITORIAL_GUTTER = 24;
 
 export const planLimits = {
   free: {
-    monthlyPresentations: 3,
+    monthlyPresentations: 10,
     maxSlides: 10,
     maxProjectBytes: 50 * 1024 * 1024,
-    exports: ["pdf"],
+    exports: ["pdf", "pptx"],
   },
   student: {
     monthlyPresentations: 60,

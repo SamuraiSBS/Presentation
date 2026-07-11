@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, FileUp, Search } from "lucide-react";
+import Link from "next/link";
+import { Check, FileUp, GraduationCap, School, Search } from "lucide-react";
+import type { UsageSummary } from "@/lib/account-types";
+import { canCreateProject } from "@/lib/account-types";
+import { formatResetDate } from "@/lib/project-ui";
+import { ApiClientError, apiJson } from "@/lib/project-queries";
 
 const slideOptions = [
   { count: 6, label: "Короткое выступление", description: "5-7 минут" },
@@ -21,18 +26,21 @@ const studentGenerationBrief = {
   exportTarget: "web_and_pptx_pdf",
 } as const;
 
-export function NewProjectForm() {
+export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxSlides: number }) {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [topic, setTopic] = useState("");
   const [slideCount, setSlideCount] = useState(10);
   const [sourceMode, setSourceMode] = useState<"web" | "files">("web");
+  const [audience, setAudience] = useState<"school" | "university">("university");
   const [files, setFiles] = useState<File[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const normalizedTopic = topic.trim();
+  const availableSlideOptions = slideOptions.filter((option) => option.count <= maxSlides);
+  const creationAllowed = canCreateProject(usage);
 
   function nextFromTopic() {
     setError("");
@@ -54,6 +62,10 @@ export function NewProjectForm() {
   }
 
   async function createProjectAndNarration() {
+    if (!creationAllowed) {
+      setError(`Лимит исчерпан. Новую презентацию можно создать ${formatResetDate(usage)}.`);
+      return;
+    }
     if (sourceMode === "files" && !files.length) {
       setError("Добавь хотя бы один файл или выбери поиск источников в интернете.");
       return;
@@ -63,34 +75,28 @@ export function NewProjectForm() {
     setError("");
 
     try {
-      const createResponse = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+      const project = await apiJson<{ id: string }>("/api/projects", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
           title: projectTitleFromTopic(normalizedTopic),
-          prompt: studentPrompt(normalizedTopic, slideCount),
-          scenario: "university_report",
-          level: "university_student",
-          mode: sourceMode === "web" ? "with_sources" : "without_sources",
+          prompt: studentPrompt(normalizedTopic, slideCount, audience),
+          scenario: audience === "school" ? "school_report" : "university_report",
+          level: audience === "school" ? "school" : "university_student",
+          mode: sourceMode === "web" ? "with_sources" : "fast_draft",
           slideCount,
-          generationBrief: studentGenerationBrief,
-        }),
+          generationBrief: { ...studentGenerationBrief, audience: audience === "school" ? "school_student" : "university_student" },
+        })
       });
-      if (!createResponse.ok) throw new Error(await createResponse.text());
-      const project = await createResponse.json();
 
       if (sourceMode === "files" && files.length) {
         const uploadBody = new FormData();
         files.forEach((file) => uploadBody.append("files", file));
-        const uploadResponse = await fetch(`/api/projects/${project.id}/uploads`, { method: "POST", body: uploadBody });
-        if (!uploadResponse.ok) throw new Error(await uploadResponse.text());
+        await apiJson(`/api/projects/${project.id}/uploads`, { method: "POST", body: uploadBody });
       }
 
-      const narrationResponse = await fetch(`/api/projects/${project.id}/narration`, { method: "POST" });
-      if (!narrationResponse.ok) throw new Error(await narrationResponse.text());
+      await apiJson(`/api/projects/${project.id}/narration`, { method: "POST" });
       router.push(`/projects/${project.id}/script`);
     } catch (err) {
-      setError(err instanceof Error && /[А-Яа-яЁё]/.test(err.message) ? err.message : "Не получилось начать работу. Попробуй ещё раз.");
+      setError(err instanceof ApiClientError ? err.message : "Не получилось начать работу. Попробуй ещё раз.");
     } finally {
       setBusy(false);
     }
@@ -98,6 +104,7 @@ export function NewProjectForm() {
 
   return (
     <section className="wizard panel new-workspace" aria-label="Создание презентации">
+      {!creationAllowed ? <div className="usage-blocked" role="alert"><strong>Лимит на этот месяц исчерпан</strong><span>Создание снова откроется {formatResetDate(usage)}. Существующие презентации можно редактировать и экспортировать.</span><Link className="ghost" href="/projects">Открыть презентации</Link></div> : null}
       <nav className="wizard-progress" aria-label="Шаги создания презентации">
         {[
           { label: "Тема", complete: Boolean(normalizedTopic) },
@@ -142,9 +149,14 @@ export function NewProjectForm() {
                   }}
                 />
               </label>
+              <fieldset className="audience-choice">
+                <legend>Для какого уровня?</legend>
+                <button className={audience === "school" ? "audience-option audience-option-active" : "audience-option"} type="button" aria-pressed={audience === "school"} onClick={() => setAudience("school")}><School size={19} /><span><strong>Школа</strong><small>Понятно и по возрасту</small></span></button>
+                <button className={audience === "university" ? "audience-option audience-option-active" : "audience-option"} type="button" aria-pressed={audience === "university"} onClick={() => setAudience("university")}><GraduationCap size={19} /><span><strong>Вуз</strong><small>Академично, но ясно</small></span></button>
+              </fieldset>
             </div>
             <div className="actions action-row">
-              <button className="button" type="button" onClick={nextFromTopic}>
+              <button className="button" type="button" onClick={nextFromTopic} disabled={!creationAllowed}>
                 Продолжить
               </button>
             </div>
@@ -159,7 +171,7 @@ export function NewProjectForm() {
                 <p className="muted">По умолчанию выбрали оптимальный объём для обычного выступления.</p>
               </div>
               <div className="slide-count-options" role="radiogroup" aria-label="Количество слайдов">
-                {slideOptions.map((option) => (
+                {availableSlideOptions.map((option) => (
                   <button
                     className={`choice-button ${slideCount === option.count ? "choice-button-active" : ""}`}
                     key={option.count}
@@ -278,7 +290,7 @@ export function NewProjectForm() {
               <button className="ghost" type="button" onClick={() => setStep(1)} disabled={busy}>
                 Назад
               </button>
-              <button className="button" type="button" onClick={createProjectAndNarration} disabled={busy}>
+              <button className="button" type="button" onClick={createProjectAndNarration} disabled={busy || !creationAllowed}>
                 {busy ? "Готовим текст..." : "Подготовить текст"}
               </button>
             </div>
@@ -297,11 +309,14 @@ function projectTitleFromTopic(topic: string) {
   return `${normalized.slice(0, projectTitleLimit - 3).trimEnd()}...`;
 }
 
-function studentPrompt(topic: string, slideCount: number) {
+function studentPrompt(topic: string, slideCount: number, audience: "school" | "university") {
+  const audienceCopy = audience === "school"
+    ? "школьную презентацию с понятными формулировками, подходящими для выступления перед классом"
+    : "академическую, но лёгкую для устного выступления студенческую презентацию";
   return [
-    `Подготовь академическую, но легкую для устного выступления студенческую презентацию на ${slideCount} слайдов по теме: ${topic}.`,
+    `Подготовь ${audienceCopy} на ${slideCount} слайдов по теме: ${topic}.`,
     "Слайды должны быть короткими и визуально аккуратными: один сильный тезис, минимум текста, изображения, схемы или диаграммы там, где они помогают объяснению.",
-    "Основное объяснение перенеси в заметки докладчика и текст выступления: он должен звучать профессионально, понятно и естественно для студента университета.",
+    audience === "school" ? "Основное объяснение перенеси в заметки докладчика: текст должен звучать естественно для школьника." : "Основное объяснение перенеси в заметки докладчика: текст должен звучать профессионально и естественно для студента.",
     "Результат должен одинаково хорошо смотреться в веб-превью и в экспорте PPTX/PDF.",
   ].join(" ");
 }

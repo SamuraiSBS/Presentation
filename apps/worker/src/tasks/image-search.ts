@@ -3,6 +3,7 @@ import type { DesignBriefSlideDirection, PresentationDocument, SlideVisualImage 
 import sharp from "sharp";
 import { captureGenerationError, errorLogFields, logger } from "../observability.js";
 import { putObjectBuffer } from "../storage.js";
+import { currentUsageContext, recordCostEvent } from "../usage-ledger.js";
 
 type ProjectInput = {
   id: string;
@@ -116,6 +117,17 @@ export async function enrichPresentationImages(
           const hash = crypto.createHash("sha1").update(candidate.url).digest("hex").slice(0, 12);
           const objectKey = `projects/${project.id}/images/slide-${slide.order}-${hash}.${downloaded.extension}`;
           await putObject(objectKey, downloaded.buffer, downloaded.contentType);
+          const usage = currentUsageContext();
+          await recordCostEvent({
+            idempotencyKey: crypto.createHash("sha256").update(`${usage?.generationJobId || usage?.queueJobId || project.id}:storage:${objectKey}`).digest("hex"),
+            category: "storage",
+            provider: process.env.S3_ENDPOINT?.includes("localhost") || process.env.S3_ENDPOINT?.includes("minio") ? "minio" : "object_storage",
+            quantity: String(downloaded.byteSize ?? downloaded.buffer.length),
+            unit: "stored_byte_month",
+            unitPrice: process.env.STORAGE_PRICE_USD_PER_BYTE_MONTH,
+            currency: "USD",
+            measurement: "calculated",
+          });
 
           image = {
             url: candidate.url,
@@ -379,6 +391,18 @@ async function searchTavilyImages(query: string): Promise<ImageCandidate[]> {
   if (!response.ok) {
     throw new Error(`Tavily image search failed: ${response.status} ${await response.text()}`);
   }
+
+  const usage = currentUsageContext();
+  await recordCostEvent({
+    idempotencyKey: crypto.createHash("sha256").update(`${usage?.generationJobId || usage?.queueJobId || "unknown"}:tavily:image:${query}`).digest("hex"),
+    category: "image_search",
+    provider: "tavily",
+    quantity: "1",
+    unit: "api_credit",
+    unitPrice: process.env.TAVILY_CREDIT_PRICE_USD,
+    currency: "USD",
+    measurement: "calculated",
+  });
 
   return tavilyResponseToImageCandidates((await response.json()) as TavilyImageResponse);
 }

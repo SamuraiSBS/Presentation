@@ -1,39 +1,155 @@
-const guestUserId = process.env.TEMP_USER_ID || "local-user";
-const demoPreviewEnabled = process.env.NEXT_PUBLIC_DEMO_PREVIEW !== "false";
+import "server-only";
 
-export async function requireUserId() {
-  return guestUserId;
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth-options";
+
+export type ApiErrorBody = {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+};
+
+export class InternalApiError extends Error {
+  readonly status: number;
+  readonly body: ApiErrorBody;
+
+  constructor(status: number, body: ApiErrorBody) {
+    super(body.message);
+    this.name = "InternalApiError";
+    this.status = status;
+    this.body = body;
+  }
 }
 
-export async function internalFetch(path: string, init: RequestInit = {}) {
-  if (demoPreviewEnabled && init.method !== "POST") {
+export type InternalApiResponse<T> = {
+  data: T;
+  status: number;
+  headers: Headers;
+};
+
+export async function requireUserId(): Promise<string> {
+  const session = await getServerSession(authOptions);
+  if (session?.user?.id) return session.user.id;
+
+  // This is deliberately server-only. It is useful for a local production-like
+  // container too, but can only be enabled by the exact private env flag.
+  if (process.env.ALLOW_DEV_AUTH === "true") {
+    return process.env.TEMP_USER_ID?.trim() || "local-user";
+  }
+
+  throw new InternalApiError(401, {
+    code: "UNAUTHENTICATED",
+    message: "Нужно войти в аккаунт",
+  });
+}
+
+export async function internalRequest<T = unknown>(
+  path: string,
+  init: RequestInit = {},
+): Promise<InternalApiResponse<T>> {
+  const method = (init.method || "GET").toUpperCase();
+  const demoPreviewEnabled = process.env.NEXT_PUBLIC_DEMO_PREVIEW === "true";
+
+  if (demoPreviewEnabled && method === "GET" && path === "/projects/demo") {
     const { demoProject } = await import("./demo-project");
-
-    if (path === "/projects") {
-      return [demoProject];
-    }
-
-    if (path === "/projects/demo") {
-      return demoProject;
-    }
+    return { data: demoProject as T, status: 200, headers: new Headers() };
   }
 
   const userId = await requireUserId();
-  const baseUrl = process.env.INTERNAL_API_URL || "http://localhost:4000";
+  const baseUrl = (process.env.INTERNAL_API_URL || "http://localhost:4000").replace(/\/$/, "");
+  const headers = new Headers(init.headers);
+  headers.set("x-user-id", userId);
+  headers.set("x-internal-token", process.env.INTERNAL_API_TOKEN || "");
+
   const response = await fetch(`${baseUrl}/v1${path}`, {
     ...init,
+    method,
     cache: "no-store",
-    headers: {
-      ...(init.headers || {}),
-      "x-user-id": userId,
-      "x-internal-token": process.env.INTERNAL_API_TOKEN || "",
-    },
+    headers,
   });
 
+  const data = await readResponseBody(response);
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(body || `Internal API failed with ${response.status}`);
+    throw new InternalApiError(response.status, normalizeApiError(response.status, data));
   }
 
-  return response.json();
+  return { data: data as T, status: response.status, headers: response.headers };
+}
+
+export async function internalFetch<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+  return (await internalRequest<T>(path, init)).data;
+}
+
+export function normalizeUnknownApiError(error: unknown): InternalApiError {
+  if (error instanceof InternalApiError) return error;
+  return new InternalApiError(500, {
+    code: "INTERNAL_ERROR",
+    message: "Сервис временно недоступен. Попробуйте ещё раз.",
+  });
+}
+
+async function readResponseBody(response: Response): Promise<unknown> {
+  if (response.status === 204) return null;
+  const text = await response.text();
+  if (!text) return null;
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("json") || /^[\[{]/.test(text.trim())) {
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      // Fall through to the safe text mapping below.
+    }
+  }
+  return text;
+}
+
+function normalizeApiError(status: number, value: unknown): ApiErrorBody {
+  if (isRecord(value)) {
+    const details = isRecord(value.details) ? value.details : undefined;
+    const code = typeof value.code === "string" ? value.code : statusCode(status);
+    const message = readableMessage(value.message, status);
+    return { code, message, ...(details ? { details } : {}) };
+  }
+
+  return {
+    code: statusCode(status),
+    message: readableMessage(value, status),
+  };
+}
+
+function readableMessage(value: unknown, status: number): string {
+  const candidate = Array.isArray(value)
+    ? value.find((item): item is string => typeof item === "string")
+    : typeof value === "string"
+      ? value
+      : undefined;
+
+  if (candidate && /[А-Яа-яЁё]/.test(candidate) && !/<[^>]+>/.test(candidate)) {
+    return candidate.slice(0, 500);
+  }
+
+  const defaults: Record<number, string> = {
+    400: "Проверьте введённые данные",
+    401: "Нужно войти в аккаунт",
+    403: "Для этого действия не хватает прав",
+    404: "Запрошенные данные не найдены",
+    409: "Данные изменились. Обновите страницу и попробуйте снова.",
+    429: "Лимит на этот месяц исчерпан",
+  };
+  return defaults[status] || "Сервис временно недоступен. Попробуйте ещё раз.";
+}
+
+function statusCode(status: number) {
+  return ({
+    400: "BAD_REQUEST",
+    401: "UNAUTHENTICATED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    409: "CONFLICT",
+    429: "TOO_MANY_REQUESTS",
+  } as Record<number, string>)[status] || "INTERNAL_ERROR";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

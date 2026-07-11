@@ -4,6 +4,8 @@ import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentation
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-node";
 import pino from "pino";
+import crypto from "node:crypto";
+import { getPrisma } from "./prisma.js";
 
 type CaptureContext = {
   projectId?: string;
@@ -172,6 +174,25 @@ function captureWorkerError(error: unknown, operation: "generation" | "export", 
     jobId: context.jobId ? String(context.jobId) : undefined,
     ...errorLogFields(error),
   }, "worker operation failed");
+
+  const message = redactLogString(error instanceof Error ? error.message : String(error || "Worker operation failed"));
+  const errorClass = error instanceof Error ? error.name : typeof error;
+  const fingerprint = crypto.createHash("sha256").update(`worker:${operation}:${context.stage || "unknown"}:${errorClass}:${message.slice(0, 120)}`).digest("hex");
+  void getPrisma().operationalEvent.create({ data: {
+    service: "worker",
+    severity: "error",
+    category: `${operation}_error`,
+    operation,
+    stage: context.stage,
+    projectId: context.projectId,
+    jobId: context.jobId ? String(context.jobId) : undefined,
+    exportId: context.exportId,
+    message,
+    errorClass,
+    fingerprint,
+    occurredAt: new Date(),
+    expiresAt: new Date(Date.now() + 90 * 86_400_000),
+  } }).catch((persistError) => logger.warn({ ...errorLogFields(persistError) }, "operational event could not be persisted"));
 
   if (!initialized) return;
 

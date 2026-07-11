@@ -1,11 +1,5 @@
-import { NextResponse } from "next/server";
-import { internalFetch } from "@/lib/internal-api";
+import { proxyInternalRequest } from "@/lib/internal-api-route";
 
 export async function POST(request: Request) {
-  const result = await internalFetch("/billing/checkout", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(await request.json()),
-  });
-  return NextResponse.json(result);
+  return proxyInternalRequest(request, "/billing/checkout", { includeSearch: false });
 }

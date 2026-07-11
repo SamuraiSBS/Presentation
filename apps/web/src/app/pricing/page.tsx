@@ -1,29 +1,17 @@
 import Link from "next/link";
-import { CheckoutButton } from "@/components/checkout-button";
-import { Check, Sparkles } from "lucide-react";
+import { Check, Clock3, Folder, Presentation, Share2 } from "lucide-react";
+
+const features = ["10 новых презентаций в календарный месяц", "Экспорт в PDF и PPTX", "Папки одного уровня без лишней вложенности", "Совместные проекты с ролями редактора и зрителя"];
 
 export default function PricingPage() {
-  const plans = [
-    ["Бесплатный", "$0", "3 презентации в месяц", "До 10 слайдов", "Экспорт в PDF"],
-    ["Студенческий", "$9", "60 презентаций в месяц", "До 14 слайдов", "PDF и PPTX"],
-    ["Для преподавателя", "$19", "200 презентаций в месяц", "До 20 слайдов", "Приоритетная очередь"],
-  ];
-
   return (
-    <main className="page">
-      <h1 className="page-title">Тарифы</h1>
-      <p className="lead">Выбери, сколько презентаций тебе нужно. Начать можно бесплатно.</p>
-      <section className="grid">
-        {plans.map(([name, price, ...features]) => (
-          <article className={name === "Студенческий" ? "card pricing-card pricing-card-featured" : "card pricing-card"} key={name}>
-            {name === "Студенческий" ? <span className="recommended"><Sparkles aria-hidden="true" size={15} />Для учёбы</span> : null}
-            <h2>{name}</h2>
-            <div className="price"><strong>{price}</strong><span className="muted">/мес.</span></div>
-            <div className="plan-features">{features.map((feature) => <p className="muted" key={feature}><Check aria-hidden="true" size={17} />{feature}</p>)}</div>
-            {name === "Бесплатный" ? <Link className="ghost" href="/new">Попробовать бесплатно</Link> : <CheckoutButton plan={name === "Для преподавателя" ? "pro" : "student"} />}
-          </article>
-        ))}
+    <main className="page pricing-page account-page">
+      <header className="pricing-header"><p className="account-kicker">Тариф</p><h1 className="page-title">Всё нужное для учёбы — бесплатно</h1><p className="lead">На старте StudyDeck работает без оплаты и банковской карты.</p></header>
+      <section className="free-plan-card">
+        <div className="free-plan-main"><span className="recommended">Текущий тариф</span><h2>Бесплатный</h2><p className="free-price"><strong>0 ₽</strong><span>навсегда на старте</span></p><div className="plan-features">{features.map((feature) => <p key={feature}><Check size={18} />{feature}</p>)}</div><Link className="button" href="/new">Создать презентацию</Link></div>
+        <aside className="plan-notes"><div><Presentation size={21} /><span><strong>Лимит обновляется</strong>1-го числа по Москве</span></div><div><Folder size={21} /><span><strong>Работы сохраняются</strong>после исчерпания лимита</span></div><div><Share2 size={21} /><span><strong>Совместные проекты</strong>считаются владельцу</span></div></aside>
       </section>
+      <section className="coming-plan"><Clock3 size={22} /><div><h2>Расширенные тарифы появятся позже</h2><p>Оплата пока отключена. Мы сообщим о дополнительных возможностях отдельно.</p></div><span>Скоро</span></section>
     </main>
   );
 }

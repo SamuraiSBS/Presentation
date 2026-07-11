@@ -37,9 +37,13 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
   const document = project.presentation?.document;
   const speechItems = useMemo(() => speechItemsFromDocument(document), [document]);
   const latestPptx = useMemo(() => (project.exports || []).find((item) => item.type === "pptx"), [project.exports]);
+  const latestPdf = useMemo(() => (project.exports || []).find((item) => item.type === "pdf"), [project.exports]);
   const exportJob = useExportJob(project.id, latestPptx && isActiveExportStatus(latestPptx.status) ? latestPptx.id : undefined);
+  const pdfExportJob = useExportJob(project.id, latestPdf && isActiveExportStatus(latestPdf.status) ? latestPdf.id : undefined);
   const livePptx = exportJob.data && latestPptx?.id === exportJob.data.id ? exportJob.data : latestPptx;
+  const livePdf = pdfExportJob.data && latestPdf?.id === pdfExportJob.data.id ? pdfExportJob.data : latestPdf;
   const pptxPending = isActiveExportStatus(livePptx?.status);
+  const pdfPending = isActiveExportStatus(livePdf?.status);
 
   async function startPptxExport() {
     setError("");
@@ -47,6 +51,15 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
       await requestExport.mutateAsync("pptx");
     } catch {
       setError("Не удалось начать подготовку PPTX. Попробуйте ещё раз.");
+    }
+  }
+
+  async function startPdfExport() {
+    setError("");
+    try {
+      await requestExport.mutateAsync("pdf");
+    } catch {
+      setError("Не удалось начать подготовку PDF. Попробуйте ещё раз.");
     }
   }
 
@@ -105,7 +118,7 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
         <TabsContent value="presentation">
           <div className="export-stage">
             <div className="export-stage-main">
-              <StageHeading icon={<Presentation size={28} />} step="PPTX" title="Скачайте презентацию" description="Файл откроется в PowerPoint, Keynote и других редакторах." />
+              <StageHeading icon={<Presentation size={28} />} step="PDF + PPTX" title="Скачайте презентацию" description="PPTX можно редактировать, PDF удобно отправить или распечатать." />
               {livePptx && pptxPending ? (
                 <div className="export-live-status" role="status" aria-live="polite">
                   <div className="export-live-row">
@@ -132,6 +145,16 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
                   <Button className="export-primary-action" data-testid="export-pptx-action" type="button" onClick={startPptxExport} disabled={requestExport.isPending || pptxPending}>
                     {requestExport.isPending || pptxPending ? <LoaderCircle className="spin" size={19} /> : livePptx?.status === "failed" ? <RefreshCw size={19} /> : <Presentation size={19} />}
                     {pptxPending ? "Готовим PPTX" : livePptx?.status === "failed" ? "Попробовать ещё раз" : "Подготовить PPTX"}
+                  </Button>
+                )}
+                {livePdf?.status === "ready" ? (
+                  <Button variant="secondary" type="button" onClick={() => downloadPresentation(livePdf)}>
+                    <Download size={19} aria-hidden="true" />Скачать PDF
+                  </Button>
+                ) : (
+                  <Button variant="secondary" type="button" onClick={startPdfExport} disabled={requestExport.isPending || pdfPending}>
+                    {pdfPending ? <LoaderCircle className="spin" size={19} /> : livePdf?.status === "failed" ? <RefreshCw size={19} /> : <FileText size={19} />}
+                    {pdfPending ? "Готовим PDF" : livePdf?.status === "failed" ? "Повторить PDF" : "Подготовить PDF"}
                   </Button>
                 )}
                 <Button variant="secondary" type="button" onClick={() => projectQuery.refetch()} disabled={projectQuery.isFetching}>

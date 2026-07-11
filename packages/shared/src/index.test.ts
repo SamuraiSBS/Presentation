@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   auditSlideCanvas,
   buildSlideCanvas,
+  createFolderInputSchema,
+  createProjectInvitationInputSchema,
   createProjectInputSchema,
+  dashboardSummarySchema,
+  duplicateProjectInputSchema,
   deckStorySchema,
   designBriefSchema,
   diagramGraphSpecSchema,
@@ -20,6 +24,8 @@ import {
   PREMIUM_PRESENTATION_THEME_IDS,
   presentationSchema,
   presentationThemeSchema,
+  projectListQuerySchema,
+  projectSummarySchema,
   projectStatusSchema,
   qualityCritiqueSchema,
   qualityDimensionScoreSchema,
@@ -32,8 +38,13 @@ import {
   slideLayoutSchema,
   slideLayoutOptions,
   slideTextPlanSchema,
+  updateFolderInputSchema,
   visualStrategySchema,
   updateNarrationInputSchema,
+  updateProjectMetadataInputSchema,
+  updateProjectMemberInputSchema,
+  updateSlideInputSchema,
+  usageSummarySchema,
 } from "./index";
 
 describe("shared contracts", () => {
@@ -50,8 +61,94 @@ describe("shared contracts", () => {
     ).not.toThrow();
   });
 
-  it("keeps free plan export limited to pdf", () => {
-    expect(planLimits.free.exports).toEqual(["pdf"]);
+  it("exposes the personal-account free plan limits", () => {
+    expect(planLimits.free.monthlyPresentations).toBe(10);
+    expect(planLimits.free.exports).toEqual(["pdf", "pptx"]);
+    expect(planLimits.free.maxSlides).toBe(10);
+  });
+
+  it("accepts both school and university audiences while keeping the university default", () => {
+    expect(generationBriefSchema.parse({}).audience).toBe("university_student");
+    expect(generationBriefSchema.parse({ audience: "school_student" }).audience).toBe("school_student");
+  });
+
+  it("validates personal-account mutation contracts", () => {
+    expect(createFolderInputSchema.parse({ name: "  Учёба  " })).toEqual({
+      name: "Учёба",
+      color: "orange",
+    });
+    expect(() => createFolderInputSchema.parse({ name: " ".repeat(3) })).toThrow();
+    expect(() => createFolderInputSchema.parse({ name: "x".repeat(81) })).toThrow();
+    expect(updateFolderInputSchema.parse({ color: "purple", sortOrder: 2 })).toEqual({
+      color: "purple",
+      sortOrder: 2,
+    });
+    expect(() => updateFolderInputSchema.parse({})).toThrow();
+    expect(updateProjectMetadataInputSchema.parse({ folderId: null })).toEqual({ folderId: null });
+    expect(duplicateProjectInputSchema.parse({})).toEqual({});
+    expect(createProjectInvitationInputSchema.parse({ role: "viewer" })).toEqual({ role: "viewer" });
+    expect(updateProjectMemberInputSchema.parse({ role: "editor" })).toEqual({ role: "editor" });
+  });
+
+  it("coerces project list query values and applies safe defaults", () => {
+    expect(projectListQuerySchema.parse({ limit: "12", search: "  физика  " })).toEqual({
+      scope: "all",
+      search: "физика",
+      sort: "updated_desc",
+      limit: 12,
+    });
+    expect(() => projectListQuerySchema.parse({ limit: "101" })).toThrow();
+  });
+
+  it("requires an optimistic revision for slide updates", () => {
+    expect(updateSlideInputSchema.parse({ expectedRevision: 3, title: "Новый заголовок" })).toEqual({
+      expectedRevision: 3,
+      title: "Новый заголовок",
+    });
+    expect(() => updateSlideInputSchema.parse({ title: "Без ревизии" })).toThrow();
+  });
+
+  it("validates compact project, usage and dashboard summaries", () => {
+    const project = projectSummarySchema.parse({
+      id: "project-1",
+      title: "Физика",
+      status: "ready",
+      slideCount: 8,
+      updatedAt: new Date("2026-07-11T10:00:00.000Z"),
+      createdAt: "2026-07-10T10:00:00.000Z",
+      error: null,
+      accessRole: "owner",
+      owner: { id: "user-1", name: "Иван", image: null },
+      folder: { id: "folder-1", name: "Учёба", color: "orange" },
+      hasPresentation: true,
+      latestExport: { id: "export-1", type: "pptx", status: "ready" },
+      memberCount: 1,
+    });
+    const usage = usageSummarySchema.parse({
+      planCode: "free",
+      period: "2026-07",
+      limit: 10,
+      used: 2,
+      remaining: 8,
+      resetsAt: "2026-07-31T21:00:00.000Z",
+      exhausted: false,
+    });
+
+    expect(project.updatedAt).toBe("2026-07-11T10:00:00.000Z");
+    expect(() => dashboardSummarySchema.parse({
+      user: { id: "user-1", name: "Иван", image: null, telegramUsername: "ivan", planCode: "free" },
+      usage,
+      stats: {
+        presentationsCreated: 2,
+        slidesCreated: 16,
+        readyPresentations: 1,
+        savedHoursMin: 1.5,
+        savedHoursMax: 2,
+      },
+      recentProjects: [project],
+      activeProjects: [],
+      sharedProjects: [],
+    })).not.toThrow();
   });
 
   it("accepts safe Mermaid diagram specs and rejects unsafe markup", () => {

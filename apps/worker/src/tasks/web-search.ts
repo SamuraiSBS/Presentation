@@ -1,4 +1,6 @@
 import { type Source } from "@studydeck/shared";
+import crypto from "node:crypto";
+import { currentUsageContext, recordCostEvent } from "../usage-ledger.js";
 
 type TavilySearchResult = {
   title?: string;
@@ -35,6 +37,7 @@ export async function searchWebSources(prompt: string): Promise<Source[]> {
   }
 
   const maxResults = clampNumber(Number(process.env.WEB_SEARCH_MAX_RESULTS || 6), 1, 20);
+  const query = buildTavilyWebSearchQuery(prompt);
   const response = await fetch("https://api.tavily.com/search", {
     method: "POST",
     headers: {
@@ -42,7 +45,7 @@ export async function searchWebSources(prompt: string): Promise<Source[]> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      query: buildTavilyWebSearchQuery(prompt),
+      query,
       search_depth: "basic",
       max_results: maxResults,
       country: "russia",
@@ -54,6 +57,18 @@ export async function searchWebSources(prompt: string): Promise<Source[]> {
   if (!response.ok) {
     throw new Error(`Tavily search failed: ${response.status} ${await response.text()}`);
   }
+
+  const usage = currentUsageContext();
+  await recordCostEvent({
+    idempotencyKey: crypto.createHash("sha256").update(`${usage?.generationJobId || usage?.queueJobId || "unknown"}:tavily:web:${query}`).digest("hex"),
+    category: "web_search",
+    provider: "tavily",
+    quantity: "1",
+    unit: "api_credit",
+    unitPrice: process.env.TAVILY_CREDIT_PRICE_USD,
+    currency: "USD",
+    measurement: "calculated",
+  });
 
   return tavilyResultsToSources((await response.json()) as TavilySearchResponse);
 }

@@ -49,22 +49,113 @@ enum ExportStatus {
   failed
 }
 
+enum AiUsageStatus {
+  succeeded
+  failed
+  unknown_usage
+  unknown_price
+}
+
+enum CostCategory {
+  web_search
+  image_search
+  storage
+  export_compute
+  payment_fee
+  other
+}
+
+enum CostMeasurement {
+  provider_reported
+  calculated
+}
+
+enum PaymentTransactionType {
+  payment
+  refund
+  dispute
+  fee
+  adjustment
+}
+
+enum PaymentTransactionStatus {
+  pending
+  succeeded
+  failed
+  reversed
+}
+
+enum OperationalService {
+  web
+  api
+  worker
+}
+
+enum OperationalSeverity {
+  info
+  warn
+  error
+  critical
+}
+
+enum ProjectMemberRole {
+  editor
+  viewer
+}
+
+enum FolderColor {
+  orange
+  green
+  purple
+  blue
+  neutral
+}
+
 model User {
-  id                 String              @id @default(cuid())
-  name               String?
-  email              String?             @unique
-  emailVerified      DateTime?
-  image              String?
-  planCode           PlanCode            @default(free)
-  stripeCustomerId   String?             @unique
-  stripeSubscriptionId String?           @unique
-  subscriptionStatus String?
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
-  accounts           Account[]
-  sessions           Session[]
-  projects           Project[]
-  usageCounters      UsageCounter[]
+  id                    String               @id @default(cuid())
+  name                  String?
+  email                 String?              @unique
+  emailVerified         DateTime?
+  image                 String?
+  telegramId            String?              @unique
+  telegramUsername      String?
+  planCode              PlanCode             @default(free)
+  stripeCustomerId      String?              @unique
+  stripeSubscriptionId  String?              @unique
+  subscriptionStatus    String?
+  lastSeenAt            DateTime?
+  blockedAt             DateTime?
+  blockedById           String?
+  blockReason           String?
+  planOverride          PlanCode?
+  planOverrideStartsAt  DateTime?
+  planOverrideExpiresAt DateTime?
+  planOverrideReason    String?
+  planOverrideActorId   String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  accounts              Account[]
+  sessions              Session[]
+  projects              Project[]
+  usageCounters         UsageCounter[]
+  folders               Folder[]
+  projectMemberships    ProjectMember[]
+  projectInvitesCreated ProjectInvitation[]  @relation("InviteCreator")
+  blockedBy             User?                @relation("UserBlockedBy", fields: [blockedById], references: [id], onDelete: SetNull)
+  blockedUsers          User[]               @relation("UserBlockedBy")
+  planOverrideActor     User?                @relation("PlanOverrideActor", fields: [planOverrideActorId], references: [id], onDelete: SetNull)
+  planOverridesMade     User[]               @relation("PlanOverrideActor")
+  aiUsageEvents         AiUsageEvent[]
+  costEvents            CostEvent[]
+  paymentTransactions   PaymentTransaction[]
+  operationalEvents     OperationalEvent[]
+  adminActions          AdminAuditLog[]      @relation("AdminAuditActor")
+  activityEvents        UserActivityEvent[]  @relation("ActivityUser")
+  activityActions       UserActivityEvent[]  @relation("ActivityActor")
+
+  @@index([createdAt])
+  @@index([lastSeenAt])
+  @@index([blockedAt])
 }
 
 model Account {
@@ -102,27 +193,82 @@ model VerificationToken {
 }
 
 model Project {
-  id           String        @id @default(cuid())
-  userId       String
-  title        String
-  prompt       String        @db.Text
-  scenario     String
-  level        String
-  mode         String
-  slideCount   Int
-  status       ProjectStatus @default(draft)
-  speechDraft  String?       @db.Text
+  id                   String              @id @default(cuid())
+  userId               String
+  folderId             String?
+  title                String
+  prompt               String              @db.Text
+  scenario             String
+  level                String
+  mode                 String
+  slideCount           Int
+  status               ProjectStatus       @default(draft)
+  speechDraft          String?             @db.Text
   speechDraftUpdatedAt DateTime?
-  error        String?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sources      Source[]
-  presentation Presentation?
-  jobs         GenerationJob[]
-  exports      Export[]
+  error                String?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folder               Folder?             @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  sources              Source[]
+  presentation         Presentation?
+  jobs                 GenerationJob[]
+  exports              Export[]
+  members              ProjectMember[]
+  invitations          ProjectInvitation[]
+  aiUsageEvents        AiUsageEvent[]
+  costEvents           CostEvent[]
+  operationalEvents    OperationalEvent[]
+  activityEvents       UserActivityEvent[]
 
   @@index([userId, updatedAt])
+  @@index([folderId, updatedAt])
+}
+
+model Folder {
+  id        String      @id @default(cuid())
+  ownerId   String
+  name      String
+  color     FolderColor @default(orange)
+  sortOrder Int         @default(0)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  owner     User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  projects  Project[]
+
+  @@unique([ownerId, name])
+  @@index([ownerId, sortOrder])
+}
+
+model ProjectMember {
+  id        String            @id @default(cuid())
+  projectId String
+  userId    String
+  role      ProjectMemberRole
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  project   Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId, updatedAt])
+}
+
+model ProjectInvitation {
+  id           String            @id @default(cuid())
+  projectId    String
+  tokenHash    String            @unique
+  role         ProjectMemberRole
+  createdById  String
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  acceptedById String?
+  revokedAt    DateTime?
+  createdAt    DateTime          @default(now())
+  project      Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy    User              @relation("InviteCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
 }
 
 model Source {
@@ -142,55 +288,251 @@ model Source {
 }
 
 model Presentation {
-  id         String   @id @default(cuid())
-  projectId  String   @unique
-  document   Json
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id        String   @id @default(cuid())
+  projectId String   @unique
+  document  Json
+  revision  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
 model GenerationJob {
-  id        String    @id @default(cuid())
-  projectId String
-  kind      GenerationJobKind @default(presentation)
-  status    JobStatus @default(queued)
-  queueJobId String?
-  progressStage String @default("queued")
-  progressLabel String @default("В очереди")
-  progressPercent Int @default(0)
-  stageStartedAt DateTime?
-  error     String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id                String            @id @default(cuid())
+  projectId         String
+  kind              GenerationJobKind @default(presentation)
+  status            JobStatus         @default(queued)
+  queueJobId        String?
+  progressStage     String            @default("queued")
+  progressLabel     String            @default("В очереди")
+  progressPercent   Int               @default(0)
+  stageStartedAt    DateTime?
+  error             String?
+  cancelRequestedAt DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  project           Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  aiUsageEvents     AiUsageEvent[]
+  costEvents        CostEvent[]
 
   @@index([projectId, createdAt])
   @@index([projectId, kind, createdAt])
 }
 
 model Export {
-  id        String       @id @default(cuid())
-  projectId String
-  type      ExportType
-  status    ExportStatus @default(queued)
-  objectKey String?
-  error     String?
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id                String             @id @default(cuid())
+  projectId         String
+  type              ExportType
+  status            ExportStatus       @default(queued)
+  objectKey         String?
+  error             String?
+  queueJobId        String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  project           Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  costEvents        CostEvent[]
+  operationalEvents OperationalEvent[]
 
   @@index([projectId, createdAt])
 }
 
 model UsageCounter {
-  id        String   @id @default(cuid())
-  userId    String
-  period    String
-  generated Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                   String   @id @default(cuid())
+  userId               String
+  period               String
+  generated            Int      @default(0)
+  presentationsCreated Int      @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, period])
+}
+
+model AiUsageEvent {
+  id                       String         @id @default(cuid())
+  idempotencyKey           String         @unique
+  userId                   String?
+  projectId                String?
+  generationJobId          String?
+  provider                 String
+  model                    String
+  operation                String
+  schemaName               String?
+  stage                    String?
+  attempt                  Int            @default(1)
+  providerRequestId        String?
+  status                   AiUsageStatus
+  inputTokens              Int?
+  outputTokens             Int?
+  cachedInputTokens        Int?
+  reasoningTokens          Int?
+  totalTokens              Int?
+  durationMs               Int?
+  sourceCurrency           String?
+  inputPricePerMillion     Decimal?       @db.Decimal(24, 10)
+  outputPricePerMillion    Decimal?       @db.Decimal(24, 10)
+  cachedPricePerMillion    Decimal?       @db.Decimal(24, 10)
+  reasoningPricePerMillion Decimal?       @db.Decimal(24, 10)
+  sourceCost               Decimal?       @db.Decimal(24, 10)
+  exchangeRateToRub        Decimal?       @db.Decimal(24, 10)
+  rubCostAtEvent           Decimal?       @db.Decimal(24, 10)
+  pricingVersion           String?
+  priceEffectiveFrom       DateTime?
+  errorCode                String?
+  errorClass               String?
+  startedAt                DateTime
+  finishedAt               DateTime?
+  createdAt                DateTime       @default(now())
+  user                     User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  project                  Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  generationJob            GenerationJob? @relation(fields: [generationJobId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([generationJobId, createdAt])
+  @@index([provider, model, createdAt])
+  @@index([status, createdAt])
+}
+
+model CostEvent {
+  id                String          @id @default(cuid())
+  idempotencyKey    String          @unique
+  category          CostCategory
+  userId            String?
+  projectId         String?
+  generationJobId   String?
+  exportId          String?
+  provider          String
+  quantity          Decimal         @db.Decimal(24, 10)
+  unit              String
+  unitPrice         Decimal?        @db.Decimal(24, 10)
+  sourceCurrency    String
+  sourceCost        Decimal?        @db.Decimal(24, 10)
+  exchangeRateToRub Decimal?        @db.Decimal(24, 10)
+  rubCostAtEvent    Decimal?        @db.Decimal(24, 10)
+  measurement       CostMeasurement
+  pricingVersion    String?
+  occurredAt        DateTime
+  createdAt         DateTime        @default(now())
+  user              User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  project           Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  generationJob     GenerationJob?  @relation(fields: [generationJobId], references: [id], onDelete: SetNull)
+  export            Export?         @relation(fields: [exportId], references: [id], onDelete: SetNull)
+
+  @@index([occurredAt])
+  @@index([category, occurredAt])
+  @@index([userId, occurredAt])
+  @@index([projectId, occurredAt])
+}
+
+model ExchangeRate {
+  id            String   @id @default(cuid())
+  baseCurrency  String
+  quoteCurrency String   @default("RUB")
+  rate          Decimal  @db.Decimal(24, 10)
+  provider      String
+  effectiveAt   DateTime
+  fetchedAt     DateTime @default(now())
+
+  @@unique([baseCurrency, quoteCurrency, effectiveAt])
+  @@index([baseCurrency, quoteCurrency, effectiveAt])
+}
+
+model PaymentTransaction {
+  id                    String                   @id @default(cuid())
+  userId                String?
+  stripeEventId         String                   @unique
+  stripeCustomerId      String?
+  stripeSubscriptionId  String?
+  stripeInvoiceId       String?
+  stripePaymentIntentId String?
+  stripeChargeId        String?
+  type                  PaymentTransactionType
+  status                PaymentTransactionStatus
+  grossAmount           Decimal                  @db.Decimal(24, 10)
+  feeAmount             Decimal                  @default(0) @db.Decimal(24, 10)
+  netAmount             Decimal                  @db.Decimal(24, 10)
+  currency              String
+  grossRubAtEvent       Decimal?                 @db.Decimal(24, 10)
+  feeRubAtEvent         Decimal?                 @db.Decimal(24, 10)
+  netRubAtEvent         Decimal?                 @db.Decimal(24, 10)
+  exchangeRateToRub     Decimal?                 @db.Decimal(24, 10)
+  metadata              Json?
+  occurredAt            DateTime
+  createdAt             DateTime                 @default(now())
+  user                  User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([occurredAt])
+  @@index([userId, occurredAt])
+  @@index([type, occurredAt])
+}
+
+model OperationalEvent {
+  id            String              @id @default(cuid())
+  service       OperationalService
+  severity      OperationalSeverity
+  category      String
+  operation     String?
+  stage         String?
+  userId        String?
+  projectId     String?
+  jobId         String?
+  exportId      String?
+  message       String
+  errorClass    String?
+  errorCode     String?
+  httpStatus    Int?
+  sentryEventId String?
+  fingerprint   String
+  occurredAt    DateTime
+  expiresAt     DateTime
+  createdAt     DateTime            @default(now())
+  user          User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  project       Project?            @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  export        Export?             @relation(fields: [exportId], references: [id], onDelete: SetNull)
+
+  @@index([occurredAt])
+  @@index([expiresAt])
+  @@index([severity, occurredAt])
+  @@index([service, occurredAt])
+  @@index([fingerprint, occurredAt])
+  @@index([userId, occurredAt])
+  @@index([projectId, occurredAt])
+  @@index([jobId, occurredAt])
+}
+
+model AdminAuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String
+  action      String
+  targetType  String
+  targetId    String
+  reason      String?
+  metadata    Json?
+  requestId   String?
+  occurredAt  DateTime @default(now())
+  actor       User     @relation("AdminAuditActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([occurredAt])
+  @@index([actorUserId, occurredAt])
+  @@index([targetType, targetId, occurredAt])
+}
+
+model UserActivityEvent {
+  id          String   @id @default(cuid())
+  userId      String
+  actorUserId String?
+  projectId   String?
+  type        String
+  metadata    Json?
+  occurredAt  DateTime @default(now())
+  user        User     @relation("ActivityUser", fields: [userId], references: [id], onDelete: Cascade)
+  actor       User?    @relation("ActivityActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([userId, occurredAt])
+  @@index([projectId, occurredAt])
+  @@index([type, occurredAt])
 }

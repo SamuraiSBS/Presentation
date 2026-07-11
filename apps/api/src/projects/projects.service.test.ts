@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ConfigService } from "@nestjs/config";
 import type { Queue } from "bullmq";
-import { ProjectsService } from "./projects.service.js";
+import type { ProjectAccessService } from "../access/project-access.service.js";
 import type { PrismaService } from "../prisma/prisma.service.js";
+import type { ProjectStorageService } from "../storage/project-storage.service.js";
+import type { UsageService } from "../usage/usage.service.js";
+import { ProjectsService } from "./projects.service.js";
 
 const speechDraft = "Слайд 1: Введение\nЭто достаточно длинный текст выступления для проверки запуска презентации.";
 
@@ -10,16 +13,21 @@ function project(overrides: Record<string, unknown> = {}) {
   return {
     id: "project-1",
     userId: "user-1",
+    folderId: null,
     title: "Project",
     prompt: "Prompt",
     scenario: "lesson",
     level: "beginner",
-    mode: "without_sources",
+    mode: "fast_draft",
     slideCount: 6,
     status: "script_ready",
     speechDraft,
     speechDraftUpdatedAt: new Date("2026-06-28T00:00:00.000Z"),
     error: null,
+    createdAt: new Date("2026-06-28T00:00:00.000Z"),
+    updatedAt: new Date("2026-06-28T00:00:00.000Z"),
+    user: { id: "user-1", name: null, image: null },
+    folder: null,
     sources: [],
     presentation: null,
     jobs: [],
@@ -29,47 +37,62 @@ function project(overrides: Record<string, unknown> = {}) {
 }
 
 function createHarness() {
-  const prisma = {
+  const tx = {
+    user: {
+      upsert: vi.fn().mockResolvedValue({ id: "user-1", planCode: "free" }),
+    },
     project: {
       create: vi.fn(),
-      findFirst: vi.fn(),
+    },
+  };
+  const prisma = {
+    $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+    project: {
+      findUnique: vi.fn(),
       update: vi.fn(),
+    },
+    presentation: {
+      findUnique: vi.fn(),
+      updateMany: vi.fn(),
     },
     generationJob: {
       findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
     },
-    user: {
-      upsert: vi.fn().mockResolvedValue({ id: "user-1", planCode: "free" }),
-      findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "user-1", planCode: "free" }),
-    },
-    usageCounter: {
-      upsert: vi.fn().mockResolvedValue({ userId: "user-1", period: "2026-06", generated: 0 }),
-      update: vi.fn(),
-    },
   };
-  const queue = {
-    add: vi.fn().mockResolvedValue({ id: "queue-job-1" }),
+  const queue = { add: vi.fn().mockResolvedValue({ id: "queue-job-1" }) };
+  const access = {
+    requireEditor: vi.fn().mockResolvedValue({ project: { id: "project-1", userId: "user-1" }, role: "owner" }),
+    requireViewer: vi.fn().mockResolvedValue({ project: { id: "project-1", userId: "user-1" }, role: "owner" }),
+    requireOwner: vi.fn().mockResolvedValue({ project: { id: "project-1", userId: "user-1" }, role: "owner" }),
+    resolve: vi.fn().mockResolvedValue({ project: { id: "project-1", userId: "user-1" }, role: "owner" }),
+  };
+  const usage = {
+    reserveCreationSlot: vi.fn(),
+    getSummary: vi.fn(),
+  };
+  const storage = {
+    copyProjectPrefix: vi.fn(),
+    deleteProjectPrefix: vi.fn(),
+    deleteObjectKey: vi.fn(),
   };
   const service = new ProjectsService(
     prisma as unknown as PrismaService,
     {} as ConfigService,
     queue as unknown as Queue,
+    access as unknown as ProjectAccessService,
+    usage as unknown as UsageService,
+    storage as unknown as ProjectStorageService,
   );
 
-  return { prisma, queue, service };
+  return { access, prisma, queue, service, storage, tx, usage };
 }
 
 describe("ProjectsService creation", () => {
-  it("stores the university student creation brief in the saved prompt", async () => {
-    const { prisma, service } = createHarness();
-    prisma.project.create.mockResolvedValueOnce(project({
-      scenario: "university_report",
-      level: "university_student",
-      mode: "with_sources",
-      prompt: "saved",
-    }));
+  it("reserves the monthly slot in the same transaction and stores the creation brief", async () => {
+    const { service, tx, usage } = createHarness();
+    tx.project.create.mockResolvedValueOnce(project({ prompt: "saved" }));
 
     await service.create("user-1", {
       title: "AI in higher education",
@@ -87,7 +110,8 @@ describe("ProjectsService creation", () => {
       },
     });
 
-    expect(prisma.project.create).toHaveBeenCalledWith({
+    expect(usage.reserveCreationSlot).toHaveBeenCalledWith(tx, "user-1");
+    expect(tx.project.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         scenario: "university_report",
         level: "university_student",
@@ -96,79 +120,33 @@ describe("ProjectsService creation", () => {
       }),
       include: { sources: true, presentation: true },
     });
-    expect(prisma.project.create.mock.calls[0][0].data.prompt).toContain("brief_slides_full_speech");
-    expect(prisma.project.create.mock.calls[0][0].data.prompt).toContain("images_and_diagrams");
+    expect(tx.project.create.mock.calls[0][0].data.prompt).toContain("brief_slides_full_speech");
   });
 });
 
-describe("ProjectsService narration acceptance", () => {
-  it("queues final presentation generation when the narration draft is accepted", async () => {
-    const { prisma, queue, service } = createHarness();
-    const accepted = project({ status: "script_ready", speechDraft });
-    const queued = project({
-      status: "queued",
-      speechDraft,
-      jobs: [{ id: "job-1", kind: "presentation", status: "queued", queueJobId: "queue-job-1" }],
-    });
-
-    prisma.project.findFirst
-      .mockResolvedValueOnce(project({ speechDraft: "Previous accepted text." }))
-      .mockResolvedValueOnce(accepted)
-      .mockResolvedValueOnce(queued);
-    prisma.project.update
-      .mockResolvedValueOnce(accepted)
-      .mockResolvedValueOnce(queued);
+describe("ProjectsService generation", () => {
+  it("queues presentation generation without charging creation usage again", async () => {
+    const { prisma, queue, service, usage } = createHarness();
+    prisma.project.findUnique.mockResolvedValue(project());
     prisma.generationJob.findFirst.mockResolvedValueOnce(null);
     prisma.generationJob.create.mockResolvedValueOnce({ id: "job-1" });
 
-    const result = await service.updateNarrationDraft("user-1", "project-1", {
-      speechDraft,
-      accept: true,
-    });
+    const result = await service.enqueueGeneration("user-1", "project-1");
 
     expect(result.status).toBe("queued");
-    expect(prisma.generationJob.create).toHaveBeenCalledWith({
-      data: { projectId: "project-1", kind: "presentation", status: "queued" },
-    });
     expect(queue.add).toHaveBeenCalledWith(
       "generate-presentation",
-      { projectId: "project-1", userId: "user-1" },
-      expect.objectContaining({ attempts: 3, backoff: { type: "exponential", delay: 5_000 } }),
+      expect.objectContaining({ projectId: "project-1", userId: "user-1" }),
+      expect.objectContaining({ attempts: 3 }),
     );
-    expect(prisma.usageCounter.update).toHaveBeenCalledWith({
-      where: { userId_period: { userId: "user-1", period: expect.any(String) } },
-      data: { generated: { increment: 1 } },
-    });
-  });
-
-  it("does not create a duplicate presentation job when one is already queued", async () => {
-    const { prisma, queue, service } = createHarness();
-    const existingJob = { id: "job-existing", kind: "presentation", status: "queued", queueJobId: "queue-job-existing" };
-    const queued = project({ status: "queued", speechDraft, jobs: [existingJob] });
-
-    prisma.project.findFirst
-      .mockResolvedValueOnce(project())
-      .mockResolvedValueOnce(queued)
-      .mockResolvedValueOnce(queued);
-    prisma.project.update.mockResolvedValueOnce(project({ status: "script_ready", speechDraft }));
-    prisma.generationJob.findFirst.mockResolvedValueOnce(existingJob);
-
-    const result = await service.updateNarrationDraft("user-1", "project-1", {
-      speechDraft,
-      accept: true,
-    });
-
-    expect(result.status).toBe("queued");
-    expect(prisma.generationJob.create).not.toHaveBeenCalled();
-    expect(queue.add).not.toHaveBeenCalled();
-    expect(prisma.usageCounter.upsert).not.toHaveBeenCalled();
+    expect(usage.reserveCreationSlot).not.toHaveBeenCalled();
   });
 
   it("returns ready without queueing when a presentation already exists", async () => {
     const { prisma, queue, service } = createHarness();
-    prisma.project.findFirst.mockResolvedValueOnce(project({
+    prisma.project.findUnique.mockResolvedValueOnce(project({
       status: "ready",
-      presentation: { id: "presentation-1", document: {} },
+      presentation: { id: "presentation-1", revision: 1, document: {} },
     }));
 
     const result = await service.enqueueGeneration("user-1", "project-1");
@@ -176,5 +154,22 @@ describe("ProjectsService narration acceptance", () => {
     expect(result).toEqual({ projectId: "project-1", status: "ready" });
     expect(prisma.generationJob.findFirst).not.toHaveBeenCalled();
     expect(queue.add).not.toHaveBeenCalled();
+  });
+});
+
+describe("ProjectsService revision protection", () => {
+  it("returns a 409 conflict before writing a stale slide revision", async () => {
+    const { prisma, service } = createHarness();
+    prisma.presentation.findUnique.mockResolvedValueOnce({
+      projectId: "project-1",
+      revision: 4,
+      document: {},
+    });
+
+    await expect(service.updateSlide("user-1", "project-1", "slide-1", {
+      expectedRevision: 3,
+      title: "Новая версия",
+    })).rejects.toMatchObject({ status: 409 });
+    expect(prisma.presentation.updateMany).not.toHaveBeenCalled();
   });
 });

@@ -1,9 +1,11 @@
 import type { Metadata, Viewport } from "next";
+import { getServerSession } from "next-auth";
 import "@fontsource-variable/nunito";
 import "./globals.css";
-import { AppHeader } from "@/components/app-header";
-import { MobileBottomNav } from "@/components/mobile-bottom-nav";
+import { AppChrome } from "@/components/app-chrome";
 import { AppQueryProvider } from "@/components/query-provider";
+import { SessionProvider } from "@/components/session-provider";
+import { authOptions } from "@/lib/auth-options";
 
 export const metadata: Metadata = {
   title: "StudyDeck AI",
@@ -16,15 +18,16 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const session = await getServerSession(authOptions);
   return (
     <html lang="ru">
       <body>
-        <AppQueryProvider>
-          <AppHeader />
-          <div className="app-content">{children}</div>
-          <MobileBottomNav />
-        </AppQueryProvider>
+        <SessionProvider session={session}>
+          <AppQueryProvider>
+            <AppChrome>{children}</AppChrome>
+          </AppQueryProvider>
+        </SessionProvider>
       </body>
     </html>
   );

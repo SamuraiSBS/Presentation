@@ -62,6 +62,8 @@ services:
         required: false
     environment:
       API_PORT: 4000
+      ALLOW_DEV_ADMIN: ${ALLOW_DEV_ADMIN:-true}
+      DEPLOYMENT_ENV: local
       S3_ENDPOINT: http://minio:9000
       REDIS_URL: redis://redis:6379
       DATABASE_URL: postgresql://studydeck:studydeck@postgres:5432/studydeck?schema=public
@@ -85,6 +87,7 @@ services:
       - path: .env
         required: false
     environment:
+      DEPLOYMENT_ENV: local
       S3_ENDPOINT: http://minio:9000
       REDIS_URL: redis://redis:6379
       DATABASE_URL: postgresql://studydeck:studydeck@postgres:5432/studydeck?schema=public
@@ -107,9 +110,21 @@ services:
         required: false
     environment:
       INTERNAL_API_URL: http://api:4000
-      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      DATABASE_URL: postgresql://studydeck:studydeck@postgres:5432/studydeck?schema=public
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3010}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-change-me-local-auth-secret}
+      TELEGRAM_CLIENT_ID: ${TELEGRAM_CLIENT_ID:-}
+      TELEGRAM_CLIENT_SECRET: ${TELEGRAM_CLIENT_SECRET:-}
+      ALLOW_DEV_AUTH: ${ALLOW_DEV_AUTH:-false}
+      ALLOW_DEV_ADMIN: ${ALLOW_DEV_ADMIN:-true}
+      ADMIN_TELEGRAM_IDS: ${ADMIN_TELEGRAM_IDS:-}
+      DEPLOYMENT_ENV: local
+      TEMP_USER_ID: ${TEMP_USER_ID:-local-user}
     depends_on:
-      - api
+      api:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     ports:
       - "${WEB_PORT:-3000}:3000"
 

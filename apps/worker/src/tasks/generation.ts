@@ -14,6 +14,7 @@ import {
 } from "./job-progress.js";
 import { generateNarrationDraft, generatePresentationFromNarration } from "./presentation.js";
 import { searchWebSources } from "./web-search.js";
+import { runWithUsageContext } from "../usage-ledger.js";
 
 type GenerationJobData = {
   projectId: string;
@@ -25,6 +26,23 @@ export async function handleGenerationJob(job: Job<GenerationJobData>) {
   const prisma = getPrisma();
   const { projectId, traceContext } = job.data;
   const kind = job.name === "generate-narration" ? "narration" : "presentation";
+  const databaseJob = await prisma.generationJob.findFirst({
+    where: { projectId, queueJobId: job.id, kind },
+    select: { id: true },
+  });
+
+  return runWithUsageContext({
+    userId: job.data.userId,
+    projectId,
+    generationJobId: databaseJob?.id,
+    queueJobId: job.id ? String(job.id) : undefined,
+    stage: kind === "narration" ? "drafting_speech" : "building_slides",
+  }, () => runGenerationJob(job, kind, traceContext));
+}
+
+async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" | "presentation", traceContext?: TraceCarrier) {
+  const prisma = getPrisma();
+  const { projectId } = job.data;
 
   await prisma.project.update({
     where: { id: projectId },
@@ -37,6 +55,8 @@ export async function handleGenerationJob(job: Job<GenerationJobData>) {
 
   const stageStartedAt = new Map<GenerationProgressStage, number>();
   const setStage = async (stage: GenerationProgressStage) => {
+    const cancellation = await prisma.generationJob.findFirst({ where: { projectId, queueJobId: job.id, kind }, select: { cancelRequestedAt: true } });
+    if (cancellation?.cancelRequestedAt) throw new Error("Generation cancelled by administrator");
     stageStartedAt.set(stage, Date.now());
     await updateGenerationProgress(job, stage, (data) =>
       prisma.generationJob.updateMany({ where: { projectId, queueJobId: job.id, kind }, data }),
@@ -83,6 +103,7 @@ export async function handleGenerationJob(job: Job<GenerationJobData>) {
         where: { projectId, queueJobId: job.id, kind },
         data: { status: "completed", progressStage: "completed", progressLabel: "Готово", progressPercent: 100 },
       });
+      await prisma.userActivityEvent.create({ data: { userId: job.data.userId, projectId, type: "generation.completed", metadata: { kind } } });
       return;
     }
 
@@ -136,6 +157,7 @@ export async function handleGenerationJob(job: Job<GenerationJobData>) {
       where: { projectId, queueJobId: job.id, kind },
       data: { status: "completed", progressStage: "completed", progressLabel: "Готово", progressPercent: 100 },
     });
+    await prisma.userActivityEvent.create({ data: { userId: job.data.userId, projectId, type: "generation.completed", metadata: { kind } } });
   } catch (error) {
     const message = safeErrorSummary(error);
     const retryClass = classifyGenerationError(error);

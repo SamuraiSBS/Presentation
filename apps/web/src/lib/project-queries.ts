@@ -1,30 +1,31 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type {
+  ExportSummary,
+  ProjectDetail,
+  ProjectListResponse,
+} from "@/lib/account-types";
 
-export type ExportItem = {
-  id: string;
-  type: string;
-  status: string;
-  objectKey?: string | null;
-  error?: string | null;
-};
+export type ExportItem = ExportSummary;
+export type ProjectPayload = ProjectDetail;
 
-export type ProjectPayload = {
-  id: string;
-  title: string;
-  status: string;
-  error?: string | null;
-  speechDraft?: string | null;
-  exports?: ExportItem[];
-  presentation?: unknown;
-  slideCount?: number;
-  updatedAt?: string;
-};
+export class ApiClientError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    readonly details?: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = "ApiClientError";
+  }
+}
 
 export const projectKeys = {
   all: ["projects"] as const,
   lists: () => [...projectKeys.all, "list"] as const,
+  list: (query: string) => [...projectKeys.lists(), query] as const,
   detail: (projectId: string) => [...projectKeys.all, "detail", projectId] as const,
   export: (projectId: string, exportId: string) => [...projectKeys.detail(projectId), "exports", exportId] as const,
 };
@@ -40,24 +41,42 @@ export function isActiveExportStatus(status: string | undefined) {
   return Boolean(status && activeExportStatuses.has(status));
 }
 
-export function useProjects(initialData?: ProjectPayload[]) {
+export function useProjectList(query: URLSearchParams, initialData?: ProjectListResponse) {
+  const normalized = normalizedQuery(query);
+  return useInfiniteQuery({
+    queryKey: projectKeys.list(normalized),
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams(normalized);
+      if (pageParam) params.set("cursor", pageParam);
+      return apiJson<ProjectListResponse>(`/api/projects?${params.toString()}`);
+    },
+    initialPageParam: "" as string,
+    getNextPageParam: (lastPage) => lastPage.nextCursor || undefined,
+    initialData: initialData
+      ? { pages: [initialData], pageParams: [""] }
+      : undefined,
+  });
+}
+
+// Compatibility for the old dashboard list while callers migrate to /dashboard.
+export function useProjects(initialData?: ProjectDetail[]) {
   return useQuery({
-    queryKey: projectKeys.lists(),
-    queryFn: () => apiJson<ProjectPayload[]>("/api/projects"),
+    queryKey: projectKeys.list("limit=24"),
+    queryFn: async () => (await apiJson<ProjectListResponse>("/api/projects?limit=24")).items as unknown as ProjectDetail[],
     initialData,
   });
 }
 
-export function useProject(projectId: string, initialData?: ProjectPayload) {
+export function useProject(projectId: string, initialData?: ProjectDetail) {
   return useQuery({
     queryKey: projectKeys.detail(projectId),
-    queryFn: () => apiJson<ProjectPayload>(`/api/projects/${projectId}`),
+    queryFn: () => apiJson<ProjectDetail>(`/api/projects/${projectId}`),
     initialData,
     refetchInterval: (query) => (isActiveProjectStatus(query.state.data?.status) ? 2500 : false),
   });
 }
 
-export function useGenerationJob(projectId: string, initialData?: ProjectPayload) {
+export function useGenerationJob(projectId: string, initialData?: ProjectDetail) {
   return useProject(projectId, initialData);
 }
 
@@ -73,52 +92,62 @@ export function useExportJob(projectId: string, exportId: string | undefined) {
 export function useCreateProject() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: unknown) =>
-      apiJson<ProjectPayload>("/api/projects", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      }),
+    mutationFn: (payload: unknown) => apiJson<ProjectDetail>("/api/projects", jsonInit("POST", payload)),
     onSuccess: (project) => {
       queryClient.setQueryData(projectKeys.detail(project.id), project);
-      void queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
+      invalidateAccountLists(queryClient);
     },
   });
 }
 
+export function useUpdateProject(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { title?: string; folderId?: string | null }) =>
+      apiJson<ProjectDetail>(`/api/projects/${projectId}`, jsonInit("PATCH", payload)),
+    onSuccess: (project) => {
+      queryClient.setQueryData(projectKeys.detail(projectId), project);
+      invalidateAccountLists(queryClient);
+    },
+  });
+}
+
+export function useDuplicateProject(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { title?: string; folderId?: string | null } = {}) =>
+      apiJson<ProjectDetail>(`/api/projects/${projectId}/duplicate`, jsonInit("POST", payload)),
+    onSuccess: () => invalidateAccountLists(queryClient),
+  });
+}
+
+export function useDeleteProject(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiJson<unknown>(`/api/projects/${projectId}`, { method: "DELETE" }),
+    onSuccess: () => invalidateAccountLists(queryClient),
+  });
+}
+
 export function useStartNarration(projectId: string) {
-  return useProjectMutation(projectId, () =>
-    apiJson<ProjectPayload>(`/api/projects/${projectId}/narration`, { method: "POST" }),
-  );
+  return useProjectMutation(projectId, () => apiJson<ProjectDetail>(`/api/projects/${projectId}/narration`, { method: "POST" }));
 }
 
 export function useSaveSpeechDraft(projectId: string) {
   return useProjectMutation(projectId, (speechDraft: string) =>
-    apiJson<ProjectPayload>(`/api/projects/${projectId}/narration`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ speechDraft }),
-    }),
+    apiJson<ProjectDetail>(`/api/projects/${projectId}/narration`, jsonInit("PATCH", { speechDraft })),
   );
 }
 
 export function useAcceptSpeechAndGenerate(projectId: string) {
   return useProjectMutation(projectId, (speechDraft: string) =>
-    apiJson<ProjectPayload>(`/api/projects/${projectId}/narration`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ speechDraft, accept: true }),
-    }),
+    apiJson<ProjectDetail>(`/api/projects/${projectId}/narration`, jsonInit("PATCH", { speechDraft, accept: true })),
   );
 }
 
 export function useStartGeneration(projectId: string) {
   return useProjectMutation(projectId, (payload: unknown = {}) =>
-    apiJson<ProjectPayload>(`/api/projects/${projectId}/generate`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    }),
+    apiJson<ProjectDetail>(`/api/projects/${projectId}/generate`, jsonInit("POST", payload)),
   );
 }
 
@@ -126,14 +155,10 @@ export function useRequestExport(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (type: "pptx" | "pdf" = "pptx") =>
-      apiJson<ExportItem>(`/api/projects/${projectId}/exports`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type }),
-      }),
+      apiJson<ExportItem>(`/api/projects/${projectId}/exports`, jsonInit("POST", { type })),
     onSuccess: (created) => {
       queryClient.setQueryData(projectKeys.export(projectId, created.id), created);
-      queryClient.setQueryData<ProjectPayload | undefined>(projectKeys.detail(projectId), (current) =>
+      queryClient.setQueryData<ProjectDetail | undefined>(projectKeys.detail(projectId), (current) =>
         current ? { ...current, exports: [created, ...(current.exports || [])] } : current,
       );
       void queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) });
@@ -145,33 +170,55 @@ export function useSavePresentationEdits(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ slideId, payload }: { slideId: string; payload: unknown }) =>
-      apiJson<ProjectPayload>(`/api/projects/${projectId}/slides/${slideId}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      }),
-    onSuccess: (project) => {
-      queryClient.setQueryData(projectKeys.detail(projectId), project);
-    },
+      apiJson<ProjectDetail>(`/api/projects/${projectId}/slides/${slideId}`, jsonInit("PATCH", payload)),
+    onSuccess: (project) => queryClient.setQueryData(projectKeys.detail(projectId), project),
   });
 }
 
-function useProjectMutation<TVariables>(
-  projectId: string,
-  mutationFn: (variables: TVariables) => Promise<ProjectPayload>,
-) {
+function useProjectMutation<TVariables>(projectId: string, mutationFn: (variables: TVariables) => Promise<ProjectDetail>) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn,
     onSuccess: (project) => {
       queryClient.setQueryData(projectKeys.detail(projectId), project);
-      void queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
+      invalidateAccountLists(queryClient);
     },
   });
 }
 
-async function apiJson<T>(url: string, init?: RequestInit): Promise<T> {
+export async function apiJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
-  if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<T>;
+  const text = await response.text();
+  let payload: unknown = null;
+  if (text) {
+    try { payload = JSON.parse(text); } catch { payload = text; }
+  }
+  if (!response.ok) {
+    const value = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+    throw new ApiClientError(
+      response.status,
+      typeof value.code === "string" ? value.code : "REQUEST_FAILED",
+      typeof value.message === "string" ? value.message : "Не удалось выполнить действие",
+      value.details && typeof value.details === "object" ? value.details as Record<string, unknown> : undefined,
+    );
+  }
+  return payload as T;
+}
+
+function jsonInit(method: string, payload: unknown): RequestInit {
+  return { method, headers: { "content-type": "application/json" }, body: JSON.stringify(payload) };
+}
+
+function normalizedQuery(query: URLSearchParams) {
+  const normalized = new URLSearchParams(query);
+  normalized.delete("cursor");
+  if (!normalized.has("limit")) normalized.set("limit", "24");
+  normalized.sort();
+  return normalized.toString();
+}
+
+function invalidateAccountLists(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
+  void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  void queryClient.invalidateQueries({ queryKey: ["folders"] });
 }

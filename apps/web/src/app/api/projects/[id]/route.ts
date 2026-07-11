@@ -1,14 +1,25 @@
 import { NextResponse } from "next/server";
-import { internalFetch } from "@/lib/internal-api";
-import { demoProject } from "@/lib/demo-project";
+import { internalRequest } from "@/lib/internal-api";
+import { apiErrorResponse, proxyInternalRequest } from "@/lib/internal-api-route";
 import { sanitizeProjectForDisplay } from "@/lib/presentation-display";
+import type { ProjectDetail } from "@/lib/account-types";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  if (process.env.NEXT_PUBLIC_DEMO_PREVIEW !== "false" && id === "demo") {
-    return NextResponse.json(sanitizeProjectForDisplay(demoProject));
+  try {
+    const upstream = await internalRequest<ProjectDetail>(`/projects/${encodeURIComponent(id)}`);
+    return NextResponse.json(sanitizeProjectForDisplay(upstream.data), { status: upstream.status });
+  } catch (error) {
+    return apiErrorResponse(error);
   }
+}
 
-  const project = await internalFetch(`/projects/${id}`);
-  return NextResponse.json(sanitizeProjectForDisplay(project));
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return proxyInternalRequest(request, `/projects/${encodeURIComponent(id)}`, { includeSearch: false });
+}
+
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return proxyInternalRequest(request, `/projects/${encodeURIComponent(id)}`, { includeSearch: false, body: "none" });
 }

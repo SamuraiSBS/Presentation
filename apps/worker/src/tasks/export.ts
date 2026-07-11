@@ -21,6 +21,7 @@ import {
 import { captureExportError, errorLogFields, logger, type TraceCarrier, withTraceSpan } from "../observability.js";
 import { getPrisma } from "../prisma.js";
 import { putObjectBuffer, readObjectBuffer } from "../storage.js";
+import { recordCostEvent, runWithUsageContext } from "../usage-ledger.js";
 
 const require = createRequire(import.meta.url);
 const PptxGenConstructor = require("pptxgenjs") as new () => {
@@ -60,6 +61,14 @@ type ExportJobData = {
 export async function handleExportJob(job: Job<ExportJobData>) {
   const prisma = getPrisma();
   const { exportId, projectId, type } = job.data;
+  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { userId: true } });
+  if (!project) throw new Error("Export project was not found");
+  return runWithUsageContext({ userId: project.userId, projectId, queueJobId: job.id ? String(job.id) : undefined, stage: "export" }, () => runExportJob(job));
+}
+
+async function runExportJob(job: Job<ExportJobData>) {
+  const prisma = getPrisma();
+  const { exportId, projectId, type } = job.data;
   await prisma.export.update({ where: { id: exportId }, data: { status: "processing" } });
 
   try {
@@ -79,6 +88,28 @@ export async function handleExportJob(job: Job<ExportJobData>) {
         : "application/pdf";
 
     await putObjectBuffer(key, buffer, contentType);
+    await recordCostEvent({
+      idempotencyKey: `export:${exportId}:compute`,
+      category: "export_compute",
+      provider: "studydeck-worker",
+      quantity: "1",
+      unit: "export",
+      unitPrice: process.env.EXPORT_COMPUTE_PRICE_RUB,
+      currency: "RUB",
+      measurement: "calculated",
+      exportId,
+    });
+    await recordCostEvent({
+      idempotencyKey: `export:${exportId}:storage`,
+      category: "storage",
+      provider: process.env.S3_ENDPOINT?.includes("localhost") || process.env.S3_ENDPOINT?.includes("minio") ? "minio" : "object_storage",
+      quantity: String(buffer.length),
+      unit: "stored_byte_month",
+      unitPrice: process.env.STORAGE_PRICE_USD_PER_BYTE_MONTH,
+      currency: "USD",
+      measurement: "calculated",
+      exportId,
+    });
     await prisma.export.update({ where: { id: exportId }, data: { status: "ready", objectKey: key } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Export failed";

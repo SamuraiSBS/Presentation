@@ -3,6 +3,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3020";
+const skipWebServer = process.env.PLAYWRIGHT_SKIP_WEBSERVER === "true";
 const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || findInstalledPlaywrightChrome();
 
 function findInstalledPlaywrightChrome(): string | undefined {
@@ -43,7 +44,7 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "off",
   },
-  webServer: {
+  webServer: skipWebServer ? undefined : {
     command: "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-web-fast.ps1 -Port 3020 -DemoPreview",
     url: baseURL,
     reuseExistingServer: false,
@@ -53,6 +54,10 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "mobile",
+      use: { ...devices["Pixel 5"] },
     },
   ],
 });

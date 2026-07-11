@@ -4,6 +4,7 @@ import { generateText, Output } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import { captureGenerationError, errorLogFields, logger } from "../observability.js";
+import { normalizeOpenAIUsage, recordAiUsage } from "../usage-ledger.js";
 import {
   type DesignBrief,
   type DeckStory,
@@ -506,12 +507,26 @@ type YandexCompletionResponse = {
         text?: string;
       };
     }>;
+    usage?: {
+      inputTextTokens?: string;
+      completionTokens?: string;
+      totalTokens?: string;
+      completionTokensDetails?: { reasoningTokens?: string };
+    };
+    modelVersion?: string;
   };
   alternatives?: Array<{
     message?: {
       text?: string;
     };
   }>;
+  usage?: {
+    inputTextTokens?: string;
+    completionTokens?: string;
+    totalTokens?: string;
+    completionTokensDetails?: { reasoningTokens?: string };
+  };
+  requestId?: string;
 };
 
 export async function generatePresentation(project: ProjectInput, sources: Source[]): Promise<PresentationDocument> {
@@ -738,6 +753,7 @@ async function generateOpenAINarration(client: OpenAI, project: ProjectInput, so
   for (let attempt = 0; attempt < 3; attempt += 1) {
     let outputText = "";
     try {
+      const startedAt = new Date();
       const narrationResponse = await client.responses.create({
         model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
         input: [
@@ -751,6 +767,7 @@ async function generateOpenAINarration(client: OpenAI, project: ProjectInput, so
           },
         ],
       });
+      await recordOpenAIResponse(narrationResponse, "narration", "studydeck_narration", startedAt);
       outputText = narrationResponse.output_text || "";
       return normalizeNarrationText(outputText, project);
     } catch (error) {
@@ -1054,6 +1071,7 @@ async function requestOpenAIStructuredWithSdk<T>({
   schemaName: string;
   temperature: number;
 }) {
+  const startedAt = new Date();
   const apiKey = process.env.OPENAI_API_KEY;
   const provider = createOpenAI(apiKey ? { apiKey } : undefined);
   const model = provider(process.env.OPENAI_MODEL || "gpt-4.1-mini");
@@ -1064,14 +1082,22 @@ async function requestOpenAIStructuredWithSdk<T>({
         name: schemaName,
         description: "StudyDeck structured generation output. User-facing educational text should be in Russian.",
       });
-  const result = await generate({
-    model,
-    system,
-    prompt: repairPrompt || withJsonPromptRules(prompt),
-    output,
-    temperature,
-  });
-  return result.output;
+  try {
+    const result = await generate({
+      model,
+      system,
+      prompt: repairPrompt || withJsonPromptRules(prompt),
+      output,
+      temperature,
+    });
+    const metadata = result as unknown as Record<string, unknown>;
+    const response = metadata.response as Record<string, unknown> | undefined;
+    await recordAiUsage({ provider: "openai", model: process.env.OPENAI_MODEL || "gpt-4.1-mini", operation: "structured_generation", schemaName, providerRequestId: typeof response?.id === "string" ? response.id : undefined, usage: normalizeOpenAIUsage(metadata.usage), startedAt });
+    return result.output;
+  } catch (error) {
+    await recordAiUsage({ provider: "openai", model: process.env.OPENAI_MODEL || "gpt-4.1-mini", operation: "structured_generation", schemaName, startedAt, error });
+    throw error;
+  }
 }
 
 async function requestOpenAIStructuredLegacy({
@@ -1091,6 +1117,8 @@ async function requestOpenAIStructuredLegacy({
   schemaJson?: Record<string, unknown>;
   strict: boolean;
 }) {
+  const startedAt = new Date();
+  try {
   const response = await client.responses.create({
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
     input: [
@@ -1109,11 +1137,29 @@ async function requestOpenAIStructuredLegacy({
       : undefined,
   });
   const typedResponse = response as typeof response & { output_parsed?: unknown };
+  await recordOpenAIResponse(response, "structured_generation_legacy", schemaName, startedAt);
   return typedResponse.output_parsed || response.output_text || "";
+  } catch (error) {
+    await recordAiUsage({ provider: "openai", model: process.env.OPENAI_MODEL || "gpt-4.1-mini", operation: "structured_generation_legacy", schemaName, startedAt, error });
+    throw error;
+  }
 }
 
 function isUnknownSchema(schema: z.ZodType<unknown, z.ZodTypeDef, unknown>) {
   return (schema as z.ZodTypeAny)._def.typeName === z.ZodFirstPartyTypeKind.ZodUnknown;
+}
+
+async function recordOpenAIResponse(response: unknown, operation: string, schemaName: string | undefined, startedAt: Date) {
+  const item = response as Record<string, unknown>;
+  await recordAiUsage({
+    provider: "openai",
+    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    operation,
+    schemaName,
+    providerRequestId: typeof item._request_id === "string" ? item._request_id : typeof item.id === "string" ? item.id : undefined,
+    usage: normalizeOpenAIUsage(item.usage),
+    startedAt,
+  });
 }
 
 function logStructuredGenerationAttempt(provider: AiGenerationMode, schemaName: string, attempt: number) {
@@ -1689,13 +1735,16 @@ function shouldRetryNarration(error: unknown) {
 }
 
 async function requestYandexText(apiKey: string, systemText: string, userText: string, options: YandexTextOptions = {}) {
+  const startedAt = new Date();
   const useJsonSchema = options.jsonSchema && isYandexJsonSchemaCompatible(options.jsonSchema);
   const responseFormat = useJsonSchema
     ? { json_schema: { schema: options.jsonSchema } }
     : options.jsonSchema || options.jsonObject
       ? { json_object: true }
       : {};
-  const response = await fetch("https://llm.api.cloud.yandex.net/foundationModels/v1/completion", {
+  let response: Response;
+  try {
+  response = await fetch("https://llm.api.cloud.yandex.net/foundationModels/v1/completion", {
     method: "POST",
     headers: {
       Authorization: `Api-Key ${apiKey}`,
@@ -1729,6 +1778,20 @@ async function requestYandexText(apiKey: string, systemText: string, userText: s
   }
 
   const payload = (await response.json()) as YandexCompletionResponse;
+  const usage = payload.result?.usage || payload.usage;
+  await recordAiUsage({
+    provider: "yandex",
+    model: process.env.YANDEX_MODEL_NAME || "yandexgpt",
+    operation: options.jsonSchema || options.jsonObject ? "structured_generation" : "text_generation",
+    providerRequestId: payload.requestId || response.headers.get("x-request-id") || undefined,
+    usage: usage ? {
+      inputTokens: safeTokenCount(usage.inputTextTokens),
+      outputTokens: safeTokenCount(usage.completionTokens),
+      reasoningTokens: safeTokenCount(usage.completionTokensDetails?.reasoningTokens),
+      totalTokens: safeTokenCount(usage.totalTokens),
+    } : undefined,
+    startedAt,
+  });
   const outputText = payload.result?.alternatives?.[0]?.message?.text || payload.alternatives?.[0]?.message?.text;
 
   if (!outputText) {
@@ -1736,6 +1799,15 @@ async function requestYandexText(apiKey: string, systemText: string, userText: s
   }
 
   return outputText;
+  } catch (error) {
+    await recordAiUsage({ provider: "yandex", model: process.env.YANDEX_MODEL_NAME || "yandexgpt", operation: options.jsonSchema || options.jsonObject ? "structured_generation" : "text_generation", startedAt, error });
+    throw error;
+  }
+}
+
+function safeTokenCount(value: string | undefined) {
+  const result = Number(value);
+  return Number.isFinite(result) && result >= 0 ? Math.trunc(result) : undefined;
 }
 
 function isYandexJsonSchemaCompatible(schema: unknown): boolean {
@@ -2866,6 +2938,7 @@ function canLocallyRepairNarrationSections(sections: NarrationSection[], project
 }
 
 async function repairSlideTextWithOpenAI(client: OpenAI, presentation: PresentationDocument, issues: SlideTextIssue[]) {
+  const startedAt = new Date();
   const response = await client.responses.create({
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
     input: [
@@ -2888,6 +2961,7 @@ async function repairSlideTextWithOpenAI(client: OpenAI, presentation: Presentat
       },
     },
   });
+  await recordOpenAIResponse(response, "slide_text_repair", "studydeck_slide_text_repair", startedAt);
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   return typedResponse.output_parsed || parseJsonText(response.output_text || "");
 }
@@ -2907,6 +2981,7 @@ async function critiquePresentationQualityWithOpenAI(
   presentation: PresentationDocument,
   deterministic: QualityCritique,
 ) {
+  const startedAt = new Date();
   const response = await client.responses.create({
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
     input: [
@@ -2922,6 +2997,7 @@ async function critiquePresentationQualityWithOpenAI(
       },
     },
   });
+  await recordOpenAIResponse(response, "quality_critique", "studydeck_quality_critique", startedAt);
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   return typedResponse.output_parsed || parseJsonText(response.output_text || "");
 }
@@ -2946,6 +3022,7 @@ async function repairPresentationQualityWithOpenAI(
   issues: QualityIssue[],
   attempt: number,
 ): Promise<QualityRepairResponse> {
+  const startedAt = new Date();
   const response = await client.responses.create({
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
     input: [
@@ -2961,6 +3038,7 @@ async function repairPresentationQualityWithOpenAI(
       },
     },
   });
+  await recordOpenAIResponse(response, "quality_repair", "studydeck_quality_repair", startedAt);
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   return (typedResponse.output_parsed || parseJsonText(response.output_text || "")) as QualityRepairResponse;
 }

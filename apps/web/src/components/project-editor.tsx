@@ -40,6 +40,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { RichTextField } from "@/components/editor/rich-text-field";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type {
   CanvasElement,
   CanvasImageElement,
@@ -66,6 +67,8 @@ type ProjectPayload = {
   status: string;
   error?: string | null;
   presentation?: { document: PresentationDocument } | null;
+  accessRole?: "owner" | "editor" | "viewer";
+  presentationRevision?: number;
 };
 
 type Tool = "select" | "text" | "shape";
@@ -122,10 +125,15 @@ export function ProjectEditor({
   const [canvasScale, setCanvasScale] = useState(1);
   const [editingTextId, setEditingTextId] = useState("");
   const [imageReplaceTargetId, setImageReplaceTargetId] = useState("");
+  const [revisionConflict, setRevisionConflict] = useState(false);
+  const [conflictText, setConflictText] = useState("");
   const frameRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragRef = useRef<DragState | null>(null);
+  const revisionRef = useRef(initialProject.presentationRevision || 0);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const conflictRef = useRef(false);
 
   const presentation = project.presentation?.document
     ? ensureEditableCanvas(project.presentation.document)
@@ -144,6 +152,7 @@ export function ProjectEditor({
   const showObjectCanvas = advancedMode && viewMode === "edit";
   const canUpload =
     project.id !== "demo" || process.env.NEXT_PUBLIC_DEMO_PREVIEW === "false";
+  const canEdit = (project.accessRole || "owner") !== "viewer";
 
   useEffect(() => {
     setSelectedId("");
@@ -216,10 +225,16 @@ export function ProjectEditor({
 
   async function refresh() {
     const response = await fetch(`/api/projects/${project.id}`);
-    setProject(sanitizeProjectForDisplay(await response.json()));
+    if (!response.ok) throw new Error(await response.text());
+    const next = sanitizeProjectForDisplay(await response.json()) as ProjectPayload;
+    revisionRef.current = next.presentationRevision || 0;
+    conflictRef.current = false;
+    setRevisionConflict(false);
+    setProject(next);
   }
 
   async function generate() {
+    if (!canEdit) return;
     setBusy(true);
     setActionError("");
 
@@ -241,7 +256,7 @@ export function ProjectEditor({
     }
   }
 
-  async function saveSlide(next: {
+  function saveSlide(next: {
     title?: string;
     thesis?: string;
     bullets?: string[];
@@ -251,27 +266,38 @@ export function ProjectEditor({
     canvas?: SlideCanvas;
     speakerNotes?: string;
   }) {
-    if (!slide) return;
-    setSaveStatus("saving");
-    const response = await fetch(
-      `/api/projects/${project.id}/slides/${slide.id}`,
-      {
+    if (!slide || !canEdit || conflictRef.current) return Promise.resolve();
+    const slideId = slide.id;
+    const run = async () => {
+      if (conflictRef.current) return;
+      setSaveStatus("saving");
+      const response = await fetch(`/api/projects/${project.id}/slides/${slideId}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(next),
-      },
-    );
-    if (!response.ok) {
-      setSaveStatus("error");
-      setActionError(
-        editorError(
-          new Error(await response.text()),
-          "Не получилось сохранить изменения. Попробуй ещё раз.",
-        ),
-      );
-      return;
-    }
-    setSaveStatus("saved");
+        body: JSON.stringify({ ...next, expectedRevision: revisionRef.current }),
+      });
+      const payload = await response.json().catch(() => null) as ProjectPayload | { message?: string } | null;
+      if (response.status === 409) {
+        conflictRef.current = true;
+        setRevisionConflict(true);
+        setSaveStatus("error");
+        return;
+      }
+      if (!response.ok) {
+        setSaveStatus("error");
+        setActionError(editorError(new Error(payload && "message" in payload && payload.message || ""), "Не получилось сохранить изменения. Попробуй ещё раз."));
+        return;
+      }
+      if (payload && "presentationRevision" in payload && typeof payload.presentationRevision === "number") {
+        revisionRef.current = payload.presentationRevision;
+        setProject((current) => ({ ...current, presentationRevision: payload.presentationRevision }));
+      } else {
+        revisionRef.current += 1;
+      }
+      setSaveStatus("saved");
+    };
+    saveQueueRef.current = saveQueueRef.current.then(run, run);
+    return saveQueueRef.current;
   }
 
   function updateLocalSlide(patch: Partial<Slide>) {
@@ -310,6 +336,7 @@ export function ProjectEditor({
     const nextSlide: Slide = { ...slide, ...patch };
     const blocks = blocksFromSlideText(nextSlide);
     const payload = { ...patch, blocks };
+    setConflictText([patch.title, patch.thesis, ...(patch.bullets || []), patch.speakerNotes].filter(Boolean).join("\n\n"));
     updateLocalSlide({ ...patch, blocks });
     void saveSlide(payload);
   }
@@ -823,7 +850,7 @@ export function ProjectEditor({
           </p>
         ) : null}
         {actionError ? <p className="form-error">{actionError}</p> : null}
-        {canStartGeneration ? (
+        {canStartGeneration && canEdit ? (
           <div className="actions">
             <button
               className="button"
@@ -839,6 +866,18 @@ export function ProjectEditor({
     );
   }
 
+  if (!canEdit) {
+    return (
+      <section className="editor-workspace viewer-workspace" data-testid="project-editor">
+        <div className="editor-top"><div><span className="status">Только просмотр</span><h1>{presentation.title}</h1></div><Link className="button" href={`/projects/${project.id}/export`}>Экспорт</Link></div>
+        <section className="viewer-editor">
+          <aside className="slide-rail"><strong>Слайды</strong><div className="slide-rail-list">{presentation.slides.map((item, index) => <button className={`slide-thumb ${index === active ? "slide-thumb-active" : ""}`} key={item.id} type="button" onClick={() => setActive(index)}><span>{String(index + 1).padStart(2, "0")}</span><strong>{item.title}</strong></button>)}</div></aside>
+          <main className="canvas-shell viewer-canvas-shell"><div className="viewer-toolbar"><span>Редактирование доступно владельцу и редакторам</span><Link href={`/projects/${project.id}/export`}>PDF и PPTX</Link></div><TemplatePreviewFrame slide={slide} theme={theme} scale={canvasScale} frameRef={frameRef} onSelectElement={() => undefined} /></main>
+        </section>
+      </section>
+    );
+  }
+
   return (
     <section className="editor-workspace" data-testid="project-editor">
       <div className="editor-top">
@@ -850,6 +889,12 @@ export function ProjectEditor({
       </div>
 
       {actionError ? <p className="form-error">{actionError}</p> : null}
+      <Dialog open={revisionConflict} onOpenChange={(open) => { if (!open) setRevisionConflict(false); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Презентация изменилась</DialogTitle><DialogDescription>Слайд изменился в другой вкладке или другим участником. Мы не перезаписали свежую версию.</DialogDescription></DialogHeader>
+          <div className="conflict-actions"><button className="ghost" type="button" onClick={() => void navigator.clipboard.writeText(conflictText)} disabled={!conflictText}>Скопировать мой текст</button><button className="button" type="button" onClick={() => void refresh()}>Загрузить свежую версию</button></div>
+        </DialogContent>
+      </Dialog>
 
       <section
         className="power-editor"

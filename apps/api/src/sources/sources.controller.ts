@@ -1,9 +1,10 @@
 import { Controller, Param, Post, Req, UploadedFiles, UseGuards, UseInterceptors } from "@nestjs/common";
 import { FilesInterceptor } from "@nestjs/platform-express";
 import { InternalAuthGuard, type InternalRequest } from "../auth/internal-auth.guard.js";
+import { BlockedUserGuard } from "../auth/blocked-user.guard.js";
 import { SourcesService } from "./sources.service.js";
 
-@UseGuards(InternalAuthGuard)
+@UseGuards(InternalAuthGuard, BlockedUserGuard)
 @Controller("projects/:projectId/uploads")
 export class SourcesController {
   constructor(private readonly sources: SourcesService) {}

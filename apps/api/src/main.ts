@@ -5,6 +5,7 @@ import { ConfigService } from "@nestjs/config";
 import { AppModule } from "./app.module.js";
 import { initSentry, initTracing, logger } from "./observability.js";
 import { SentryExceptionFilter } from "./sentry-exception.filter.js";
+import { PrismaService } from "./prisma/prisma.service.js";
 
 initTracing();
 initSentry();
@@ -15,7 +16,7 @@ async function bootstrap() {
   const httpAdapter = app.get(HttpAdapterHost);
   app.setGlobalPrefix("v1");
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-  app.useGlobalFilters(new SentryExceptionFilter(httpAdapter.httpAdapter));
+  app.useGlobalFilters(new SentryExceptionFilter(httpAdapter.httpAdapter, app.get(PrismaService)));
 
   const port = Number(config.get("API_PORT") || 4000);
   await app.listen(port, "0.0.0.0");

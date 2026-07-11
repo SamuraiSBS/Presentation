@@ -33,6 +33,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
   const startNarration = useStartNarration(project.id);
   const saveSpeechDraft = useSaveSpeechDraft(project.id);
   const acceptSpeech = useAcceptSpeechAndGenerate(project.id);
+  const canEdit = project.accessRole !== "viewer";
   const isTextReady = project.status === "script_ready" || Boolean(project.speechDraft);
   const isWaitingForText = project.status === "script_queued" || project.status === "script_generating";
   const isFinalGeneration = project.status === "queued" || project.status === "generating";
@@ -80,6 +81,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
   }
 
   async function startText() {
+    if (!canEdit) return;
     setActionError("");
     try {
       await startNarration.mutateAsync(undefined);
@@ -89,6 +91,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
   }
 
   async function saveDraft() {
+    if (!canEdit) return null;
     if (!draftIsLongEnough) {
       setActionError("Добавь немного деталей. Текст должен быть хотя бы 50 символов.");
       return null;
@@ -106,6 +109,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
   }
 
   async function acceptAndGenerate() {
+    if (!canEdit) return;
     if (!draftIsLongEnough) {
       setActionError("Сначала проверь текст выступления и добавь недостающие детали.");
       return;
@@ -124,7 +128,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
     <section className="script-shell">
       <div className="script-header">
         <div>
-          <span className={`status status-${project.status}`}>{statusText}</span>
+          <span className={`status status-${project.status}`}>{canEdit ? statusText : "Только просмотр"}</span>
           <h1>{project.title}</h1>
         </div>
         <Button variant="ghost" type="button" onClick={refresh} disabled={busy || projectQuery.isFetching}>
@@ -156,6 +160,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
             <textarea
               className="textarea script-textarea"
               value={draft}
+              readOnly={!canEdit}
               onChange={(event) => {
                 setDraft(event.target.value);
                 setDirty(true);
@@ -164,7 +169,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
           </label>
           <div className="script-toolbar">
             <p className="muted">{dirty ? "Есть несохранённые правки" : "Всё сохранено"}</p>
-            <div className="actions">
+            {canEdit ? <div className="actions">
               <Button variant="secondary" type="button" onClick={saveDraft} disabled={busy || !draftIsLongEnough}>
                 <Save size={18} />
                 Сохранить
@@ -193,7 +198,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
                   </div>
                 </DialogContent>
               </Dialog>
-            </div>
+            </div> : <p className="muted">Редактирование доступно владельцу и редакторам.</p>}
           </div>
         </div>
       ) : null}
@@ -202,7 +207,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
         <div className="panel script-error-panel">
           <h2>Что-то пошло не так</h2>
           {project.error ? <p className="muted">{userError(new Error(project.error), "Не получилось завершить этот шаг. Попробуй ещё раз.")}</p> : null}
-          <div className="actions">
+          {canEdit ? <div className="actions">
             {draft ? (
               <Button type="button" onClick={acceptAndGenerate} disabled={busy || !draftIsLongEnough}>
                 Попробовать собрать слайды ещё раз
@@ -212,7 +217,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
                 Попробовать подготовить текст ещё раз
               </Button>
             )}
-          </div>
+          </div> : null}
         </div>
       ) : null}
 
