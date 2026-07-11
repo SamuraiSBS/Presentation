@@ -3229,7 +3229,7 @@ body:has(.editor-page) {
 
 .simple-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   border-radius: var(--radius-editor);
@@ -3825,6 +3825,20 @@ body:has(.editor-page) {
   align-content: start;
 }
 
+.wizard-question,
+.wizard-pane h2.wizard-question {
+  font-size: clamp(25px, 3vw, 34px);
+  text-align: center;
+}
+
+.wizard-intro {
+  text-align: center;
+}
+
+.wizard-intro .muted {
+  margin-inline: auto;
+}
+
 .wizard-content .field {
   min-height: auto;
 }
@@ -3832,6 +3846,28 @@ body:has(.editor-page) {
 .topic-input {
   min-height: 132px;
   max-height: 180px;
+}
+
+.wizard-pane-topic .wizard-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.wizard-pane-topic .field {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.wizard-pane-topic .topic-input {
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  flex: 1 1 auto;
+  resize: none;
 }
 
 .slide-count-options {
@@ -3870,7 +3906,7 @@ body:has(.editor-page) {
 
 .source-choice {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
   min-height: 100px;
   border: 1px solid #f0dbc4;
@@ -3884,7 +3920,6 @@ body:has(.editor-page) {
 
 .source-choice > svg {
   flex: none;
-  margin-top: 2px;
   color: var(--orange-deep);
 }
 
@@ -3910,6 +3945,54 @@ body:has(.editor-page) {
   border-color: var(--orange);
   background: var(--orange-soft);
   box-shadow: inset 0 0 0 1px var(--orange);
+}
+
+.wizard-pane-sources .wizard-content {
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.wizard-pane-sources:not(.wizard-pane-sources-files) .source-choices {
+  min-height: 100px;
+}
+
+.source-web-note {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 7px;
+  min-height: 0;
+  border-radius: 16px;
+  padding: 18px;
+  background: #e7f7ef;
+  color: #164f36;
+  text-align: center;
+}
+
+.source-web-note strong {
+  font-size: 15px;
+}
+
+.source-web-note span {
+  max-width: 48ch;
+  color: #276347;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.wizard-pane-sources-files .wizard-content {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow-y: auto;
+}
+
+.wizard-pane-sources-files .source-choice {
+  min-height: 78px;
+}
+
+.wizard-pane-sources-files .dropzone {
+  min-height: 122px;
 }
 
 .source-file-hint {
