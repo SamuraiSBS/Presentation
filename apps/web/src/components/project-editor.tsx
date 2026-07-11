@@ -56,8 +56,6 @@ import {
   buildSlideCanvas,
   canvasBackgroundCss,
   ensureEditableCanvas,
-  hasMeasurableValue,
-  slideLayoutOptions,
   sortCanvasElements,
 } from "@studydeck/shared";
 import { sanitizeProjectForDisplay } from "@/lib/presentation-display";
@@ -72,7 +70,7 @@ type ProjectPayload = {
 
 type Tool = "select" | "text" | "shape";
 type ViewMode = "preview" | "edit";
-type SimpleEditorTab = "text" | "image" | "layout";
+type SimpleEditorTab = "text" | "image";
 type MobileEditorSection = "slides" | "edit" | "preview";
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 type ElementPatch = Partial<CanvasElement> & Record<string, unknown>;
@@ -92,11 +90,13 @@ type DragState =
       startY: number;
       original: CanvasElement;
       originals: CanvasElement[];
+      lastValid: CanvasElement[];
     };
 
 const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = 720;
 const CUSTOM_CANVAS_MARKER_SUFFIX = "custom-canvas-marker";
+const MIN_READABLE_TEXT_SIZE = 12;
 
 export function ProjectEditor({
   initialProject,
@@ -359,43 +359,6 @@ export function ProjectEditor({
     }
   }
 
-  function applySlideLayout(layout: SlideLayout) {
-    if (!slide || !theme || layout === slide.layout) return;
-    const nextVisual = layoutKeepsVisualImage(layout)
-      ? slide.visual
-      : visualWithoutImage(slide.visual);
-    const nextSlide = {
-      ...slide,
-      layout,
-      visual: nextVisual,
-      canvas: undefined,
-    };
-    const nextCanvas = buildSlideCanvas(nextSlide, theme);
-    setProject((current) => {
-      const document = current.presentation?.document;
-      if (!document) return current;
-      const slides = document.slides.map((item, index) =>
-        index === active ? { ...nextSlide, canvas: nextCanvas } : item,
-      );
-      return {
-        ...current,
-        presentation: {
-          ...current.presentation,
-          document: { ...document, slides },
-        },
-      };
-    });
-    setSelectedId("");
-    setUndoStack([]);
-    setRedoStack([]);
-    void saveSlide({
-      layout,
-      title: slide.title,
-      visual: nextVisual,
-      canvas: nextCanvas,
-    });
-  }
-
   function updateSelected(patch: ElementPatch) {
     if (!canvas || !selected) return;
     commitCanvas({
@@ -648,6 +611,7 @@ export function ProjectEditor({
       startY: point.y,
       original: element,
       originals,
+      lastValid: originals,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
@@ -661,34 +625,56 @@ export function ProjectEditor({
     const originalById = new Map(
       drag.originals.map((element) => [element.id, element]),
     );
-    const elements = canvas.elements.map((element) => {
-      const original = originalById.get(element.id);
-      if (!original) return element;
-      if (drag.mode === "move") {
+    if (drag.mode === "move") {
+      const elements = canvas.elements.map((element) => {
+        const original = originalById.get(element.id);
+        if (!original) return element;
         return {
           ...element,
           x: clamp(original.x + dx, 0, canvasWidth - element.w),
           y: clamp(original.y + dy, 0, canvasHeight - element.h),
         } as CanvasElement;
-      }
+      });
+      setLocalCanvas({ ...canvas, elements });
+      return;
+    }
+    const resized = drag.originals.map((original) => {
       const scaleX = clamp((drag.original.w + dx) / drag.original.w, 0.2, 5);
       const scaleY = clamp((drag.original.h + dy) / drag.original.h, 0.2, 5);
+      const w = clamp(original.w * scaleX, 24, canvasWidth);
+      const h = clamp(original.h * scaleY, 20, canvasHeight);
+      if (original.type !== "text") {
+        return {
+          ...original,
+          x: drag.original.x + (original.x - drag.original.x) * scaleX,
+          y: drag.original.y + (original.y - drag.original.y) * scaleY,
+          w,
+          h,
+        } as CanvasElement;
+      }
+      const fontSize = fittedTextSize(original, w, h);
+      if (fontSize === null) return null;
       return {
-        ...element,
+        ...original,
         x: drag.original.x + (original.x - drag.original.x) * scaleX,
         y: drag.original.y + (original.y - drag.original.y) * scaleY,
-        w: clamp(original.w * scaleX, 24, canvasWidth),
-        h: clamp(original.h * scaleY, 20, canvasHeight),
-        ...(element.type === "text"
-          ? {
-              fontSize: clamp(
-                Math.round(element.fontSize * Math.min(scaleX, scaleY)),
-                8,
-                160,
-              ),
-            }
-          : {}),
+        w,
+        h,
+        fontSize,
       } as CanvasElement;
+    });
+    const nextDragElements = resized.some((element) => element === null)
+      ? drag.lastValid
+      : (resized as CanvasElement[]);
+    if (!resized.some((element) => element === null)) {
+      drag.lastValid = nextDragElements;
+    }
+    const nextById = new Map(
+      nextDragElements.map((element) => [element.id, element]),
+    );
+    const elements = canvas.elements.map((element) => {
+      if (!originalById.has(element.id)) return element;
+      return nextById.get(element.id) || element;
     });
     setLocalCanvas({ ...canvas, elements });
   }
@@ -1053,7 +1039,6 @@ export function ProjectEditor({
               onDelete={deleteSelected}
               onLayerUp={() => moveLayer("up")}
               onLayerDown={() => moveLayer("down")}
-              onChangeLayout={applySlideLayout}
               onSaveText={saveSlideText}
             />
           ) : (
@@ -1064,7 +1049,6 @@ export function ProjectEditor({
               busy={busy}
               canUpload={canUpload}
               onChangeTab={setSimpleTab}
-              onChangeLayout={applySlideLayout}
               onSaveText={saveSlideText}
               onUploadClick={() => {
                 setImageReplaceTargetId(primaryImage?.id || "");
@@ -1705,7 +1689,6 @@ function PropertiesPanel({
   onDelete,
   onLayerUp,
   onLayerDown,
-  onChangeLayout,
   onSaveText,
 }: {
   selected: CanvasElement | null;
@@ -1715,7 +1698,6 @@ function PropertiesPanel({
   onDelete: () => void;
   onLayerUp: () => void;
   onLayerDown: () => void;
-  onChangeLayout: (layout: SlideLayout) => void;
   onSaveText: (patch: { title?: string; thesis?: string; bullets?: string[]; speakerNotes?: string }) => void;
 }) {
   return (
@@ -1723,29 +1705,6 @@ function PropertiesPanel({
       <div className="properties-header">
         <strong>{selected ? elementLabel(selected) : "Слайд"}</strong>
       </div>
-
-      <PropertySection>
-        <label className="field">
-          Макет
-          <select
-            className="select"
-            value={slide.layout}
-            onChange={(event) =>
-              onChangeLayout(event.target.value as SlideLayout)
-            }
-          >
-            {slideLayoutOptions(slide.slideKind).map((option) => (
-              <option
-                key={option.id}
-                value={option.id}
-                disabled={!layoutCanRender(option.id, slide)}
-              >
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </PropertySection>
 
       <PropertySection title="Текст слайда">
         <label className="field">
@@ -1976,7 +1935,6 @@ function SimplePropertiesPanel({
   busy,
   canUpload,
   onChangeTab,
-  onChangeLayout,
   onSaveText,
   onUploadClick,
 }: {
@@ -1986,7 +1944,6 @@ function SimplePropertiesPanel({
   busy: boolean;
   canUpload: boolean;
   onChangeTab: (tab: SimpleEditorTab) => void;
-  onChangeLayout: (layout: SlideLayout) => void;
   onSaveText: (patch: {
     title?: string;
     thesis?: string;
@@ -2017,13 +1974,6 @@ function SimplePropertiesPanel({
           id="image"
           label="Картинка"
           onClick={() => onChangeTab("image")}
-        />
-        <SimpleTab
-          active={activeTab === "layout"}
-          icon={<LayoutTemplate aria-hidden="true" />}
-          id="layout"
-          label="Макет"
-          onClick={() => onChangeTab("layout")}
         />
       </div>
 
@@ -2109,7 +2059,7 @@ function SimplePropertiesPanel({
             <div className="simple-empty-state">
               <Image aria-hidden="true" />
               <strong>На этом слайде нет изображения</strong>
-              <p>Макет и текст можно изменить во вкладках рядом.</p>
+              <p>Текст можно изменить в соседней вкладке.</p>
             </div>
           )}
           <button
@@ -2125,30 +2075,6 @@ function SimplePropertiesPanel({
         </div>
       ) : null}
 
-      {activeTab === "layout" ? (
-        <div className="simple-tab-panel" role="tabpanel">
-          <p className="simple-helper">Выбери подачу, не меняя содержание.</p>
-          <div className="layout-choice-list">
-            {slideLayoutOptions(slide.slideKind).map((option) => (
-              <button
-                className={`layout-choice ${slide.layout === option.id ? "layout-choice-active" : ""}`}
-                key={option.id}
-                type="button"
-                disabled={!layoutCanRender(option.id, slide)}
-                onClick={() => onChangeLayout(option.id)}
-              >
-                <span className={`layout-choice-preview layout-choice-preview-${option.id}`} aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </span>
-                <span>{option.label}</span>
-                {slide.layout === option.id ? <Check aria-label="Выбрано" /> : null}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -2257,59 +2183,6 @@ function PropertySection({
       {children}
     </section>
   );
-}
-
-function layoutCanRender(layout: SlideLayout, slide: Slide) {
-  const sequenceCount = Math.max(
-    slide.visual.items.length,
-    slide.bullets.length,
-  );
-  if (layout === "metrics") {
-    const text = [
-      slide.title,
-      slide.thesis,
-      ...slide.bullets,
-      ...slide.blocks.flatMap((block) =>
-        block.type === "bullets" ? block.items : [block.content],
-      ),
-    ].join(" ");
-    return hasMeasurableValue(text);
-  }
-  if (layout === "definition") return Boolean(slide.definition);
-  if (layout === "comparison") {
-    return (
-      slide.visual.rows.filter((row) => row.left.trim() && row.right.trim())
-        .length >= 2 &&
-      Boolean(slide.visual.leftLabel.trim() && slide.visual.rightLabel.trim())
-    );
-  }
-  if (layout === "myth-fact")
-    return slide.visual.items.length >= 2 && slide.bullets.length >= 1;
-  if (layout === "question-answer")
-    return Boolean(slide.thesis.trim() && slide.bullets.length >= 2);
-  if (layout === "timeline" || layout === "process") {
-    return (
-      slide.visual.items.filter((item) => item.label.trim() && item.text.trim())
-        .length >= 3
-    );
-  }
-  if (layout === "case-study" || layout === "problem-solution")
-    return sequenceCount >= 3;
-  if (layout === "evidence")
-    return Boolean(slide.thesis && slide.bullets.length >= 2);
-  return true;
-}
-
-function layoutKeepsVisualImage(layout: SlideLayout) {
-  return layout === "image-focus";
-}
-
-function visualWithoutImage(visual: SlideVisual): SlideVisual {
-  const { image: _image, ...rest } = visual;
-  return {
-    ...rest,
-    type: visual.type === "image" ? "none" : visual.type,
-  };
 }
 
 function TextContentProperties({
@@ -2656,6 +2529,73 @@ function elementStyle(element: CanvasElement): CSSProperties {
   };
 }
 
+function fittedTextSize(
+  element: CanvasTextElement,
+  width: number,
+  height: number,
+): number | null {
+  const maximum = Math.max(
+    MIN_READABLE_TEXT_SIZE,
+    Math.floor(element.fontSize),
+  );
+  if (textFitsBox(element, width, height, maximum)) return maximum;
+  if (!textFitsBox(element, width, height, MIN_READABLE_TEXT_SIZE)) return null;
+
+  let low = MIN_READABLE_TEXT_SIZE;
+  let high = maximum;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (textFitsBox(element, width, height, middle)) low = middle;
+    else high = middle - 1;
+  }
+  return low;
+}
+
+function textFitsBox(
+  element: CanvasTextElement,
+  width: number,
+  height: number,
+  fontSize: number,
+) {
+  if (!element.text.trim()) return true;
+  const context = document.createElement("canvas").getContext("2d");
+  if (!context) return true;
+  context.font = `${element.italic ? "italic " : ""}${element.bold ? 800 : 400} ${fontSize}px ${element.fontFamily}, Arial, sans-serif`;
+
+  let lines = 0;
+  for (const paragraph of element.text.split("\n")) {
+    if (!paragraph) {
+      lines += 1;
+      continue;
+    }
+    let currentWidth = 0;
+    for (const token of paragraph.match(/\S+\s*/g) || [paragraph]) {
+      const tokenWidth = context.measureText(token).width;
+      if (tokenWidth <= width) {
+        if (currentWidth > 0 && currentWidth + tokenWidth > width) {
+          lines += 1;
+          currentWidth = tokenWidth;
+        } else {
+          currentWidth += tokenWidth;
+        }
+        continue;
+      }
+      for (const character of token) {
+        const characterWidth = context.measureText(character).width;
+        if (characterWidth > width) return false;
+        if (currentWidth > 0 && currentWidth + characterWidth > width) {
+          lines += 1;
+          currentWidth = characterWidth;
+        } else {
+          currentWidth += characterWidth;
+        }
+      }
+    }
+    lines += 1;
+  }
+  return lines * fontSize * 1.14 <= height + 0.5;
+}
+
 function textStyle(element: CanvasTextElement): CSSProperties {
   return {
     width: "100%",
@@ -2678,6 +2618,7 @@ function textStyle(element: CanvasTextElement): CSSProperties {
     lineHeight: 1.14,
     outline: "none",
     overflow: "hidden",
+    overflowWrap: "anywhere",
     whiteSpace: "pre-wrap",
   };
 }
