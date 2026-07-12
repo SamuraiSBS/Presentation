@@ -2869,6 +2869,14 @@ summary::marker {
 }
 
 .app-content { min-height: calc(100dvh - 72px); }
+.motion-page { min-height: inherit; }
+.hero-primary-action svg { transition: transform var(--motion-fast) var(--ease-out); }
+.hero-primary-action:hover svg { transform: translateX(3px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-primary-action:hover svg,
+  .motion-card:hover { transform: none; }
+}
 
 .topbar {
   z-index: var(--z-sticky);
@@ -4302,6 +4310,12 @@ body:has(.editor-page) {
   background: #e7f7ef;
   color: #164f36;
   text-align: center;
+}
+
+.source-file-panel {
+  display: grid;
+  min-height: 0;
+  gap: 12px;
 }
 
 .source-web-note strong {

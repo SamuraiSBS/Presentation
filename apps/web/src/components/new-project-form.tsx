@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Check, FileUp, GraduationCap, School, Search } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { fadeSlideVariants, listItemVariants, transitions } from "@/components/motion/motion-presets";
 import type { UsageSummary } from "@/lib/account-types";
 import { canCreateProject } from "@/lib/account-types";
 import { formatResetDate } from "@/lib/project-ui";
@@ -116,24 +118,27 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
           const active = step === targetStep;
 
           return (
-            <button
+            <motion.button
               className={`wizard-progress-step ${active ? "wizard-progress-step-active" : ""} ${item.complete ? "wizard-progress-step-complete" : ""}`}
               key={item.label}
               type="button"
               disabled={!available}
               aria-current={active ? "step" : undefined}
               onClick={() => setStep(targetStep)}
+              layout
+              transition={transitions.control}
             >
               <span>{item.complete ? <Check aria-hidden="true" size={14} strokeWidth={3} /> : index + 1}</span>
               {item.label}
-            </button>
+            </motion.button>
           );
         })}
       </nav>
 
       <div className="wizard-main">
+        <AnimatePresence initial={false} mode="wait">
         {step === 0 ? (
-          <div className="wizard-pane wizard-pane-topic">
+          <motion.div key="topic" className="wizard-pane wizard-pane-topic" variants={fadeSlideVariants} initial="hidden" animate="visible" exit="exit">
             <div className="wizard-content">
               <label className="field">
                 <span className="wizard-question">О чём будет презентация?</span>
@@ -160,11 +165,11 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
                 Продолжить
               </button>
             </div>
-          </div>
+          </motion.div>
         ) : null}
 
         {step === 1 ? (
-          <div className="wizard-pane wizard-pane-volume">
+          <motion.div key="volume" className="wizard-pane wizard-pane-volume" variants={fadeSlideVariants} initial="hidden" animate="visible" exit="exit">
             <div className="wizard-content">
               <div className="wizard-intro">
                 <h2 className="wizard-question">Сколько слайдов собрать?</h2>
@@ -195,11 +200,11 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
                 Продолжить
               </button>
             </div>
-          </div>
+          </motion.div>
         ) : null}
 
         {step === 2 ? (
-          <div className={`wizard-pane wizard-pane-sources ${sourceMode === "files" ? "wizard-pane-sources-files" : ""}`}>
+          <motion.div key="sources" className={`wizard-pane wizard-pane-sources ${sourceMode === "files" ? "wizard-pane-sources-files" : ""}`} variants={fadeSlideVariants} initial="hidden" animate="visible" exit="exit">
             <div className="wizard-content">
               <div className="wizard-intro">
                 <h2 className="wizard-question">На что опираться?</h2>
@@ -239,14 +244,15 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
                   </span>
                 </button>
               </div>
+              <AnimatePresence initial={false} mode="popLayout">
               {sourceMode === "web" ? (
-                <div className="source-web-note">
+                <motion.div key="web-note" className="source-web-note" variants={fadeSlideVariants} initial="hidden" animate="visible" exit="exit" layout="position">
                   <strong>Можно продолжать</strong>
                   <span>Ничего загружать не нужно: подберём подходящие источники по теме и подготовим текст выступления.</span>
-                </div>
+                </motion.div>
               ) : null}
               {sourceMode === "files" ? (
-                <>
+                <motion.div key="file-source" className="source-file-panel" variants={fadeSlideVariants} initial="hidden" animate="visible" exit="exit" layout="position">
                   <label
                     className={`dropzone ${dragActive ? "dropzone-active" : ""}`}
                     onDragEnter={(event) => {
@@ -272,19 +278,22 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
                     <small>Или нажми, чтобы выбрать файлы на устройстве.</small>
                   </label>
                   {files.length ? (
-                    <div className="source-list" aria-label="Выбранные файлы">
-                      {files.map((file) => (
-                        <div className="source-item" key={`${file.name}-${file.size}`}>
+                    <motion.div className="source-list" aria-label="Выбранные файлы" initial="hidden" animate="visible">
+                      <AnimatePresence initial={false} mode="popLayout">
+                      {files.map((file, index) => (
+                        <motion.div className="source-item" key={`${file.name}-${file.size}`} custom={index} variants={listItemVariants} initial="hidden" animate="visible" exit="exit" layout="position">
                           <strong>{file.name}</strong>
                           <span>{formatFileSize(file.size)}</span>
-                        </div>
+                        </motion.div>
                       ))}
-                    </div>
+                      </AnimatePresence>
+                    </motion.div>
                   ) : (
                     <p className="source-file-hint">Добавь хотя бы один файл, чтобы продолжить с собственными материалами.</p>
                   )}
-                </>
+                </motion.div>
               ) : null}
+              </AnimatePresence>
             </div>
             <div className="actions action-row">
               <button className="ghost" type="button" onClick={() => setStep(1)} disabled={busy}>
@@ -294,10 +303,13 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
                 {busy ? "Готовим текст..." : "Подготовить текст"}
               </button>
             </div>
-          </div>
+          </motion.div>
         ) : null}
+        </AnimatePresence>
 
-        {error ? <p className="form-error">{error}</p> : null}
+        <AnimatePresence initial={false}>
+          {error ? <motion.p className="form-error" role="alert" variants={fadeSlideVariants} initial="hidden" animate="visible" exit="exit">{error}</motion.p> : null}
+        </AnimatePresence>
       </div>
     </section>
   );

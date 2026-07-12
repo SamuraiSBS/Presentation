@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, FileText, Mic2, MonitorUp, PencilRuler, Presentation } from "lucide-react";
+import { MotionList, MotionListItem } from "@/components/motion/motion-list";
 
 const workflow = [
   { icon: Presentation, text: "Расскажи, о чём будешь выступать" },
@@ -12,26 +13,26 @@ const workflow = [
 export default function HomePage() {
   return (
     <main className="page hero">
-      <section className="hero-copy">
-        <p className="status">Тема, материалы, текст, слайды, готовый файл</p>
-        <h1>Собери презентацию, с которой легко выступать</h1>
-        <p className="lead">
+      <MotionList className="hero-copy" as="section">
+        <MotionListItem index={0}><p className="status">Тема, материалы, текст, слайды, готовый файл</p></MotionListItem>
+        <MotionListItem index={1}><h1>Собери презентацию, с которой легко выступать</h1></MotionListItem>
+        <MotionListItem index={2}><p className="lead">
           Напиши тему или добавь свои материалы. StudyDeck AI подготовит слайды,
           заметки и связный текст, который можно спокойно рассказать на паре или защите.
-        </p>
-        <div className="hero-actions">
-          <Link className="button" href="/new">Создать презентацию <ArrowRight aria-hidden="true" size={19} /></Link>
+        </p></MotionListItem>
+        <MotionListItem index={3}><div className="hero-actions">
+          <Link className="button hero-primary-action" href="/new">Создать презентацию <ArrowRight aria-hidden="true" size={19} /></Link>
           <Link className="ghost" href="/pricing">Выбрать тариф</Link>
-        </div>
-      </section>
-      <section className="preview" aria-label="Рабочий процесс">
-        {workflow.map(({ icon: Icon, text }) => (
-          <div className="preview-item" key={text}>
+        </div></MotionListItem>
+      </MotionList>
+      <MotionList className="preview" as="section" aria-label="Рабочий процесс">
+        {workflow.map(({ icon: Icon, text }, index) => (
+          <MotionListItem className="preview-item" index={index} key={text}>
             <span><Icon aria-hidden="true" size={20} /></span>
             <strong>{text}</strong>
-          </div>
+          </MotionListItem>
         ))}
-      </section>
+      </MotionList>
     </main>
   );
 }
