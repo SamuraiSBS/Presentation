@@ -38,7 +38,9 @@ export class ExportsService {
       const allowed = planLimits[project.user.planCode].exports;
       if (!(allowed as readonly string[]).includes(type)) throw new BadRequestException("This export type is not included in your plan");
 
-      const created = await this.prisma.export.create({ data: { projectId, type } });
+      const created = await this.prisma.export.create({
+        data: { projectId, type, presentationRevision: project.presentation.revision },
+      });
       const queueJob = await this.exportsQueue.add(
         "export-presentation",
         { exportId: created.id, projectId, type, traceContext: injectTraceContext() },
@@ -59,6 +61,10 @@ export class ExportsService {
   async getDownloadUrl(userId: string, projectId: string, exportId: string) {
     const item = await this.get(userId, projectId, exportId);
     if (item.status !== "ready" || !item.objectKey) throw new BadRequestException("Export is not ready");
+    const presentation = await this.prisma.presentation.findUnique({ where: { projectId }, select: { revision: true } });
+    if (!presentation || item.presentationRevision !== presentation.revision) {
+      throw new BadRequestException("Экспорт устарел после редактирования презентации. Подготовьте новый файл.");
+    }
 
     const url = await getSignedUrl(
       this.getS3(),

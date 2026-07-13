@@ -75,7 +75,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       "studydeck.job_id": String(job.id || ""),
       "studydeck.stage": "research",
       "studydeck.provider": process.env.WEB_SEARCH_PROVIDER || "tavily",
-    }, () => prepareGenerationSources(project), traceContext);
+    }, () => prepareGenerationSources(project, { refreshWeb: kind === "narration" }), traceContext);
     finishStage("researching");
 
     if (kind === "narration") {
@@ -205,12 +205,26 @@ export async function prepareGenerationSources(project: {
     url: string | null;
     excerpt: string;
     text: string;
+    included?: boolean;
   }>;
-}) {
+}, options: { refreshWeb?: boolean } = {}) {
+  const refreshWeb = options.refreshWeb ?? true;
   const sources: Source[] = [];
 
   for (const source of project.sources) {
+    if (source.included === false) continue;
     if (source.type === "WEB") {
+      if (!refreshWeb) {
+        sources.push({
+          id: source.id,
+          label: source.label,
+          type: source.type,
+          size: source.size,
+          excerpt: source.excerpt,
+          url: source.url || undefined,
+          included: true,
+        });
+      }
       continue;
     }
 
@@ -223,6 +237,7 @@ export async function prepareGenerationSources(project: {
           size: source.size,
           excerpt: source.excerpt || makeExcerpt(source.text, project.prompt),
           url: source.url || undefined,
+          included: true,
         });
       }
       continue;
@@ -241,10 +256,11 @@ export async function prepareGenerationSources(project: {
       objectKey: updated.objectKey || undefined,
       excerpt: updated.excerpt,
       url: updated.url || undefined,
+      included: true,
     });
   }
 
-  if (!sources.length || project.mode === "with_sources") {
+  if (refreshWeb && (!sources.length || project.mode === "with_sources")) {
     const prisma = getPrisma();
     await prisma.source.deleteMany({ where: { projectId: project.id, type: "WEB" } });
     let webSources: Source[];
@@ -268,6 +284,7 @@ export async function prepareGenerationSources(project: {
           excerpt: source.excerpt,
           text: source.excerpt,
           url: source.url,
+          included: true,
         },
       });
 
@@ -279,6 +296,7 @@ export async function prepareGenerationSources(project: {
         objectKey: created.objectKey || undefined,
         excerpt: created.excerpt,
         url: created.url || undefined,
+        included: true,
       });
     }
   }
@@ -291,6 +309,7 @@ export async function prepareGenerationSources(project: {
       type: "PROMPT",
       size: text.length,
       excerpt: makeExcerpt(text, project.prompt) || text.slice(0, 1100),
+      included: true,
     });
   }
 

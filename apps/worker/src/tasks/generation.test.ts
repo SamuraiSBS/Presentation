@@ -97,4 +97,20 @@ describe("prepareGenerationSources", () => {
       sources: [],
     })).rejects.toThrow("No source material was found for generation");
   });
+
+  it("uses only approved stored web sources for presentation generation", async () => {
+    const sources = await prepareGenerationSources({
+      id: "project-approved-web",
+      prompt: "Approved research",
+      mode: "with_sources",
+      speechDraft: "Слайд 1: Тема\nДостаточно длинный принятый текст выступления для презентации.",
+      sources: [
+        { id: "keep", label: "Approved", type: "WEB", size: 0, objectKey: null, url: "https://example.com/keep", excerpt: "Useful evidence", text: "Useful evidence", included: true },
+        { id: "drop", label: "Excluded", type: "WEB", size: 0, objectKey: null, url: "https://example.com/drop", excerpt: "Weak evidence", text: "Weak evidence", included: false },
+      ],
+    }, { refreshWeb: false });
+
+    expect(searchWebSources).not.toHaveBeenCalled();
+    expect(sources.map((source) => source.id)).toEqual(["keep"]);
+  });
 });

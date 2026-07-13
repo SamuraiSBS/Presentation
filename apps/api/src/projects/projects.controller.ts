@@ -7,6 +7,7 @@ import {
   projectListQuerySchema,
   updateNarrationInputSchema,
   updateProjectMetadataInputSchema,
+  updateSourceReviewInputSchema,
   updateSlideInputSchema,
 } from "@studydeck/shared";
 import { InternalAuthGuard, type InternalRequest } from "../auth/internal-auth.guard.js";
@@ -62,6 +63,21 @@ export class ProjectsController {
   @Post(":id/generate")
   generate(@Req() request: InternalRequest, @Param("id") id: string, @Body() body: unknown) {
     return this.projects.enqueueGeneration(request.userId, id, parseInput(generatePresentationInputSchema, body || {}));
+  }
+
+  @Patch(":id/sources/:sourceId")
+  updateSourceReview(
+    @Req() request: InternalRequest,
+    @Param("id") projectId: string,
+    @Param("sourceId") sourceId: string,
+    @Body() body: unknown,
+  ) {
+    return this.projects.updateSourceReview(
+      request.userId,
+      projectId,
+      sourceId,
+      parseInput(updateSourceReviewInputSchema, body),
+    );
   }
 
   @Patch(":id/slides/:slideId")

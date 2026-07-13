@@ -145,6 +145,15 @@ export function useAcceptSpeechAndGenerate(projectId: string) {
   );
 }
 
+export function useUpdateSourceReview(projectId: string) {
+  return useProjectMutation(projectId, ({ sourceId, included }: { sourceId: string; included: boolean }) =>
+    apiJson<ProjectDetail>(
+      `/api/projects/${projectId}/sources/${sourceId}`,
+      jsonInit("PATCH", { included }),
+    ),
+  );
+}
+
 export function useStartGeneration(projectId: string) {
   return useProjectMutation(projectId, (payload: unknown = {}) =>
     apiJson<ProjectDetail>(`/api/projects/${projectId}/generate`, jsonInit("POST", payload)),

@@ -40,6 +40,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { RichTextField } from "@/components/editor/rich-text-field";
+import { WorkflowProgress } from "@/components/workflow-progress";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
 import type {
@@ -232,29 +233,6 @@ export function ProjectEditor({
     conflictRef.current = false;
     setRevisionConflict(false);
     setProject(next);
-  }
-
-  async function generate() {
-    if (!canEdit) return;
-    setBusy(true);
-    setActionError("");
-
-    try {
-      const response = await fetch(`/api/projects/${project.id}/generate`, {
-        method: "POST",
-      });
-      if (!response.ok) throw new Error(await response.text());
-      await refresh();
-    } catch (error) {
-      setActionError(
-        editorError(
-          error,
-          "Не получилось запустить сборку презентации. Попробуй ещё раз.",
-        ),
-      );
-    } finally {
-      setBusy(false);
-    }
   }
 
   function saveSlide(next: {
@@ -767,7 +745,10 @@ export function ProjectEditor({
       if (!response.ok) throw new Error(await response.text());
       const payload = (await response.json()) as {
         element: CanvasImageElement;
+        presentationRevision: number;
       };
+      revisionRef.current = payload.presentationRevision;
+      setProject((current) => ({ ...current, presentationRevision: payload.presentationRevision }));
       const imageToReplace = replaceElementId
         ? canvas?.elements.find(
             (element): element is CanvasImageElement =>
@@ -850,17 +831,10 @@ export function ProjectEditor({
             )}
           </p>
         ) : null}
-        {actionError ? <p className="form-error">{actionError}</p> : null}
+        {actionError ? <p className="form-error" role="alert">{actionError}</p> : null}
         {canStartGeneration && canEdit ? (
           <div className="actions">
-            <button
-              className="button"
-              type="button"
-              onClick={generate}
-              disabled={busy}
-            >
-              {busy ? "Запускаем..." : "Собрать презентацию"}
-            </button>
+            <Link className="button" href={`/projects/${project.id}/script`}>Проверить текст и запуск</Link>
           </div>
         ) : null}
       </section>
@@ -870,6 +844,7 @@ export function ProjectEditor({
   if (!canEdit) {
     return (
       <section className="editor-workspace viewer-workspace" data-testid="project-editor">
+        <WorkflowProgress current={4} />
         <div className="editor-top"><div><span className="status">Только просмотр</span><h1>{presentation.title}</h1></div><Link className="button" href={`/projects/${project.id}/export`}>Экспорт</Link></div>
         <section className="viewer-editor">
           <aside className="slide-rail"><strong>Слайды</strong><div className="slide-rail-list">{presentation.slides.map((item, index) => <button className={`slide-thumb ${index === active ? "slide-thumb-active" : ""}`} key={item.id} type="button" onClick={() => setActive(index)}><span>{String(index + 1).padStart(2, "0")}</span><strong>{item.title}</strong></button>)}</div></aside>
@@ -881,6 +856,7 @@ export function ProjectEditor({
 
   return (
     <section className="editor-workspace" data-testid="project-editor">
+      <WorkflowProgress current={4} />
       <div className="editor-top">
         <div>
           <span className="status">{projectStatusLabel(project.status)}</span>
@@ -889,7 +865,7 @@ export function ProjectEditor({
         <SaveIndicator status={saveStatus} />
       </div>
 
-      {actionError ? <p className="form-error">{actionError}</p> : null}
+      {actionError ? <p className="form-error" role="alert">{actionError}</p> : null}
       <Dialog open={revisionConflict} onOpenChange={(open) => { if (!open) setRevisionConflict(false); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Презентация изменилась</DialogTitle><DialogDescription>Слайд изменился в другой вкладке или другим участником. Мы не перезаписали свежую версию.</DialogDescription></DialogHeader>
@@ -901,7 +877,6 @@ export function ProjectEditor({
         className="power-editor"
         data-mobile-section={mobileSection}
         onKeyDown={onKeyDown}
-        tabIndex={0}
       >
         <aside className="slide-rail">
           <strong>Слайды</strong>
@@ -911,7 +886,7 @@ export function ProjectEditor({
                 className={`slide-thumb ${index === active ? "slide-thumb-active" : ""}`}
                 key={item.id}
                 type="button"
-                aria-current={index === active ? "step" : undefined}
+                  aria-current={index === active ? "page" : undefined}
                 onClick={() => {
                   setActive(index);
                   setMobileSection("preview");
@@ -2006,7 +1981,18 @@ function SimplePropertiesPanel({
           <p>Меняй только то, что нужно перед защитой.</p>
         </div>
       </div>
-      <div className="simple-tabs" role="tablist" aria-label="Правка слайда">
+      <div
+        className="simple-tabs"
+        role="tablist"
+        aria-label="Правка слайда"
+        onKeyDown={(event) => {
+          if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+          event.preventDefault();
+          const next = activeTab === "text" ? "image" : "text";
+          onChangeTab(next);
+          event.currentTarget.querySelector<HTMLButtonElement>(`#simple-editor-tab-${next}`)?.focus();
+        }}
+      >
         <SimpleTab
           active={activeTab === "text"}
           icon={<Type aria-hidden="true" />}
@@ -2024,7 +2010,7 @@ function SimplePropertiesPanel({
       </div>
 
       {activeTab === "text" ? (
-        <div className="simple-tab-panel" role="tabpanel">
+        <div className="simple-tab-panel" id="simple-editor-text" role="tabpanel" aria-labelledby="simple-editor-tab-text">
           <label className="field">
             Заголовок
             <RichTextField
@@ -2094,7 +2080,7 @@ function SimplePropertiesPanel({
       ) : null}
 
       {activeTab === "image" ? (
-        <div className="simple-tab-panel" role="tabpanel">
+        <div className="simple-tab-panel" id="simple-editor-image" role="tabpanel" aria-labelledby="simple-editor-tab-image">
           {image?.url ? (
             <img
               className="simple-image-preview"
@@ -2105,17 +2091,17 @@ function SimplePropertiesPanel({
             <div className="simple-empty-state">
               <Image aria-hidden="true" />
               <strong>На этом слайде нет изображения</strong>
-              <p>Текст можно изменить в соседней вкладке.</p>
+              <p>Добавьте изображение с устройства — точная правка для этого не нужна.</p>
             </div>
           )}
           <button
             className="button simple-upload-button"
             type="button"
             onClick={onUploadClick}
-            disabled={!image || !canUpload || busy}
+            disabled={!canUpload || busy}
           >
             <Upload aria-hidden="true" />
-            {busy ? "Загружаем…" : "Заменить файлом"}
+            {busy ? "Загружаем…" : image ? "Заменить изображение" : "Добавить изображение"}
           </button>
           <p className="simple-helper">PNG, JPG или WebP с устройства.</p>
         </div>

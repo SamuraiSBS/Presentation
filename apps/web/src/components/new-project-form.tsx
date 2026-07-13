@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Check, FileUp, GraduationCap, School, Search } from "lucide-react";
+import { Check, FileUp, GraduationCap, School, Search, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { fadeSlideVariants, listItemVariants, transitions } from "@/components/motion/motion-presets";
 import type { UsageSummary } from "@/lib/account-types";
@@ -33,6 +33,7 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
   const [step, setStep] = useState(0);
   const [topic, setTopic] = useState("");
   const [slideCount, setSlideCount] = useState(10);
+  const [volumeConfirmed, setVolumeConfirmed] = useState(false);
   const [sourceMode, setSourceMode] = useState<"web" | "files">("web");
   const [audience, setAudience] = useState<"school" | "university">("university");
   const [files, setFiles] = useState<File[]>([]);
@@ -63,7 +64,7 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
     return `${(size / 1024 / 1024).toFixed(1)} МБ`;
   }
 
-  async function createProjectAndNarration() {
+  async function createProjectDraft() {
     if (!creationAllowed) {
       setError(`Лимит исчерпан. Новую презентацию можно создать ${formatResetDate(usage)}.`);
       return;
@@ -95,7 +96,6 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
         await apiJson(`/api/projects/${project.id}/uploads`, { method: "POST", body: uploadBody });
       }
 
-      await apiJson(`/api/projects/${project.id}/narration`, { method: "POST" });
       router.push(`/projects/${project.id}/script`);
     } catch (err) {
       setError(err instanceof ApiClientError ? err.message : "Не получилось начать работу. Попробуй ещё раз.");
@@ -110,11 +110,16 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
       <nav className="wizard-progress" aria-label="Шаги создания презентации">
         {[
           { label: "Тема", complete: Boolean(normalizedTopic) },
-          { label: "Объём", complete: step > 1 },
+          { label: "Объём", complete: volumeConfirmed },
           { label: "Источники", complete: false },
+          { label: "Текст", complete: false },
+          { label: "Слайды", complete: false },
+          { label: "Экспорт", complete: false },
         ].map((item, index) => {
           const targetStep = index;
-          const available = targetStep === 0 || Boolean(normalizedTopic);
+          const available = targetStep === 0 || targetStep === 1
+            ? Boolean(normalizedTopic) || targetStep === 0
+            : targetStep === 2 && volumeConfirmed;
           const active = step === targetStep;
 
           return (
@@ -124,7 +129,7 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
               type="button"
               disabled={!available}
               aria-current={active ? "step" : undefined}
-              onClick={() => setStep(targetStep)}
+              onClick={() => targetStep <= 2 && setStep(targetStep)}
               layout
               transition={transitions.control}
             >
@@ -176,7 +181,7 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
                 <p className="muted">По умолчанию выбрали оптимальный объём для обычного выступления.</p>
               </div>
               <div className="slide-count-options" role="radiogroup" aria-label="Количество слайдов">
-                {availableSlideOptions.map((option) => (
+                {availableSlideOptions.map((option, index) => (
                   <button
                     className={`choice-button ${slideCount === option.count ? "choice-button-active" : ""}`}
                     key={option.count}
@@ -184,6 +189,7 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
                     role="radio"
                     aria-checked={slideCount === option.count}
                     onClick={() => setSlideCount(option.count)}
+                    onKeyDown={(event) => focusRadioOption(event, index, availableSlideOptions.length, (nextIndex) => setSlideCount(availableSlideOptions[nextIndex].count))}
                   >
                     <strong>{option.count}</strong>
                     <span>{option.label}</span>
@@ -196,7 +202,7 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
               <button className="ghost" type="button" onClick={() => setStep(0)}>
                 Назад
               </button>
-              <button className="button" type="button" onClick={() => setStep(2)}>
+              <button className="button" type="button" onClick={() => { setVolumeConfirmed(true); setStep(2); }}>
                 Продолжить
               </button>
             </div>
@@ -220,6 +226,7 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
                     setSourceMode("web");
                     setError("");
                   }}
+                  onKeyDown={(event) => focusRadioOption(event, 0, 2, (nextIndex) => setSourceMode(nextIndex === 0 ? "web" : "files"))}
                 >
                   <Search aria-hidden="true" size={20} />
                   <span>
@@ -236,6 +243,7 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
                     setSourceMode("files");
                     setError("");
                   }}
+                  onKeyDown={(event) => focusRadioOption(event, 1, 2, (nextIndex) => setSourceMode(nextIndex === 0 ? "web" : "files"))}
                 >
                   <FileUp aria-hidden="true" size={20} />
                   <span>
@@ -248,7 +256,7 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
               {sourceMode === "web" ? (
                 <motion.div key="web-note" className="source-web-note" variants={fadeSlideVariants} initial="hidden" animate="visible" exit="exit" layout="position">
                   <strong>Можно продолжать</strong>
-                  <span>Ничего загружать не нужно: подберём подходящие источники по теме и подготовим текст выступления.</span>
+                  <span>На следующем экране ты проверишь настройки и отдельно подтвердишь запуск AI-поиска и подготовки текста.</span>
                 </motion.div>
               ) : null}
               {sourceMode === "files" ? (
@@ -282,8 +290,13 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
                       <AnimatePresence initial={false} mode="popLayout">
                       {files.map((file, index) => (
                         <motion.div className="source-item" key={`${file.name}-${file.size}`} custom={index} variants={listItemVariants} initial="hidden" animate="visible" exit="exit" layout="position">
-                          <strong>{file.name}</strong>
-                          <span>{formatFileSize(file.size)}</span>
+                          <div><strong>{file.name}</strong><span>{formatFileSize(file.size)}</span></div>
+                          <button
+                            type="button"
+                            className="source-remove"
+                            aria-label={`Удалить файл ${file.name}`}
+                            onClick={() => setFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}
+                          ><X aria-hidden="true" size={17} /></button>
                         </motion.div>
                       ))}
                       </AnimatePresence>
@@ -299,10 +312,11 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
               <button className="ghost" type="button" onClick={() => setStep(1)} disabled={busy}>
                 Назад
               </button>
-              <button className="button" type="button" onClick={createProjectAndNarration} disabled={busy || !creationAllowed}>
-                {busy ? "Готовим текст..." : "Подготовить текст"}
+              <button className="button" type="button" onClick={createProjectDraft} disabled={busy || !creationAllowed || (sourceMode === "files" && !files.length)}>
+                {busy ? "Сохраняем проект..." : "Сохранить и проверить настройки"}
               </button>
             </div>
+            <p className="generation-safety-note">На этом шаге AI не запускается и баланс провайдера не расходуется.</p>
           </motion.div>
         ) : null}
         </AnimatePresence>
@@ -313,6 +327,21 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
       </div>
     </section>
   );
+}
+
+function focusRadioOption(
+  event: KeyboardEvent<HTMLButtonElement>,
+  index: number,
+  count: number,
+  onSelect: (index: number) => void,
+) {
+  if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+  event.preventDefault();
+  const direction = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
+  const nextIndex = (index + direction + count) % count;
+  onSelect(nextIndex);
+  const radios = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+  radios?.[nextIndex]?.focus();
 }
 
 function projectTitleFromTopic(topic: string) {

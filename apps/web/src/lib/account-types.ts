@@ -9,6 +9,7 @@ import type {
   ProjectMemberRole,
   ProjectStatus,
   ProjectSummary,
+  Source,
   UsageSummary as SharedUsageSummary,
   UserIdentitySummary,
 } from "@studydeck/shared";
@@ -24,6 +25,7 @@ export type ExportSummary = {
   status: string;
   objectKey?: string | null;
   error?: string | null;
+  presentationRevision?: number;
 };
 
 export type FolderSummary = SharedFolderSummary & {
@@ -42,6 +44,10 @@ export type ProjectDetail = {
   status: ProjectStatus;
   error?: string | null;
   speechDraft?: string | null;
+  prompt?: string;
+  mode?: string;
+  level?: string;
+  sources?: Source[];
   exports?: ExportSummary[];
   presentation?: { document: PresentationDocument } | null;
   slideCount?: number;

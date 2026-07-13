@@ -190,8 +190,14 @@ export const sourceSchema = z.object({
   excerpt: z.string().default(""),
   objectKey: z.string().optional(),
   url: z.string().url().optional(),
+  included: z.boolean().optional(),
 });
 export type Source = z.infer<typeof sourceSchema>;
+
+export const updateSourceReviewInputSchema = z.object({
+  included: z.boolean(),
+}).strict();
+export type UpdateSourceReviewInput = z.infer<typeof updateSourceReviewInputSchema>;
 
 export const sourceRefSchema = z.object({
   sourceId: z.string(),

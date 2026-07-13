@@ -16,6 +16,7 @@ import {
   type ProjectListQuery,
   type UpdateNarrationInput,
   type UpdateProjectMetadataInput,
+  type UpdateSourceReviewInput,
   type UpdateSlideInput,
   ensureEditableCanvas,
   planLimits,
@@ -192,6 +193,7 @@ export class ProjectsService {
               url: source.url,
               excerpt: source.excerpt,
               text: source.text,
+              included: source.included,
             },
             select: { id: true },
           });
@@ -328,6 +330,25 @@ export class ProjectsService {
       await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
       return { projectId: project.id, jobId: job.id, queueJobId: queueJob.id, status: "queued" };
     });
+  }
+
+  async updateSourceReview(
+    userId: string,
+    projectId: string,
+    sourceId: string,
+    input: UpdateSourceReviewInput,
+  ) {
+    await this.access.requireEditor(userId, projectId);
+    const source = await this.prisma.source.findFirst({ where: { id: sourceId, projectId } });
+    if (!source) throw new NotFoundException("Источник не найден");
+    if (!input.included) {
+      const includedCount = await this.prisma.source.count({ where: { projectId, included: true } });
+      if (includedCount <= 1) {
+        throw new BadRequestException("Оставьте хотя бы один источник для презентации");
+      }
+    }
+    await this.prisma.source.update({ where: { id: sourceId }, data: { included: input.included } });
+    return this.getAccessible(userId, projectId);
   }
 
   async updateSlide(userId: string, projectId: string, slideId: string, input: UpdateSlideInput) {
