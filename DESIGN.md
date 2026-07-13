@@ -1,51 +1,51 @@
 ---
 name: StudyDeck AI
-description: A focused study-workflow interface for turning prompts and source material into editable presentations, speaker notes, scripts, and exports.
+description: A warm, task-led workspace that turns a study prompt and sources into an editable presentation.
 colors:
   app-bg: "#fff5e9"
   surface: "#ffffff"
   surface-warm: "#fff0dc"
-  surface-input: "#fffefb"
+  surface-input: "#fffdf9"
   ink: "#3a2109"
   muted: "#805c38"
   line: "#efd6b9"
   action-orange: "#ff8a00"
-  verified-green: "#22a866"
+  action-orange-deep: "#a84600"
+  action-orange-soft: "#ffe2be"
+  verified-green: "#168552"
   ai-purple: "#7b3dff"
-  editor-dark: "#302012"
+  error: "#a73822"
+  error-soft: "#fff0ec"
+  editor-workspace: "#302012"
   editor-panel: "#432b18"
   editor-control: "#54371f"
-  error-bg: "#fff2ee"
-  error-line: "#f0b8a8"
-  error-text: "#8d2d18"
 typography:
   display:
     fontFamily: "Nunito Variable, Nunito, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "38px to 78px on marketing shell; 30px to 52px in app pages"
+    fontSize: "clamp(43px, 6vw, 76px)"
     fontWeight: 900
-    lineHeight: 0.98
-    letterSpacing: "0"
+    lineHeight: 1.02
+    letterSpacing: "-0.035em"
   headline:
     fontFamily: "Nunito Variable, Nunito, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "26px to 48px"
+    fontSize: "clamp(26px, 3vw, 34px)"
     fontWeight: 850
-    lineHeight: 1.1
-    letterSpacing: "0"
+    lineHeight: 1.12
+    letterSpacing: "-0.02em"
   body:
     fontFamily: "Nunito Variable, Nunito, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "16px to 19px"
+    fontSize: "16px"
     fontWeight: 400
     lineHeight: 1.55
-    letterSpacing: "0"
   label:
     fontFamily: "Nunito Variable, Nunito, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "12px to 14px"
+    fontSize: "14px"
     fontWeight: 800
     lineHeight: 1.2
-    letterSpacing: "0"
 rounded:
-  sm: "12px"
-  md: "18px"
+  editor: "12px"
+  control: "14px"
+  card: "18px"
   major: "24px"
   pill: "999px"
 spacing:
@@ -54,35 +54,30 @@ spacing:
   md: "14px"
   lg: "18px"
   xl: "24px"
-  page-x: "clamp(16px, 4vw, 44px)"
-  page-y: "clamp(24px, 5vw, 64px)"
+  page-x: "clamp(16px, 4vw, 48px)"
+  page-y: "clamp(30px, 5vw, 68px)"
 components:
   button-primary:
     backgroundColor: "{colors.action-orange}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.sm}"
+    rounded: "{rounded.control}"
     padding: "0 14px"
-    height: "40px"
-  button-ghost:
+    height: "44px"
+  button-secondary:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.sm}"
+    rounded: "{rounded.control}"
     padding: "0 14px"
-    height: "40px"
-  status-chip:
-    backgroundColor: "#eef4ea"
-    textColor: "{colors.verified-green}"
-    rounded: "{rounded.pill}"
-    padding: "5px 9px"
+    height: "44px"
   panel:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.sm}"
+    rounded: "{rounded.major}"
     padding: "clamp(18px, 3vw, 28px)"
   input:
     backgroundColor: "{colors.surface-input}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.sm}"
+    rounded: "{rounded.card}"
     padding: "12px"
 ---
 
@@ -92,136 +87,141 @@ components:
 
 **Creative North Star: "The Guided Study Desk"**
 
-StudyDeck AI should feel like a clean, energetic workspace for a student under deadline: the next action is obvious, the source trail stays visible, and the interface helps the user prepare rather than pretending the work is magically done. The system is familiar product UI first, with just enough color to make workflow state legible.
+StudyDeck AI is a practical desk for a student preparing a presentation under time pressure. The next useful action must be unmistakable: formulate the topic, add material, check the plan, refine slides and speech, then export. The interface supports that work rather than hiding it behind a magical-looking generation flow.
 
-The current interface is restrained and task-led. Warm neutral backgrounds reduce glare, orange carries primary action, green marks verified progress and status, and purple is reserved for AI/editor power inside generated presentation material. The editor is deliberately darker than the rest of the app so slide work feels like a focused canvas.
+The app shell is light, warm, and compact. A pale peach canvas and white work surfaces reduce glare; orange establishes action and current progress; green confirms trustworthy completion; purple is reserved for AI- and presentation-specific moments. The editor deliberately changes scene into a dark, concentrated workspace while leaving the generated 16:9 slide itself theme-driven.
 
-It explicitly rejects generic green SaaS styling, childish classroom cartoons, decorative AI gradients, heavy glassmorphism, oversized marketing hero layouts, and interfaces that hide source quality behind polished slides.
+It rejects generic green SaaS styling, childish classroom imagery, decorative AI gradients, heavy glassmorphism, oversized marketing composition in signed-in flows, and polished output that conceals source quality.
 
 **Key Characteristics:**
-- Workflow-first composition: prompt, files, plan, editor, script, export.
-- Single-family typography with heavy, readable labels and headings.
-- Orange action language, green confidence language, purple AI/editor language.
-- Tonal layers and restrained elevation separate major workflow objects without turning every surface into glass.
-- Friendly 24px workflow surfaces, 16-18px cards and controls, and dense 12px editor chrome.
+
+- Workflow-first pages with one prominent next action.
+- One friendly product sans for application chrome, dense labels, and long Russian copy.
+- Functional color: orange for action, green for confirmation, purple for AI/editor context.
+- Soft tonal layering and short state shadows instead of floating-card decoration.
+- Structural mobile layout: desktop topbar becomes a safe-area-aware bottom navigation below 760px.
 
 ## 2. Colors
 
-The palette is warm-neutral product UI with three functional accents: orange for action, green for verified progress, and purple for AI-powered editing.
+The palette is a light warm-neutral product system with accents assigned by meaning, not decoration.
 
 ### Primary
-- **Action Orange**: The primary action color. Use for create, next, generate, loading progress, active wizard steps, and the StudyDeck mark.
+
+- **Action Orange** (`#ff8a00`): Create, generate, export, active progress, selected mobile navigation, and the product mark.
+- **Deep Orange** (`#a84600`): Active text, hover feedback, focus-adjacent details, and small directional icons.
+- **Soft Orange** (`#ffe2be`): Hover fills, selected controls, and low-emphasis action context.
 
 ### Secondary
-- **Verified Green**: The confidence and completion color. Use for status chips, completed step hints, and successful/verified states.
-- **AI Purple**: The editor-power color. Use inside slide themes, AI-generated visual accents, speech panels, and moments where the product is shaping study material.
+
+- **Verified Green** (`#168552`): Completion, readiness, confidence, and successful export states. Pair it with the app's pale green status surfaces rather than using it as a general accent.
+- **AI Purple** (`#7b3dff`): AI and speech/editor-specific accents. It is not a replacement for the primary action color.
+- **Error Red** (`#a73822`) on **Error Soft** (`#fff0ec`): Failures and blocking form feedback.
 
 ### Neutral
-- **Study Canvas**: The app background. It should remain quiet and slightly warm, never saturated enough to read as beige branding.
-- **White Surface**: Cards, panels, top-level content containers, and ghost controls.
-- **Warm Source Surface**: Secondary panels, slide alternate surfaces, choice buttons, and generated-content blocks.
-- **Ink**: Primary text and icon color.
-- **Muted Text**: Secondary text, helper copy, slide metadata, and inactive navigation.
-- **Divider Line**: Borders, panel outlines, slide boundaries, and input strokes.
-- **Editor Dark**: The focused slide-editor workspace.
-- **Editor Panel**: Dark rails, speech panels, and editor interior surfaces.
+
+- **Study Canvas** (`#fff5e9`): The page field, with a restrained warm gradient only at the app background level.
+- **White Surface** (`#ffffff`): Primary panels, dialogs, controls, and readable content planes.
+- **Warm Source Surface** (`#fff0dc`) and **Input Surface** (`#fffdf9`): Secondary workflow areas, generated-content context, and fields.
+- **Ink** (`#3a2109`), **Muted** (`#805c38`), and **Line** (`#efd6b9`): Text hierarchy and quiet separation.
+- **Editor Workspace** (`#302012`), **Editor Panel** (`#432b18`), and **Editor Control** (`#54371f`): Focused editor shell, rails, and local controls.
 
 ### Named Rules
 
-**The Task Color Rule.** Orange, green, and purple are not decoration. Each color must communicate action, confidence, or AI/editor power.
+**The Task Color Rule.** Orange, green, and purple always communicate action, confirmation, or AI/editor context.
 
-**The Warm Neutral Ceiling.** The app may be warm, but it must not become a cream SaaS page. Neutral backgrounds stay low-chroma and subordinate to the workflow.
+**The Warm Neutral Ceiling.** The background may be warm but must remain subordinate to the task. Do not turn the product into a cream marketing surface.
 
 ## 3. Typography
 
-**Display Font:** Nunito Variable with system sans fallbacks.
-**Body Font:** Nunito Variable with system sans fallbacks.
-**Label/Mono Font:** Nunito Variable with system sans fallbacks.
+**Display Font:** Nunito Variable, then Nunito and system sans fallbacks.
+**Body Font:** Nunito Variable, then Nunito and system sans fallbacks.
+**Label/Mono Font:** The same product sans; no display or mono face is introduced for chrome.
 
-**Character:** The type system is direct and sturdy. Heavy weights make actions and slide structure scannable, while body copy stays plain and readable for long Russian labels and study text.
+**Character:** Rounded, high-weight Nunito makes actions and structure easy to scan without becoming childish. Body copy stays conventional and roomy enough for study text and Russian labels.
 
 ### Hierarchy
-- **Display** (900, 38px to 78px, 0.98 line-height): Landing shell and page-level titles only. Letter spacing stays at 0.
-- **Headline** (850 to 950, 26px to 48px, 1.1 line-height): App page headers, wizard prompts, editor titles, and slide headings.
-- **Title** (800 to 900, 16px to 26px, 1.2 line-height): Cards, panels, rail headings, export rows, and slide substructures.
-- **Body** (400 to 750, 16px to 19px, 1.45 to 1.58 line-height): Helper copy, narration text, slide notes, and generated study material. Prose should stay within roughly 65-75ch where the layout allows.
-- **Label** (800 to 850, 12px to 14px, 0 letter-spacing): Navigation, status chips, form labels, wizard steps, and small slide metadata.
+
+- **Display** (900, `clamp(43px, 6vw, 76px)`, 1.02): Landing-only hero headings. Use balanced wrapping and `-0.035em` tracking.
+- **Headline** (850, `clamp(26px, 3vw, 34px)`, 1.12): Page sections, export stages, wizard questions, and editor headings.
+- **Title** (800–900, 18–24px, 1.2): Cards, summaries, and structured workspace blocks.
+- **Body** (400–750, 16–17px, 1.5–1.65): Helper text, narration, notes, and generated study content. Keep prose close to 65–75ch when the layout permits.
+- **Label** (800–900, 11–14px, 1.2): Navigation, form labels, status, controls, and compact metadata.
 
 ### Named Rules
 
-**The Product Sans Rule.** Nunito carries all application chrome. Generated slide themes keep their own typography and must not inherit the app font contract.
+**The Russian Label Rule.** Give long Russian labels room to wrap or expand before reducing their type size.
 
-**The Russian Label Rule.** Buttons, chips, and navigation must be sized for long Russian labels without clipping. Use wrapping or wider containers before reducing legibility.
+**The Slide Boundary Rule.** Application typography is Nunito. Generated slide themes own their own type tokens so web preview and export remain aligned.
 
 ## 4. Elevation
 
-StudyDeck AI is flat by default. Depth is conveyed with tonal layers, dark editor surfaces, borders, and spacing. The only prominent shadow in the current app is the landing workflow preview; it behaves like a product object, not a card decoration.
+Depth is stateful and structural. Most work surfaces use tonal contrast and very short warm shadows; raised previews, menus, dialogs, and a hovered project card earn stronger elevation. The dark editor provides its own depth through nested tones, not ambient glass.
 
 ### Shadow Vocabulary
-- **Preview Object** (`box-shadow: 0 18px 42px rgba(21, 25, 20, 0.16)`): Use only for a large preview object that needs to separate from the page background.
-- **Inset Slide Frame** (`box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--slide-line) 88%, transparent)`): Use only inside generated slide themes where a frame is part of the slide design.
+
+- **Surface Rest** (`0 5px 12px rgba(111, 61, 14, 0.07)`): Standard `.card`, `.panel`, and wizard surface separation.
+- **Raised Object** (`0 12px 30px rgba(111, 61, 14, 0.11)`): Hovered project cards and floating menus.
+- **Preview Object** (`0 22px 44px rgba(76, 39, 8, 0.18)`): The landing workflow preview only.
+- **Dialog** (`0 22px 60px rgba(58, 33, 9, 0.22)`): Modal layer above the app shell.
 
 ### Named Rules
 
-**The Flat Workflow Rule.** Panels, cards, inputs, rails, and lists are bordered or tonally layered at rest. Do not add ambient shadows to ordinary UI.
+**The Purposeful Lift Rule.** Do not add a border and a broad decorative shadow to the same ordinary surface. Use the established short shadow at rest; reserve stronger lift for interaction or hierarchy.
 
 ## 5. Components
 
 ### Buttons
-- **Shape:** Friendly rounded rectangles (14px radius), minimum 44px height.
-- **Primary:** Action Orange background with Primary Ink text for AA contrast; heavy label; used for start, next, generate, export, and create.
-- **Hover / Focus:** Preserve the same vocabulary across routes. Add visible focus rings before adding decorative hover effects.
-- **Secondary / Ghost:** White surface with Divider Line border and Ink text; used for back, refresh, pricing, dashboard, and secondary export actions.
 
-### Chips
-- **Style:** Pill shape with pale green background and Verified Green text for status and progress.
-- **State:** Active wizard steps switch to orange; completed steps keep orange number marks. Inactive steps stay neutral with muted text.
+- **Shape:** 14px rounded rectangles; standard shell actions are at least 44px high. Shared UI primitives may use the compact 40px size.
+- **Primary:** `#ff8a00` with Ink text, heavy label, 0 6px 10px orange-tinted shadow. Hover changes to `#ed7d00` and lifts by 1px; active moves down by 1px.
+- **Secondary / Ghost:** White or translucent white with a `#efd6b9` outline. Hover moves to Soft Orange and a brighter orange edge.
+- **Focus / disabled:** A 2px Deep Orange outline plus the 4px orange focus ring; disabled buttons stay readable at reduced opacity with no lift.
+
+### Fields and Selects
+
+- **Fields:** 46px minimum height, 16px radius, `#fffdf9` fill, warm edge, and a visible orange hover/focus treatment.
+- **Selects:** 12px radius, 40px height, clear chevron, and Radix popover content instead of clipped in-flow menus.
+- **Errors:** Pale red fill with a red inset edge and no ambiguous low-contrast status copy.
 
 ### Cards / Containers
-- **Corner Style:** 24px for major workflow surfaces, 16-18px for cards and controls, and 12px for dense editor chrome.
-- **Background:** White Surface for normal containers, Warm Source Surface for generated or secondary content, Editor Dark for the slide workspace.
-- **Shadow Strategy:** Restrained short shadows may separate ordinary app surfaces; major workflow objects may use a wider ambient shadow.
-- **Border:** Prefer a tonal edge or a shadow on app cards, never both. Slide canvas frames remain independently theme-driven.
-- **Internal Padding:** Cards use 18px; panels use `clamp(18px, 3vw, 28px)`.
 
-### Inputs / Fields
-- **Style:** Full-width, tonal edge, 16px radius, warm input surface, and 12px padding.
-- **Focus:** Must be visibly keyboard-focusable. Use a high-contrast outline or border shift that does not move layout.
-- **Error / Disabled:** Error panels use pale red background, red border, and dark red text. Disabled controls keep shape and label legibility.
+- **Corner Style:** 24px for major workflows and dialogs, 18px for cards and fields, 14px for controls, and 12px for dense editor chrome.
+- **Background:** White for normal work, Warm Source Surface for summaries and secondary workflow context, and the dark editor palette for slide tooling.
+- **Spacing:** Use the existing 8 / 12 / 14 / 18 / 24px rhythm; page gutters are `clamp(16px, 4vw, 48px)`.
 
 ### Navigation
-- **Style, typography, default/hover/active states, mobile treatment.** The topbar is sticky and lightly translucent. The orange icon tile uses Lucide artwork. Desktop navigation gives way to a safe-area-aware bottom bar below 760px.
 
-### Wizard
-- **Style:** Step chips form a compact progression. The selected step has orange border influence and Ink text; completed and active number dots are orange.
-- **Behavior:** The wizard should always reveal the next action: topic, slide count, materials, then generation.
+- **Desktop:** Sticky 72px translucent topbar with product mark, icon-led links, create action, and account menu.
+- **Mobile:** At 760px and below, hide desktop navigation and use a fixed safe-area-aware bottom bar. The current destination uses orange; the create destination remains available as a primary task.
 
-### Slide Editor
-- **Style:** Dark editor shell with dark rails, a light canvas panel, and a 16:9 slide canvas. Slide selection uses dark buttons with heavy white labels.
-- **Behavior:** Speaker notes and generated script remain adjacent to the slide when space allows, then collapse structurally on smaller screens.
+### Status, Wizard, and Progress
 
-### Slide Canvas
-- **Style:** Generated slides use their own CSS variables for background, surface, text, muted text, accent, secondary accent, line, and fonts. Layouts are structured and readable, not decorative-only.
-- **Behavior:** Generated slide geometry remains theme-driven and independent from the rounded application chrome so export rendering and web preview stay aligned.
+- **Status:** Orange is draft or in-progress; pale green with deep green is ready/completed; pale red is failed.
+- **Wizard:** Pill steps make the next configuration task explicit. Active and completed markers use the orange action language.
+- **Progress:** Thin orange indicators move only to communicate live generation/export state; honour reduced-motion preferences.
+
+### Slide Editor and Canvas
+
+- **Editor:** `#302012` shell with `#432b18` rails and panels, `#54371f` controls, a light canvas shell, and 12px local radii.
+- **Canvas:** Always 16:9 and visually independent from app-shell tokens. Slide themes supply their own text, accent, line, and font variables so export and browser rendering agree.
 
 ## 6. Do's and Don'ts
 
 ### Do:
-- **Do** start every screen from the student's next action: create, choose slides, add materials, edit script, review slide, export.
-- **Do** use orange only for action and active progress.
-- **Do** use green only for verified, completed, ready, or trustworthy states.
-- **Do** reserve purple for AI/editor power and generated presentation accents.
-- **Do** use tonal separation or restrained elevation on ordinary panels without combining a large shadow and visible border.
-- **Do** keep source confidence, speaker preparation, and export readiness visible in workflow surfaces.
-- **Do** test long Russian labels and small mobile widths before shipping any new control.
+
+- **Do** start every screen with the student's next action: topic, material, plan, edit, rehearsal, or export.
+- **Do** use orange only for action and active progress; use green only for trustworthy completion.
+- **Do** preserve the established 150–200ms ease-out state transitions and reduced-motion alternatives.
+- **Do** use the same rounded-control, field, focus, and icon vocabulary across routes.
+- **Do** test long Russian labels, 320px-wide screens, and the 760px navigation transition.
+- **Do** keep source confidence, speaker preparation, and export readiness visible instead of implying that a deck is finished by default.
 
 ### Don't:
-- **Don't** use generic green SaaS styling.
-- **Don't** add childish classroom cartoons.
-- **Don't** add decorative AI gradients.
-- **Don't** use heavy glassmorphism.
-- **Don't** build oversized marketing hero layouts for authenticated product flows.
+
+- **Don't** use generic green SaaS styling, childish classroom cartoons, decorative AI gradients, or heavy glassmorphism.
+- **Don't** use oversized marketing hero layouts for authenticated product flows.
 - **Don't** hide source quality behind polished slides.
-- **Don't** add ambient shadows to cards, panels, or buttons.
+- **Don't** add broad decorative shadows to buttons, ordinary cards, or panels.
 - **Don't** use side-stripe borders, gradient text, or repeated identical icon-card grids.
-- **Don't** introduce display fonts into controls, labels, data, or editor panels.
+- **Don't** add a new display font to controls, labels, data, or editor chrome.
+- **Don't** redesign the slide canvas with app-shell tokens; its presentation theme is a separate contract.
