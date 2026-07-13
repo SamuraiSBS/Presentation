@@ -3638,6 +3638,12 @@ body:has(.editor-page) {
   overflow: hidden;
 }
 
+.app-content:has(.editor-page) > .motion-page {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .editor-page {
   width: 100%;
   max-width: none;
@@ -3670,19 +3676,41 @@ body:has(.editor-page) {
 .editor-workspace .power-editor {
   min-width: 0;
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 1 1 0;
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
 
 .editor-workspace .slide-rail,
-.editor-workspace .properties-panel,
+.editor-workspace .properties-panel {
+  height: 100%;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
 .editor-workspace .canvas-shell,
 .editor-workspace .canvas-scroll {
   min-height: 0;
 }
 
 .editor-workspace .canvas-shell {
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
+}
+
+.editor-workspace .canvas-scroll {
+  height: 100%;
+  container-type: size;
+  overflow: hidden;
+}
+
+.editor-workspace .canvas-frame {
+  width: min(100cqw, 1120px, calc(100cqh * 16 / 9));
+  max-width: 100%;
 }
 
 /* Simple editor: keep the generated deck in focus and reveal precision tools only on demand. */
