@@ -37,7 +37,6 @@ export function DemoGallery() {
   return (
     <section className="landing-showcase-section" id="examples" aria-labelledby="landing-showcase-title">
       <header className="landing-section-heading landing-showcase-heading">
-        <p className="landing-section-label">Примеры</p>
         <h2 id="landing-showcase-title">Три темы. Три совершенно разные защиты.</h2>
         <p>
           Посмотри, как одна и та же студенческая задача превращается в цельную презентацию и связную речь.

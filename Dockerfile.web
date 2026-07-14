@@ -28,5 +28,8 @@ ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 COPY --from=base /app/apps/web/.next/standalone ./
 COPY --from=base /app/apps/web/.next/static ./apps/web/.next/static
+# Next's standalone output intentionally excludes public assets. Copy them
+# explicitly so landing-page photographs remain available in the web image.
+COPY --from=base /app/apps/web/public ./apps/web/public
 EXPOSE 3000
 CMD ["node", "apps/web/server.js"]

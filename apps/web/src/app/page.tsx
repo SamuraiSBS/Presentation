@@ -91,8 +91,6 @@ export default function HomePage() {
             <div className="landing-output-lines" aria-hidden="true"><i /><i /><i /><i /></div>
           </article>
         </div>
-
-        <p className="landing-output-secondary"><FileText aria-hidden="true" size={18} /> Источники, заметки и файлы экспорта остаются рядом — ничего не нужно искать по разным сервисам.</p>
       </section>
 
       <LandingFinalCta />
