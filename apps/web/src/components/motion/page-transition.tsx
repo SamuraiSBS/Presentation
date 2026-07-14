@@ -13,11 +13,11 @@ export function PageTransition({ routeKey, children }: { routeKey: string; child
   }, []);
 
   return (
-    <AnimatePresence initial mode="popLayout">
+    <AnimatePresence initial={false} mode="popLayout">
       <motion.div
         key={routeKey}
         className="motion-page"
-        initial={{ opacity: 0, y: 8 }}
+        initial={isFirstRender ? false : { opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0 }}
         transition={{

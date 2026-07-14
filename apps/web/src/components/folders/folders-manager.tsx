@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Folder, FolderOpen, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FolderColor, FolderSummary } from "@/lib/account-types";
 import { useCreateFolder, useDeleteFolder, useFolders, useUpdateFolder } from "@/lib/folder-queries";
 import { ApiClientError } from "@/lib/project-queries";
@@ -29,7 +29,9 @@ export function FoldersManager({ initialFolders }: { initialFolders: FolderSumma
 }
 
 function FolderGroup({ title, folders, onEdit, onDelete }: { title: string; folders: FolderSummary[]; onEdit?: (folder: FolderSummary) => void; onDelete?: (folder: FolderSummary) => void }) {
-  return <section className="folder-group"><h2>{title}</h2><div className="folders-grid">{folders.map((folder) => <article className="folder-card" key={folder.id}><Link href={`/projects?folderId=${encodeURIComponent(folder.id)}`}><span className={`folder-icon folder-${folder.color}`}><FolderOpen size={24} /></span><div><strong>{folder.name}</strong><span>{folder.projectCount} {projectWord(folder.projectCount)}</span>{folder.owner?.name ? <small>Владелец: {folder.owner.name}</small> : null}</div></Link>{onEdit && onDelete ? <DropdownMenu><DropdownMenuTrigger asChild><button className="row-menu-trigger" type="button" aria-label={`Действия: ${folder.name}`}><MoreHorizontal size={19} /></button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => onEdit(folder)}><Pencil size={16} />Изменить</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem className="danger-menu-item" onSelect={() => onDelete(folder)}><Trash2 size={16} />Удалить</DropdownMenuItem></DropdownMenuContent></DropdownMenu> : null}</article>)}</div></section>;
+  const skipMenuFocusRestore = useRef(false);
+  const afterMenuClose = (action: () => void) => { skipMenuFocusRestore.current = true; window.setTimeout(action, 0); };
+  return <section className="folder-group"><h2>{title}</h2><div className="folders-grid">{folders.map((folder) => <article className="folder-card" key={folder.id}><Link href={`/projects?folderId=${encodeURIComponent(folder.id)}`}><span className={`folder-icon folder-${folder.color}`}><FolderOpen size={24} /></span><div><strong>{folder.name}</strong><span>{folder.projectCount} {projectWord(folder.projectCount)}</span>{folder.owner?.name ? <small>Владелец: {folder.owner.name}</small> : null}</div></Link>{onEdit && onDelete ? <DropdownMenu><DropdownMenuTrigger asChild><button className="row-menu-trigger" type="button" aria-label={`Действия: ${folder.name}`}><MoreHorizontal size={19} /></button></DropdownMenuTrigger><DropdownMenuContent align="end" onCloseAutoFocus={(event) => { if (skipMenuFocusRestore.current) { event.preventDefault(); skipMenuFocusRestore.current = false; } }}><DropdownMenuItem onSelect={() => afterMenuClose(() => onEdit(folder))}><Pencil size={16} />Изменить</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem className="danger-menu-item" onSelect={() => afterMenuClose(() => onDelete(folder))}><Trash2 size={16} />Удалить</DropdownMenuItem></DropdownMenuContent></DropdownMenu> : null}</article>)}</div></section>;
 }
 
 function FolderDialog({ state, onOpenChange }: { state: DialogState; onOpenChange: (open: boolean) => void }) {

@@ -147,6 +147,7 @@ describe("shared contracts", () => {
       },
       recentProjects: [project],
       activeProjects: [],
+      attentionProjects: [],
       sharedProjects: [],
     })).not.toThrow();
   });

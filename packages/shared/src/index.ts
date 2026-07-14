@@ -1651,6 +1651,7 @@ export const dashboardSummarySchema = z.object({
   }),
   recentProjects: z.array(projectSummarySchema).max(5),
   activeProjects: z.array(projectSummarySchema),
+  attentionProjects: z.array(projectSummarySchema),
   sharedProjects: z.array(projectSummarySchema).max(5),
 });
 export type DashboardSummary = z.infer<typeof dashboardSummarySchema>;

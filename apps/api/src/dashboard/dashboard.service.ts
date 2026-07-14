@@ -3,6 +3,8 @@ import { projectSummarySelect, toProjectSummary } from "../projects/project-summ
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UsageService } from "../usage/usage.service.js";
 
+export const ACTIVE_PROJECT_STATUSES = ["uploading", "script_queued", "script_generating", "queued", "generating"] as const;
+
 @Injectable()
 export class DashboardService {
   constructor(
@@ -18,7 +20,7 @@ export class DashboardService {
       select: { id: true, name: true, image: true, telegramUsername: true, planCode: true },
     });
     const select = projectSummarySelect(userId);
-    const [usage, presentationsCreated, readyStats, recentProjects, activeProjects, sharedProjects] = await Promise.all([
+    const [usage, presentationsCreated, readyStats, recentProjects, activeProjects, attentionProjects, sharedProjects] = await Promise.all([
       this.usage.getSummary(userId),
       this.prisma.project.count({ where: { userId } }),
       this.prisma.project.aggregate({
@@ -35,8 +37,14 @@ export class DashboardService {
       this.prisma.project.findMany({
         where: {
           userId,
-          status: { in: ["uploading", "script_queued", "script_generating", "queued", "generating", "failed"] },
+          status: { in: [...ACTIVE_PROJECT_STATUSES] },
         },
+        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+        take: 5,
+        select,
+      }),
+      this.prisma.project.findMany({
+        where: { userId, status: "failed" },
         orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
         take: 5,
         select,
@@ -62,6 +70,7 @@ export class DashboardService {
       },
       recentProjects: recentProjects.map((project) => toProjectSummary(project, userId)),
       activeProjects: activeProjects.map((project) => toProjectSummary(project, userId)),
+      attentionProjects: attentionProjects.map((project) => toProjectSummary(project, userId)),
       sharedProjects: sharedProjects.map((project) => toProjectSummary(project, userId)),
     };
   }

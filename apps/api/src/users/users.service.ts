@@ -2,19 +2,20 @@ import { Injectable } from "@nestjs/common";
 import { badRequest } from "../errors/api-error.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { ProjectStorageService } from "../storage/project-storage.service.js";
+import { UsageService } from "../usage/usage.service.js";
 
 @Injectable()
 export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: ProjectStorageService,
+    private readonly usage: UsageService,
   ) {}
 
-  getMe(userId: string) {
-    return this.prisma.user.upsert({
+  async getMe(userId: string) {
+    const usage = await this.usage.getSummary(userId);
+    const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
-      create: { id: userId },
-      update: {},
       select: {
         id: true,
         name: true,
@@ -25,6 +26,7 @@ export class UsersService {
         createdAt: true,
       },
     });
+    return { ...user, usage };
   }
 
   async removeMe(userId: string, confirmation: unknown) {

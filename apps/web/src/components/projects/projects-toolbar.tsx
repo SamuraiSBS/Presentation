@@ -32,8 +32,8 @@ export function ProjectsToolbar({ folders, usage, initialQuery }: { folders: Fol
   const scope = initial.get("scope") || "all";
   return (
     <section className="projects-toolbar" aria-label="Фильтры презентаций">
-      <div className="scope-tabs" role="tablist" aria-label="Область списка">
-        {scopes.map((item) => <button className={scope === item.value ? "scope-tab scope-tab-active" : "scope-tab"} key={item.value} type="button" role="tab" aria-selected={scope === item.value} onClick={() => update("scope", item.value)}>{item.label}</button>)}
+      <div className="scope-tabs" role="group" aria-label="Область списка">
+        {scopes.map((item) => <button className={scope === item.value ? "scope-tab scope-tab-active" : "scope-tab"} key={item.value} type="button" aria-pressed={scope === item.value} onClick={() => update("scope", item.value)}>{item.label}</button>)}
       </div>
       <label className="projects-search"><Search size={18} aria-hidden="true" /><span className="sr-only">Поиск</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Найти по названию" /></label>
       <div className="projects-filters">

@@ -16,6 +16,8 @@ export function ProjectsView({ initialProjects, initialFolders, initialQuery }: 
   const projects = pages.flatMap((page) => page.items);
   const usage = pages[0]?.usage || initialProjects.usage;
   const canCreate = canCreateProject(usage);
+  const sharedScope = query.get("scope") === "shared";
+  const sharedScopeOnly = sharedScope && !query.get("search") && !query.get("status") && !query.get("folderId");
 
   return (
     <main className="page account-page projects-page">
@@ -31,7 +33,7 @@ export function ProjectsView({ initialProjects, initialFolders, initialQuery }: 
           {projects.map((project) => <ProjectRow folders={initialFolders.filter((folder) => !folder.isShared)} key={project.id} project={project} usage={usage} />)}
         </section>
       ) : (
-        <section className="panel empty-state account-empty"><h2>Ничего не найдено</h2><p>Измените фильтры или создайте новую презентацию.</p>{canCreate ? <Link className="button" href="/new"><Plus size={18} />Создать презентацию</Link> : null}</section>
+        <section className="panel empty-state account-empty"><h2>{sharedScopeOnly ? "Нет доступных вам презентаций" : "Ничего не найдено"}</h2><p>{sharedScopeOnly ? "Здесь появятся презентации, которыми с вами поделятся по приглашению или ссылке доступа." : "Измените поиск или фильтры, чтобы увидеть другие презентации."}</p>{!sharedScope && canCreate ? <Link className="button" href="/new"><Plus size={18} />Создать презентацию</Link> : null}</section>
       )}
 
       {projectsQuery.hasNextPage ? <button className="ghost load-more" type="button" onClick={() => void projectsQuery.fetchNextPage()} disabled={projectsQuery.isFetchingNextPage}>{projectsQuery.isFetchingNextPage ? "Загружаем…" : "Показать ещё"}</button> : null}

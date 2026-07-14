@@ -5,7 +5,7 @@ import { Clock3, FileStack, Layers3, Plus, Sparkles } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import type { DashboardSummary, ProjectSummary } from "@/lib/account-types";
 import { useDashboard } from "@/lib/dashboard-queries";
-import { formatResetDate, formatShortDate, projectStatusLabel, usagePercent } from "@/lib/project-ui";
+import { formatResetDate, formatShortDate, planLabel, projectStatusLabel, usagePercent } from "@/lib/project-ui";
 
 export function DashboardOverview({ initialDashboard }: { initialDashboard: DashboardSummary }) {
   const { data = initialDashboard, isFetching } = useDashboard(initialDashboard);
@@ -25,7 +25,7 @@ export function DashboardOverview({ initialDashboard }: { initialDashboard: Dash
 
       <section className="usage-panel" aria-labelledby="usage-title">
         <div className="usage-copy">
-          <div><p className="account-kicker">Бесплатный тариф</p><h2 id="usage-title">{data.usage.used} из {data.usage.limit} презентаций</h2></div>
+          <div><p className="account-kicker">{planLabel(data.usage.planCode)} тариф</p><h2 id="usage-title">{data.usage.used} из {data.usage.limit} презентаций</h2></div>
           <strong>{Math.max(0, data.usage.remaining)} осталось</strong>
         </div>
         <Progress value={usagePercent(data.usage)} aria-label={`Использовано ${data.usage.used} из ${data.usage.limit}`} />
@@ -47,9 +47,10 @@ export function DashboardOverview({ initialDashboard }: { initialDashboard: Dash
 
       <DashboardSection title="Последние презентации" projects={data.recentProjects.slice(0, 5)} allHref="/projects" />
       {data.activeProjects.length ? <DashboardSection title="Создаются сейчас" projects={data.activeProjects} /> : null}
+      {data.attentionProjects.length ? <DashboardSection title="Требуют внимания" projects={data.attentionProjects} /> : null}
       {data.sharedProjects.length ? <DashboardSection title="Доступные мне" projects={data.sharedProjects.slice(0, 5)} allHref="/projects?scope=shared" /> : null}
 
-      {!data.recentProjects.length && !data.activeProjects.length && !data.sharedProjects.length ? (
+      {!data.recentProjects.length && !data.activeProjects.length && !data.attentionProjects.length && !data.sharedProjects.length ? (
         <section className="panel empty-state account-empty">
           <h2>Первая презентация начинается с темы</h2>
           <p>Расскажите, о чём будете выступать, а материалы можно добавить на следующем шаге.</p>

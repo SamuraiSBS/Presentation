@@ -21,7 +21,11 @@ export function accessRoleLabel(role: ProjectAccessRole) {
 export function formatShortDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return "";
-  return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" }).format(date);
+  return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", timeZone: "Europe/Moscow" }).format(date);
+}
+
+export function planLabel(planCode: UsageSummary["planCode"]) {
+  return ({ free: "Бесплатный", student: "Студенческий", pro: "Профессиональный" } as const)[planCode];
 }
 
 export function formatResetDate(usage: UsageSummary) {

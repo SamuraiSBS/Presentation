@@ -65,7 +65,7 @@ export type ProfileSummary = UserSummary & {
   telegramId?: string | null;
   createdAt: string;
   planCode: PlanCode;
-  usage?: UsageSummary;
+  usage: UsageSummary;
 };
 
 export type ProjectMember = SharedProjectMember;
