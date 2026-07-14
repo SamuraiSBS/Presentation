@@ -14,7 +14,7 @@ export function WorkflowProgress({ current }: { current: number }) {
             aria-current={active ? "step" : undefined}
             key={label}
           >
-            <span>{complete ? <Check aria-hidden="true" size={13} /> : index + 1}</span>
+            <span>{complete ? <Check aria-hidden="true" size={16} /> : index + 1}</span>
             {label}
           </li>
         );

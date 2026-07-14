@@ -40,7 +40,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { RichTextField } from "@/components/editor/rich-text-field";
-import { WorkflowProgress } from "@/components/workflow-progress";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
 import type {
@@ -844,7 +843,6 @@ export function ProjectEditor({
   if (!canEdit) {
     return (
       <section className="editor-workspace viewer-workspace" data-testid="project-editor">
-        <WorkflowProgress current={4} />
         <div className="editor-top"><div><span className="status">Только просмотр</span><h1>{presentation.title}</h1></div><Link className="button" href={`/projects/${project.id}/export`}>Экспорт</Link></div>
         <section className="viewer-editor">
           <aside className="slide-rail"><strong>Слайды</strong><div className="slide-rail-list">{presentation.slides.map((item, index) => <button className={`slide-thumb ${index === active ? "slide-thumb-active" : ""}`} key={item.id} type="button" onClick={() => setActive(index)}><span>{String(index + 1).padStart(2, "0")}</span><strong>{item.title}</strong></button>)}</div></aside>
@@ -856,10 +854,8 @@ export function ProjectEditor({
 
   return (
     <section className="editor-workspace" data-testid="project-editor">
-      <WorkflowProgress current={4} />
       <div className="editor-top">
         <div>
-          <span className="status">{projectStatusLabel(project.status)}</span>
           <h1>{presentation.title}</h1>
         </div>
         <SaveIndicator status={saveStatus} />
