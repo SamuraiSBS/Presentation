@@ -10,8 +10,9 @@ export default async function NewProjectPage() {
 
   return (
     <main className="page new-page">
+      <p className="new-page-kicker">Одна тема → готовое выступление</p>
       <h1 className="page-title">О чём будешь выступать?</h1>
-      <p className="lead">Сначала вместе подготовим текст, а после соберём из него слайды.</p>
+      <p className="lead">Начни с темы: примерно через 5 минут у тебя будут презентация и связный текст выступления. Перед запуском всё можно проверить.</p>
       <NewProjectForm usage={dashboard.usage} maxSlides={planLimits[dashboard.usage.planCode].maxSlides} />
     </main>
   );

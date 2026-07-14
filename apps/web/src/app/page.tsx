@@ -1,38 +1,105 @@
-import Link from "next/link";
-import { ArrowRight, FileText, Mic2, MonitorUp, PencilRuler, Presentation } from "lucide-react";
-import { MotionList, MotionListItem } from "@/components/motion/motion-list";
+import type { Metadata } from "next";
+import {
+  ArrowRight,
+  BookOpenCheck,
+  FileText,
+  Mic2,
+  Presentation,
+  Sparkles,
+} from "lucide-react";
+import { DemoGallery } from "@/components/landing/demo-gallery";
+import { FiveMinuteTimeline } from "@/components/landing/five-minute-timeline";
+import { LandingFinalCta } from "@/components/landing/landing-final-cta";
+import { LandingHero } from "@/components/landing/landing-hero";
 
-const workflow = [
-  { icon: Presentation, text: "Расскажи, о чём будешь выступать" },
-  { icon: FileText, text: "Добавь конспект, PDF, DOCX, PPTX или TXT" },
-  { icon: Mic2, text: "Прочитай и поправь текст выступления" },
-  { icon: PencilRuler, text: "Настрой слайды и заметки" },
-  { icon: MonitorUp, text: "Скачай готовую работу в PDF или PPTX" },
-];
+export const metadata: Metadata = {
+  title: "StudyDeck AI — презентация и речь за 5 минут",
+  description: "Начни с одной темы и подготовь студенческую презентацию, связную речь и материалы для защиты примерно за 5 минут.",
+};
 
 export default function HomePage() {
   return (
-    <main className="page hero">
-      <MotionList className="hero-copy" as="section">
-        <MotionListItem index={0}><p className="status">Тема, материалы, текст, слайды, готовый файл</p></MotionListItem>
-        <MotionListItem index={1}><h1>Собери презентацию, с которой легко выступать</h1></MotionListItem>
-        <MotionListItem index={2}><p className="lead">
-          Напиши тему или добавь свои материалы. StudyDeck AI подготовит слайды,
-          заметки и связный текст, который можно спокойно рассказать на паре или защите.
-        </p></MotionListItem>
-        <MotionListItem index={3}><div className="hero-actions">
-          <Link className="button hero-primary-action" href="/new">Создать презентацию <ArrowRight aria-hidden="true" size={19} /></Link>
-          <Link className="ghost" href="/pricing">Выбрать тариф</Link>
-        </div></MotionListItem>
-      </MotionList>
-      <MotionList className="preview" as="section" aria-label="Рабочий процесс">
-        {workflow.map(({ icon: Icon, text }, index) => (
-          <MotionListItem className="preview-item" index={index} key={text}>
-            <span><Icon aria-hidden="true" size={20} /></span>
-            <strong>{text}</strong>
-          </MotionListItem>
-        ))}
-      </MotionList>
+    <main className="landing-page" id="main-content">
+      <LandingHero />
+
+      <section className="landing-transform-section" id="capabilities" aria-labelledby="landing-transform-title">
+        <header className="landing-section-heading landing-transform-heading">
+          <p className="landing-section-label">Одна тема — это уже достаточно</p>
+          <h2 id="landing-transform-title">Не нужен длинный промпт, чтобы начать готовиться к защите.</h2>
+          <p>Дальше StudyDeck раскладывает задачу на понятный маршрут: содержание, аргументы, речь и слайды.</p>
+        </header>
+
+        <div className="landing-transform-flow">
+          <article className="landing-topic-artifact">
+            <span className="landing-artifact-label">Тема выступления</span>
+            <strong>Как искусственный интеллект меняет образование</strong>
+            <span className="landing-artifact-note">Одна короткая формулировка — без сложного технического задания.</span>
+          </article>
+
+          <div className="landing-transform-connector" aria-hidden="true">
+            <span><Sparkles size={20} /></span>
+            <i />
+            <b>StudyDeck собирает основу</b>
+          </div>
+
+          <div className="landing-result-artifacts">
+            <article className="landing-result-deck">
+              <span className="landing-artifact-label"><Presentation size={17} aria-hidden="true" /> Презентация</span>
+              <strong>8 ясных слайдов</strong>
+              <p>Структура, визуальный ритм и тезисы, которые удобно объяснять вслух.</p>
+            </article>
+            <article className="landing-result-speech">
+              <span className="landing-artifact-label"><Mic2 size={17} aria-hidden="true" /> Готовая речь</span>
+              <p>«Сначала покажу, что AI не заменяет обучение, а помогает студенту быстрее разобраться в материале…»</p>
+              <span>По слайдам · можно отредактировать</span>
+            </article>
+            <div className="landing-result-support" aria-label="Дополнительные материалы">
+              <span><BookOpenCheck aria-hidden="true" size={16} /> Проверяемые источники</span>
+              <span><FileText aria-hidden="true" size={16} /> Заметки и PDF/PPTX/DOCX</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <DemoGallery />
+      <FiveMinuteTimeline />
+
+      <section className="landing-output-section" aria-labelledby="landing-output-title">
+        <header className="landing-section-heading landing-output-heading">
+          <p className="landing-section-label">Результат, с которым можно выступать</p>
+          <h2 id="landing-output-title">Два главных артефакта, а не ещё один «готовый файл».</h2>
+        </header>
+
+        <div className="landing-output-layout">
+          <article className="landing-output-presentation">
+            <span className="landing-output-icon"><Presentation aria-hidden="true" size={29} /></span>
+            <div>
+              <h3>Презентация</h3>
+              <p>Слайды собираются в цельный рассказ, а не в набор разрозненных тезисов.</p>
+            </div>
+            <div className="landing-output-slide-motif" aria-hidden="true">
+              <span>Тезис</span><span>Схема</span><span>Вывод</span>
+            </div>
+          </article>
+
+          <article className="landing-output-speech">
+            <span className="landing-output-icon"><Mic2 aria-hidden="true" size={29} /></span>
+            <div>
+              <h3>Текст выступления</h3>
+              <p>Связная речь уже разбита по слайдам: её легко сократить, уточнить и проговорить заранее.</p>
+            </div>
+            <div className="landing-output-lines" aria-hidden="true"><i /><i /><i /><i /></div>
+          </article>
+        </div>
+
+        <p className="landing-output-secondary"><FileText aria-hidden="true" size={18} /> Источники, заметки и файлы экспорта остаются рядом — ничего не нужно искать по разным сервисам.</p>
+      </section>
+
+      <LandingFinalCta />
+
+      <a className="landing-sticky-create" href="/new">
+        Создать за 5 минут <ArrowRight aria-hidden="true" size={17} />
+      </a>
     </main>
   );
 }

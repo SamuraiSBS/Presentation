@@ -33,7 +33,7 @@ export default async function LoginPage({
   return (
     <main className="page">
       <section className="panel">
-        <p className="status">Личный кабинет StudyDeck</p>
+        <p className="status">Одна тема → презентация и речь примерно за 5 минут</p>
         <h1 className="page-title">Войди, чтобы продолжить</h1>
         <p className="lead">
           Проекты, папки и совместные презентации будут привязаны к твоему Telegram-аккаунту.

@@ -2,21 +2,23 @@
 
 import { usePathname } from "next/navigation";
 import { AppHeader } from "@/components/app-header";
+import { PublicHeader } from "@/components/landing/public-header";
+import { classifyAppRoute, usesAccountNavigation } from "@/lib/app-route-classification";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 import { MotionProvider } from "@/components/motion/motion-provider";
 import { PageTransition } from "@/components/motion/page-transition";
 
-const accountPrefixes = ["/dashboard", "/projects", "/new", "/folders", "/profile", "/billing", "/invite", "/admin"];
-
 export function AppChrome({ children, adminAvailable = false }: { children: React.ReactNode; adminAvailable?: boolean }) {
   const pathname = usePathname();
-  const login = pathname === "/login";
-  const accountRoute = accountPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+  const route = classifyAppRoute(pathname);
+  const login = route === "auth";
+  const publicLanding = route === "public";
+  const accountRoute = usesAccountNavigation(route);
 
   return (
     <MotionProvider>
-      {!login ? <AppHeader adminAvailable={adminAvailable} /> : null}
-      <div className={login ? "app-content app-content-auth" : "app-content"}>
+      {publicLanding ? <PublicHeader /> : !login ? <AppHeader adminAvailable={adminAvailable} /> : null}
+      <div className={login ? "app-content app-content-auth" : publicLanding ? "app-content app-content-public" : "app-content"}>
         <PageTransition routeKey={pathname}>{children}</PageTransition>
       </div>
       {!login && accountRoute ? <MobileBottomNav /> : null}
