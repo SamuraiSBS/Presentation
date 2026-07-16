@@ -1,0 +1,16 @@
+.project-list { gap: 12px; }
+.project-card { display: grid; grid-template-columns: auto minmax(0,1fr) auto auto; align-items: center; gap: 15px; min-height: 92px; transition: transform var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out); }
+.project-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-raised); }
+.project-card-copy { min-width: 0; }
+.project-card-copy strong { display: block; font-size: 18px; line-height: 1.25; }
+.project-card-copy p { margin: 5px 0 0; }
+.project-arrow { color: var(--orange-deep); }
+.icon-surface { display: inline-grid; place-items: center; width: 48px; height: 48px; flex: none; border-radius: 16px; background: var(--orange-soft); color: var(--orange-deep); }
+.icon-surface-large { width: 58px; height: 58px; border-radius: 18px; }
+.empty-state { display: grid; justify-items: start; gap: 10px; max-width: 720px; padding: clamp(24px,5vw,42px); }
+.empty-state h2, .empty-state p { margin: 0; }
+
+.status { background: var(--orange-soft); color: var(--orange-deep); }
+.status-ready, .status-completed, .status-script_ready { background: #ddf6e9; color: #126b43; }
+.status-failed { background: var(--error-soft); color: var(--error); }
+.status-draft { background: #f1e8dd; color: #70583f; }

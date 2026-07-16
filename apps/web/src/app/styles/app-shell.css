@@ -1,0 +1,89 @@
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px clamp(16px, 4vw, 44px);
+  border-bottom: 1px solid var(--line);
+  background: rgba(248, 248, 245, 0.9);
+  backdrop-filter: blur(12px);
+}
+
+.brand,
+.nav,
+.actions,
+.row,
+.hero-actions {
+  display: flex;
+  align-items: center;
+}
+
+.brand {
+  gap: 10px;
+  font-weight: 900;
+}
+
+.mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--orange);
+  color: var(--ink);
+}
+
+.nav {
+  gap: 18px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.actions {
+  gap: 8px;
+}
+
+.button,
+.ghost,
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  border: 0;
+  border-radius: var(--radius);
+  padding: 0 14px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.button {
+  background: var(--orange);
+  color: var(--ink);
+}
+
+.ghost,
+.icon {
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.icon {
+  width: 38px;
+  padding: 0;
+}
+
+.page {
+  padding: clamp(24px, 5vw, 64px) clamp(16px, 4vw, 44px);
+}

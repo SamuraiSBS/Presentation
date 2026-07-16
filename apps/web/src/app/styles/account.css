@@ -1,0 +1,98 @@
+/* Personal account shell and management surfaces. */
+.nav-link-active {
+  background: var(--orange-soft);
+  color: var(--orange-deep) !important;
+}
+
+.header-actions {
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.account-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 5px 10px 5px 6px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.account-trigger > span,
+.account-trigger > img,
+.member-avatar,
+.profile-avatar,
+.invitation-owner > span {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--orange-soft);
+  color: var(--orange-deep);
+  font-weight: 900;
+}
+
+.account-trigger img,
+.profile-avatar img,
+.member-avatar img,
+.invitation-owner img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.account-menu { min-width: 220px; }
+.danger-menu-item, .danger-menu-item svg { color: var(--error) !important; }
+.app-content-auth { min-height: 100dvh; }
+.app-content-auth .page { display: grid; min-height: 100dvh; place-items: center; }
+.app-content-auth .panel { display: grid; width: min(100%, 520px); gap: 18px; padding: clamp(24px, 5vw, 42px); }
+.app-content-auth .panel > * { margin-block: 0; }
+
+.account-page {
+  display: grid;
+  gap: 24px;
+  align-content: start;
+}
+
+.account-page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.account-page-header h1,
+.account-page-header p { margin-block: 0; }
+.account-page-header .lead { margin-top: 8px; }
+.account-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  color: var(--orange-deep);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.usage-panel,
+.continue-panel,
+.dashboard-section,
+.projects-toolbar,
+.folder-group,
+.profile-card,
+.profile-plan,
+.profile-actions,
+.danger-zone,
+.invitation-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-major);
+  background: var(--surface);
+}
