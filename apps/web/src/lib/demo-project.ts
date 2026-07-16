@@ -139,12 +139,84 @@ export const demoProject = {
   status: "ready",
   slideCount: demoPresentation.slideCount,
   updatedAt: new Date("2026-06-12T12:00:00.000Z").toISOString(),
+  accessRole: "owner" as const,
+  presentationRevision: 1,
   sources: demoPresentation.sources,
   exports: [],
   presentation: {
     id: demoPresentation.id,
     document: demoPresentation,
   },
+};
+
+const demoUser = {
+  id: "demo-user",
+  name: "Учебный пример",
+  image: null,
+};
+
+export const demoUsage = {
+  planCode: "free" as const,
+  period: "2026-07",
+  limit: 10,
+  used: 1,
+  remaining: 9,
+  resetsAt: "2026-08-01T00:00:00.000Z",
+  exhausted: false,
+  canCreate: true,
+};
+
+const demoProjectSummary = {
+  id: demoProject.id,
+  title: demoProject.title,
+  status: "ready" as const,
+  slideCount: demoProject.slideCount,
+  updatedAt: demoProject.updatedAt,
+  createdAt: "2026-06-12T10:00:00.000Z",
+  error: null,
+  accessRole: "owner" as const,
+  owner: demoUser,
+  folder: null,
+  hasPresentation: true,
+  latestExport: null,
+  memberCount: 1,
+};
+
+export const demoDashboard = {
+  user: {
+    ...demoUser,
+    telegramUsername: null,
+    planCode: "free" as const,
+  },
+  usage: demoUsage,
+  stats: {
+    presentationsCreated: 1,
+    slidesCreated: demoProject.slideCount,
+    readyPresentations: 1,
+    savedHoursMin: 1,
+    savedHoursMax: 2,
+  },
+  recentProjects: [demoProjectSummary],
+  activeProjects: [],
+  attentionProjects: [],
+  sharedProjects: [],
+};
+
+export const demoProjectList = {
+  items: [demoProjectSummary],
+  nextCursor: null,
+  usage: demoUsage,
+};
+
+export const demoFolders = { items: [] };
+
+export const demoProfile = {
+  ...demoUser,
+  telegramUsername: null,
+  telegramId: null,
+  createdAt: "2026-06-12T10:00:00.000Z",
+  planCode: "free" as const,
+  usage: demoUsage,
 };
 
 export function updateDemoSlide(slideId: string, input: { title?: string; thesis?: string; bullets?: string[]; blocks?: SlideBlock[]; canvas?: SlideCanvas; speakerNotes?: string }) {

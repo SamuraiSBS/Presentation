@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import NextImage from "next/image";
 import {
   compactSourceRefs,
   fittedFontSize,
@@ -128,7 +129,7 @@ export function SlideTemplatePreview({ slide }: { slide: Slide }) {
 function VisualImage({ image }: { image: NonNullable<Slide["visual"]["image"]> }) {
   return (
     <figure className="visual-image">
-      <img src={image.url} alt={image.alt || ""} loading="lazy" />
+      <NextImage src={image.url} alt={image.alt || ""} width={1600} height={900} unoptimized />
       {image.sourceTitle || image.sourceUrl ? <figcaption>{image.sourceTitle || image.sourceUrl}</figcaption> : null}
     </figure>
   );

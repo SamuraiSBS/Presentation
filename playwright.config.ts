@@ -33,7 +33,8 @@ function findInstalledPlaywrightChrome(): string | undefined {
 
 export default defineConfig({
   testDir: "./e2e",
-  fullyParallel: true,
+  fullyParallel: false,
+  workers: process.env.CI ? 2 : 1,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
   reporter: [["list"]],
@@ -45,7 +46,7 @@ export default defineConfig({
     video: "off",
   },
   webServer: skipWebServer ? undefined : {
-    command: "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-web-fast.ps1 -Port 3020 -DemoPreview",
+    command: "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-web-fast.ps1 -Port 3020 -DemoPreview -E2E",
     url: baseURL,
     reuseExistingServer: false,
     timeout: 120_000,

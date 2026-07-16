@@ -60,7 +60,7 @@ type ExportJobData = {
 
 export async function handleExportJob(job: Job<ExportJobData>) {
   const prisma = getPrisma();
-  const { exportId, projectId, type } = job.data;
+  const { projectId } = job.data;
   const project = await prisma.project.findUnique({ where: { id: projectId }, select: { userId: true } });
   if (!project) throw new Error("Export project was not found");
   return runWithUsageContext({ userId: project.userId, projectId, queueJobId: job.id ? String(job.id) : undefined, stage: "export" }, () => runExportJob(job));
@@ -1006,7 +1006,6 @@ export async function renderPdfHtml(presentation: ReturnType<typeof presentation
 
 async function renderPdfTemplateSlide(slide: ReturnType<typeof presentationSchema.parse>["slides"][number], theme: ExportTheme) {
   const image = await pdfSlideImageFigure(slide);
-  const hasImage = Boolean(image);
   const vars = pdfThemeVars(theme);
   const bg = slideBackgroundVariant(slide);
   const content = await pdfTemplateContent(slide, image);

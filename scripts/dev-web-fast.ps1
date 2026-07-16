@@ -1,6 +1,7 @@
 param(
   [int]$Port = 3020,
-  [switch]$DemoPreview
+  [switch]$DemoPreview,
+  [switch]$E2E
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,6 +49,12 @@ $env:NEXTAUTH_URL = "http://localhost:$Port"
 $env:PUBLIC_APP_URL = "http://localhost:$Port"
 if ($DemoPreview) {
   $env:NEXT_PUBLIC_DEMO_PREVIEW = 'true'
+}
+
+if ($E2E) {
+  $env:ALLOW_DEV_AUTH = 'true'
+  $env:ALLOW_DEV_ADMIN = 'true'
+  $env:TEMP_USER_ID = 'playwright-user'
 }
 
 Write-Host 'Building the small shared package once...'

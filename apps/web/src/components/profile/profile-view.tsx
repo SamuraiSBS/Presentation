@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import NextImage from "next/image";
 import { signOut } from "next-auth/react";
 import { CalendarDays, LogOut, ShieldCheck, Tags, Trash2, UserRound } from "lucide-react";
 import { useState } from "react";
@@ -18,7 +19,7 @@ export function ProfileView({ initialProfile }: { initialProfile: ProfileSummary
     <main className="page account-page profile-page">
       <header className="account-page-header"><div><p className="account-kicker">Аккаунт</p><h1 className="page-title">Профиль</h1><p className="lead">Данные Telegram и настройки личного кабинета.</p></div></header>
       <section className="profile-card">
-        <div className="profile-avatar">{profile.image ? <img src={profile.image} alt="" referrerPolicy="no-referrer" /> : <UserRound size={34} />}</div>
+        <div className="profile-avatar">{profile.image ? <NextImage src={profile.image} alt="" width={34} height={34} unoptimized referrerPolicy="no-referrer" /> : <UserRound size={34} />}</div>
         <div className="profile-identity"><h2>{profile.name || "Пользователь StudyDeck"}</h2><p>{profile.telegramUsername ? `@${profile.telegramUsername}` : "Имя пользователя Telegram не указано"}</p></div>
         <dl className="profile-facts"><div><dt><CalendarDays size={17} />В StudyDeck с</dt><dd>{joined}</dd></div><div><dt><ShieldCheck size={17} />Вход</dt><dd>Telegram</dd></div></dl>
       </section>

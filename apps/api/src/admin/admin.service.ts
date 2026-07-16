@@ -3,7 +3,6 @@ import { InjectQueue } from "@nestjs/bullmq";
 import type { AdminListQuery, AdminPlanOverrideInput } from "@studydeck/shared";
 import { Prisma } from "@prisma/client";
 import type { Queue } from "bullmq";
-import { randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { ProjectStorageService } from "../storage/project-storage.service.js";
 import { generationJobOptions } from "../jobs/job-options.js";

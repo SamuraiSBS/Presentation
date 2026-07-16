@@ -110,12 +110,12 @@ export function sanitizeProjectForDisplay<T extends ProjectWithPresentation>(pro
     ...project,
     presentation: {
       ...project.presentation,
-      document: project.id ? useStoredImageUrls(sanitizedDocument, project.id) : sanitizedDocument,
+      document: project.id ? restoreStoredImageUrls(sanitizedDocument, project.id) : sanitizedDocument,
     },
   };
 }
 
-export function useStoredImageUrls(document: PresentationDocument, projectId: string): PresentationDocument {
+export function restoreStoredImageUrls(document: PresentationDocument, projectId: string): PresentationDocument {
   return {
     ...document,
     slides: document.slides.map((slide) => {

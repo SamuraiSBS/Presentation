@@ -4404,7 +4404,7 @@ body:has(.editor-page) {
   cursor: pointer;
 }
 
-.wizard-progress-step > span {
+.wizard-progress-step > span:first-child {
   display: grid;
   place-items: center;
   width: 22px;
@@ -4420,12 +4420,12 @@ body:has(.editor-page) {
   color: var(--orange-deep);
 }
 
-.wizard-progress-step-active > span {
+.wizard-progress-step-active > span:first-child {
   background: var(--orange);
   color: #fff;
 }
 
-.wizard-progress-step-complete > span {
+.wizard-progress-step-complete > span:first-child {
   background: #ddf6e9;
   color: var(--green);
 }
@@ -4639,6 +4639,10 @@ body:has(.editor-page) {
 }
 
 @media (max-width: 560px) {
+  .new-page {
+    padding-bottom: calc(20px + 92px + env(safe-area-inset-bottom));
+  }
+
   .wizard-progress {
     justify-content: space-between;
     gap: 2px;
@@ -4649,9 +4653,33 @@ body:has(.editor-page) {
     font-size: 12px;
   }
 
-  .wizard-progress-step > span {
+  .wizard-progress-step > span:first-child {
     width: 20px;
     height: 20px;
+  }
+
+  .wizard-progress-step-label {
+    display: none;
+  }
+
+  .wizard-progress-step-active .wizard-progress-step-label {
+    display: inline;
+  }
+
+  .wizard-main {
+    height: auto;
+    min-height: 430px;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .wizard-pane {
+    min-height: 430px;
+  }
+
+  .wizard-question,
+  .wizard-pane h2.wizard-question {
+    overflow-wrap: anywhere;
   }
 
   .slide-count-options,
@@ -5045,6 +5073,20 @@ body:has(.editor-page) {
   color: var(--orange-deep);
   font-size: 13px;
   font-weight: 900;
+}
+
+.project-unavailable {
+  display: grid;
+  justify-items: start;
+  gap: 14px;
+  max-width: 640px;
+  margin-inline: auto;
+  padding: clamp(22px, 5vw, 36px);
+}
+
+.project-unavailable h1,
+.project-unavailable p {
+  margin: 0;
 }
 
 @media (max-width: 760px) {

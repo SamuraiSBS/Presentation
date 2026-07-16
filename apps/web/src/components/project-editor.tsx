@@ -20,7 +20,7 @@ import {
   Check,
   Copy,
   Eye,
-  Image,
+  Image as ImageIcon,
   Italic,
   LayoutTemplate,
   Lock,
@@ -39,6 +39,7 @@ import {
   Upload,
   type LucideIcon,
 } from "lucide-react";
+import NextImage from "next/image";
 import { RichTextField } from "@/components/editor/rich-text-field";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
@@ -1180,9 +1181,12 @@ function ReadonlyCanvasElement({
         }}
       >
         {element.url ? (
-          <img
+          <NextImage
             src={element.url}
             alt={element.alt}
+            fill
+            sizes="100vw"
+            unoptimized
             style={{ objectFit: element.fit }}
           />
         ) : null}
@@ -1253,7 +1257,7 @@ const editorIcons: Record<IconName, LucideIcon> = {
   cursor: MousePointer2,
   text: Type,
   shape: Square,
-  image: Image,
+  image: ImageIcon,
   undo: Undo2,
   redo: Redo2,
   preview: Eye,
@@ -1646,9 +1650,12 @@ function CanvasElementView({
         onPointerDown={onPointerDown}
       >
         {element.url ? (
-          <img
+          <NextImage
             src={element.url}
             alt={element.alt}
+            fill
+            sizes="100vw"
+            unoptimized
             draggable={false}
             style={{ objectFit: element.fit }}
           />
@@ -1998,7 +2005,7 @@ function SimplePropertiesPanel({
         />
         <SimpleTab
           active={activeTab === "image"}
-          icon={<Image aria-hidden="true" />}
+          icon={<ImageIcon aria-hidden="true" />}
           id="image"
           label="Картинка"
           onClick={() => onChangeTab("image")}
@@ -2078,14 +2085,17 @@ function SimplePropertiesPanel({
       {activeTab === "image" ? (
         <div className="simple-tab-panel" id="simple-editor-image" role="tabpanel" aria-labelledby="simple-editor-tab-image">
           {image?.url ? (
-            <img
+            <NextImage
               className="simple-image-preview"
               src={image.url}
               alt={image.alt || "Изображение на слайде"}
+              width={1600}
+              height={900}
+              unoptimized
             />
           ) : (
             <div className="simple-empty-state">
-              <Image aria-hidden="true" />
+              <ImageIcon aria-hidden="true" />
               <strong>На этом слайде нет изображения</strong>
               <p>Добавьте изображение с устройства — точная правка для этого не нужна.</p>
             </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sanitizePresentationForDisplay, sanitizeProjectForDisplay, useStoredImageUrls } from "./presentation-display";
+import { restoreStoredImageUrls, sanitizePresentationForDisplay, sanitizeProjectForDisplay } from "./presentation-display";
 
 const forbiddenNarrationFragments = [
   'Слайд "',
@@ -432,7 +432,7 @@ describe("sanitizePresentationForDisplay", () => {
       })),
     };
 
-    const restored = useStoredImageUrls(withoutCanvasImage, "project-1");
+    const restored = restoreStoredImageUrls(withoutCanvasImage, "project-1");
     const image = restored.slides[0].canvas?.elements.find((element) => element.type === "image");
 
     expect(image?.url).toBe("/api/projects/project-1/slides/slide-1/assets/visual-image");

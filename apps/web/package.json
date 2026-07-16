@@ -9,7 +9,7 @@
     "build": "next build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "lint": "next lint || eslint src --ext .ts,.tsx"
+    "lint": "eslint src --ext .ts,.tsx"
   },
   "dependencies": {
     "@fontsource-variable/nunito": "^5.2.7",

@@ -50,9 +50,9 @@ export async function internalRequest<T = unknown>(
   const method = (init.method || "GET").toUpperCase();
   const demoPreviewEnabled = process.env.NEXT_PUBLIC_DEMO_PREVIEW === "true";
 
-  if (demoPreviewEnabled && method === "GET" && path === "/projects/demo") {
-    const { demoProject } = await import("./demo-project");
-    return { data: demoProject as T, status: 200, headers: new Headers() };
+  if (demoPreviewEnabled && method === "GET") {
+    const demo = await demoPreviewResponse(path);
+    if (demo) return { data: demo as T, status: 200, headers: new Headers() };
   }
 
   const userId = await requireUserId();
@@ -74,6 +74,23 @@ export async function internalRequest<T = unknown>(
   }
 
   return { data: data as T, status: response.status, headers: response.headers };
+}
+
+async function demoPreviewResponse(path: string): Promise<unknown | null> {
+  const {
+    demoDashboard,
+    demoFolders,
+    demoProfile,
+    demoProject,
+    demoProjectList,
+  } = await import("./demo-project");
+
+  if (path === "/projects/demo") return demoProject;
+  if (path === "/dashboard") return demoDashboard;
+  if (path === "/folders") return demoFolders;
+  if (path === "/users/me") return demoProfile;
+  if (path === "/projects" || path.startsWith("/projects?")) return demoProjectList;
+  return null;
 }
 
 export async function internalFetch<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {

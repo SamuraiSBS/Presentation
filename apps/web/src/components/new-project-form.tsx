@@ -128,13 +128,14 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
               key={item.label}
               type="button"
               disabled={!available}
+              aria-label={`Шаг ${index + 1}: ${item.label}`}
               aria-current={active ? "step" : undefined}
               onClick={() => targetStep <= 2 && setStep(targetStep)}
               layout
               transition={transitions.control}
             >
               <span>{item.complete ? <Check aria-hidden="true" size={14} strokeWidth={3} /> : index + 1}</span>
-              {item.label}
+              <span className="wizard-progress-step-label">{item.label}</span>
             </motion.button>
           );
         })}
@@ -166,7 +167,7 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
               </fieldset>
             </div>
             <div className="actions action-row">
-              <button className="button" type="button" onClick={nextFromTopic} disabled={!creationAllowed}>
+              <button className="button" data-testid="new-project-next" type="button" onClick={nextFromTopic} disabled={!creationAllowed}>
                 Продолжить
               </button>
             </div>
@@ -202,7 +203,7 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
               <button className="ghost" type="button" onClick={() => setStep(0)}>
                 Назад
               </button>
-              <button className="button" type="button" onClick={() => { setVolumeConfirmed(true); setStep(2); }}>
+              <button className="button" data-testid="new-project-next" type="button" onClick={() => { setVolumeConfirmed(true); setStep(2); }}>
                 Продолжить
               </button>
             </div>
@@ -312,7 +313,7 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
               <button className="ghost" type="button" onClick={() => setStep(1)} disabled={busy}>
                 Назад
               </button>
-              <button className="button" type="button" onClick={createProjectDraft} disabled={busy || !creationAllowed || (sourceMode === "files" && !files.length)}>
+              <button className="button" data-testid="new-project-next" type="button" onClick={createProjectDraft} disabled={busy || !creationAllowed || (sourceMode === "files" && !files.length)}>
                 {busy ? "Сохраняем проект..." : "Сохранить и проверить настройки"}
               </button>
             </div>

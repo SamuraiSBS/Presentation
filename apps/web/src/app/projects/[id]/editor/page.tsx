@@ -1,5 +1,6 @@
 import { ProjectEditor } from "@/components/project-editor";
-import { internalFetch } from "@/lib/internal-api";
+import { ProjectUnavailable } from "@/components/project-unavailable";
+import { InternalApiError, internalFetch } from "@/lib/internal-api";
 import { sanitizeProjectForDisplay } from "@/lib/presentation-display";
 import type { ProjectDetail } from "@/lib/account-types";
 
@@ -7,11 +8,23 @@ export const dynamic = "force-dynamic";
 
 export default async function EditorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const project = sanitizeProjectForDisplay(await internalFetch<ProjectDetail>(`/projects/${id}`));
+  try {
+    const project = sanitizeProjectForDisplay(await internalFetch<ProjectDetail>(`/projects/${id}`));
 
-  return (
-    <main className="page editor-page">
-      <ProjectEditor initialProject={project} />
-    </main>
-  );
+    return (
+      <main className="page editor-page">
+        <ProjectEditor initialProject={project} />
+      </main>
+    );
+  } catch (error) {
+    const missing = error instanceof InternalApiError && error.status === 404;
+    return (
+      <main className="page">
+        <ProjectUnavailable
+          title={missing ? "Презентация не найдена" : "Не удалось открыть редактор"}
+          description={missing ? "Возможно, презентация была удалена или ссылка устарела." : "Проверьте подключение и попробуйте ещё раз. Пока можно вернуться к списку презентаций."}
+        />
+      </main>
+    );
+  }
 }

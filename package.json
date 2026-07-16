@@ -14,7 +14,7 @@
     "dev:worker": "npm run dev -w @studydeck/worker",
     "build": "npm run build --workspaces --if-present",
     "check": "npm run build -w @studydeck/shared && npm run typecheck -w @studydeck/shared && npm run typecheck -w @studydeck/api && npm run typecheck -w @studydeck/web && npm run typecheck -w @studydeck/worker",
-    "lint": "npm run lint --workspaces --if-present",
+    "lint": "eslint apps packages e2e --max-warnings 57",
     "test": "npm run test --workspaces --if-present",
     "test:e2e": "playwright test",
     "prisma:generate": "prisma generate",
@@ -81,8 +81,10 @@
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
     "eslint": "^9.18.0",
+    "eslint-config-next": "^15.1.6",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
+    "typescript-eslint": "^8.64.0",
     "vitest": "^2.1.8"
   }
 }

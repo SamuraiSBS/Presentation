@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type ProjectPayload = {
@@ -36,7 +36,7 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
     return "Обновляем статус";
   }, [project.status]);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     const response = await fetch(`/api/projects/${project.id}`);
     if (!response.ok) throw new Error(await response.text());
     const next = (await response.json()) as ProjectPayload;
@@ -47,7 +47,7 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
     if (next.status === "ready") {
       router.replace(`/projects/${next.id}/editor`);
     }
-  }
+  }, [dirty, project.id, router]);
 
   useEffect(() => {
     if (project.status === "ready") {
@@ -60,7 +60,7 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
       refresh().catch((error) => setActionError(userError(error, "Не получилось обновить проект. Попробуй ещё раз.")));
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [project.id, project.status, isWaiting, dirty, router]);
+  }, [project.id, project.status, isWaiting, refresh, router]);
 
   async function startNarration() {
     setBusy(true);

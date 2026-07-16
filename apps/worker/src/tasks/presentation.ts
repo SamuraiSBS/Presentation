@@ -741,11 +741,6 @@ async function generateOpenAIPresentationFromNarration(project: ProjectInput, so
   designBrief);
 }
 
-async function generateOpenAINarrativePlan(client: OpenAI, project: ProjectInput, sources: Source[]) {
-  const researchBrief = buildResearchBrief(project, sources);
-  return generateNarrativePlanWithProvider("openai", project, sources, researchBrief, { openAIClient: client });
-}
-
 async function generateOpenAINarration(client: OpenAI, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief) {
   let prompt = buildNarrationPrompt(project, sources, narrativePlan, researchBrief);
   let lastError: unknown;
@@ -886,11 +881,6 @@ async function generateYandexPresentationFromNarration(project: ProjectInput, so
     },
     designBrief,
   );
-}
-
-async function generateYandexNarrativePlan(apiKey: string, project: ProjectInput, sources: Source[]) {
-  const researchBrief = buildResearchBrief(project, sources);
-  return generateNarrativePlanWithProvider("yandex", project, sources, researchBrief, { yandexApiKey: apiKey });
 }
 
 async function generateYandexNarration(apiKey: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief) {
@@ -2201,7 +2191,7 @@ function repairShortNarrationSections(sections: NarrationSection[], project: Pro
   });
 }
 
-export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[], researchBrief?: ResearchBrief) {
+export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[], _researchBrief?: ResearchBrief) {
   return [
     "Верни JSON-массив narrativePlan для StudyDeck презентации.",
     `Тема и запрос пользователя: ${project.prompt}`,
@@ -2795,7 +2785,6 @@ async function finalizeGeneratedPresentation(
 ) {
   let presentation = normalizePresentation(raw, project, sources, generationMode, generatedText, narrativePlan, false, designBrief);
   let issues = findSlideTextIssues(presentation);
-  let qualityCritique = buildQualityCritique(presentation, issues);
 
   if (issues.length) {
     try {
@@ -2806,11 +2795,9 @@ async function finalizeGeneratedPresentation(
     }
 
     issues = findSlideTextIssues(presentation);
-    qualityCritique = buildQualityCritique(presentation, issues);
     if (issues.length) {
       presentation = applyNarrationFallbacks(presentation, issues, project);
       issues = findSlideTextIssues(presentation);
-      qualityCritique = buildQualityCritique(presentation, issues);
     }
   }
 
@@ -4266,15 +4253,6 @@ function defaultRightLabel(type: SlideVisual["type"]) {
   return "";
 }
 
-function fallbackRows(type: SlideVisual["type"], bullets: string[]) {
-  if (!["comparison_diagram", "before_after_table", "pros_cons_table", "cause_effect_diagram"].includes(type)) return [];
-  return bullets.slice(0, 4).map((item, index) => ({
-    label: index === 0 ? "Главное" : `Пункт ${index + 1}`,
-    left: item,
-    right: "",
-  }));
-}
-
 function slideText(blocks: SlideBlock[]) {
   return sanitizeScreenText(
     blocks
@@ -4489,7 +4467,7 @@ function layoutHasEnoughContent(layout: SlideLayout, slide: Pick<Slide, "title" 
 
 function fallbackForSparseLayout(
   layout: SlideLayout,
-  slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks"> & Partial<Pick<Slide, "sourceRefs">>,
+  _slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks"> & Partial<Pick<Slide, "sourceRefs">>,
 ): SlideLayout {
   if (layout === "question-answer" || layout === "myth-fact" || layout === "comparison" || layout === "problem-solution") {
     return "statement";
@@ -4506,17 +4484,6 @@ function hasMeasurableText(slide: Pick<Slide, "title" | "thesis" | "bullets" | "
   ].join(" ");
 
   return hasMeasurableValue(text);
-}
-
-function hasProblemSolutionLanguage(slide: Pick<Slide, "title" | "thesis" | "bullets" | "blocks">) {
-  const text = [slide.title, slide.thesis, ...slide.bullets].join(" ").toLowerCase();
-  const hasProblem = /(проблем|трудност|риск|причин|последств|мешает|вызывает)/u.test(text);
-  const hasSolution = /(решени|исправ|помога|нужно|можно|способ|предлага)/u.test(text);
-  return hasProblem && hasSolution;
-}
-
-function hasExampleLanguage(slide: Pick<Slide, "title" | "thesis" | "bullets" | "blocks">) {
-  return /(пример|например|ошибк|важно помнить|оговорк)/iu.test([slide.title, slide.thesis, ...slide.bullets].join(" "));
 }
 
 function normalizeProvider(value: string | undefined): AiGenerationMode | undefined {
@@ -4897,15 +4864,6 @@ function buildFallbackGeneratedText(project: ProjectInput) {
     const body = buildFallbackSpeakerNotes(project, order);
     return `Слайд ${order}: ${title}\n${body}`;
   }).join("\n\n");
-}
-
-function buildGeneratedTextFromSlides(slides: Slide[]) {
-  return slides
-    .map((slide) => {
-      const body = cleanMultilineText(slide.speakerNotes || [slide.thesis, ...slide.bullets].filter(Boolean).join(" "));
-      return `Слайд ${slide.order}: ${slide.title}\n${body}`;
-    })
-    .join("\n\n");
 }
 
 function cleanMultilineText(value: unknown) {

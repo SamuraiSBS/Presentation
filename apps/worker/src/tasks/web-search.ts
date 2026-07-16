@@ -21,7 +21,6 @@ export type SourceResearchBrief = {
   sourceIds: string[];
 };
 
-const TAVILY_QUERY_MAX_LENGTH = 400;
 const TAVILY_QUERY_SAFE_LENGTH = 380;
 const SEARCH_TERM_MAX_COUNT = 10;
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import NextImage from "next/image";
 import { Check, Copy, Link2, LoaderCircle, Trash2, UserRound } from "lucide-react";
 import type { ProjectMemberRole } from "@/lib/account-types";
 import {
@@ -56,7 +57,7 @@ export function ShareProjectDialog({ open, onOpenChange, projectId, projectTitle
         <section className="members-section" aria-labelledby="members-title">
           <h3 id="members-title">Участники</h3>
           {membersQuery.isLoading ? <p className="muted">Загружаем участников…</p> : null}
-          {membersQuery.data?.members.length ? <div className="members-list">{membersQuery.data.members.map((member) => <div className="member-row" key={member.id}><span className="member-avatar">{member.user.image ? <img src={member.user.image} alt="" /> : <UserRound size={17} />}</span><div><strong>{member.user.name || "Участник"}</strong><small>{member.user.telegramUsername ? `@${member.user.telegramUsername}` : "Telegram"}</small></div><Select className="member-role-select" ariaLabel={`Роль: ${member.user.name || "участник"}`} value={member.role} onValueChange={(value) => void updateMember.mutateAsync({ memberId: member.id, role: value as ProjectMemberRole })} options={[{ value: "viewer", label: "Просмотр" }, { value: "editor", label: "Редактор" }]} /><button className="icon danger-icon" type="button" aria-label="Отозвать доступ" onClick={() => void removeMember.mutateAsync(member.id)}><Trash2 size={16} /></button></div>)}</div> : !membersQuery.isLoading ? <p className="muted">Пока доступ есть только у вас.</p> : null}
+          {membersQuery.data?.members.length ? <div className="members-list">{membersQuery.data.members.map((member) => <div className="member-row" key={member.id}><span className="member-avatar">{member.user.image ? <NextImage src={member.user.image} alt="" width={34} height={34} unoptimized /> : <UserRound size={17} />}</span><div><strong>{member.user.name || "Участник"}</strong><small>{member.user.telegramUsername ? `@${member.user.telegramUsername}` : "Telegram"}</small></div><Select className="member-role-select" ariaLabel={`Роль: ${member.user.name || "участник"}`} value={member.role} onValueChange={(value) => void updateMember.mutateAsync({ memberId: member.id, role: value as ProjectMemberRole })} options={[{ value: "viewer", label: "Просмотр" }, { value: "editor", label: "Редактор" }]} /><button className="icon danger-icon" type="button" aria-label="Отозвать доступ" onClick={() => void removeMember.mutateAsync(member.id)}><Trash2 size={16} /></button></div>)}</div> : !membersQuery.isLoading ? <p className="muted">Пока доступ есть только у вас.</p> : null}
           {membersQuery.data?.invitations?.length ? <div className="active-invites"><h4>Активные ссылки</h4>{membersQuery.data.invitations.map((invitation) => <div key={invitation.id}><span>{invitation.role === "editor" ? "Редактор" : "Просмотр"} · до {new Date(invitation.expiresAt).toLocaleString("ru-RU")}</span><button type="button" onClick={() => void revokeInvitation.mutateAsync(invitation.id)}>Отозвать</button></div>)}</div> : null}
         </section>
         {error ? <p className="form-error" role="alert">{error}</p> : null}
