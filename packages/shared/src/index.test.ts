@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as publicSharedApi from "./index";
 import {
   auditSlideCanvas,
   buildSlideCanvas,
@@ -48,6 +49,30 @@ import {
 } from "./index";
 
 describe("shared contracts", () => {
+  it("keeps the critical runtime public API at the package entry point", () => {
+    expect(Object.keys(publicSharedApi)).toEqual(expect.arrayContaining([
+      "adminPeriodSchema",
+      "planLimits",
+      "createProjectInputSchema",
+      "projectSummarySchema",
+      "exportTypeSchema",
+      "generationPipelineArtifactsSchema",
+      "presentationSchema",
+      "slideCanvasSchema",
+      "SLIDE_LAYOUT_DEFINITIONS",
+      "resolvePresentationTheme",
+      "resolveThemeFromDesignBrief",
+      "buildSlideCanvas",
+      "ensureEditableCanvas",
+      "auditSlideCanvas",
+      "hasCustomSlideCanvas",
+      "canvasBackgroundCss",
+    ]));
+    expect("visibleSlideTextSchema" in publicSharedApi).toBe(false);
+    expect("speakerNotesTextSchema" in publicSharedApi).toBe(false);
+    expect("mermaidDiagramSourceSchema" in publicSharedApi).toBe(false);
+  });
+
   it("validates project input limits", () => {
     expect(() =>
       createProjectInputSchema.parse({
