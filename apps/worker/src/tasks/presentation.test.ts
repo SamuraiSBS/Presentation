@@ -13,6 +13,11 @@ import {
   normalizeNarrativePlan,
   selectAiProviders,
 } from "./presentation.js";
+import { generatePresentation as generatePresentationFromOrchestrator } from "./presentation/orchestrator.js";
+import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./presentation/prompts/builders.js";
+import { normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
+import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
+import { normalizeLayout as normalizeLayoutFromLayer } from "./presentation/normalization/presentation.js";
 
 const originalEnv = { ...process.env };
 const forbiddenNarrationFragments = [
@@ -77,6 +82,16 @@ const forbiddenSlideTextFragments = [
 
 afterEach(() => {
   process.env = { ...originalEnv };
+});
+
+describe("presentation compatibility facade", () => {
+  it("keeps public generation, planning, quality, and layout exports stable", () => {
+    expect(generatePresentation).toBe(generatePresentationFromOrchestrator);
+    expect(buildGenerationPrompt).toBe(buildGenerationPromptFromLayer);
+    expect(normalizeNarrativePlan).toBe(normalizeNarrativePlanFromLayer);
+    expect(findSlideTextIssues).toBe(findSlideTextIssuesFromLayer);
+    expect(normalizeLayout).toBe(normalizeLayoutFromLayer);
+  });
 });
 
 function yandexTextResponse(text: string) {
