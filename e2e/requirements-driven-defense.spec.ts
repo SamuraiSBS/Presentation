@@ -17,7 +17,12 @@ test.describe("requirements-driven defense mode", () => {
   test("walks through source setup without starting AI before draft confirmation", async ({ page }) => {
     await page.goto("/new/defense");
 
+    const hackathon = page.getByRole("radio", { name: /Хакатон/ });
     await page.getByRole("radio", { name: /Диплом/ }).click();
+    await expect(page.getByRole("radio", { name: /Диплом/ })).toHaveAttribute("aria-checked", "true");
+    await hackathon.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByRole("radio", { name: /Диплом/ })).toBeFocused();
     await expect(page.getByRole("radio", { name: /Диплом/ })).toHaveAttribute("aria-checked", "true");
     await page.getByRole("button", { name: "Продолжить" }).click();
 
@@ -39,6 +44,10 @@ test.describe("requirements-driven defense mode", () => {
     await page.goto("/new/defense");
 
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await expect(page.getByText("Правила", { exact: true })).toBeVisible();
+    await expect(page.getByText("Проект", { exact: true })).toBeVisible();
+    await expect(page.getByText("Материалы", { exact: true })).toBeVisible();
+    await expect(page.getByText("Автор", { exact: true })).toBeVisible();
 
     const continueButton = page.getByRole("button", { name: "Продолжить" });
     await continueButton.focus();

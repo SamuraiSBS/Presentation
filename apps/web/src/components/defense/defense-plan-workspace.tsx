@@ -52,6 +52,8 @@ export function DefensePlanWorkspace({ projectId, projectTitle, initialData }: {
   const confirmPlan = useConfirmDefensePlan(projectId);
   const patchConfig = usePatchDefenseConfig(projectId);
   const canEdit = data.accessRole !== "viewer";
+  const planLocked = plan?.status === "approved";
+  const canEditPlan = canEdit && !planLocked;
   const busy = savePlan.isPending || rebuildPlan.isPending || confirmPlan.isPending || patchConfig.isPending;
   const total = plan ? defensePlanTiming(plan.slides) : 0;
   const overTarget = total > data.workspace.targetDurationSeconds;
@@ -63,11 +65,13 @@ export function DefensePlanWorkspace({ projectId, projectTitle, initialData }: {
   }, [data.workspace.plan, dirty]);
 
   function updateSlide(index: number, patch: Partial<DefensePlanSlide>) {
+    if (!canEditPlan) return;
     setPlan((current) => current ? normalizePlan({ ...current, status: "draft", approvedAt: null, slides: current.slides.map((slide, slideIndex) => slideIndex === index ? { ...slide, ...patch } : slide) }) : current);
     setDirty(true);
   }
 
   function moveSlide(index: number, direction: -1 | 1) {
+    if (!canEditPlan) return;
     setPlan((current) => current ? reorderDefensePlanSlides(current, index, index + direction) : current);
     setDirty(true);
   }
@@ -83,11 +87,13 @@ export function DefensePlanWorkspace({ projectId, projectTitle, initialData }: {
   }
 
   async function buildPlan() {
+    if (!canEditPlan) return;
     const result = await run(() => rebuildPlan.mutateAsync({ expectedAnalysisRevision: data.workspace.analysisRevision, expectedPlanRevision: data.workspace.planRevision, confirmPresetRebuild: true }), "Не получилось составить план. Проверьте требования и повторите попытку.");
     if (result) await workspaceQuery.refetch();
   }
 
   async function saveCurrent(nextPlan = plan) {
+    if (!canEditPlan) return null;
     if (!nextPlan || blankTitles) {
       setError("У каждого слайда должны быть заголовок и задача.");
       return null;
@@ -102,6 +108,7 @@ export function DefensePlanWorkspace({ projectId, projectTitle, initialData }: {
   }
 
   async function approveAndStart() {
+    if (!canEditPlan) return;
     if (!plan || overTarget || blankTitles) {
       setError(overTarget ? "Сократите тайминг до целевой продолжительности перед подтверждением." : "Проверьте заголовки и задачи всех слайдов.");
       return;
@@ -112,6 +119,7 @@ export function DefensePlanWorkspace({ projectId, projectTitle, initialData }: {
   }
 
   async function switchType() {
+    if (!canEditPlan) return;
     if (typeChoice === data.workspace.defenseType) return;
     const updated = await run(() => patchConfig.mutateAsync({ defenseType: typeChoice, confirmPresetRebuild: true, expectedAnalysisRevision: data.workspace.analysisRevision }), "Не получилось изменить тип защиты.");
     if (!updated) return;
@@ -136,7 +144,7 @@ export function DefensePlanWorkspace({ projectId, projectTitle, initialData }: {
     <section className="defense-plan-workspace" aria-labelledby="defense-plan-title">
       <header className="defense-workspace-header">
         <div><span className="status">План защиты</span><h1 id="defense-plan-title">Проверьте порядок и тайминг</h1><p>«{projectTitle}» · требования и подтверждённые факты уже привязаны к слайдам.</p></div>
-        <div className="defense-header-actions"><Button variant="secondary" asChild><Link href={`/projects/${projectId}/defense/review`}><ArrowLeft size={18} />Данные</Link></Button>{canEdit ? <Dialog><DialogTrigger asChild><Button variant="secondary" type="button">Тип: {data.workspace.defenseType === "hackathon" ? "хакатон" : "диплом"}</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>Изменить тип защиты?</DialogTitle><DialogDescription>Встроенные пункты плана будут перестроены. Загруженные материалы, подтверждённые факты и пользовательские требования сохранятся.</DialogDescription></DialogHeader><Select value={typeChoice} ariaLabel="Новый тип защиты" options={[{ value: "hackathon", label: "Хакатон" }, { value: "diploma", label: "Диплом" }]} onValueChange={(value) => setTypeChoice(value as DefenseType)} /><div className="ui-dialog-actions"><DialogClose asChild><Button variant="secondary" type="button">Отмена</Button></DialogClose><DialogClose asChild><Button type="button" onClick={switchType} disabled={busy || typeChoice === data.workspace.defenseType}>Перестроить план</Button></DialogClose></div></DialogContent></Dialog> : null}</div>
+        <div className="defense-header-actions"><Button variant="secondary" asChild><Link href={`/projects/${projectId}/defense/review`}><ArrowLeft size={18} />Данные</Link></Button>{canEditPlan ? <Dialog><DialogTrigger asChild><Button variant="secondary" type="button">Тип: {data.workspace.defenseType === "hackathon" ? "хакатон" : "диплом"}</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>Изменить тип защиты?</DialogTitle><DialogDescription>Встроенные пункты плана будут перестроены. Загруженные материалы, подтверждённые факты и пользовательские требования сохранятся.</DialogDescription></DialogHeader><Select value={typeChoice} ariaLabel="Новый тип защиты" options={[{ value: "hackathon", label: "Хакатон" }, { value: "diploma", label: "Диплом" }]} onValueChange={(value) => setTypeChoice(value as DefenseType)} /><div className="ui-dialog-actions"><DialogClose asChild><Button variant="secondary" type="button">Отмена</Button></DialogClose><DialogClose asChild><Button type="button" onClick={switchType} disabled={busy || typeChoice === data.workspace.defenseType}>Перестроить план</Button></DialogClose></div></DialogContent></Dialog> : null}</div>
       </header>
 
       <div className={overTarget ? "defense-plan-summary defense-plan-summary-warning" : "defense-plan-summary"}>
@@ -149,14 +157,14 @@ export function DefensePlanWorkspace({ projectId, projectTitle, initialData }: {
       <div className="defense-plan-list">
         {plan.slides.map((slide, index) => (
           <article className="defense-plan-slide" key={slide.id}>
-            <div className="defense-plan-order"><span>{String(index + 1).padStart(2, "0")}</span>{canEdit ? <div><button type="button" aria-label={`Поднять слайд ${index + 1}`} disabled={busy || index === 0} onClick={() => moveSlide(index, -1)}><ArrowUp size={16} /></button><button type="button" aria-label={`Опустить слайд ${index + 1}`} disabled={busy || index === plan.slides.length - 1} onClick={() => moveSlide(index, 1)}><ArrowDown size={16} /></button></div> : null}</div>
+            <div className="defense-plan-order"><span>{String(index + 1).padStart(2, "0")}</span>{canEditPlan ? <div><button type="button" aria-label={`Поднять слайд ${index + 1}`} disabled={busy || index === 0} onClick={() => moveSlide(index, -1)}><ArrowUp size={16} /></button><button type="button" aria-label={`Опустить слайд ${index + 1}`} disabled={busy || index === plan.slides.length - 1} onClick={() => moveSlide(index, 1)}><ArrowDown size={16} /></button></div> : null}</div>
             <div className="defense-plan-fields">
-              <label><span>Заголовок</span><input className="input" value={slide.title} readOnly={!canEdit} onChange={(event) => updateSlide(index, { title: event.target.value })} /></label>
-              <label><span>Задача слайда</span><textarea className="textarea" value={slide.purpose} readOnly={!canEdit} onChange={(event) => updateSlide(index, { purpose: event.target.value })} /></label>
+              <label><span>Заголовок</span><input className="input" value={slide.title} readOnly={!canEditPlan} onChange={(event) => updateSlide(index, { title: event.target.value })} /></label>
+              <label><span>Задача слайда</span><textarea className="textarea" value={slide.purpose} readOnly={!canEditPlan} onChange={(event) => updateSlide(index, { purpose: event.target.value })} /></label>
               {slide.visualStrategy ? <p><Sparkles size={14} />{slide.visualStrategy}</p> : null}
             </div>
             <div className="defense-plan-meta">
-              <label><Clock3 size={15} /><input type="number" min={20} max={240} value={slide.timingSeconds} readOnly={!canEdit} onChange={(event) => updateSlide(index, { timingSeconds: Math.max(20, Math.min(240, Number(event.target.value))) })} /><span>сек</span></label>
+              <label><Clock3 size={15} /><input type="number" min={20} max={240} value={slide.timingSeconds} readOnly={!canEditPlan} onChange={(event) => updateSlide(index, { timingSeconds: Math.max(20, Math.min(240, Number(event.target.value))) })} /><span>сек</span></label>
               <div className="defense-plan-badges"><span>{slide.requirementIds.length} треб.</span><span>{slide.factIds.length} факт.</span><span>{slide.assetSourceIds.length} матер.</span>{slide.placeholders.filter((item) => !item.resolved).length ? <span className="defense-plan-badge-warning"><FileWarning size={13} />{slide.placeholders.filter((item) => !item.resolved).length} заполн.</span> : null}</div>
               {slide.adaptiveChangeReason ? <small>Адаптация: {slide.adaptiveChangeReason}</small> : null}
             </div>
@@ -165,7 +173,7 @@ export function DefensePlanWorkspace({ projectId, projectTitle, initialData }: {
       </div>
 
       {error ? <p className="form-error" role="alert">{error}</p> : null}
-      <footer className="defense-plan-toolbar"><div><strong>{dirty ? "Есть несохранённые изменения" : plan.status === "approved" ? "План подтверждён" : "План сохранён как черновик"}</strong><span>Перед запуском речи сохраните порядок, формулировки и тайминг.</span></div>{canEdit ? <div><Button variant="secondary" type="button" onClick={() => saveCurrent()} disabled={busy || !dirty}>{savePlan.isPending ? <LoaderCircle className="spin" size={18} /> : <Save size={18} />}Сохранить</Button><Button variant="secondary" type="button" onClick={buildPlan} disabled={busy}><RefreshCw size={18} />Пересобрать</Button><Dialog><DialogTrigger asChild><Button type="button" disabled={busy || dirty || overTarget}><Rocket size={18} />Подтвердить и готовить речь</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>Подтвердить план и запустить AI?</DialogTitle><DialogDescription>План станет основой речи. Запуск создаёт отдельный запрос к AI-провайдеру и может расходовать его платный баланс.</DialogDescription></DialogHeader><div className="ai-cost-warning"><ShieldCheck aria-hidden="true" /><div><strong>Перед запуском</strong><span>Проверьте баланс Yandex/OpenAI. Факты будут взяты только из подтверждённой основы.</span></div></div><div className="ui-dialog-actions"><DialogClose asChild><Button variant="secondary" type="button">Вернуться к плану</Button></DialogClose><Button type="button" onClick={approveAndStart} disabled={busy}>{confirmPlan.isPending ? <LoaderCircle className="spin" size={18} /> : <Rocket size={18} />}Запустить подготовку речи</Button></div></DialogContent></Dialog></div> : null}</footer>
+      <footer className="defense-plan-toolbar"><div><strong>{dirty ? "Есть несохранённые изменения" : planLocked ? "План подтверждён" : "План сохранён как черновик"}</strong><span>{planLocked ? "План зафиксирован. Перейдите к речи и редактированию слайдов, чтобы не расходиться с утверждённой основой." : "Перед запуском речи сохраните порядок, формулировки и тайминг."}</span></div>{canEditPlan ? <div><Button variant="secondary" type="button" onClick={() => saveCurrent()} disabled={busy || !dirty}>{savePlan.isPending ? <LoaderCircle className="spin" size={18} /> : <Save size={18} />}Сохранить</Button><Button variant="secondary" type="button" onClick={buildPlan} disabled={busy}><RefreshCw size={18} />Пересобрать</Button><Dialog><DialogTrigger asChild><Button type="button" disabled={busy || dirty || overTarget}><Rocket size={18} />Подтвердить и готовить речь</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>Подтвердить план и запустить AI?</DialogTitle><DialogDescription>План станет основой речи. Запуск создаёт отдельный запрос к AI-провайдеру и может расходовать его платный баланс.</DialogDescription></DialogHeader><div className="ai-cost-warning"><ShieldCheck aria-hidden="true" /><div><strong>Перед запуском</strong><span>Проверьте баланс Yandex/OpenAI. Факты будут взяты только из подтверждённой основы.</span></div></div><div className="ui-dialog-actions"><DialogClose asChild><Button variant="secondary" type="button">Вернуться к плану</Button></DialogClose><Button type="button" onClick={approveAndStart} disabled={busy}>{confirmPlan.isPending ? <LoaderCircle className="spin" size={18} /> : <Rocket size={18} />}Запустить подготовку речи</Button></div></DialogContent></Dialog></div> : planLocked ? <div><Button asChild><Link href={`/projects/${projectId}/script`}>Открыть речь</Link></Button></div> : null}</footer>
     </section>
   );
 }

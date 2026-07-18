@@ -4,11 +4,13 @@ import { InjectQueue } from "@nestjs/bullmq";
 import { ConfigService } from "@nestjs/config";
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { Prisma } from "@prisma/client";
 import type { Queue } from "bullmq";
 import path from "node:path";
 import { complianceReportDocumentSchema, type ExportType, planLimits, presentationSchema } from "@studydeck/shared";
 import { ProjectAccessService } from "../access/project-access.service.js";
 import { conflict } from "../errors/api-error.js";
+import { enqueueOrRetryJob, needsQueueRecovery } from "../jobs/queue-recovery.js";
 import { injectTraceContext, withTraceSpan } from "../observability.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -28,6 +30,7 @@ export class ExportsService {
     projectId: string,
     type: ExportType,
     acknowledgement: ExportWarningAcknowledgement = {},
+    _idempotencyKey?: string,
   ) {
     return withTraceSpan("api.export.enqueue", {
       "studydeck.project_id": projectId,
@@ -58,16 +61,73 @@ export class ExportsService {
         this.requireDefenseAcknowledgement(project, acknowledgement);
       }
 
-      const created = await this.prisma.export.create({
-        data: { projectId, type, presentationRevision: project.presentation.revision },
+      // A rendered file is uniquely determined by project, type and presentation
+      // revision. Client request keys must not create duplicate export jobs.
+      const requestKey = "auto";
+      const existing = await this.prisma.export.findUnique({
+        where: {
+          projectId_type_presentationRevision_requestKey: {
+            projectId,
+            type,
+            presentationRevision: project.presentation.revision,
+            requestKey,
+          },
+        },
       });
-      const queueJob = await this.exportsQueue.add(
-        "export-presentation",
-        { exportId: created.id, projectId, type, traceContext: injectTraceContext() },
-        { attempts: 2 },
-      );
-      await this.prisma.export.update({ where: { id: created.id }, data: { queueJobId: queueJob.id } });
-      return { ...created, queueJobId: queueJob.id };
+      if (existing && (
+        existing.status === "ready"
+        || ((existing.status === "queued" || existing.status === "processing")
+          && !(await needsQueueRecovery(this.exportsQueue, existing.queueJobId)))
+      )) return existing;
+
+      let created = existing;
+      if (created) {
+        created = await this.prisma.export.update({
+          where: { id: created.id },
+          data: { status: "queued", objectKey: null, error: null, queueJobId: null },
+        });
+      } else {
+        try {
+          created = await this.prisma.export.create({
+            data: { projectId, type, presentationRevision: project.presentation.revision, requestKey },
+          });
+        } catch (error) {
+          if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") throw error;
+          const concurrent = await this.prisma.export.findUnique({
+            where: {
+              projectId_type_presentationRevision_requestKey: {
+                projectId,
+                type,
+                presentationRevision: project.presentation.revision,
+                requestKey,
+              },
+            },
+          });
+          if (!concurrent) throw error;
+          if (
+            concurrent.status === "ready"
+            || ((concurrent.status === "queued" || concurrent.status === "processing")
+              && !(await needsQueueRecovery(this.exportsQueue, concurrent.queueJobId)))
+          ) return concurrent;
+          created = concurrent;
+        }
+      }
+      let queueJob;
+      try {
+        queueJob = await enqueueOrRetryJob(
+          this.exportsQueue,
+          "export-presentation",
+          { exportId: created.id, projectId, type, traceContext: injectTraceContext() },
+          { attempts: 2, jobId: `presentation-export-${created.id}` },
+        );
+      } catch (error) {
+        await this.prisma.export.update({
+          where: { id: created.id },
+          data: { status: "failed", error: "Не удалось поставить экспорт в очередь" },
+        });
+        throw error;
+      }
+      return this.prisma.export.update({ where: { id: created.id }, data: { queueJobId: queueJob.id } });
     });
   }
 

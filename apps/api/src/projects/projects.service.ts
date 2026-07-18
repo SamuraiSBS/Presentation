@@ -532,6 +532,16 @@ export class ProjectsService {
     input: UpdateSourceReviewInput,
   ) {
     await this.access.requireEditor(userId, projectId);
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { workflow: true },
+    });
+    if (project?.workflow === "requirements_driven") {
+      throw badRequest(
+        "DEFENSE_SOURCE_ENDPOINT_REQUIRED",
+        "Для материалов защиты используйте маршрут /defense/assets: он сохраняет ревизии и актуальность плана.",
+      );
+    }
     const source = await this.prisma.source.findFirst({ where: { id: sourceId, projectId } });
     if (!source) throw new NotFoundException("Источник не найден");
     if (!input.included) {

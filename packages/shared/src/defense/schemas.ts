@@ -78,6 +78,14 @@ export const authorProfileFieldSchema = z.enum([
 export type AuthorProfileField = z.infer<typeof authorProfileFieldSchema>;
 
 const optionalProfileTextSchema = (max: number) => z.string().trim().min(1).max(max).optional();
+const defenseYearSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{4}$/)
+  .refine((value) => {
+    const year = Number(value);
+    return year >= 1900 && year <= 2100;
+  }, "Year must be between 1900 and 2100");
 
 export const defenseAuthorProfileSchema = z
   .object({
@@ -87,7 +95,7 @@ export const defenseAuthorProfileSchema = z
     group: optionalProfileTextSchema(80),
     supervisor: optionalProfileTextSchema(160),
     city: optionalProfileTextSchema(120),
-    year: z.string().trim().regex(/^\d{4}$/).optional(),
+    year: defenseYearSchema.optional(),
     teamName: optionalProfileTextSchema(160),
     eventName: optionalProfileTextSchema(200),
   })
@@ -355,6 +363,13 @@ export const factEvidenceSchema = z
         code: z.ZodIssueCode.custom,
         path: ["sourceId"],
         message: "Source-confirmed evidence requires sourceId",
+      });
+    }
+    if (evidence.confirmation === "source" && !evidence.locator?.trim()) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["locator"],
+        message: "Source-confirmed evidence requires a locator",
       });
     }
     if (evidence.confirmation === "user" && evidence.sourceId) {

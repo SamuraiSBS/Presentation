@@ -4,9 +4,10 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { ConfigService } from "@nestjs/config";
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { Prisma, type SourceRole } from "@prisma/client";
-import { planLimits } from "@studydeck/shared";
+import { defensePlanSchema, planLimits } from "@studydeck/shared";
 import sharp from "sharp";
 import { ProjectAccessService } from "../access/project-access.service.js";
+import { conflict } from "../errors/api-error.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 @Injectable()
@@ -66,16 +67,33 @@ export class SourcesService {
     projectId: string,
     files: Express.Multer.File[],
     manifest: readonly DefenseUploadManifestEntry[],
+    expectedAnalysisRevision?: number,
+    idempotencyKey?: string,
   ) {
     const access = await this.access.requireEditor(userId, projectId);
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
-      include: { user: true, defenseWorkspace: { select: { id: true } } },
+      include: {
+        user: true,
+        defenseWorkspace: { select: { id: true, analysisRevision: true, planRevision: true, plan: true } },
+      },
     });
     if (!project || project.userId !== access.project.userId || project.workflow !== "requirements_driven" || !project.defenseWorkspace) {
       throw new NotFoundException("Defense workspace not found");
     }
-    const defenseWorkspaceId = project.defenseWorkspace.id;
+    const workspace = project.defenseWorkspace;
+    if (expectedAnalysisRevision !== undefined && expectedAnalysisRevision !== workspace.analysisRevision) {
+      throw conflict("ANALYSIS_REVISION_CONFLICT", "Данные защиты изменились в другой вкладке", {
+        currentAnalysisRevision: workspace.analysisRevision,
+      });
+    }
+    const plan = defensePlanSchema.safeParse(workspace.plan);
+    if (plan.success && plan.data.status === "approved") {
+      throw conflict(
+        "DEFENSE_PLAN_ALREADY_CONFIRMED",
+        "После подтверждения плана изменять материалы нельзя. Создайте новый черновик защиты.",
+      );
+    }
     if (!files.length) throw new BadRequestException("No files uploaded");
     if (files.length !== manifest.length) throw new BadRequestException("Each uploaded file must have exactly one role");
 
@@ -88,6 +106,16 @@ export class SourcesService {
     }
     if (byFieldName.size !== files.length || files.some((file) => !byFieldName.has(file.fieldname))) {
       throw new BadRequestException("Each uploaded file must have exactly one role");
+    }
+    if (idempotencyKey) {
+      const repeated = await this.prisma.source.findMany({
+        where: { projectId, uploadRequestKey: idempotencyKey },
+        orderBy: { uploadFieldName: "asc" },
+      });
+      if (repeated.length) {
+        if (sameDefenseUploadBatch(repeated, manifest)) return { sources: repeated };
+        throw conflict("DEFENSE_UPLOAD_IDEMPOTENCY_CONFLICT", "Этот ключ загрузки уже относится к другому набору файлов");
+      }
     }
 
     const parentSourceIds = [...new Set(manifest.flatMap((entry) => entry.parentSourceId ? [entry.parentSourceId] : []))];
@@ -135,6 +163,7 @@ export class SourcesService {
           rows.push(await tx.source.create({
             data: {
               projectId,
+              ...(idempotencyKey ? { uploadRequestKey: idempotencyKey, uploadFieldName: item.entry.fieldName } : {}),
               label: item.entry.label || item.validated.originalName,
               type: item.validated.extension.slice(1).toUpperCase(),
               role: item.entry.role,
@@ -162,8 +191,12 @@ export class SourcesService {
           }));
         }
         await tx.project.update({ where: { id: projectId }, data: { status: "uploading" } });
-        await tx.defenseWorkspace.update({
-          where: { id: defenseWorkspaceId },
+        const bumped = await tx.defenseWorkspace.updateMany({
+          where: {
+            id: workspace.id,
+            analysisRevision: workspace.analysisRevision,
+            planRevision: workspace.planRevision,
+          },
           data: {
             analysisStatus: "draft",
             analysisError: null,
@@ -172,6 +205,9 @@ export class SourcesService {
             planRevision: { increment: 1 },
           },
         });
+        if (!bumped.count) {
+          throw conflict("ANALYSIS_REVISION_CONFLICT", "Данные защиты изменились в другой вкладке");
+        }
         return rows;
       });
       return { sources: created };
@@ -180,6 +216,13 @@ export class SourcesService {
         Bucket: this.config.getOrThrow<string>("S3_BUCKET"),
         Key: objectKey,
       }))));
+      if (idempotencyKey && error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        const repeated = await this.prisma.source.findMany({
+          where: { projectId, uploadRequestKey: idempotencyKey },
+          orderBy: { uploadFieldName: "asc" },
+        });
+        if (sameDefenseUploadBatch(repeated, manifest)) return { sources: repeated };
+      }
       throw error;
     }
   }
@@ -207,6 +250,15 @@ export type DefenseUploadManifestEntry = {
   label?: string;
   parentSourceId?: string;
 };
+
+function sameDefenseUploadBatch(
+  sources: Array<{ uploadFieldName: string | null }>,
+  manifest: readonly DefenseUploadManifestEntry[],
+) {
+  if (sources.length !== manifest.length) return false;
+  const sourceFieldNames = new Set(sources.flatMap((source) => source.uploadFieldName ? [source.uploadFieldName] : []));
+  return sourceFieldNames.size === manifest.length && manifest.every((entry) => sourceFieldNames.has(entry.fieldName));
+}
 
 const documentExtensions = new Set([".txt", ".md", ".pdf", ".docx", ".pptx"]);
 const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp"]);

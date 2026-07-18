@@ -31,6 +31,15 @@ export type DefenseCompliancePdfRequest = {
   queueJobId?: string | null;
 };
 
+export type DefenseActiveJob = {
+  id: string;
+  kind: string;
+  status: string;
+  queueJobId?: string | null;
+  progressStage?: string | null;
+  progressLabel?: string | null;
+};
+
 export type DefenseWorkspacePayload = {
   workspace: DefenseWorkspace;
   sources: DefenseSource[];
@@ -38,6 +47,7 @@ export type DefenseWorkspacePayload = {
   requirements: ProjectRequirement[];
   conflicts: ProjectConflict[];
   reports: DefenseComplianceReport[];
+  jobs?: DefenseActiveJob[];
   presentationRevision: number;
   accessRole: ProjectAccessRole;
 };
@@ -56,7 +66,10 @@ export function useDefenseWorkspace(projectId: string, initialData?: DefenseWork
       const data = query.state.data;
       if (!data) return false;
       if (["queued", "analyzing"].includes(data.workspace.analysisStatus)) return 2200;
-      return data.reports.some((report) => ["queued", "processing"].includes(report.status)) ? 2200 : false;
+      const reportPending = data.reports.some((report) =>
+        ["queued", "processing"].includes(report.status) || ["queued", "processing"].includes(report.pdfStatus));
+      const jobPending = data.jobs?.some((job) => ["queued", "active", "waiting", "delayed"].includes(job.status));
+      return reportPending || jobPending ? 2200 : false;
     },
   });
 }
@@ -66,13 +79,15 @@ export function usePatchDefenseConfig(projectId: string) {
 }
 
 export function useStartDefenseAnalysis(projectId: string) {
-  return useDefenseMutation(projectId, () => apiJson(`/api/projects/${projectId}/defense/analyze`, json("POST", { confirmCost: true })));
+  return useDefenseMutation(projectId, (input: { expectedAnalysisRevision?: number; idempotencyKey?: string }) =>
+    apiJson(`/api/projects/${projectId}/defense/analyze`, json("POST", { confirmCost: true, ...input })));
 }
 
 export function useCreateDefenseFact(projectId: string) {
-  return useDefenseMutation(projectId, (statement: string) => apiJson(`/api/projects/${projectId}/defense/facts`, json("POST", {
+  return useDefenseMutation(projectId, ({ statement, expectedAnalysisRevision }: { statement: string; expectedAnalysisRevision: number }) => apiJson(`/api/projects/${projectId}/defense/facts`, json("POST", {
     statement,
     evidence: [{ confirmation: "user" }],
+    expectedAnalysisRevision,
   })));
 }
 
@@ -82,8 +97,8 @@ export function useUpdateDefenseFact(projectId: string) {
 }
 
 export function useDeleteDefenseFact(projectId: string) {
-  return useDefenseMutation(projectId, (factId: string) =>
-    apiJson(`/api/projects/${projectId}/defense/facts/${encodeURIComponent(factId)}`, { method: "DELETE" }));
+  return useDefenseMutation(projectId, ({ factId, expectedAnalysisRevision }: { factId: string; expectedAnalysisRevision: number }) =>
+    apiJson(`/api/projects/${projectId}/defense/facts/${encodeURIComponent(factId)}`, json("DELETE", { expectedAnalysisRevision })));
 }
 
 export function useUpdateDefenseRequirement(projectId: string) {
@@ -120,8 +135,8 @@ export function useStartComplianceCheck(projectId: string) {
 }
 
 export function useRequestCompliancePdf(projectId: string) {
-  return useDefenseMutation(projectId, ({ reportId, expectedPresentationRevision }: { reportId: string; expectedPresentationRevision: number }) =>
-    apiJson<DefenseCompliancePdfRequest>(`/api/projects/${projectId}/defense/compliance-reports/${encodeURIComponent(reportId)}/pdf`, json("POST", { expectedPresentationRevision })));
+  return useDefenseMutation(projectId, ({ reportId, expectedPresentationRevision, idempotencyKey }: { reportId: string; expectedPresentationRevision: number; idempotencyKey?: string }) =>
+    apiJson<DefenseCompliancePdfRequest>(`/api/projects/${projectId}/defense/compliance-reports/${encodeURIComponent(reportId)}/pdf`, json("POST", { expectedPresentationRevision, ...(idempotencyKey ? { idempotencyKey } : {}) })));
 }
 
 function useDefenseMutation<TVariables, TResult = unknown>(projectId: string, mutationFn: (variables: TVariables) => Promise<TResult>) {

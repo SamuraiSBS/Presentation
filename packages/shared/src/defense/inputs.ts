@@ -18,6 +18,10 @@ import {
 
 const identifierSchema = z.string().trim().min(1).max(128);
 const revisionSchema = z.number().int().nonnegative();
+const idempotencyKeySchema = z.string().trim().min(8).max(200);
+
+export const DEFENSE_UPLOAD_MAX_FILES = 20;
+export const DEFENSE_UPLOAD_MAX_FILE_BYTES = 100 * 1024 * 1024;
 
 export const createDefenseProjectInputSchema = z
   .object({
@@ -29,6 +33,7 @@ export const createDefenseProjectInputSchema = z
     allowWebImages: z.boolean().default(false),
     authorProfile: defenseAuthorProfileSchema,
     folderId: identifierSchema.nullable().optional(),
+    idempotencyKey: idempotencyKeySchema,
   })
   .strict();
 export type CreateDefenseProjectInput = z.infer<typeof createDefenseProjectInputSchema>;
@@ -69,7 +74,8 @@ export type PatchDefenseConfigInput = z.infer<typeof patchDefenseConfigInputSche
 export const startDefenseAnalysisInputSchema = z
   .object({
     confirmCost: z.literal(true),
-    idempotencyKey: z.string().trim().min(8).max(200).optional(),
+    idempotencyKey: idempotencyKeySchema.optional(),
+    expectedAnalysisRevision: revisionSchema.optional(),
   })
   .strict();
 export type StartDefenseAnalysisInput = z.infer<typeof startDefenseAnalysisInputSchema>;
@@ -92,18 +98,26 @@ export const publicRepositoryUrlSchema = z
     if (url.username || url.password || url.port) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: "Repository URL cannot include credentials or a custom port" });
     }
-    if (url.hostname !== "github.com" && url.hostname !== "gitlab.com") {
+    const hostname = url.hostname.toLowerCase();
+    if (hostname !== "github.com" && hostname !== "gitlab.com") {
       context.addIssue({ code: z.ZodIssueCode.custom, message: "Only public github.com and gitlab.com repositories are supported" });
+    }
+    if (url.search || url.hash) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Repository URL cannot include a query or fragment" });
     }
     const pathParts = url.pathname.split("/").filter(Boolean);
     if (pathParts.length < 2) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: "Repository URL must include owner and repository" });
+    }
+    if (hostname === "github.com" && pathParts.length !== 2) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "GitHub URL must point to the repository root" });
     }
   });
 
 export const addDefenseRepositoryInputSchema = z
   .object({
     url: publicRepositoryUrlSchema,
+    expectedAnalysisRevision: revisionSchema.optional(),
   })
   .strict();
 export type AddDefenseRepositoryInput = z.infer<typeof addDefenseRepositoryInputSchema>;
@@ -120,7 +134,9 @@ export type DefenseUploadManifestItem = z.infer<typeof defenseUploadManifestItem
 
 export const defenseUploadManifestSchema = z
   .object({
-    files: z.array(defenseUploadManifestItemSchema).min(1).max(20),
+    files: z.array(defenseUploadManifestItemSchema).min(1).max(DEFENSE_UPLOAD_MAX_FILES),
+    expectedAnalysisRevision: revisionSchema.optional(),
+    idempotencyKey: idempotencyKeySchema.optional(),
   })
   .strict()
   .superRefine((manifest, context) => {
@@ -162,6 +178,13 @@ export const updateFactInputSchema = z
     { message: "At least one fact field is required" },
   );
 export type UpdateFactInput = z.infer<typeof updateFactInputSchema>;
+
+export const deleteDefenseFactInputSchema = z
+  .object({
+    expectedAnalysisRevision: revisionSchema.optional(),
+  })
+  .strict();
+export type DeleteDefenseFactInput = z.infer<typeof deleteDefenseFactInputSchema>;
 
 export const updateRequirementInputSchema = z
   .object({

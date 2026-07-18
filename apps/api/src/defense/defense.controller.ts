@@ -18,6 +18,9 @@ import {
   confirmDefensePlanInputSchema,
   createDefenseProjectInputSchema,
   createFactInputSchema,
+  deleteDefenseFactInputSchema,
+  DEFENSE_UPLOAD_MAX_FILES,
+  DEFENSE_UPLOAD_MAX_FILE_BYTES,
   defenseUploadManifestSchema,
   patchDefenseConfigInputSchema,
   putDefensePlanInputSchema,
@@ -96,9 +99,9 @@ export class DefenseController {
   @Post(":id/defense/uploads")
   @UseInterceptors(AnyFilesInterceptor({
     limits: {
-      files: 20,
+      files: DEFENSE_UPLOAD_MAX_FILES,
       fields: 5,
-      fileSize: 100 * 1024 * 1024,
+      fileSize: DEFENSE_UPLOAD_MAX_FILE_BYTES,
       fieldSize: 128 * 1024,
     },
   }))
@@ -109,7 +112,14 @@ export class DefenseController {
     @UploadedFiles() files?: Express.Multer.File[],
   ) {
     const manifest = parseManifest(body);
-    return this.sources.uploadDefense(request.userId, projectId, files || [], manifest.files);
+    return this.sources.uploadDefense(
+      request.userId,
+      projectId,
+      files || [],
+      manifest.files,
+      manifest.expectedAnalysisRevision,
+      manifest.idempotencyKey,
+    );
   }
 
   @Post(":id/defense/facts")
@@ -141,8 +151,14 @@ export class DefenseController {
     @Req() request: InternalRequest,
     @Param("id") projectId: string,
     @Param("factId") factId: string,
+    @Body() body: unknown,
   ) {
-    return this.defense.deleteFact(request.userId, projectId, factId);
+    return this.defense.deleteFact(
+      request.userId,
+      projectId,
+      factId,
+      parseInput(deleteDefenseFactInputSchema, body || {}),
+    );
   }
 
   @Patch(":id/defense/requirements/:requirementId")

@@ -92,18 +92,20 @@ export function buildDefensePlan(input: DefensePlanBuilderInput): DefensePlanOut
     presetSlideKey: item.origin === "builtin" ? item.key : undefined,
   }));
 
-  for (const requirement of activeRequirements) {
-    const target = targetSlideForRequirement(slides, requirement);
-    target.requirementIds.push(requirement.id);
-    const rule = requirement.rule || {};
-    const assetRole = clean(String(rule.assetRole || rule.role || ""));
-    const requiredField = clean(String(rule.field || ""));
-    if (assetRole && !input.assets.some((asset) => asset.role === assetRole)) {
-      target.placeholders.push(makePlaceholder(requirement, assetRole === "screenshot" ? "screenshot" : "text", `Добавьте материал: ${assetRole}`));
-    }
-    if (requiredField && !clean(String(input.config.authorProfile[requiredField] || ""))) {
-      target.placeholders.push(makePlaceholder(requirement, "identity", `Заполните данные автора: ${requiredField}`));
-    }
+  // Required rules always get their literal placement first. Adaptive mode may
+  // reorganize only the remaining optional portion of the template.
+  const requiredRequirements = activeRequirements.filter((item) => item.priority === "required");
+  const optionalRequirements = activeRequirements.filter((item) => item.priority !== "required");
+  const reservedSlideIds = new Set(requiredRequirements.map((requirement) => targetSlideForRequirement(slides, requirement, true).id));
+
+  for (const requirement of requiredRequirements) {
+    applyRequirementToSlide(targetSlideForRequirement(slides, requirement, true), requirement, input);
+  }
+  for (const requirement of optionalRequirements) {
+    const target = input.config.complianceMode === "adaptive"
+      ? targetSlideForAdaptiveRequirement(slides, requirement, reservedSlideIds)
+      : targetSlideForRequirement(slides, requirement, true);
+    applyRequirementToSlide(target, requirement, input);
   }
 
   for (const fact of confirmedFacts) {
@@ -122,12 +124,6 @@ export function buildDefensePlan(input: DefensePlanBuilderInput): DefensePlanOut
       label: `Разрешите противоречие: ${conflict.summary}`,
       resolved: false,
       severity: "error",
-    });
-  }
-
-  if (input.config.complianceMode === "adaptive") {
-    slides.forEach((slide) => {
-      if (slide.origin !== "builtin") slide.adaptiveChangeReason = "Добавлено для покрытия активного требования без изменения подтверждённых фактов";
     });
   }
 
@@ -166,19 +162,74 @@ export function allocateTiming(targetSeconds: number, slideCount: number) {
   return values;
 }
 
-function targetSlideForRequirement(slides: DefensePlanOutput["slides"], requirement: DefensePlanBuilderInput["requirements"][number]) {
-  const requestedOrder = Number(requirement.rule?.slideOrder || requirement.rule?.position || 0);
-  if (Number.isInteger(requestedOrder) && requestedOrder >= 1 && requestedOrder <= slides.length) return slides[requestedOrder - 1];
+function applyRequirementToSlide(
+  target: DefensePlanOutput["slides"][number],
+  requirement: DefensePlanBuilderInput["requirements"][number],
+  input: DefensePlanBuilderInput,
+) {
+  target.requirementIds.push(requirement.id);
+  const rule = requirement.rule || {};
+  const assetRole = clean(String(rule.assetRole || rule.role || ""));
+  const requiredField = clean(String(rule.field || ""));
+  if (assetRole && !input.assets.some((asset) => asset.role === assetRole)) {
+    target.placeholders.push(makePlaceholder(requirement, assetRole === "screenshot" ? "screenshot" : "text", `Добавьте материал: ${assetRole}`));
+  }
+  if (requiredField && !clean(String(input.config.authorProfile[requiredField] || ""))) {
+    target.placeholders.push(makePlaceholder(requirement, "identity", `Заполните данные автора: ${requiredField}`));
+  }
+}
+
+function targetSlideForRequirement(
+  slides: DefensePlanOutput["slides"],
+  requirement: DefensePlanBuilderInput["requirements"][number],
+  honorPosition: boolean,
+) {
+  const rule = requirement.rule || {};
+  if (honorPosition) {
+    const position = clean(String(rule.position || "")).toLowerCase();
+    if (position === "first") return slides[0];
+    if (position === "last") return slides[slides.length - 1];
+    const requestedOrder = Number(rule.order ?? rule.slideOrder ?? (typeof rule.position === "number" ? rule.position : 0));
+    if (Number.isInteger(requestedOrder) && requestedOrder >= 1 && requestedOrder <= slides.length) return slides[requestedOrder - 1];
+  }
   return targetSlideByText(slides, requirement.text);
 }
 
 function targetSlideByText(slides: DefensePlanOutput["slides"], text: string) {
+  const match = bestTextMatch(slides, text);
+  return match.score ? match.slide : slides[Math.min(1, slides.length - 1)];
+}
+
+function bestTextMatch(slides: DefensePlanOutput["slides"], text: string) {
   const tokens = meaningfulTokens(text);
   const scored = slides.map((slide) => ({
     slide,
     score: [...meaningfulTokens(`${slide.title} ${slide.purpose}`)].filter((token) => tokens.has(token)).length,
   })).sort((a, b) => b.score - a.score || a.slide.order - b.slide.order);
-  return scored[0]?.score ? scored[0].slide : slides[Math.min(1, slides.length - 1)];
+  return scored[0] || { slide: slides[0], score: 0 };
+}
+
+function targetSlideForAdaptiveRequirement(
+  slides: DefensePlanOutput["slides"],
+  requirement: DefensePlanBuilderInput["requirements"][number],
+  reservedSlideIds: Set<string>,
+) {
+  const matching = bestTextMatch(slides, requirement.text);
+  if (matching.score > 0 && !reservedSlideIds.has(matching.slide.id)) return matching.slide;
+
+  const replacement = slides
+    .filter((slide) => slide.origin === "builtin" && !reservedSlideIds.has(slide.id) && slide.order !== 1 && slide.order !== slides.length)
+    .sort((left, right) => left.requirementIds.length - right.requirementIds.length || left.order - right.order)[0];
+  if (!replacement) return targetSlideForRequirement(slides, requirement, false);
+
+  const previousTitle = replacement.title;
+  replacement.title = conciseTitle(requirement.text);
+  replacement.purpose = `Адаптировано для необязательного требования: ${requirement.text}`;
+  replacement.origin = requirement.origin === "user" ? "user" : "source";
+  replacement.presetSlideKey = undefined;
+  replacement.visualStrategy = visualStrategy(replacement.title, replacement.purpose);
+  replacement.adaptiveChangeReason = `Необязательное требование заменило шаблонный раздел «${previousTitle}» без изменения обязательных ограничений или подтверждённых фактов.`;
+  return replacement;
 }
 
 function targetSlideForAsset(slides: DefensePlanOutput["slides"], role: string) {

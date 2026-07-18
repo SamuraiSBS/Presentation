@@ -13,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  ShieldCheck,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -58,7 +59,8 @@ export function DefenseReviewWorkspace({ projectId, projectTitle, initialData }:
   const workspaceQuery = useDefenseWorkspace(projectId, initialData);
   const data = workspaceQuery.data || initialData;
   const counts = defenseReviewCounts(data);
-  const canEdit = data.accessRole !== "viewer";
+  const inputsLocked = data.workspace.plan?.status === "approved";
+  const canEdit = data.accessRole !== "viewer" && !inputsLocked;
   const sourceById = useMemo(() => new Map(data.sources.map((source) => [source.id, source])), [data.sources]);
   const [newFact, setNewFact] = useState("");
   const [error, setError] = useState("");
@@ -88,7 +90,7 @@ export function DefenseReviewWorkspace({ projectId, projectTitle, initialData }:
       return;
     }
     await run(async () => {
-      await createFact.mutateAsync(statement);
+      await createFact.mutateAsync({ statement, expectedAnalysisRevision: data.workspace.analysisRevision });
       setNewFact("");
     }, "Не получилось добавить факт.");
   }
@@ -115,7 +117,8 @@ export function DefenseReviewWorkspace({ projectId, projectTitle, initialData }:
       </div>
 
       {analysisActive ? <div className="defense-analysis-band" role="status" aria-live="polite"><LoaderCircle className="spin" aria-hidden="true" /><div><strong>{data.workspace.analysisStatus === "queued" ? "Анализ ждёт запуска" : "Извлекаем факты и требования"}</strong><span>Страница обновляется автоматически. Можно оставить её открытой.</span></div></div> : null}
-      {data.workspace.analysisStatus === "failed" ? <div className="defense-problem-band" role="alert"><AlertTriangle aria-hidden="true" /><div><strong>Анализ не завершён</strong><span>{data.workspace.analysisError || "Материалы сохранены — можно повторить запрос."}</span></div>{canEdit ? <Button variant="secondary" type="button" onClick={() => run(() => startAnalysis.mutateAsync(undefined), "Не получилось повторить анализ.")}>Повторить анализ</Button> : null}</div> : null}
+      {inputsLocked ? <div className="defense-readonly-note" role="status"><ShieldCheck aria-hidden="true" /><span>План уже подтверждён: факты, требования и материалы доступны только для просмотра, чтобы речь и слайды не разошлись с согласованной основой.</span></div> : null}
+      {data.workspace.analysisStatus === "failed" ? <div className="defense-problem-band" role="alert"><AlertTriangle aria-hidden="true" /><div><strong>Анализ не завершён</strong><span>{data.workspace.analysisError || "Материалы сохранены — можно повторить запрос."}</span></div>{canEdit ? <Button variant="secondary" type="button" onClick={() => run(() => startAnalysis.mutateAsync({ expectedAnalysisRevision: data.workspace.analysisRevision }), "Не получилось повторить анализ.")}>Повторить анализ</Button> : null}</div> : null}
 
       <Tabs defaultValue="requirements" className="defense-review-tabs">
         <div className="defense-tabs-scroll"><TabsList aria-label="Данные защиты">
@@ -127,23 +130,23 @@ export function DefenseReviewWorkspace({ projectId, projectTitle, initialData }:
 
         <TabsContent value="requirements">
           <SectionHeading title="Что должна выполнить презентация" description="Измените важность или исключите пункт. Источник и локатор сохраняются для отчёта." />
-          {data.requirements.length ? <div className="defense-review-list">{data.requirements.map((requirement) => <RequirementRow key={requirement.id} requirement={requirement} source={requirement.sourceId ? sourceById.get(requirement.sourceId) : undefined} canEdit={canEdit} busy={busy} onUpdate={(patch) => run(() => updateRequirement.mutateAsync({ requirementId: requirement.id, patch }), "Не получилось изменить требование.")} />)}</div> : <EmptyState icon={<FileSearch />} title="Требования ещё не извлечены" text={analysisActive ? "Они появятся после анализа материалов." : "Запустите анализ или добавьте ТЗ защиты."} />}
+          {data.requirements.length ? <div className="defense-review-list">{data.requirements.map((requirement) => <RequirementRow key={requirement.id} requirement={requirement} source={requirement.sourceId ? sourceById.get(requirement.sourceId) : undefined} canEdit={canEdit} busy={busy} onUpdate={(patch) => run(() => updateRequirement.mutateAsync({ requirementId: requirement.id, patch: { ...patch, expectedAnalysisRevision: data.workspace.analysisRevision } }), "Не получилось изменить требование.")} />)}</div> : <EmptyState icon={<FileSearch />} title="Требования ещё не извлечены" text={analysisActive ? "Они появятся после анализа материалов." : "Запустите анализ или добавьте ТЗ защиты."} />}
         </TabsContent>
 
         <TabsContent value="facts">
           <SectionHeading title="Только подтверждённые сведения о проекте" description="Факт из документа показывает источник. Ручной факт явно помечается как подтверждённый автором." />
           {canEdit ? <div className="defense-add-fact"><label><span>Добавить факт от автора проекта</span><textarea className="textarea" value={newFact} onChange={(event) => setNewFact(event.target.value)} placeholder="Например: MVP протестировали 24 студента" /></label><Button type="button" onClick={addFact} disabled={busy || newFact.trim().length < 2}><Plus size={18} />Добавить факт</Button></div> : null}
-          {data.facts.filter((item) => item.state === "active").length ? <div className="defense-review-list">{data.facts.filter((item) => item.state === "active").map((fact) => <FactRow key={fact.id} fact={fact} sourceById={sourceById} canEdit={canEdit} busy={busy} onSave={(statement) => run(() => updateFact.mutateAsync({ factId: fact.id, patch: { statement } }), "Не получилось сохранить факт.")} onDelete={() => run(() => deleteFact.mutateAsync(fact.id), "Не получилось удалить факт.")} />)}</div> : <EmptyState icon={<FileCheck2 />} title="Подтверждённых фактов пока нет" text="Добавьте факт вручную или дождитесь извлечения из документов." />}
+          {data.facts.filter((item) => item.state === "active").length ? <div className="defense-review-list">{data.facts.filter((item) => item.state === "active").map((fact) => <FactRow key={fact.id} fact={fact} sourceById={sourceById} canEdit={canEdit} busy={busy} onSave={(statement) => run(() => updateFact.mutateAsync({ factId: fact.id, patch: { statement, expectedAnalysisRevision: data.workspace.analysisRevision } }), "Не получилось сохранить факт.")} onDelete={() => run(() => deleteFact.mutateAsync({ factId: fact.id, expectedAnalysisRevision: data.workspace.analysisRevision }), "Не получилось удалить факт.")} />)}</div> : <EmptyState icon={<FileCheck2 />} title="Подтверждённых фактов пока нет" text="Добавьте факт вручную или дождитесь извлечения из документов." />}
         </TabsContent>
 
         <TabsContent value="assets">
           <SectionHeading title="Материалы и их роль" description="Роль определяет, можно ли использовать файл как доказательство, стиль или иллюстрацию." />
-          {data.sources.length ? <div className="defense-review-list">{data.sources.map((source) => <AssetRow key={source.id} source={source} canEdit={canEdit} busy={busy} onRole={(role) => run(() => updateAsset.mutateAsync({ sourceId: source.id, patch: { role } }), "Не получилось изменить роль материала.")} />)}</div> : <EmptyState icon={<FileSearch />} title="Материалы не найдены" text="Вернитесь к черновику и добавьте хотя бы один источник проекта." />}
+          {data.sources.length ? <div className="defense-review-list">{data.sources.map((source) => <AssetRow key={source.id} source={source} canEdit={canEdit} busy={busy} onRole={(role) => run(() => updateAsset.mutateAsync({ sourceId: source.id, patch: { role, expectedAnalysisRevision: data.workspace.analysisRevision } }), "Не получилось изменить роль материала.")} onIncluded={(included) => run(() => updateAsset.mutateAsync({ sourceId: source.id, patch: { included, expectedAnalysisRevision: data.workspace.analysisRevision } }), "Не получилось изменить участие материала.")} />)}</div> : <EmptyState icon={<FileSearch />} title="Материалы не найдены" text="Вернитесь к черновику и добавьте хотя бы один источник проекта." />}
         </TabsContent>
 
         <TabsContent value="conflicts">
           <SectionHeading title="Разрешите каждое противоречие отдельно" description="Неразрешённый спор не блокирует черновик: вместо спорного значения появится заметный заполнитель." />
-          {data.conflicts.length ? <div className="defense-review-list">{data.conflicts.map((conflict) => <article className={conflict.state === "unresolved" ? "defense-review-row defense-conflict-row" : "defense-review-row defense-review-row-resolved"} key={conflict.id}><div className="defense-review-row-main"><span className={conflict.state === "unresolved" ? "defense-item-status defense-item-status-problem" : "defense-item-status defense-item-status-ok"}>{conflict.state === "unresolved" ? "Нужно решение" : conflict.state === "resolved" ? "Разрешено" : "Не учитывать"}</span><h3>{conflict.summary}</h3><small>{conflictKindLabel(conflict.kind)}</small></div>{conflict.state === "unresolved" && canEdit ? <div className="defense-conflict-options">{conflict.options.map((option) => <button type="button" key={option.id} disabled={busy} onClick={() => run(() => resolveConflict.mutateAsync({ conflictId: conflict.id, input: { action: "resolve", resolution: { optionId: option.id } } }), "Не получилось сохранить решение.")}><strong>{option.label}</strong>{option.locator ? <span><MapPin size={13} />{option.locator}</span> : null}</button>)}<Button variant="secondary" size="sm" type="button" disabled={busy} onClick={() => run(() => resolveConflict.mutateAsync({ conflictId: conflict.id, input: { action: "ignore" } }), "Не получилось исключить конфликт.")}>Не учитывать</Button></div> : null}</article>)}</div> : <EmptyState icon={<Check />} title="Противоречий не найдено" text="Все извлечённые данные можно использовать без дополнительного решения." success />}
+          {data.conflicts.length ? <div className="defense-review-list">{data.conflicts.map((conflict) => <article className={conflict.state === "unresolved" ? "defense-review-row defense-conflict-row" : "defense-review-row defense-review-row-resolved"} key={conflict.id}><div className="defense-review-row-main"><span className={conflict.state === "unresolved" ? "defense-item-status defense-item-status-problem" : "defense-item-status defense-item-status-ok"}>{conflict.state === "unresolved" ? "Нужно решение" : conflict.state === "resolved" ? "Разрешено" : "Не учитывать"}</span><h3>{conflict.summary}</h3><small>{conflictKindLabel(conflict.kind)}</small></div>{conflict.state === "unresolved" && canEdit ? <div className="defense-conflict-options">{conflict.options.map((option) => <button type="button" key={option.id} disabled={busy} onClick={() => run(() => resolveConflict.mutateAsync({ conflictId: conflict.id, input: { action: "resolve", resolution: { optionId: option.id }, expectedAnalysisRevision: data.workspace.analysisRevision } }), "Не получилось сохранить решение.")}><strong>{option.label}</strong>{option.locator ? <span><MapPin size={13} />{option.locator}</span> : null}</button>)}<Button variant="secondary" size="sm" type="button" disabled={busy} onClick={() => run(() => resolveConflict.mutateAsync({ conflictId: conflict.id, input: { action: "ignore", expectedAnalysisRevision: data.workspace.analysisRevision } }), "Не получилось исключить конфликт.")}>Не учитывать</Button></div> : null}</article>)}</div> : <EmptyState icon={<Check />} title="Противоречий не найдено" text="Все извлечённые данные можно использовать без дополнительного решения." success />}
         </TabsContent>
       </Tabs>
 
@@ -173,11 +176,12 @@ function FactRow({ fact, sourceById, canEdit, busy, onSave, onDelete }: { fact: 
   return <article className="defense-review-row"><div className="defense-review-row-main"><span className="defense-item-status defense-item-status-ok"><Check size={13} />{evidence?.confirmation === "user" ? "Подтверждено автором" : "Есть источник"}</span>{editing ? <textarea className="textarea defense-fact-edit" value={statement} onChange={(event) => setStatement(event.target.value)} /> : <h3>{fact.statement}</h3>}<SourceLocator source={source} locator={evidence?.confirmation === "user" ? "Подтверждено автором проекта" : evidence?.locator} /></div>{canEdit ? <div className="defense-row-actions">{editing ? <><Button size="sm" type="button" disabled={busy || statement.trim().length < 2} onClick={() => { onSave(statement.trim()); setEditing(false); }}><Save size={15} />Сохранить</Button><Button variant="secondary" size="sm" type="button" onClick={() => { setStatement(fact.statement); setEditing(false); }}>Отмена</Button></> : <Button variant="secondary" size="sm" type="button" disabled={busy} onClick={() => setEditing(true)}>Изменить</Button>}<Button variant="secondary" size="sm" type="button" disabled={busy} onClick={onDelete}><Trash2 size={15} />Удалить</Button></div> : null}</article>;
 }
 
-function AssetRow({ source, canEdit, busy, onRole }: { source: DefenseSource; canEdit: boolean; busy: boolean; onRole: (role: SourceRole) => void }) {
+function AssetRow({ source, canEdit, busy, onRole, onIncluded }: { source: DefenseSource; canEdit: boolean; busy: boolean; onRole: (role: SourceRole) => void; onIncluded: (included: boolean) => void }) {
   const metadata = source.metadata;
   const confidence = metadata?.image?.classification?.confidence;
   const locator = metadata?.locator || source.url;
-  return <article className="defense-review-row"><div className="defense-review-row-main"><span className="defense-item-status defense-item-status-ai">{source.status === "processing" ? "Обрабатывается" : "Материал"}</span><h3>{source.label}</h3><SourceLocator source={source} locator={locator} />{confidence !== undefined ? <small>Уверенность классификации: {Math.round(confidence * 100)}%</small> : null}</div><div className="defense-row-actions"><Select value={source.role || "project_document"} ariaLabel={`Роль материала ${source.label}`} options={roleOptions} disabled={!canEdit || busy} onValueChange={(role) => onRole(role as SourceRole)} /></div></article>;
+  const included = source.included !== false;
+  return <article className={included ? "defense-review-row" : "defense-review-row defense-review-row-muted"}><div className="defense-review-row-main"><span className={included ? "defense-item-status defense-item-status-ai" : "defense-item-status defense-item-status-problem"}>{included ? source.status === "processing" ? "Обрабатывается" : "Материал" : "Исключён"}</span><h3>{source.label}</h3><SourceLocator source={source} locator={locator} />{confidence !== undefined ? <small>Уверенность классификации: {Math.round(confidence * 100)}%</small> : null}</div><div className="defense-row-actions"><Select value={source.role || "project_document"} ariaLabel={`Роль материала ${source.label}`} options={roleOptions} disabled={!canEdit || busy} onValueChange={(role) => onRole(role as SourceRole)} />{canEdit ? <Button variant="secondary" size="sm" type="button" disabled={busy} aria-pressed={included} onClick={() => onIncluded(!included)}>{included ? "Не использовать" : "Вернуть"}</Button> : null}</div></article>;
 }
 
 function SourceLocator({ source, locator }: { source?: DefenseSource; locator?: string }) {

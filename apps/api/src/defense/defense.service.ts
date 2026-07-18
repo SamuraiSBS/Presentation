@@ -11,6 +11,7 @@ import {
   type ConfirmDefensePlanInput,
   type CreateDefenseProjectInput,
   type CreateFactInput,
+  type DeleteDefenseFactInput,
   type DefensePlan,
   type FactEvidence,
   type PatchDefenseConfigInput,
@@ -30,6 +31,7 @@ import {
 import { ProjectAccessService } from "../access/project-access.service.js";
 import { badRequest, conflict, resourceNotFound } from "../errors/api-error.js";
 import { generationJobOptions } from "../jobs/job-options.js";
+import { enqueueOrRetryJob, needsQueueRecovery } from "../jobs/queue-recovery.js";
 import { injectTraceContext, withTraceSpan } from "../observability.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UsageService } from "../usage/usage.service.js";
@@ -61,52 +63,69 @@ export class DefenseService {
   ) {}
 
   async create(userId: string, input: CreateDefenseProjectInput) {
-    const project = await this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.upsert({
-        where: { id: userId },
-        create: { id: userId },
-        update: {},
-        select: { planCode: true },
-      });
-      const limit = planLimits[user.planCode];
-      if (input.targetSlideCount > limit.maxSlides) {
-        throw new BadRequestException(`Your plan allows up to ${limit.maxSlides} slides`);
-      }
-      if (input.folderId) {
-        const folder = await tx.folder.findFirst({
-          where: { id: input.folderId, ownerId: userId },
-          select: { id: true },
+    const repeated = await this.prisma.project.findFirst({
+      where: { userId, creationRequestKey: input.idempotencyKey, workflow: "requirements_driven" },
+      select: { id: true },
+    });
+    if (repeated) return { id: repeated.id, ...(await this.get(userId, repeated.id)) };
+
+    try {
+      const project = await this.prisma.$transaction(async (tx) => {
+        const user = await tx.user.upsert({
+          where: { id: userId },
+          create: { id: userId },
+          update: {},
+          select: { planCode: true },
         });
-        if (!folder) throw resourceNotFound("Папка не найдена");
-      }
-      await this.usage.reserveCreationSlot(tx, userId);
-      return tx.project.create({
-        data: {
-          userId,
-          folderId: input.folderId,
-          title: input.title,
-          prompt: `Защита проекта: ${input.title}`,
-          scenario: "project_defense",
-          level: "student",
-          mode: "fast_draft",
-          workflow: "requirements_driven",
-          slideCount: input.targetSlideCount,
-          defenseWorkspace: {
-            create: {
-              defenseType: input.defenseType,
-              complianceMode: input.complianceMode,
-              targetSlideCount: input.targetSlideCount,
-              targetDurationSeconds: input.targetDurationSeconds,
-              allowWebImages: input.allowWebImages,
-              authorProfile: input.authorProfile as Prisma.InputJsonValue,
-              standardPresetVersion: presetVersion(input.defenseType),
+        const limit = planLimits[user.planCode];
+        if (input.targetSlideCount > limit.maxSlides) {
+          throw new BadRequestException(`Your plan allows up to ${limit.maxSlides} slides`);
+        }
+        if (input.folderId) {
+          const folder = await tx.folder.findFirst({
+            where: { id: input.folderId, ownerId: userId },
+            select: { id: true },
+          });
+          if (!folder) throw resourceNotFound("Папка не найдена");
+        }
+        await this.usage.reserveCreationSlot(tx, userId);
+        return tx.project.create({
+          data: {
+            userId,
+            creationRequestKey: input.idempotencyKey,
+            folderId: input.folderId,
+            title: input.title,
+            prompt: `Защита проекта: ${input.title}`,
+            scenario: "project_defense",
+            level: "student",
+            mode: "fast_draft",
+            workflow: "requirements_driven",
+            slideCount: input.targetSlideCount,
+            defenseWorkspace: {
+              create: {
+                defenseType: input.defenseType,
+                complianceMode: input.complianceMode,
+                targetSlideCount: input.targetSlideCount,
+                targetDurationSeconds: input.targetDurationSeconds,
+                allowWebImages: input.allowWebImages,
+                authorProfile: input.authorProfile as Prisma.InputJsonValue,
+                standardPresetVersion: presetVersion(input.defenseType),
+              },
             },
           },
-        },
+          select: { id: true },
+        });
+      });
+      return { id: project.id, ...(await this.get(userId, project.id)) };
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      const concurrent = await this.prisma.project.findFirst({
+        where: { userId, creationRequestKey: input.idempotencyKey, workflow: "requirements_driven" },
         select: { id: true },
       });
-    });
-    return { id: project.id, ...(await this.get(userId, project.id)) };
+      if (!concurrent) throw error;
+      return { id: concurrent.id, ...(await this.get(userId, concurrent.id)) };
+    }
   }
 
   async get(userId: string, projectId: string) {
@@ -117,6 +136,12 @@ export class DefenseService {
         id: true,
         workflow: true,
         presentation: { select: { revision: true } },
+        jobs: {
+          where: { kind: { in: ["requirements_analysis", "narration", "compliance"] }, status: { in: [...activeJobStatuses] } },
+          orderBy: { createdAt: "desc" },
+          take: 10,
+          select: { id: true, kind: true, status: true, queueJobId: true, progressStage: true, progressLabel: true },
+        },
         sources: { orderBy: { createdAt: "asc" } },
         defenseWorkspace: {
           include: {
@@ -135,6 +160,7 @@ export class DefenseService {
     const presentationRevision = project.presentation?.revision ?? 0;
     return {
       workspace,
+      jobs: project.jobs,
       sources: project.sources,
       facts,
       requirements,
@@ -152,19 +178,22 @@ export class DefenseService {
   async updateConfig(userId: string, projectId: string, input: PatchDefenseConfigInput) {
     await this.access.requireEditor(userId, projectId);
     const workspace = await this.requireWorkspace(projectId);
+    this.assertInputsEditable(workspace);
     this.assertAnalysisRevision(workspace, input.expectedAnalysisRevision);
     const presetChanges = input.defenseType !== undefined && input.defenseType !== workspace.defenseType;
     const planChanges = presetChanges
       || (input.complianceMode !== undefined && input.complianceMode !== workspace.complianceMode)
       || (input.targetSlideCount !== undefined && input.targetSlideCount !== workspace.targetSlideCount)
       || (input.targetDurationSeconds !== undefined && input.targetDurationSeconds !== workspace.targetDurationSeconds)
+      || (input.allowWebImages !== undefined && input.allowWebImages !== workspace.allowWebImages)
       || input.authorProfile !== undefined;
 
     await this.prisma.$transaction(async (tx) => {
       const updated = await tx.defenseWorkspace.updateMany({
         where: {
           id: workspace.id,
-          ...(input.expectedAnalysisRevision === undefined ? {} : { analysisRevision: input.expectedAnalysisRevision }),
+          analysisRevision: workspace.analysisRevision,
+          planRevision: workspace.planRevision,
         },
         data: {
           ...(input.defenseType === undefined ? {} : {
@@ -198,47 +227,63 @@ export class DefenseService {
   async addRepository(userId: string, projectId: string, input: AddDefenseRepositoryInput) {
     await this.access.requireEditor(userId, projectId);
     const workspace = await this.requireWorkspace(projectId);
+    this.assertInputsEditable(workspace);
+    this.assertAnalysisRevision(workspace, input.expectedAnalysisRevision);
     const repository = parsePublicRepositoryUrl(input.url);
     const existing = await this.prisma.source.findFirst({
       where: { projectId, role: "repository_document", url: repository.normalizedUrl },
     });
     if (existing) return { source: existing, analysisRevision: workspace.analysisRevision };
-    const source = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.source.create({
-        data: {
-          projectId,
-          label: `${repository.namespace}/${repository.repository}`,
-          type: "REPOSITORY",
-          role: "repository_document",
-          url: repository.normalizedUrl,
-          metadata: {
-            origin: "repository",
-            repository: {
-              provider: repository.provider,
-              owner: repository.namespace,
-              repository: repository.repository,
-              ref: "HEAD",
-              path: "",
-              url: repository.normalizedUrl,
+    try {
+      const source = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.source.create({
+          data: {
+            projectId,
+            label: `${repository.namespace}/${repository.repository}`,
+            type: "REPOSITORY",
+            role: "repository_document",
+            url: repository.normalizedUrl,
+            metadata: {
+              origin: "repository",
+              repository: {
+                provider: repository.provider,
+                owner: repository.namespace,
+                repository: repository.repository,
+                ref: "HEAD",
+                path: "",
+                url: repository.normalizedUrl,
+              },
+              chunks: [],
+              warnings: [],
             },
-            chunks: [],
-            warnings: [],
           },
-        },
+        });
+        const bumped = await tx.defenseWorkspace.updateMany({
+          where: {
+            id: workspace.id,
+            analysisRevision: workspace.analysisRevision,
+            planRevision: workspace.planRevision,
+          },
+          data: {
+            analysisStatus: "draft",
+            analysisError: null,
+            analysisRevision: { increment: 1 },
+            plan: Prisma.DbNull,
+            planRevision: { increment: 1 },
+          },
+        });
+        if (!bumped.count) throw await analysisRevisionConflict(tx, workspace.id);
+        return created;
       });
-      await tx.defenseWorkspace.update({
-        where: { id: workspace.id },
-        data: {
-          analysisStatus: "draft",
-          analysisError: null,
-          analysisRevision: { increment: 1 },
-          plan: Prisma.DbNull,
-          planRevision: { increment: 1 },
-        },
+      return { source, analysisRevision: workspace.analysisRevision + 1 };
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      const concurrent = await this.prisma.source.findFirst({
+        where: { projectId, role: "repository_document", url: repository.normalizedUrl },
       });
-      return created;
-    });
-    return { source, analysisRevision: workspace.analysisRevision + 1 };
+      if (!concurrent) throw error;
+      return { source: concurrent, analysisRevision: workspace.analysisRevision };
+    }
   }
 
   async startAnalysis(userId: string, projectId: string, input: StartDefenseAnalysisInput) {
@@ -248,40 +293,78 @@ export class DefenseService {
     }, async () => {
       const access = await this.access.requireEditor(userId, projectId);
       const workspace = await this.requireWorkspace(projectId);
-      if (input.idempotencyKey) {
-        const repeated = await this.prisma.generationJob.findFirst({
-          where: { projectId, kind: "requirements_analysis", requestKey: input.idempotencyKey },
-        });
-        if (repeated) return generationJobResponse(repeated, projectId);
-      }
-      const active = await this.prisma.generationJob.findFirst({
-        where: { projectId, kind: "requirements_analysis", status: { in: [...activeJobStatuses] } },
-        orderBy: { createdAt: "desc" },
+      this.assertInputsEditable(workspace);
+      this.assertAnalysisRevision(workspace, input.expectedAnalysisRevision);
+      // An analysis is defined by the workspace input revision. A client retry after a
+      // lost response must not create another job merely because it generated a new key.
+      const requestKey = defenseRequestKey("analysis", workspace.id, workspace.analysisRevision);
+      const repeated = await this.prisma.generationJob.findUnique({
+        where: { projectId_kind_requestKey: { projectId, kind: "requirements_analysis", requestKey } },
       });
-      if (active) return generationJobResponse(active, projectId);
+      if (repeated && await this.hasRunnableGenerationJob(repeated)) {
+        return generationJobResponse(repeated, projectId);
+      }
       const projectSourceCount = await this.prisma.source.count({
         where: { projectId, included: true, role: { in: [...projectSourceRoles] } },
       });
       if (!projectSourceCount) {
         throw badRequest("DEFENSE_PROJECT_SOURCE_REQUIRED", "Добавьте документ проекта, ZIP или публичный репозиторий");
       }
-
-      await this.prisma.defenseWorkspace.update({
-        where: { id: workspace.id },
-        data: { analysisStatus: "queued", analysisError: null },
+      const prepared = await this.prisma.$transaction(async (tx) => {
+        const existing = await tx.generationJob.findUnique({
+          where: { projectId_kind_requestKey: { projectId, kind: "requirements_analysis", requestKey } },
+        });
+        if (existing && await this.hasRunnableGenerationJob(existing)) {
+          return { job: existing, shouldEnqueue: false };
+        }
+        const updatedWorkspace = await tx.defenseWorkspace.updateMany({
+          where: {
+            id: workspace.id,
+            analysisRevision: workspace.analysisRevision,
+            planRevision: workspace.planRevision,
+          },
+          data: { analysisStatus: "queued", analysisError: null },
+        });
+        if (!updatedWorkspace.count) throw await analysisRevisionConflict(tx, workspace.id);
+        const job = existing
+          ? await tx.generationJob.update({
+            where: { id: existing.id },
+            data: {
+              status: "queued",
+              queueJobId: null,
+              error: null,
+              cancelRequestedAt: null,
+              progressStage: "extracting_sources",
+              progressLabel: "Анализируем материалы защиты",
+              progressPercent: 0,
+              stageStartedAt: null,
+            },
+          })
+          : await tx.generationJob.create({
+            data: {
+              projectId,
+              kind: "requirements_analysis",
+              status: "queued",
+              requestKey,
+              progressStage: "extracting_sources",
+              progressLabel: "Анализируем материалы защиты",
+            },
+          });
+        return { job, shouldEnqueue: true };
+      }).catch(async (error) => {
+        if (!isUniqueViolation(error)) throw error;
+        const concurrent = await this.prisma.generationJob.findUnique({
+          where: { projectId_kind_requestKey: { projectId, kind: "requirements_analysis", requestKey } },
+        });
+        if (!concurrent) throw error;
+        return { job: concurrent, shouldEnqueue: !(await this.hasRunnableGenerationJob(concurrent)) };
       });
-      const job = await this.prisma.generationJob.create({
-        data: {
-          projectId,
-          kind: "requirements_analysis",
-          status: "queued",
-          requestKey: input.idempotencyKey,
-          progressStage: "extracting_sources",
-          progressLabel: "Анализируем материалы защиты",
-        },
-      });
+      if (!prepared.shouldEnqueue) return generationJobResponse(prepared.job, projectId);
+      const job = prepared.job;
+      let queueJob;
       try {
-        const queueJob = await this.generationQueue.add(
+        queueJob = await enqueueOrRetryJob(
+          this.generationQueue,
           "analyze-defense-brief",
           {
             projectId,
@@ -289,38 +372,45 @@ export class DefenseService {
             workspaceId: workspace.id,
             generationJobId: job.id,
             scope: "analysis",
+            expectedAnalysisRevision: workspace.analysisRevision,
+            expectedPlanRevision: workspace.planRevision,
             traceContext: injectTraceContext(),
           },
-          generationJobOptions(),
+          { ...generationJobOptions(), jobId: `defense-analysis-${job.id}` },
         );
-        const updated = await this.prisma.generationJob.update({
-          where: { id: job.id },
-          data: { queueJobId: queueJob.id },
-        });
-        return generationJobResponse(updated, projectId);
       } catch (error) {
         await this.prisma.$transaction([
           this.prisma.generationJob.update({
             where: { id: job.id },
             data: { status: "failed", error: "Не удалось поставить анализ в очередь", progressStage: "failed" },
           }),
-          this.prisma.defenseWorkspace.update({
-            where: { id: workspace.id },
+          this.prisma.defenseWorkspace.updateMany({
+            where: {
+              id: workspace.id,
+              analysisRevision: workspace.analysisRevision,
+              planRevision: workspace.planRevision,
+            },
             data: { analysisStatus: "failed", analysisError: "Не удалось поставить анализ в очередь" },
           }),
         ]);
         throw error;
       }
+      const updated = await this.prisma.generationJob.update({
+        where: { id: job.id },
+        data: { queueJobId: queueJob.id },
+      });
+      return generationJobResponse(updated, projectId);
     });
   }
 
   async createFact(userId: string, projectId: string, input: CreateFactInput) {
     await this.access.requireEditor(userId, projectId);
     const workspace = await this.requireWorkspace(projectId);
+    this.assertInputsEditable(workspace);
     this.assertAnalysisRevision(workspace, input.expectedAnalysisRevision);
     await this.requireEvidenceSources(projectId, input.evidence);
     const fact = await this.prisma.$transaction(async (tx) => {
-      await bumpAnalysisRevision(tx, workspace.id, input.expectedAnalysisRevision);
+      await bumpAnalysisRevision(tx, workspace.id, workspace.analysisRevision, workspace.planRevision);
       return tx.projectFact.create({
         data: {
           workspaceId: workspace.id,
@@ -338,12 +428,13 @@ export class DefenseService {
   async updateFact(userId: string, projectId: string, factId: string, input: UpdateFactInput) {
     await this.access.requireEditor(userId, projectId);
     const workspace = await this.requireWorkspace(projectId);
+    this.assertInputsEditable(workspace);
     this.assertAnalysisRevision(workspace, input.expectedAnalysisRevision);
     const fact = await this.prisma.projectFact.findFirst({ where: { id: factId, workspaceId: workspace.id } });
     if (!fact) throw resourceNotFound("Факт не найден");
     if (input.evidence) await this.requireEvidenceSources(projectId, input.evidence);
     const updated = await this.prisma.$transaction(async (tx) => {
-      await bumpAnalysisRevision(tx, workspace.id, input.expectedAnalysisRevision);
+      await bumpAnalysisRevision(tx, workspace.id, workspace.analysisRevision, workspace.planRevision);
       await tx.projectFact.update({
         where: { id: factId },
         data: {
@@ -367,13 +458,20 @@ export class DefenseService {
     return { fact: updated, analysisRevision: workspace.analysisRevision + 1 };
   }
 
-  async deleteFact(userId: string, projectId: string, factId: string) {
+  async deleteFact(
+    userId: string,
+    projectId: string,
+    factId: string,
+    input: DeleteDefenseFactInput = {},
+  ) {
     await this.access.requireEditor(userId, projectId);
     const workspace = await this.requireWorkspace(projectId);
+    this.assertInputsEditable(workspace);
+    this.assertAnalysisRevision(workspace, input.expectedAnalysisRevision);
     const fact = await this.prisma.projectFact.findFirst({ where: { id: factId, workspaceId: workspace.id } });
     if (!fact) throw resourceNotFound("Факт не найден");
     await this.prisma.$transaction(async (tx) => {
-      await bumpAnalysisRevision(tx, workspace.id, undefined);
+      await bumpAnalysisRevision(tx, workspace.id, workspace.analysisRevision, workspace.planRevision);
       await tx.projectFact.update({ where: { id: factId }, data: { state: "removed" } });
     });
     return { id: factId, deleted: true, analysisRevision: workspace.analysisRevision + 1 };
@@ -387,13 +485,14 @@ export class DefenseService {
   ) {
     await this.access.requireEditor(userId, projectId);
     const workspace = await this.requireWorkspace(projectId);
+    this.assertInputsEditable(workspace);
     this.assertAnalysisRevision(workspace, input.expectedAnalysisRevision);
     const requirement = await this.prisma.projectRequirement.findFirst({
       where: { id: requirementId, workspaceId: workspace.id },
     });
     if (!requirement) throw resourceNotFound("Требование не найдено");
     const updated = await this.prisma.$transaction(async (tx) => {
-      await bumpAnalysisRevision(tx, workspace.id, input.expectedAnalysisRevision);
+      await bumpAnalysisRevision(tx, workspace.id, workspace.analysisRevision, workspace.planRevision);
       return tx.projectRequirement.update({
         where: { id: requirementId },
         data: {
@@ -419,17 +518,26 @@ export class DefenseService {
   async updateAsset(userId: string, projectId: string, sourceId: string, input: UpdateDefenseAssetInput) {
     await this.access.requireEditor(userId, projectId);
     const workspace = await this.requireWorkspace(projectId);
+    this.assertInputsEditable(workspace);
     this.assertAnalysisRevision(workspace, input.expectedAnalysisRevision);
     const source = await this.prisma.source.findFirst({ where: { id: sourceId, projectId } });
     if (!source) throw resourceNotFound("Материал не найден");
     if (input.role && !userAssignableRoles.has(input.role)) {
       throw badRequest("SOURCE_ROLE_NOT_USER_ASSIGNABLE", "Эту системную роль материала нельзя назначить вручную");
     }
+    if (input.included === false && source.included && projectSourceRoles.includes(source.role as typeof projectSourceRoles[number])) {
+      const remainingProjectSources = await this.prisma.source.count({
+        where: { projectId, included: true, role: { in: [...projectSourceRoles] } },
+      });
+      if (remainingProjectSources <= 1) {
+        throw badRequest("DEFENSE_PROJECT_SOURCE_REQUIRED", "Оставьте хотя бы один включённый материал проекта для защиты");
+      }
+    }
     const metadata = input.classification === undefined
       ? undefined
       : metadataWithClassification(source.metadata, sourceId, input.classification);
     const updated = await this.prisma.$transaction(async (tx) => {
-      await bumpAnalysisRevision(tx, workspace.id, input.expectedAnalysisRevision);
+      await bumpAnalysisRevision(tx, workspace.id, workspace.analysisRevision, workspace.planRevision);
       return tx.source.update({
         where: { id: sourceId },
         data: {
@@ -451,6 +559,7 @@ export class DefenseService {
   ) {
     await this.access.requireEditor(userId, projectId);
     const workspace = await this.requireWorkspace(projectId);
+    this.assertInputsEditable(workspace);
     this.assertAnalysisRevision(workspace, input.expectedAnalysisRevision);
     const item = await this.prisma.projectConflict.findFirst({
       where: { id: conflictId, workspaceId: workspace.id },
@@ -463,7 +572,7 @@ export class DefenseService {
       }
     }
     const updated = await this.prisma.$transaction(async (tx) => {
-      await bumpAnalysisRevision(tx, workspace.id, input.expectedAnalysisRevision);
+      await bumpAnalysisRevision(tx, workspace.id, workspace.analysisRevision, workspace.planRevision);
       return tx.projectConflict.update({
         where: { id: conflictId },
         data: input.action === "ignore"
@@ -497,6 +606,7 @@ export class DefenseService {
   async updatePlan(userId: string, projectId: string, input: PutDefensePlanInput) {
     await this.access.requireEditor(userId, projectId);
     const workspace = await this.requireWorkspace(projectId);
+    this.assertInputsEditable(workspace);
     this.assertPlanRevision(workspace, input.expectedPlanRevision);
     if (input.plan.status !== "draft" || input.plan.approvedAt !== null) {
       throw badRequest("DEFENSE_PLAN_APPROVAL_FORGED", "План можно подтвердить только отдельным действием запуска речи");
@@ -561,8 +671,7 @@ export class DefenseService {
           },
         },
       });
-      if (existing?.status === "completed" || existing?.status === "active") return existing;
-      if (existing?.status === "queued" && existing.queueJobId) return existing;
+      if (existing && await this.hasRunnableGenerationJob(existing)) return existing;
 
       const job = existing
         ? await tx.generationJob.update({
@@ -602,8 +711,10 @@ export class DefenseService {
       };
     }
 
+    let queueJob;
     try {
-      const queueJob = await this.generationQueue.add(
+      queueJob = await enqueueOrRetryJob(
+        this.generationQueue,
         "generate-narration",
         {
           projectId,
@@ -615,16 +726,6 @@ export class DefenseService {
         },
         { ...generationJobOptions(), jobId: `defense-narration-${narrationJob.id}` },
       );
-      const updatedJob = await this.prisma.generationJob.update({
-        where: { id: narrationJob.id },
-        data: { queueJobId: queueJob.id },
-      });
-      return {
-        plan,
-        planRevision,
-        analysisRevision: workspace.analysisRevision,
-        ...narrationJobResult(updatedJob, projectId),
-      };
     } catch (error) {
       await this.prisma.$transaction([
         this.prisma.generationJob.update({
@@ -644,29 +745,76 @@ export class DefenseService {
       ]);
       throw error;
     }
+    const updatedJob = await this.prisma.generationJob.update({
+      where: { id: narrationJob.id },
+      data: { queueJobId: queueJob.id },
+    });
+    return {
+      plan,
+      planRevision,
+      analysisRevision: workspace.analysisRevision,
+      ...narrationJobResult(updatedJob, projectId),
+    };
   }
 
   async rebuildPlan(userId: string, projectId: string, input: RebuildDefensePlanInput) {
     const access = await this.access.requireEditor(userId, projectId);
     const workspace = await this.requireWorkspace(projectId);
+    this.assertInputsEditable(workspace);
     this.assertAnalysisRevision(workspace, input.expectedAnalysisRevision);
     this.assertPlanRevision(workspace, input.expectedPlanRevision);
-    const active = await this.prisma.generationJob.findFirst({
-      where: { projectId, kind: "requirements_analysis", status: { in: [...activeJobStatuses] } },
-      orderBy: { createdAt: "desc" },
+    const requestKey = defenseRequestKey(
+      "plan",
+      workspace.id,
+      workspace.analysisRevision,
+      String(workspace.planRevision),
+    );
+    const prepared = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.generationJob.findUnique({
+        where: { projectId_kind_requestKey: { projectId, kind: "requirements_analysis", requestKey } },
+      });
+      if (existing && await this.hasRunnableGenerationJob(existing)) {
+        return { job: existing, shouldEnqueue: false };
+      }
+      const job = existing
+        ? await tx.generationJob.update({
+          where: { id: existing.id },
+          data: {
+            status: "queued",
+            queueJobId: null,
+            error: null,
+            cancelRequestedAt: null,
+            progressStage: "building_defense_plan",
+            progressLabel: "Составляем план защиты",
+            progressPercent: 0,
+            stageStartedAt: null,
+          },
+        })
+        : await tx.generationJob.create({
+          data: {
+            projectId,
+            kind: "requirements_analysis",
+            status: "queued",
+            requestKey,
+            progressStage: "building_defense_plan",
+            progressLabel: "Составляем план защиты",
+          },
+        });
+      return { job, shouldEnqueue: true };
+    }).catch(async (error) => {
+      if (!isUniqueViolation(error)) throw error;
+      const concurrent = await this.prisma.generationJob.findUnique({
+        where: { projectId_kind_requestKey: { projectId, kind: "requirements_analysis", requestKey } },
+      });
+      if (!concurrent) throw error;
+      return { job: concurrent, shouldEnqueue: !(await this.hasRunnableGenerationJob(concurrent)) };
     });
-    if (active) return generationJobResponse(active, projectId);
-    const job = await this.prisma.generationJob.create({
-      data: {
-        projectId,
-        kind: "requirements_analysis",
-        status: "queued",
-        progressStage: "building_defense_plan",
-        progressLabel: "Составляем план защиты",
-      },
-    });
+    if (!prepared.shouldEnqueue) return generationJobResponse(prepared.job, projectId);
+    const job = prepared.job;
+    let queueJob;
     try {
-      const queueJob = await this.generationQueue.add(
+      queueJob = await enqueueOrRetryJob(
+        this.generationQueue,
         "analyze-defense-brief",
         {
           projectId,
@@ -678,13 +826,8 @@ export class DefenseService {
           expectedPlanRevision: input.expectedPlanRevision,
           traceContext: injectTraceContext(),
         },
-        generationJobOptions(),
+        { ...generationJobOptions(), jobId: `defense-plan-${job.id}` },
       );
-      const updated = await this.prisma.generationJob.update({
-        where: { id: job.id },
-        data: { queueJobId: queueJob.id },
-      });
-      return generationJobResponse(updated, projectId);
     } catch (error) {
       await this.prisma.generationJob.update({
         where: { id: job.id },
@@ -692,6 +835,11 @@ export class DefenseService {
       });
       throw error;
     }
+    const updated = await this.prisma.generationJob.update({
+      where: { id: job.id },
+      data: { queueJobId: queueJob.id },
+    });
+    return generationJobResponse(updated, projectId);
   }
 
   async startComplianceCheck(userId: string, projectId: string, input: StartComplianceCheckInput) {
@@ -708,11 +856,17 @@ export class DefenseService {
       if (!plan.success || plan.data.status !== "approved") {
         throw badRequest("DEFENSE_PLAN_NOT_APPROVED", "Подтвердите план защиты перед проверкой");
       }
-      if (input.idempotencyKey) {
-        const repeated = await this.prisma.complianceReport.findFirst({
-          where: { workspaceId: workspace.id, requestKey: input.idempotencyKey },
-        });
-        if (repeated) return { report: reportDetail(repeated), queueJobId: repeated.queueJobId };
+      const requestKey = defenseRequestKey(
+        "compliance",
+        workspace.id,
+        presentation.revision,
+        `${workspace.analysisRevision}-${workspace.planRevision}`,
+      );
+      const repeated = await this.prisma.complianceReport.findUnique({
+        where: { workspaceId_requestKey: { workspaceId: workspace.id, requestKey } },
+      });
+      if (repeated && await this.hasRunnableComplianceReport(projectId, repeated)) {
+        return { report: reportDetail(repeated), queueJobId: repeated.queueJobId };
       }
       const active = await this.prisma.complianceReport.findFirst({
         where: {
@@ -724,13 +878,51 @@ export class DefenseService {
         },
         orderBy: { createdAt: "desc" },
       });
-      if (active) return { report: reportDetail(active), queueJobId: active.queueJobId };
+      if (active && await this.hasRunnableComplianceReport(projectId, active)) {
+        return { report: reportDetail(active), queueJobId: active.queueJobId };
+      }
+      const recoverableReport = repeated ?? active;
+      const jobRequestKey = recoverableReport?.requestKey ?? requestKey;
 
-      const { report, job } = await this.prisma.$transaction(async (tx) => {
+      const prepared = await this.prisma.$transaction(async (tx) => {
+        if (recoverableReport) {
+          const retriedReport = await tx.complianceReport.update({
+            where: { id: recoverableReport.id },
+            data: { status: "queued", queueJobId: null, error: null },
+          });
+          const existingJob = await tx.generationJob.findUnique({
+            where: { projectId_kind_requestKey: { projectId, kind: "compliance", requestKey: jobRequestKey } },
+          });
+          const retriedJob = existingJob
+            ? await tx.generationJob.update({
+              where: { id: existingJob.id },
+              data: {
+                status: "queued",
+                queueJobId: null,
+                error: null,
+                cancelRequestedAt: null,
+                progressStage: "checking_compliance",
+                progressLabel: "Проверяем презентацию по ТЗ",
+                progressPercent: 0,
+                stageStartedAt: null,
+              },
+            })
+            : await tx.generationJob.create({
+              data: {
+                projectId,
+                kind: "compliance",
+                status: "queued",
+                requestKey: jobRequestKey,
+                progressStage: "checking_compliance",
+                progressLabel: "Проверяем презентацию по ТЗ",
+              },
+            });
+          return { report: retriedReport, job: retriedJob, shouldEnqueue: true };
+        }
         const createdReport = await tx.complianceReport.create({
           data: {
             workspaceId: workspace.id,
-            requestKey: input.idempotencyKey,
+            requestKey,
             presentationRevision: presentation.revision,
             analysisRevision: workspace.analysisRevision,
             planRevision: workspace.planRevision,
@@ -741,15 +933,52 @@ export class DefenseService {
             projectId,
             kind: "compliance",
             status: "queued",
-            requestKey: input.idempotencyKey,
+            requestKey,
             progressStage: "checking_compliance",
             progressLabel: "Проверяем презентацию по ТЗ",
           },
         });
-        return { report: createdReport, job: createdJob };
+        return { report: createdReport, job: createdJob, shouldEnqueue: true };
+      }).catch(async (error) => {
+        if (!isUniqueViolation(error)) throw error;
+        const concurrent = await this.prisma.complianceReport.findUnique({
+          where: { workspaceId_requestKey: { workspaceId: workspace.id, requestKey } },
+        });
+        if (!concurrent) throw error;
+        const concurrentJob = await this.prisma.generationJob.findUnique({
+          where: { projectId_kind_requestKey: { projectId, kind: "compliance", requestKey } },
+        });
+        if (!concurrentJob) throw error;
+        if (await this.hasRunnableComplianceReport(projectId, concurrent)) {
+          return { report: concurrent, job: concurrentJob, shouldEnqueue: false };
+        }
+        const [report, job] = await this.prisma.$transaction([
+          this.prisma.complianceReport.update({
+            where: { id: concurrent.id },
+            data: { status: "queued", queueJobId: null, error: null },
+          }),
+          this.prisma.generationJob.update({
+            where: { id: concurrentJob.id },
+            data: {
+              status: "queued",
+              queueJobId: null,
+              error: null,
+              cancelRequestedAt: null,
+              progressStage: "checking_compliance",
+              progressLabel: "Проверяем презентацию по ТЗ",
+              progressPercent: 0,
+              stageStartedAt: null,
+            },
+          }),
+        ]);
+        return { report, job, shouldEnqueue: true };
       });
+      const { report, job } = prepared;
+      if (!prepared.shouldEnqueue) return { report: reportDetail(report), queueJobId: report.queueJobId };
+      let queueJob;
       try {
-        const queueJob = await this.generationQueue.add(
+        queueJob = await enqueueOrRetryJob(
+          this.generationQueue,
           "check-defense-compliance",
           {
             projectId,
@@ -762,13 +991,8 @@ export class DefenseService {
             planRevision: workspace.planRevision,
             traceContext: injectTraceContext(),
           },
-          generationJobOptions(),
+          { ...generationJobOptions(), jobId: `defense-compliance-${job.id}` },
         );
-        await this.prisma.$transaction([
-          this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } }),
-          this.prisma.complianceReport.update({ where: { id: report.id }, data: { queueJobId: queueJob.id } }),
-        ]);
-        return { report: reportDetail({ ...report, queueJobId: queueJob.id }), queueJobId: queueJob.id };
       } catch (error) {
         await this.prisma.$transaction([
           this.prisma.generationJob.update({
@@ -782,6 +1006,11 @@ export class DefenseService {
         ]);
         throw error;
       }
+      await this.prisma.$transaction([
+        this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } }),
+        this.prisma.complianceReport.update({ where: { id: report.id }, data: { queueJobId: queueJob.id } }),
+      ]);
+      return { report: reportDetail({ ...report, queueJobId: queueJob.id }), queueJobId: queueJob.id };
     });
   }
 
@@ -845,23 +1074,47 @@ export class DefenseService {
         reportPresentationRevision: report.presentationRevision,
       });
     }
-    if (report.pdfStatus === "ready" || report.pdfStatus === "queued" || report.pdfStatus === "processing") {
+    if (
+      report.pdfStatus === "ready"
+      || ((report.pdfStatus === "queued" || report.pdfStatus === "processing")
+        && !(await needsQueueRecovery(this.exportsQueue, report.pdfQueueJobId)))
+    ) {
       return { report: reportDetail(report), queueJobId: report.pdfQueueJobId };
     }
-    if (input.idempotencyKey && report.pdfRequestKey === input.idempotencyKey) {
-      return { report: reportDetail(report), queueJobId: report.pdfQueueJobId };
+    const requestKey = defenseRequestKey("report-pdf", report.id, report.presentationRevision);
+    const retryablePdfState: Prisma.ComplianceReportWhereInput[] = [
+      { pdfStatus: null },
+      { pdfStatus: "failed" },
+      { pdfStatus: "queued", pdfQueueJobId: null },
+      { pdfStatus: "processing", pdfQueueJobId: null },
+    ];
+    if (report.pdfStatus === "queued" && report.pdfQueueJobId) {
+      retryablePdfState.push({ pdfStatus: "queued", pdfQueueJobId: report.pdfQueueJobId });
     }
-    await this.prisma.complianceReport.update({
-      where: { id: report.id },
+    if (report.pdfStatus === "processing" && report.pdfQueueJobId) {
+      retryablePdfState.push({ pdfStatus: "processing", pdfQueueJobId: report.pdfQueueJobId });
+    }
+    const queued = await this.prisma.complianceReport.updateMany({
+      where: {
+        id: report.id,
+        OR: retryablePdfState,
+      },
       data: {
         pdfStatus: "queued",
-        pdfRequestKey: input.idempotencyKey,
+        pdfRequestKey: requestKey,
         pdfObjectKey: null,
+        pdfQueueJobId: null,
         error: null,
       },
     });
+    if (!queued.count) {
+      const current = await this.prisma.complianceReport.findUnique({ where: { id: report.id } });
+      if (current) return { report: reportDetail(current), queueJobId: current.pdfQueueJobId };
+    }
+    let queueJob;
     try {
-      const queueJob = await this.exportsQueue.add(
+      queueJob = await enqueueOrRetryJob(
+        this.exportsQueue,
         "export-compliance-report",
         {
           projectId,
@@ -870,13 +1123,8 @@ export class DefenseService {
           reportId: report.id,
           traceContext: injectTraceContext(),
         },
-        { attempts: 2 },
+        { attempts: 2, jobId: `defense-compliance-pdf-${report.id}-${report.presentationRevision}` },
       );
-      const updated = await this.prisma.complianceReport.update({
-        where: { id: report.id },
-        data: { pdfQueueJobId: queueJob.id },
-      });
-      return { report: reportDetail(updated), queueJobId: queueJob.id };
     } catch (error) {
       await this.prisma.complianceReport.update({
         where: { id: report.id },
@@ -884,6 +1132,11 @@ export class DefenseService {
       });
       throw error;
     }
+    const updated = await this.prisma.complianceReport.update({
+      where: { id: report.id },
+      data: { pdfQueueJobId: queueJob.id },
+    });
+    return { report: reportDetail(updated), queueJobId: queueJob.id };
   }
 
   async getReportPdfDownloadUrl(userId: string, projectId: string, reportId: string) {
@@ -925,6 +1178,16 @@ export class DefenseService {
     }
   }
 
+  private assertInputsEditable(workspace: { plan: Prisma.JsonValue | null }) {
+    const plan = defensePlanSchema.safeParse(workspace.plan);
+    if (plan.success && plan.data.status === "approved") {
+      throw conflict(
+        "DEFENSE_PLAN_ALREADY_CONFIRMED",
+        "После подтверждения плана изменять требования, факты и материалы нельзя. Создайте новый черновик защиты.",
+      );
+    }
+  }
+
   private assertPlanRevision(workspace: { planRevision: number }, expectedRevision: number) {
     if (expectedRevision !== workspace.planRevision) {
       throw conflict("PLAN_REVISION_CONFLICT", "План защиты изменился в другой вкладке", {
@@ -952,10 +1215,25 @@ export class DefenseService {
   }
 
   private async requireEvidenceSources(projectId: string, evidence: readonly FactEvidence[]) {
-    const ids = [...new Set(evidence.flatMap((item) => item.confirmation === "source" && item.sourceId ? [item.sourceId] : []))];
+    const sourceEvidence = evidence.filter((item) => item.confirmation === "source");
+    const ids = [...new Set(sourceEvidence.flatMap((item) => item.sourceId ? [item.sourceId] : []))];
     if (!ids.length) return;
-    const count = await this.prisma.source.count({ where: { projectId, id: { in: ids } } });
-    if (count !== ids.length) throw resourceNotFound("Источник подтверждения не найден");
+    const sources = await this.prisma.source.findMany({
+      where: { projectId, id: { in: ids } },
+      select: { id: true, included: true, metadata: true },
+    });
+    if (sources.length !== ids.length) throw resourceNotFound("Источник подтверждения не найден");
+    const byId = new Map(sources.map((source) => [source.id, source]));
+    for (const item of sourceEvidence) {
+      const source = item.sourceId ? byId.get(item.sourceId) : undefined;
+      if (!source || !source.included) {
+        throw badRequest("DEFENSE_EVIDENCE_SOURCE_EXCLUDED", "Подтверждение должно ссылаться на включённый материал защиты");
+      }
+      const locators = sourceLocators(source.metadata);
+      if (locators.size && (!item.locator || !locators.has(item.locator))) {
+        throw badRequest("DEFENSE_EVIDENCE_LOCATOR_INVALID", "Укажите locator существующего фрагмента материала");
+      }
+    }
   }
 
   private async validatePlanReferences(projectId: string, workspaceId: string, plan: DefensePlan) {
@@ -1007,6 +1285,26 @@ export class DefenseService {
     }
     return this.s3Client;
   }
+
+  private async hasRunnableGenerationJob(job: { status: string; queueJobId: string | null }) {
+    if (job.status === "completed") return true;
+    if (!["queued", "active"].includes(job.status)) return false;
+    return !(await needsQueueRecovery(this.generationQueue, job.queueJobId));
+  }
+
+  private async hasRunnableComplianceReport(
+    projectId: string,
+    report: { status: string; requestKey: string | null },
+  ) {
+    if (report.status === "ready") return true;
+    if (!["queued", "processing"].includes(report.status)) return false;
+    if (!report.requestKey) return false;
+    const job = await this.prisma.generationJob.findUnique({
+      where: { projectId_kind_requestKey: { projectId, kind: "compliance", requestKey: report.requestKey } },
+    });
+    if (!job || !["queued", "active"].includes(job.status)) return false;
+    return !(await needsQueueRecovery(this.generationQueue, job.queueJobId));
+  }
 }
 
 function presetVersion(defenseType: "hackathon" | "diploma") {
@@ -1017,10 +1315,17 @@ async function bumpAnalysisRevision(
   tx: Prisma.TransactionClient,
   workspaceId: string,
   expectedRevision: number | undefined,
+  expectedPlanRevision: number | undefined,
 ) {
   const updated = await tx.defenseWorkspace.updateMany({
-    where: { id: workspaceId, ...(expectedRevision === undefined ? {} : { analysisRevision: expectedRevision }) },
+    where: {
+      id: workspaceId,
+      ...(expectedRevision === undefined ? {} : { analysisRevision: expectedRevision }),
+      ...(expectedPlanRevision === undefined ? {} : { planRevision: expectedPlanRevision }),
+    },
     data: {
+      analysisStatus: "draft",
+      analysisError: null,
       analysisRevision: { increment: 1 },
       plan: Prisma.DbNull,
       planRevision: { increment: 1 },
@@ -1087,6 +1392,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function unique(values: readonly string[]) {
   return [...new Set(values)];
+}
+
+function sourceLocators(metadata: Prisma.JsonValue | null) {
+  if (!isRecord(metadata) || !Array.isArray(metadata.chunks)) return new Set<string>();
+  return new Set(
+    metadata.chunks.flatMap((chunk) => (
+      isRecord(chunk) && typeof chunk.locator === "string" && chunk.locator.trim()
+        ? [chunk.locator]
+        : []
+    )),
+  );
+}
+
+function defenseRequestKey(scope: string, workspaceId: string, revision: number, suffix?: string) {
+  return ["defense", scope, workspaceId, revision, suffix || "auto"]
+    .join(":")
+    .slice(0, 200);
+}
+
+function isUniqueViolation(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 }
 
 function generationJobResponse(job: {

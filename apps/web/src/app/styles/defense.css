@@ -2002,3 +2002,190 @@
     transform: none;
   }
 }
+
+.defense-draft-loading,
+.defense-readonly-note {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  border-radius: 14px;
+  padding: 11px 13px;
+  background: #f1eaff;
+  color: #4e2992;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.defense-draft-loading svg,
+.defense-readonly-note svg {
+  flex: none;
+}
+
+.defense-readonly-note {
+  background: #fff4e5;
+  color: #684019;
+}
+
+.defense-field-error {
+  margin: -8px 0 0;
+  color: var(--error);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.defense-wizard .input[aria-invalid="true"] {
+  border-color: var(--error);
+  box-shadow: 0 0 0 3px rgba(167, 56, 34, 0.16);
+}
+
+.defense-upload-hint {
+  margin: -8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.defense-saved-sources {
+  display: grid;
+  gap: 8px;
+  border-radius: 16px;
+  padding: 13px;
+  background: var(--surface-2);
+}
+
+.defense-saved-sources > header {
+  display: grid;
+  gap: 2px;
+}
+
+.defense-saved-sources > header span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.defense-saved-sources > div {
+  display: grid;
+  gap: 6px;
+}
+
+.defense-saved-source {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  border-radius: 12px;
+  padding: 9px;
+  background: var(--surface);
+}
+
+.defense-saved-source > svg {
+  flex: none;
+  color: var(--orange-deep);
+}
+
+.defense-saved-source > span {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.defense-saved-source strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.defense-saved-source small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.defense-saved-source-excluded {
+  opacity: 0.64;
+}
+
+.defense-step {
+  min-height: 44px;
+}
+
+.defense-file-list button,
+.defense-material-item > button {
+  width: 44px;
+  height: 44px;
+}
+
+@media (min-width: 761px) and (max-width: 1000px) {
+  body:has(.defense-route-page) .topbar .nav,
+  body:has(.defense-new-page) .topbar .nav {
+    display: flex;
+    gap: 10px;
+    font-size: 12px;
+  }
+
+  body:has(.defense-route-page) .topbar,
+  body:has(.defense-new-page) .topbar {
+    gap: 10px;
+    padding-inline: 16px;
+  }
+
+  body:has(.defense-route-page) .topbar .actions,
+  body:has(.defense-new-page) .topbar .actions {
+    display: flex;
+    gap: 5px;
+  }
+}
+
+@media (max-width: 700px) {
+  .defense-stepper {
+    align-items: stretch;
+    gap: 3px;
+  }
+
+  .defense-step {
+    min-width: 0;
+    flex: 1 1 0;
+    justify-content: center;
+    gap: 3px;
+    padding: 4px;
+  }
+
+  .defense-step strong,
+  .defense-step-active strong {
+    display: block;
+    min-width: 0;
+    font-size: 10px;
+    line-height: 1.1;
+    overflow-wrap: anywhere;
+    text-align: center;
+  }
+
+  .defense-step > span {
+    width: 24px;
+    height: 24px;
+  }
+
+  .defense-saved-source {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .defense-saved-source .ui-button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 380px) {
+  .defense-step-active strong,
+  .defense-step strong {
+    display: block;
+    font-size: 9px;
+  }
+}

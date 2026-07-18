@@ -77,6 +77,7 @@ describe("requirements-driven defense contracts", () => {
         complianceMode: "adaptive",
         targetSlideCount: 12,
         targetDurationSeconds: 600,
+        idempotencyKey: "create-defense-123",
       }),
     ).toMatchObject({ allowWebImages: false, authorProfile: {} });
     expect(() =>
@@ -129,6 +130,7 @@ describe("requirements-driven defense contracts", () => {
       projectFactSchema.parse({ id: "fact-1", statement: "Проект использует PostgreSQL", evidence: [] }),
     ).toThrow();
     expect(() => factEvidenceSchema.parse({ confirmation: "source" })).toThrow(/sourceId/);
+    expect(() => factEvidenceSchema.parse({ confirmation: "source", sourceId: "source-1" })).toThrow(/locator/);
     expect(() => factEvidenceSchema.parse({ confirmation: "user", sourceId: "source-1" })).toThrow(/impersonate/);
 
     const fact = projectFactSchema.parse({

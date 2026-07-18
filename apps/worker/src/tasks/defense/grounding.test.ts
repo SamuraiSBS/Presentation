@@ -48,6 +48,51 @@ describe("defense grounding", () => {
     expect(grounded.presentationTheme?.colors.accent).toBe("#F97316");
     expect(() => assertDefensePresentation(grounded, bundle)).not.toThrow();
   });
+
+  it("drops excluded or unlocatable source evidence but keeps user-confirmed facts", () => {
+    const workspace = fixtureWorkspace();
+    workspace.project.sources.push({
+      id: "source-excluded",
+      label: "Старый документ",
+      role: "project_document",
+      objectKey: "projects/project-1/old.pdf",
+      metadata: { origin: "upload", chunks: [], warnings: [] },
+      included: false,
+    });
+    workspace.facts.push(
+      {
+        id: "fact-excluded-source",
+        key: "obsolete",
+        statement: "Данные из исключённого документа",
+        value: null,
+        state: "active",
+        evidence: [{ id: "evidence-excluded", confirmation: "source", sourceId: "source-excluded", locator: "стр. 1", excerpt: "Устаревшие данные", confirmedById: null, createdAt }],
+      },
+      {
+        id: "fact-missing-locator",
+        key: "missing-locator",
+        statement: "Данные без locator",
+        value: null,
+        state: "active",
+        evidence: [{ id: "evidence-missing-locator", confirmation: "source", sourceId: "source-spec", locator: "  ", excerpt: "Без страницы", confirmedById: null, createdAt }],
+      },
+      {
+        id: "fact-user-confirmed",
+        key: "confirmed-by-user",
+        statement: "Подтверждено автором проекта",
+        value: null,
+        state: "active",
+        evidence: [{ id: "evidence-user", confirmation: "user", sourceId: null, locator: null, excerpt: "Подтверждено вручную", confirmedById: "user-1", createdAt }],
+      },
+    );
+
+    const bundle = buildDefenseGroundingBundle(workspace);
+
+    expect(bundle.facts.map((fact) => fact.id)).toEqual(["fact-1", "fact-user-confirmed"]);
+    expect(bundle.facts.find((fact) => fact.id === "fact-user-confirmed")?.evidence).toEqual([
+      expect.objectContaining({ confirmation: "user", confirmedById: "user-1" }),
+    ]);
+  });
 });
 
 function fixtureWorkspace(): DefenseGroundingWorkspaceRow {

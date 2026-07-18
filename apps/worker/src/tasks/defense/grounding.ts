@@ -98,25 +98,32 @@ type DefenseGenerationProject = {
 export function buildDefenseGroundingBundle(workspace: DefenseGroundingWorkspaceRow): DefenseGroundingBundle {
   if (!workspace.plan) throw new Error("Defense plan has not been created");
   const assets = workspace.project.sources.flatMap(mapAsset);
+  const includedSourceIds = new Set(workspace.project.sources.filter((source) => source.included).map((source) => source.id));
   const facts = workspace.facts
     .filter((fact) => fact.state === "active" && fact.evidence.length > 0)
-    .map((fact) => ({
-      id: fact.id,
-      ...(fact.key ? { key: fact.key } : {}),
-      statement: fact.statement,
-      ...(fact.value === null ? {} : { value: fact.value }),
-      state: "active" as const,
-      evidence: fact.evidence.map((evidence) => ({
-        id: evidence.id,
-        factId: fact.id,
-        confirmation: evidence.confirmation,
-        ...(evidence.confirmation === "source" && evidence.sourceId ? { sourceId: evidence.sourceId } : {}),
-        ...(evidence.locator ? { locator: evidence.locator } : {}),
-        ...(evidence.excerpt ? { excerpt: evidence.excerpt } : {}),
-        ...(evidence.confirmedById ? { confirmedById: evidence.confirmedById } : {}),
-        confirmedAt: evidence.createdAt.toISOString(),
-      })),
-    }));
+    .map((fact) => {
+      const evidence = fact.evidence
+        .filter((item) => isUsableFactEvidence(item, includedSourceIds))
+        .map((item) => ({
+          id: item.id,
+          factId: fact.id,
+          confirmation: item.confirmation,
+          ...(item.confirmation === "source" && item.sourceId ? { sourceId: item.sourceId } : {}),
+          ...(item.locator ? { locator: item.locator } : {}),
+          ...(item.excerpt ? { excerpt: item.excerpt } : {}),
+          ...(item.confirmedById ? { confirmedById: item.confirmedById } : {}),
+          confirmedAt: item.createdAt.toISOString(),
+        }));
+      return {
+        id: fact.id,
+        ...(fact.key ? { key: fact.key } : {}),
+        statement: fact.statement,
+        ...(fact.value === null ? {} : { value: fact.value }),
+        state: "active" as const,
+        evidence,
+      };
+    })
+    .filter((fact) => fact.evidence.length > 0);
   const requirements = workspace.requirements
     .filter((requirement) => requirement.state === "active")
     .map((requirement) => {
@@ -170,6 +177,13 @@ export function buildDefenseGroundingBundle(workspace: DefenseGroundingWorkspace
     styleBrief,
     assets,
   });
+}
+
+function isUsableFactEvidence(evidence: EvidenceRow, includedSourceIds: Set<string>) {
+  if (evidence.confirmation === "user") return true;
+  return evidence.confirmation === "source"
+    && Boolean(evidence.sourceId && includedSourceIds.has(evidence.sourceId))
+    && Boolean(evidence.locator?.trim());
 }
 
 export function prepareDefenseGenerationProject<T extends DefenseGenerationProject>(

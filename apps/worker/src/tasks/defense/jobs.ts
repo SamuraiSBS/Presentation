@@ -103,6 +103,8 @@ async function runDefenseAnalysisJob(job: Job<DefenseAnalysisJobData>) {
   const prisma = getPrisma();
   const { projectId, workspaceId, generationJobId } = job.data;
   const setStage = createStageUpdater(prisma, job, generationJobId);
+  let claimedAnalysisRevision: number | undefined;
+  let claimedPlanRevision: number | undefined;
   try {
     await prisma.generationJob.update({ where: { id: generationJobId }, data: { status: "active", error: null } });
     if (job.data.scope === "plan") {
@@ -117,7 +119,20 @@ async function runDefenseAnalysisJob(job: Job<DefenseAnalysisJobData>) {
       include: { project: { include: { sources: { where: { included: true }, orderBy: { createdAt: "asc" } } } } },
     });
     if (!workspace || workspace.project.workflow !== "requirements_driven") throw new Error("Defense workspace was not found");
-    await prisma.defenseWorkspace.update({ where: { id: workspaceId }, data: { analysisStatus: "analyzing", analysisError: null } });
+    const expectedAnalysisRevision = job.data.expectedAnalysisRevision ?? workspace.analysisRevision;
+    const expectedPlanRevision = job.data.expectedPlanRevision ?? workspace.planRevision;
+    const claimed = await prisma.defenseWorkspace.updateMany({
+      where: {
+        id: workspaceId,
+        projectId,
+        analysisRevision: expectedAnalysisRevision,
+        planRevision: expectedPlanRevision,
+      },
+      data: { analysisStatus: "analyzing", analysisError: null },
+    });
+    if (!claimed.count) throw new Error("Defense analysis or plan revision changed before the job started");
+    claimedAnalysisRevision = expectedAnalysisRevision;
+    claimedPlanRevision = expectedPlanRevision;
 
     await setStage("extracting_sources");
     const materialized = await withTraceSpan("defense.ingestion", {
@@ -127,6 +142,7 @@ async function runDefenseAnalysisJob(job: Job<DefenseAnalysisJobData>) {
       "studydeck.source_count": workspace.project.sources.length,
     }, () => materializeDefenseSources(prisma, projectId, workspace.project.sources), job.data.traceContext);
 
+    await assertCurrentDefenseAnalysisRevision(prisma, workspaceId, projectId, expectedAnalysisRevision, expectedPlanRevision);
     await setStage("extracting_requirements");
     const candidates = await withTraceSpan("defense.analysis", {
       "studydeck.project_id": projectId,
@@ -135,12 +151,22 @@ async function runDefenseAnalysisJob(job: Job<DefenseAnalysisJobData>) {
       "studydeck.chunk_count": materialized.chunks.length,
     }, () => analyzeDefenseCandidates(materialized.chunks), job.data.traceContext);
 
+    await assertCurrentDefenseAnalysisRevision(prisma, workspaceId, projectId, expectedAnalysisRevision, expectedPlanRevision);
     await setStage("classifying_assets");
     const styleBrief = await extractAndPersistStyle(prisma, projectId, materialized.styleReferences);
     await classifyAndPersistScreenshots(prisma, materialized.screenshots);
 
     await setStage("building_defense_plan");
-    await persistAnalysisAndPlan(prisma, workspaceId, projectId, candidates, materialized, styleBrief);
+    await persistAnalysisAndPlan(
+      prisma,
+      workspaceId,
+      projectId,
+      expectedAnalysisRevision,
+      expectedPlanRevision,
+      candidates,
+      materialized,
+      styleBrief,
+    );
     await completeGenerationJob(prisma, generationJobId);
     await prisma.userActivityEvent.create({
       data: { userId: job.data.userId, projectId, type: "defense.analysis.completed", metadata: { factCount: candidates.facts.length, requirementCount: candidates.requirements.length, conflictCount: candidates.conflicts.length } },
@@ -152,7 +178,17 @@ async function runDefenseAnalysisJob(job: Job<DefenseAnalysisJobData>) {
       prisma.generationJob.update({ where: { id: generationJobId }, data: { status: "failed", error: message, progressStage: "failed", progressLabel: "Не получилось", progressPercent: 100 } }),
       job.data.scope === "plan"
         ? Promise.resolve()
-        : prisma.defenseWorkspace.update({ where: { id: workspaceId }, data: { analysisStatus: "failed", analysisError: message } }),
+        : claimedAnalysisRevision === undefined || claimedPlanRevision === undefined
+          ? Promise.resolve()
+          : prisma.defenseWorkspace.updateMany({
+            where: {
+              id: workspaceId,
+              projectId,
+              analysisRevision: claimedAnalysisRevision,
+              planRevision: claimedPlanRevision,
+            },
+            data: { analysisStatus: "failed", analysisError: message },
+          }),
     ]);
     throw error;
   }
@@ -485,12 +521,26 @@ async function persistAnalysisAndPlan(
   prisma: PrismaClient,
   workspaceId: string,
   projectId: string,
+  expectedAnalysisRevision: number,
+  expectedPlanRevision: number,
   candidates: Awaited<ReturnType<typeof analyzeDefenseCandidates>>,
   materialized: Awaited<ReturnType<typeof materializeDefenseSources>>,
   styleBrief: ReturnType<typeof defenseStyleBriefSchema.parse> | null,
 ) {
   const chunkById = new Map(materialized.chunks.map((chunk) => [chunk.id, chunk]));
   await prisma.$transaction(async (tx) => {
+    // Claim the exact input revision before touching derived facts, requirements or the plan.
+    // The row lock acquired by this update also serializes a concurrent editor mutation.
+    const claimed = await tx.defenseWorkspace.updateMany({
+      where: {
+        id: workspaceId,
+        projectId,
+        analysisRevision: expectedAnalysisRevision,
+        planRevision: expectedPlanRevision,
+      },
+      data: { analysisStatus: "analyzing", analysisError: null },
+    });
+    if (!claimed.count) throw new Error("Defense analysis or plan revision changed before saving results");
     const workspace = await tx.defenseWorkspace.findUniqueOrThrow({ where: { id: workspaceId } });
     const hasDefenseSpec = await tx.source.count({ where: { projectId, included: true, role: "defense_spec" } }) > 0;
     if (hasDefenseSpec) {
@@ -579,8 +629,13 @@ async function persistAnalysisAndPlan(
       tx.source.findMany({ where: { projectId, included: true, role: { not: null } } }),
     ]);
     const plan = createPlan(workspace, hasDefenseSpec, facts.map(mapFact), requirements.map(mapRequirement), conflicts.map(mapConflict), sources.flatMap(mapAsset));
-    await tx.defenseWorkspace.update({
-      where: { id: workspaceId },
+    const updated = await tx.defenseWorkspace.updateMany({
+      where: {
+        id: workspaceId,
+        projectId,
+        analysisRevision: expectedAnalysisRevision,
+        planRevision: expectedPlanRevision,
+      },
       data: {
         analysisStatus: "review_ready",
         analysisRevision: { increment: 1 },
@@ -590,7 +645,28 @@ async function persistAnalysisAndPlan(
         planRevision: { increment: 1 },
       },
     });
+    if (!updated.count) throw new Error("Defense analysis or plan revision changed while saving results");
   });
+}
+
+async function assertCurrentDefenseAnalysisRevision(
+  prisma: PrismaClient,
+  workspaceId: string,
+  projectId: string,
+  expectedAnalysisRevision: number,
+  expectedPlanRevision: number,
+) {
+  const workspace = await prisma.defenseWorkspace.findFirst({
+    where: { id: workspaceId, projectId },
+    select: { analysisRevision: true, planRevision: true },
+  });
+  if (
+    !workspace
+    || workspace.analysisRevision !== expectedAnalysisRevision
+    || workspace.planRevision !== expectedPlanRevision
+  ) {
+    throw new Error("Defense analysis or plan revision changed while the job was running");
+  }
 }
 
 async function rebuildPersistedPlan(prisma: PrismaClient, data: DefenseAnalysisJobData) {

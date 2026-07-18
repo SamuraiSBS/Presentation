@@ -30,4 +30,30 @@ describe("defense plan builder", () => {
       expect.objectContaining({ kind: "conflict" }),
     ]));
   });
+
+  it("keeps optional placement literal in strict mode and only adapts an unreserved template slot", () => {
+    const input = {
+      config: { defenseType: "hackathon" as const, complianceMode: "strict" as const, targetSlideCount: 4, targetDurationSeconds: 420, authorProfile: {}, standardPresetVersion: "hackathon-v1" as const },
+      presetSlides,
+      requirements: [
+        { id: "required-architecture", text: "Показать архитектуру решения", priority: "required" as const, state: "active" as const, origin: "source" as const, rule: { kind: "slide_position", position: "exact", order: 3 } },
+        { id: "recommended-risks", text: "Технические риски и план снижения", priority: "recommended" as const, state: "active" as const, origin: "source" as const, rule: { kind: "slide_position", position: "exact", order: 4 } },
+      ],
+      facts: [],
+      assets: [],
+      conflicts: [],
+    };
+
+    const strict = buildDefensePlan(input);
+    const adaptive = buildDefensePlan({ ...input, config: { ...input.config, complianceMode: "adaptive" } });
+
+    expect(strict.slides[3].requirementIds).toContain("recommended-risks");
+    expect(strict.slides[1].title).toBe(presetSlides[1].title);
+
+    expect(adaptive.slides[1].requirementIds).toContain("recommended-risks");
+    expect(adaptive.slides[1].title).toContain("Технические риски");
+    expect(adaptive.slides[1].adaptiveChangeReason).toContain("Необязательное требование");
+    expect(adaptive.slides[2].requirementIds).toContain("required-architecture");
+    expect(adaptive.slides[3].requirementIds).not.toContain("recommended-risks");
+  });
 });

@@ -5,9 +5,9 @@ function serviceFixture() {
   const prisma = {
     project: { findUnique: vi.fn() },
     presentation: { findUnique: vi.fn() },
-    export: { create: vi.fn(), update: vi.fn(), findFirst: vi.fn() },
+    export: { create: vi.fn(), update: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn() },
   };
-  const queue = { add: vi.fn() };
+  const queue = { add: vi.fn(), getJob: vi.fn().mockResolvedValue(null) };
   const access = { requireViewer: vi.fn() };
   const config = { getOrThrow: vi.fn(), get: vi.fn() };
   const service = new ExportsService(prisma as never, config as never, queue as never, access as never);
@@ -21,11 +21,48 @@ describe("ExportsService revision safety", () => {
     prisma.project.findUnique.mockResolvedValue({ id: "project-1", userId: "user-1", user: { planCode: "free" }, presentation: { revision: 7 } });
     prisma.export.create.mockResolvedValue({ id: "export-1", projectId: "project-1", type: "pptx", presentationRevision: 7 });
     queue.add.mockResolvedValue({ id: "queue-1" });
-    prisma.export.update.mockResolvedValue({});
+    prisma.export.update.mockResolvedValue({ id: "export-1", projectId: "project-1", type: "pptx", presentationRevision: 7, queueJobId: "queue-1" });
 
     await service.enqueue("user-1", "project-1", "pptx");
 
-    expect(prisma.export.create).toHaveBeenCalledWith({ data: { projectId: "project-1", type: "pptx", presentationRevision: 7 } });
+    expect(prisma.export.create).toHaveBeenCalledWith({
+      data: { projectId: "project-1", type: "pptx", presentationRevision: 7, requestKey: "auto" },
+    });
+  });
+
+  it("returns an existing export for the same presentation revision instead of queueing a duplicate", async () => {
+    const { service, prisma, queue, access } = serviceFixture();
+    access.requireViewer.mockResolvedValue({ project: { userId: "user-1" } });
+    prisma.project.findUnique.mockResolvedValue({ id: "project-1", userId: "user-1", user: { planCode: "free" }, presentation: { revision: 7 } });
+    prisma.export.findUnique.mockResolvedValue({ id: "export-existing", status: "queued", queueJobId: "queue-existing" });
+    queue.getJob.mockResolvedValue({ getState: vi.fn().mockResolvedValue("waiting") });
+
+    await expect(service.enqueue("user-1", "project-1", "pptx")).resolves.toMatchObject({ id: "export-existing" });
+
+    expect(prisma.export.create).not.toHaveBeenCalled();
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it("re-enqueues a queued export that was persisted before its queue job id", async () => {
+    const { service, prisma, queue, access } = serviceFixture();
+    access.requireViewer.mockResolvedValue({ project: { userId: "user-1" } });
+    prisma.project.findUnique.mockResolvedValue({ id: "project-1", userId: "user-1", user: { planCode: "free" }, presentation: { revision: 7 } });
+    prisma.export.findUnique.mockResolvedValue({ id: "export-recovery", status: "queued", queueJobId: null });
+    prisma.export.update
+      .mockResolvedValueOnce({ id: "export-recovery", status: "queued", queueJobId: null })
+      .mockResolvedValueOnce({ id: "export-recovery", status: "queued", queueJobId: "queue-recovery" });
+    queue.add.mockResolvedValue({ id: "queue-recovery" });
+
+    await expect(service.enqueue("user-1", "project-1", "pptx")).resolves.toMatchObject({
+      id: "export-recovery",
+      queueJobId: "queue-recovery",
+    });
+
+    expect(queue.add).toHaveBeenCalledWith(
+      "export-presentation",
+      expect.objectContaining({ exportId: "export-recovery", projectId: "project-1", type: "pptx" }),
+      expect.objectContaining({ jobId: "presentation-export-export-recovery" }),
+    );
   });
 
   it("blocks downloading a ready export from an older revision", async () => {
@@ -71,7 +108,7 @@ describe("ExportsService revision safety", () => {
     expect(queue.add).not.toHaveBeenCalled();
 
     prisma.export.create.mockResolvedValue({ id: "export-1", presentationRevision: 7, type: "pptx" });
-    prisma.export.update.mockResolvedValue({});
+    prisma.export.update.mockResolvedValue({ id: "export-1", projectId: "project-1", type: "pptx", presentationRevision: 7, queueJobId: "queue-1" });
     queue.add.mockResolvedValue({ id: "queue-1" });
     await expect(service.enqueue("user-1", "project-1", "pptx", {
       acknowledgeWarnings: true,

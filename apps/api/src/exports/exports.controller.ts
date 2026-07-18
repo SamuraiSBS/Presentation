@@ -13,7 +13,7 @@ export class ExportsController {
   @Post()
   create(@Req() request: InternalRequest, @Param("projectId") projectId: string, @Body() body: unknown) {
     const input = parseInput(createExportInputSchema, body || {});
-    return this.exportsService.enqueue(request.userId, projectId, input.type, input.acknowledgement);
+    return this.exportsService.enqueue(request.userId, projectId, input.type, input.acknowledgement, input.idempotencyKey);
   }
 
   @Get(":exportId")

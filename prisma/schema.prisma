@@ -284,6 +284,7 @@ model VerificationToken {
 model Project {
   id                   String              @id @default(cuid())
   userId               String
+  creationRequestKey   String?
   folderId             String?
   title                String
   prompt               String              @db.Text
@@ -314,6 +315,7 @@ model Project {
 
   @@index([userId, updatedAt])
   @@index([folderId, updatedAt])
+  @@unique([userId, creationRequestKey])
 }
 
 model Folder {
@@ -366,6 +368,8 @@ model Source {
   id             String               @id @default(cuid())
   projectId      String
   parentSourceId String?
+  uploadRequestKey String?
+  uploadFieldName  String?
   label          String
   type           String
   role           SourceRole?
@@ -386,6 +390,8 @@ model Source {
   @@index([projectId])
   @@index([parentSourceId])
   @@index([projectId, role])
+  @@unique([projectId, role, url])
+  @@unique([projectId, uploadRequestKey, uploadFieldName])
 }
 
 model DefenseWorkspace {
@@ -560,6 +566,7 @@ model Export {
   id                   String             @id @default(cuid())
   projectId            String
   type                 ExportType
+  requestKey           String?
   status               ExportStatus       @default(queued)
   objectKey            String?
   error                String?
@@ -572,6 +579,7 @@ model Export {
   operationalEvents    OperationalEvent[]
 
   @@index([projectId, createdAt])
+  @@unique([projectId, type, presentationRevision, requestKey])
 }
 
 model UsageCounter {

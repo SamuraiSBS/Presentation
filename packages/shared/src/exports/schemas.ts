@@ -49,6 +49,7 @@ export const createExportInputSchema = z
   .object({
     type: exportTypeSchema.default("pptx"),
     acknowledgement: exportWarningAcknowledgementSchema.optional(),
+    idempotencyKey: z.string().trim().min(8).max(200).optional(),
   })
   .strict();
 export type CreateExportInput = z.infer<typeof createExportInputSchema>;
