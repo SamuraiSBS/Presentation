@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { contentPlaceholderSchema } from "../defense/schemas.js";
 import { generationBriefSchema } from "../generation/schemas.js";
 import { slideBlockSchema, slideCanvasSchema, slideLayoutSchema, slideVisualSchema } from "../presentation/schemas.js";
 import { folderColorSchema, projectMemberRoleSchema, projectStatusSchema, scenarioSchema } from "./schemas.js";
@@ -94,6 +95,7 @@ export const updateSlideInputSchema = z.object({
   layout: slideLayoutSchema.optional(),
   visual: slideVisualSchema.optional(),
   blocks: z.array(slideBlockSchema).optional(),
+  placeholders: z.array(contentPlaceholderSchema).max(50).optional(),
   canvas: slideCanvasSchema.optional(),
   speakerNotes: z.string().max(5000).optional(),
 });

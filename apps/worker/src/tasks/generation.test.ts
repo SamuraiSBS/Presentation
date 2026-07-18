@@ -113,4 +113,18 @@ describe("prepareGenerationSources", () => {
     expect(searchWebSources).not.toHaveBeenCalled();
     expect(sources.map((source) => source.id)).toEqual(["keep"]);
   });
+
+  it("never performs factual web research for requirements-driven projects", async () => {
+    const sources = await prepareGenerationSources({
+      id: "defense-project",
+      prompt: "Защита проекта",
+      mode: "with_sources",
+      workflow: "requirements_driven",
+      speechDraft: "Слайд 1: Проект\nПодтверждённый автором текст проекта.",
+      sources: [],
+    });
+
+    expect(searchWebSources).not.toHaveBeenCalled();
+    expect(sources[0]).toMatchObject({ id: "defense-project-accepted-speech", type: "PROMPT" });
+  });
 });

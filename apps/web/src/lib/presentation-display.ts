@@ -383,12 +383,15 @@ function normalizeVisualImage(value: unknown): SlideVisual["image"] | undefined 
 
   return {
     url,
+    sourceId: sanitizeDisplayText(candidate.sourceId) || undefined,
     objectKey: sanitizeDisplayText(candidate.objectKey),
     alt: sanitizeDisplayText(candidate.alt),
     query: sanitizeDisplayText(candidate.query),
     sourceUrl: validUrl(candidate.sourceUrl) ? candidate.sourceUrl : undefined,
     sourceTitle: sanitizeDisplayText(candidate.sourceTitle),
-    provider: "tavily",
+    provider: ["user", "repository", "archive", "tavily"].includes(candidate.provider)
+      ? candidate.provider
+      : "tavily",
     contentType: sanitizeDisplayText(candidate.contentType),
     width: positiveInteger(candidate.width),
     height: positiveInteger(candidate.height),

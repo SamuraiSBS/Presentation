@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { defenseSourceMetadataSchema, sourceRoleSchema } from "../defense/schemas.js";
 export const scenarioSchema = z.enum([
   "university_report",
   "school_report",
@@ -43,6 +44,9 @@ export const sourceSchema = z.object({
   objectKey: z.string().optional(),
   url: z.string().url().optional(),
   included: z.boolean().optional(),
+  role: sourceRoleSchema.nullable().optional(),
+  metadata: defenseSourceMetadataSchema.nullable().optional(),
+  parentSourceId: z.string().nullable().optional(),
 });
 export type Source = z.infer<typeof sourceSchema>;
 

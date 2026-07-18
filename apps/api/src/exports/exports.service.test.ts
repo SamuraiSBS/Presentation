@@ -11,7 +11,7 @@ function serviceFixture() {
   const access = { requireViewer: vi.fn() };
   const config = { getOrThrow: vi.fn(), get: vi.fn() };
   const service = new ExportsService(prisma as never, config as never, queue as never, access as never);
-  return { service, prisma, queue, access };
+  return { service, prisma, queue, access, config };
 }
 
 describe("ExportsService revision safety", () => {
@@ -35,5 +35,67 @@ describe("ExportsService revision safety", () => {
 
     await expect(service.getDownloadUrl("user-1", "project-1", "export-1"))
       .rejects.toThrow("Экспорт устарел после редактирования презентации");
+  });
+
+  it("requires a backend-validated acknowledgement for a defense export without a report", async () => {
+    const { service, prisma, queue, access, config } = serviceFixture();
+    access.requireViewer.mockResolvedValue({ project: { userId: "user-1" } });
+    config.getOrThrow.mockReturnValue("internal-secret");
+    prisma.project.findUnique.mockResolvedValue({
+      id: "project-1",
+      userId: "user-1",
+      workflow: "requirements_driven",
+      user: { planCode: "free" },
+      presentation: { revision: 7, document: { slides: [] } },
+      defenseWorkspace: {
+        analysisRevision: 2,
+        planRevision: 3,
+        complianceReports: [],
+        _count: { conflicts: 0 },
+      },
+    });
+
+    let preflightToken = "";
+    try {
+      await service.enqueue("user-1", "project-1", "pptx");
+    } catch (error) {
+      const response = (error as { getResponse(): { details?: { preflightToken?: string } } }).getResponse();
+      preflightToken = response.details?.preflightToken || "";
+      expect(response.details).toMatchObject({
+        allowed: false,
+        presentationRevision: 7,
+        warnings: [{ code: "missing_compliance_report" }],
+      });
+    }
+    expect(preflightToken).toHaveLength(43);
+    expect(queue.add).not.toHaveBeenCalled();
+
+    prisma.export.create.mockResolvedValue({ id: "export-1", presentationRevision: 7, type: "pptx" });
+    prisma.export.update.mockResolvedValue({});
+    queue.add.mockResolvedValue({ id: "queue-1" });
+    await expect(service.enqueue("user-1", "project-1", "pptx", {
+      acknowledgeWarnings: true,
+      preflightToken,
+      expectedPresentationRevision: 7,
+    })).resolves.toMatchObject({ id: "export-1" });
+
+    prisma.project.findUnique.mockResolvedValue({
+      id: "project-1",
+      userId: "user-1",
+      workflow: "requirements_driven",
+      user: { planCode: "free" },
+      presentation: { revision: 8, document: { slides: [] } },
+      defenseWorkspace: {
+        analysisRevision: 2,
+        planRevision: 3,
+        complianceReports: [],
+        _count: { conflicts: 0 },
+      },
+    });
+    await expect(service.enqueue("user-1", "project-1", "pptx", {
+      acknowledgeWarnings: true,
+      preflightToken,
+      expectedPresentationRevision: 7,
+    })).rejects.toMatchObject({ status: 409 });
   });
 });

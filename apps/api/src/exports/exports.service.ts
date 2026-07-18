@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { ConfigService } from "@nestjs/config";
@@ -5,8 +6,9 @@ import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Queue } from "bullmq";
 import path from "node:path";
-import { type ExportType, planLimits } from "@studydeck/shared";
+import { complianceReportDocumentSchema, type ExportType, planLimits, presentationSchema } from "@studydeck/shared";
 import { ProjectAccessService } from "../access/project-access.service.js";
+import { conflict } from "../errors/api-error.js";
 import { injectTraceContext, withTraceSpan } from "../observability.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -21,7 +23,12 @@ export class ExportsService {
 
   private s3Client?: S3Client;
 
-  async enqueue(userId: string, projectId: string, type: ExportType) {
+  async enqueue(
+    userId: string,
+    projectId: string,
+    type: ExportType,
+    acknowledgement: ExportWarningAcknowledgement = {},
+  ) {
     return withTraceSpan("api.export.enqueue", {
       "studydeck.project_id": projectId,
       "studydeck.stage": "generation.export",
@@ -30,13 +37,26 @@ export class ExportsService {
       const access = await this.access.requireViewer(userId, projectId);
       const project = await this.prisma.project.findUnique({
         where: { id: projectId },
-        include: { user: true, presentation: true },
+        include: {
+          user: true,
+          presentation: true,
+          defenseWorkspace: {
+            include: {
+              complianceReports: { orderBy: { createdAt: "desc" }, take: 1 },
+              _count: { select: { conflicts: { where: { state: "unresolved" } } } },
+            },
+          },
+        },
       });
       if (!project || project.userId !== access.project.userId) throw new NotFoundException("Project not found");
       if (!project.presentation) throw new BadRequestException("Generate the presentation before export");
 
       const allowed = planLimits[project.user.planCode].exports;
       if (!(allowed as readonly string[]).includes(type)) throw new BadRequestException("This export type is not included in your plan");
+
+      if (project.workflow === "requirements_driven" && project.defenseWorkspace) {
+        this.requireDefenseAcknowledgement(project, acknowledgement);
+      }
 
       const created = await this.prisma.export.create({
         data: { projectId, type, presentationRevision: project.presentation.revision },
@@ -49,6 +69,117 @@ export class ExportsService {
       await this.prisma.export.update({ where: { id: created.id }, data: { queueJobId: queueJob.id } });
       return { ...created, queueJobId: queueJob.id };
     });
+  }
+
+  private requireDefenseAcknowledgement(
+    project: DefenseExportProject,
+    acknowledgement: ExportWarningAcknowledgement,
+  ) {
+    const workspace = project.defenseWorkspace;
+    if (!workspace || !project.presentation) return;
+    const latestReport = workspace.complianceReports[0] ?? null;
+    const reportCurrent = Boolean(
+      latestReport
+      && latestReport.status === "ready"
+      && latestReport.presentationRevision === project.presentation.revision
+      && latestReport.analysisRevision === workspace.analysisRevision
+      && latestReport.planRevision === workspace.planRevision,
+    );
+    const placeholderCount = unresolvedPlaceholderCount(project.presentation.document);
+    const issues: DefenseExportIssue[] = [];
+    if (!latestReport) {
+      issues.push({ code: "missing_compliance_report", message: "Презентация ещё не проверена по ТЗ", count: 1 });
+    } else if (!reportCurrent) {
+      issues.push({ code: "stale_compliance_report", message: "Отчёт по ТЗ устарел или ещё не завершён", count: 1 });
+    }
+    const requiredIssueCount = latestReport ? requiredBlockingIssueCount(latestReport) : 0;
+    if (requiredIssueCount) {
+      issues.push({
+        code: "unresolved_required_issues",
+        message: "Есть невыполненные обязательные требования",
+        count: requiredIssueCount,
+      });
+    }
+    const needsReviewCount = latestReport ? semanticNeedsReviewCount(latestReport.document) : 0;
+    if (needsReviewCount) {
+      issues.push({
+        code: "unresolved_semantic_issues",
+        message: "Часть требований требует ручной проверки",
+        count: needsReviewCount,
+      });
+    }
+    if (workspace._count.conflicts) {
+      issues.push({
+        code: "unresolved_conflicts",
+        message: "Есть неразрешённые противоречия",
+        count: workspace._count.conflicts,
+      });
+    }
+    if (placeholderCount) {
+      issues.push({
+        code: "unresolved_placeholders",
+        message: "В презентации остались незаполненные данные",
+        count: placeholderCount,
+      });
+    }
+    if (!issues.length) return;
+
+    const preflightToken = this.defensePreflightToken(project, issues);
+    const details = {
+      requiresAcknowledgement: true,
+      allowed: false,
+      projectId: project.id,
+      presentationRevision: project.presentation.revision,
+      complianceReportId: reportCurrent ? latestReport?.id ?? null : null,
+      reportStale: Boolean(latestReport && !reportCurrent),
+      preflightToken,
+      warnings: issues,
+      issues,
+    };
+    if (!acknowledgement.acknowledgeWarnings) {
+      throw conflict(
+        "DEFENSE_EXPORT_WARNING",
+        "Экспорт содержит нерешённые проблемы защиты",
+        details,
+      );
+    }
+    if (acknowledgement.expectedPresentationRevision !== project.presentation.revision) {
+      throw conflict(
+        "DEFENSE_EXPORT_ACK_STALE",
+        "Презентация изменилась после подтверждения предупреждения",
+        details,
+      );
+    }
+    const reportAcknowledged = Boolean(
+      reportCurrent
+      && acknowledgement.complianceReportId
+      && acknowledgement.complianceReportId === latestReport?.id,
+    );
+    const tokenAcknowledged = Boolean(
+      acknowledgement.preflightToken
+      && safeTokenEqual(acknowledgement.preflightToken, preflightToken),
+    );
+    if (!reportAcknowledged && !tokenAcknowledged) {
+      throw conflict(
+        "DEFENSE_EXPORT_ACK_INVALID",
+        "Подтверждение предупреждения устарело или не относится к этой презентации",
+        details,
+      );
+    }
+  }
+
+  private defensePreflightToken(project: DefenseExportProject, issues: readonly DefenseExportIssue[]) {
+    const secret = this.config.getOrThrow<string>("INTERNAL_API_TOKEN");
+    const workspace = project.defenseWorkspace;
+    const payload = [
+      project.id,
+      project.presentation?.revision ?? 0,
+      workspace?.analysisRevision ?? 0,
+      workspace?.planRevision ?? 0,
+      workspace?.complianceReports[0]?.id ?? "none",
+      ...issues.map((item) => `${item.code}:${item.count ?? 0}`).sort(),
+    ].join("|");
+    return crypto.createHmac("sha256", secret).update(payload).digest("base64url");
   }
 
   async get(userId: string, projectId: string, exportId: string) {
@@ -94,6 +225,72 @@ export class ExportsService {
 
     return this.s3Client;
   }
+}
+
+export type ExportWarningAcknowledgement = {
+  acknowledgeWarnings?: boolean;
+  complianceReportId?: string;
+  preflightToken?: string;
+  expectedPresentationRevision?: number;
+};
+
+type DefenseExportIssue = {
+  code: string;
+  message: string;
+  count?: number;
+};
+
+type DefenseExportProject = {
+  id: string;
+  presentation: { revision: number; document: unknown } | null;
+  defenseWorkspace: {
+    analysisRevision: number;
+    planRevision: number;
+    complianceReports: Array<{
+      id: string;
+      status: string;
+      presentationRevision: number;
+      analysisRevision: number;
+      planRevision: number;
+      requiredSatisfied: number;
+      requiredTotal: number;
+      document: unknown;
+    }>;
+    _count: { conflicts: number };
+  } | null;
+};
+
+function unresolvedPlaceholderCount(document: unknown) {
+  const parsed = presentationSchema.safeParse(document);
+  if (!parsed.success) return 0;
+  return parsed.data.slides.reduce(
+    (total, slide) => total + ((slide as { placeholders?: Array<{ resolved?: boolean }> }).placeholders || [])
+      .filter((placeholder) => !placeholder.resolved).length,
+    0,
+  );
+}
+
+function requiredBlockingIssueCount(report: { document: unknown; requiredTotal: number; requiredSatisfied: number }) {
+  const document = complianceReportDocumentSchema.safeParse(report.document);
+  if (!document.success) return Math.max(0, report.requiredTotal - report.requiredSatisfied);
+  const counts = document.data.counts.required;
+  return counts.partial + counts.unsatisfied + counts.needsReview;
+}
+
+function semanticNeedsReviewCount(document: unknown) {
+  const parsed = complianceReportDocumentSchema.safeParse(document);
+  if (!parsed.success) return 0;
+  return parsed.data.items.filter((item) => (
+    item.semanticResult !== undefined
+    && item.result !== "ignored"
+    && ["partial", "unsatisfied", "needs_review"].includes(item.semanticResult)
+  )).length;
+}
+
+function safeTokenEqual(left: string, right: string) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function safeDownloadName(objectKey: string) {

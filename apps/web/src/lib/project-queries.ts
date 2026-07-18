@@ -1,6 +1,7 @@
 "use client";
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { CreateExportInput, ExportType } from "@studydeck/shared";
 import type {
   ExportSummary,
   ProjectDetail,
@@ -163,8 +164,8 @@ export function useStartGeneration(projectId: string) {
 export function useRequestExport(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (type: "pptx" | "pdf" = "pptx") =>
-      apiJson<ExportItem>(`/api/projects/${projectId}/exports`, jsonInit("POST", { type })),
+    mutationFn: (input: ExportType | CreateExportInput = "pptx") =>
+      apiJson<ExportItem>(`/api/projects/${projectId}/exports`, jsonInit("POST", typeof input === "string" ? { type: input } : input)),
     onSuccess: (created) => {
       queryClient.setQueryData(projectKeys.export(projectId, created.id), created);
       queryClient.setQueryData<ProjectDetail | undefined>(projectKeys.detail(projectId), (current) =>

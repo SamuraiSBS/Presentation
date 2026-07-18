@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
-import { exportTypeSchema } from "@studydeck/shared";
+import { createExportInputSchema } from "@studydeck/shared";
 import { InternalAuthGuard, type InternalRequest } from "../auth/internal-auth.guard.js";
 import { BlockedUserGuard } from "../auth/blocked-user.guard.js";
 import { parseInput } from "../errors/api-error.js";
@@ -11,8 +11,9 @@ export class ExportsController {
   constructor(private readonly exportsService: ExportsService) {}
 
   @Post()
-  create(@Req() request: InternalRequest, @Param("projectId") projectId: string, @Body() body: { type?: string }) {
-    return this.exportsService.enqueue(request.userId, projectId, parseInput(exportTypeSchema, body?.type || "pptx"));
+  create(@Req() request: InternalRequest, @Param("projectId") projectId: string, @Body() body: unknown) {
+    const input = parseInput(createExportInputSchema, body || {});
+    return this.exportsService.enqueue(request.userId, projectId, input.type, input.acknowledgement);
   }
 
   @Get(":exportId")

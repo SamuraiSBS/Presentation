@@ -228,6 +228,9 @@ export class AdminService {
     const previous = await this.prisma.generationJob.findUnique({ where: { id }, include: { project: true } });
     if (!previous) throw new NotFoundException("Генерация не найдена");
     if (previous.status !== "failed") throw new ConflictException("Повтор доступен только для неуспешной генерации");
+    if (previous.kind !== "narration" && previous.kind !== "presentation") {
+      throw new BadRequestException("Повтор этой служебной проверки запустите из рабочего пространства защиты");
+    }
     const created = await this.prisma.generationJob.create({ data: { projectId: previous.projectId, kind: previous.kind, status: "queued" } });
     const queueName = previous.kind === "narration" ? "generate-narration" : "generate-presentation";
     const queueJob = await this.generationQueue.add(queueName, { projectId: previous.projectId, userId: previous.project.userId }, generationJobOptions());

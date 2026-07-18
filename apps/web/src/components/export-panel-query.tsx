@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { PresentationDocument, SpeechScriptItem } from "@studydeck/shared";
-import { Check, CheckCircle2, Clipboard, Download, FileText, LoaderCircle, MoreHorizontal, Presentation, RefreshCw } from "lucide-react";
+import type { ExportType, PresentationDocument, SpeechScriptItem } from "@studydeck/shared";
+import { AlertTriangle, Check, CheckCircle2, Clipboard, Download, FileText, LoaderCircle, MoreHorizontal, Presentation, RefreshCw } from "lucide-react";
 import {
+  ApiClientError,
   isActiveExportStatus,
   useExportJob,
   useProject,
@@ -23,9 +24,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { WorkflowProgress } from "@/components/workflow-progress";
 import { isStaleExport } from "@/lib/export-revision";
+import { DefenseExportCompliance } from "@/components/defense/defense-export-compliance";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type ExportProjectPayload = ProjectPayload & {
   presentation?: { document?: PresentationDocument } | null;
+};
+
+type ExportWarningState = {
+  type: ExportType;
+  presentationRevision: number;
+  complianceReportId?: string;
+  preflightToken?: string;
+  issues: Array<{ code?: string; message: string; count?: number }>;
 };
 
 export function ExportPanelQuery({ project: initialProject }: { project: ExportProjectPayload }) {
@@ -36,6 +47,7 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
   const [docxError, setDocxError] = useState("");
   const [downloadNotice, setDownloadNotice] = useState("");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [exportWarning, setExportWarning] = useState<ExportWarningState | null>(null);
   const requestExport = useRequestExport(project.id);
   const document = project.presentation?.document;
   const speechItems = useMemo(() => speechItemsFromDocument(document), [document]);
@@ -55,8 +67,8 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
     setPresentationError("");
     try {
       await requestExport.mutateAsync("pptx");
-    } catch {
-      setPresentationError("Не удалось начать подготовку PPTX. Попробуйте ещё раз.");
+    } catch (cause) {
+      handleExportError(cause, "pptx", "Не удалось начать подготовку PPTX. Попробуйте ещё раз.");
     }
   }
 
@@ -64,8 +76,48 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
     setPresentationError("");
     try {
       await requestExport.mutateAsync("pdf");
-    } catch {
-      setPresentationError("Не удалось начать подготовку PDF. Попробуйте ещё раз.");
+    } catch (cause) {
+      handleExportError(cause, "pdf", "Не удалось начать подготовку PDF. Попробуйте ещё раз.");
+    }
+  }
+
+  function handleExportError(cause: unknown, type: ExportType, fallback: string) {
+    if (cause instanceof ApiClientError && cause.code === "DEFENSE_EXPORT_WARNING" && cause.details?.requiresAcknowledgement === true) {
+      const details = cause.details;
+      const issues = Array.isArray(details.issues) ? details.issues.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const value = item as Record<string, unknown>;
+        return typeof value.message === "string" ? [{ code: typeof value.code === "string" ? value.code : undefined, message: value.message, count: typeof value.count === "number" ? value.count : undefined }] : [];
+      }) : [];
+      setExportWarning({
+        type,
+        presentationRevision: typeof details.presentationRevision === "number" ? details.presentationRevision : project.presentationRevision,
+        complianceReportId: typeof details.complianceReportId === "string" ? details.complianceReportId : undefined,
+        preflightToken: typeof details.preflightToken === "string" ? details.preflightToken : undefined,
+        issues,
+      });
+      return;
+    }
+    setPresentationError(cause instanceof ApiClientError ? cause.message : fallback);
+  }
+
+  async function confirmWarningExport() {
+    if (!exportWarning) return;
+    setPresentationError("");
+    try {
+      await requestExport.mutateAsync({
+        type: exportWarning.type,
+        acknowledgement: {
+          acknowledgeWarnings: true,
+          expectedPresentationRevision: exportWarning.presentationRevision,
+          ...(exportWarning.complianceReportId ? { complianceReportId: exportWarning.complianceReportId } : {}),
+          ...(exportWarning.preflightToken ? { preflightToken: exportWarning.preflightToken } : {}),
+        },
+      });
+      setExportWarning(null);
+    } catch (cause) {
+      setPresentationError(cause instanceof ApiClientError ? cause.message : "Презентация изменилась. Обновите страницу и повторите экспорт.");
+      setExportWarning(null);
     }
   }
 
@@ -121,6 +173,7 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
         <TabsList aria-label="Экспорт">
           <TabsTrigger value="presentation">Презентация</TabsTrigger>
           <TabsTrigger value="speech">Текст выступления</TabsTrigger>
+          {project.workflow === "requirements_driven" ? <TabsTrigger value="compliance">Отчёт по ТЗ</TabsTrigger> : null}
         </TabsList>
 
         <TabsContent value="presentation">
@@ -232,7 +285,16 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
             </aside>
           </div>
         </TabsContent>
+        {project.workflow === "requirements_driven" ? <TabsContent value="compliance"><DefenseExportCompliance projectId={project.id} presentationRevision={project.presentationRevision} canEdit={project.accessRole !== "viewer"} /></TabsContent> : null}
       </Tabs>
+      <Dialog open={Boolean(exportWarning)} onOpenChange={(open) => { if (!open) setExportWarning(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>В презентации остались проблемы</DialogTitle><DialogDescription>Экспорт возможен только после явного подтверждения. Отчёт и версия презентации будут повторно проверены на сервере.</DialogDescription></DialogHeader>
+          <div className="defense-export-warning"><AlertTriangle aria-hidden="true" /><div><strong>Проверьте перед скачиванием</strong>{exportWarning?.issues.length ? <ul>{exportWarning.issues.map((issue, index) => <li key={`${issue.code || "issue"}-${index}`}>{issue.message}{issue.count ? ` · ${issue.count}` : ""}</li>)}</ul> : <p>Есть незаполненные данные, нерешённые требования или устаревший отчёт.</p>}</div></div>
+          {presentationError ? <p className="form-error" role="alert">{presentationError}</p> : null}
+          <div className="ui-dialog-actions"><Button variant="secondary" type="button" onClick={() => setExportWarning(null)}>Вернуться к проверке</Button><Button type="button" onClick={confirmWarningExport} disabled={requestExport.isPending || !exportWarning?.complianceReportId && !exportWarning?.preflightToken}>{requestExport.isPending ? <LoaderCircle className="spin" size={18} /> : <Download size={18} />}Подтвердить экспорт с проблемами</Button></div>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

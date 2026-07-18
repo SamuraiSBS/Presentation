@@ -5,6 +5,7 @@ import { BillingModule } from "./billing/billing.module.js";
 import { AuthModule } from "./auth/auth.module.js";
 import { CollaborationModule } from "./collaboration/collaboration.module.js";
 import { DashboardModule } from "./dashboard/dashboard.module.js";
+import { DefenseModule } from "./defense/defense.module.js";
 import { ExportsModule } from "./exports/exports.module.js";
 import { FoldersModule } from "./folders/folders.module.js";
 import { HealthModule } from "./health/health.module.js";
@@ -36,6 +37,7 @@ import { UsersModule } from "./users/users.module.js";
     ExportsModule,
     BillingModule,
     DashboardModule,
+    DefenseModule,
     FoldersModule,
     CollaborationModule,
     UsersModule,

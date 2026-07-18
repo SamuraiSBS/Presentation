@@ -12,18 +12,24 @@ import {
 import type { PresentationThemePreset } from "../presentation/schemas.js";
 export const generationProgressStageSchema = z.enum([
   "queued",
+  "extracting_sources",
+  "extracting_requirements",
+  "classifying_assets",
   "researching",
   "drafting_speech",
+  "building_defense_plan",
   "building_slides",
   "selecting_visuals",
+  "checking_compliance",
   "polishing",
   "saving",
+  "saving_report",
   "completed",
   "failed",
 ]);
 export type GenerationProgressStage = z.infer<typeof generationProgressStageSchema>;
 
-export const generationJobKindSchema = z.enum(["narration", "presentation"]);
+export const generationJobKindSchema = z.enum(["narration", "presentation", "requirements_analysis", "compliance"]);
 export type GenerationJobKind = z.infer<typeof generationJobKindSchema>;
 
 export const slideNarrativeSchema = z.object({

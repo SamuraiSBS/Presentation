@@ -101,6 +101,7 @@ describe("createPptx", () => {
           speakerNotes:
             "Расскажите, как менялись жанры, прокат и зрительское внимание к российскому кино после 2010 года.",
           timingSeconds: 45,
+          placeholders: [],
           sourceRefs: [{ sourceId: "src-1", label: "Источник о кино", excerpt: "Фактологический материал.", page: null }],
         },
       ],
@@ -167,6 +168,7 @@ describe("createPptx", () => {
           blocks: [{ type: "bullets", items: ["Metadata is optional", "Export falls back to text", "The deck stays valid"] }],
           speakerNotes: "Narration.",
           timingSeconds: 45,
+          placeholders: [],
           sourceRefs: [],
         },
       ],
@@ -224,6 +226,7 @@ describe("createPptx", () => {
           blocks: [{ type: "callout", content: "Process explanation." }],
           speakerNotes: "Narration.",
           timingSeconds: 45,
+          placeholders: [],
           sourceRefs: [],
         },
       ],
@@ -264,6 +267,7 @@ describe("createPptx", () => {
         blocks: [{ type: "bullets", items: ["Legacy situation", "Legacy action", "Legacy result"] }],
         speakerNotes: "Narration.",
         timingSeconds: 45,
+        placeholders: [],
         sourceRefs: [],
       }],
     });
@@ -348,6 +352,7 @@ describe("createPptx", () => {
       canvas: undefined,
       thesis: "The claim is supported by two concrete observations.",
       bullets: ["Observation one supports the claim", "Observation two confirms the pattern"],
+      placeholders: [],
       sourceRefs: [{ sourceId: "source-1", label: "Research notes", excerpt: "A compact supporting excerpt that remains readable.", page: "p. 4" }],
     };
     const buffer = await createPptx({ ...source, slides: [evidenceSlide] });
@@ -504,6 +509,7 @@ function canvasDeck() {
         },
         speakerNotes: "Narration.",
         timingSeconds: 45,
+        placeholders: [],
         sourceRefs: [],
       },
     ],

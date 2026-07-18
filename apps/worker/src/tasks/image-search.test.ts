@@ -195,6 +195,29 @@ describe("image search helpers", () => {
       imageStrategy: "generated_illustration",
       visualPrompt: "University students discussing an abstract theory",
     })).toBe(false);
+
+    expect(shouldSearchForSlideImage({
+      ...slide,
+      visual: {
+        ...slide.visual,
+        image: {
+          url: "https://assets.studydeck.local/screenshot",
+          objectKey: "projects/project-1/screens/dashboard.png",
+          provider: "user",
+          alt: "Панель проекта",
+          query: "",
+          sourceTitle: "Панель проекта",
+          contentType: "image/png",
+          warnings: [],
+        },
+      },
+    }, {
+      slideOrder: 1,
+      visualRole: "evidence",
+      layoutIntent: "split_image_text",
+      imageStrategy: "real_photo",
+      visualPrompt: "Product dashboard screenshot",
+    })).toBe(false);
   });
 
   it("tries another Tavily candidate when the first image cannot be downloaded", async () => {
@@ -364,6 +387,7 @@ function fixturePresentation(): PresentationDocument {
         blocks: [{ type: "callout", content: "AI changes classroom routines." }],
         speakerNotes: "A teacher introduces AI tools in a classroom.",
         timingSeconds: 45,
+        placeholders: [],
         sourceRefs: [],
       },
       {
@@ -381,6 +405,7 @@ function fixturePresentation(): PresentationDocument {
         blocks: [{ type: "bullets", items: ["Prepare examples", "Review drafts", "Explain mistakes"] }],
         speakerNotes: "The workflow shows how a teacher prepares, checks and explains tasks.",
         timingSeconds: 45,
+        placeholders: [],
         sourceRefs: [],
       },
     ],

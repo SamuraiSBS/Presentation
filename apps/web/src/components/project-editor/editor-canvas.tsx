@@ -48,9 +48,22 @@ export function TemplatePreviewFrame({
                   onSelect={onSelectElement}
                 />
               ))}
+            <SlidePlaceholderOverlay slide={slide} />
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function SlidePlaceholderOverlay({ slide }: { slide: Slide }) {
+  const placeholders = (slide.placeholders || []).filter((item) => !item.resolved);
+  if (!placeholders.length) return null;
+  return (
+    <div className="canvas-placeholder-overlay" role="note" aria-label="Незаполненные данные на слайде">
+      <strong>Нужно заполнить</strong>
+      <span>{placeholders.slice(0, 2).map((item) => item.label).join(" · ")}</span>
+      {placeholders.length > 2 ? <small>+{placeholders.length - 2}</small> : null}
     </div>
   );
 }

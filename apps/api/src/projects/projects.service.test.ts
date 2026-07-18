@@ -44,12 +44,18 @@ function createHarness() {
     project: {
       create: vi.fn(),
     },
+    defenseWorkspace: {
+      create: vi.fn().mockResolvedValue({ id: "workspace-copy" }),
+      update: vi.fn(),
+    },
   };
   const prisma = {
     $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
     project: {
       findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
+      delete: vi.fn(),
     },
     presentation: {
       findUnique: vi.fn(),
@@ -171,5 +177,59 @@ describe("ProjectsService revision protection", () => {
       title: "Новая версия",
     })).rejects.toMatchObject({ status: 409 });
     expect(prisma.presentation.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("ProjectsService defense lifecycle", () => {
+  it("duplicates the editable defense workspace without report history", async () => {
+    const { prisma, service, storage, tx } = createHarness();
+    prisma.project.findUniqueOrThrow.mockResolvedValue(project({
+      workflow: "requirements_driven",
+      defenseWorkspace: {
+        id: "workspace-1",
+        projectId: "project-1",
+        defenseType: "hackathon",
+        complianceMode: "strict",
+        language: "ru",
+        targetSlideCount: 10,
+        targetDurationSeconds: 420,
+        allowWebImages: false,
+        authorProfile: {},
+        standardPresetVersion: "hackathon-v1",
+        analysisStatus: "review_ready",
+        analysisRevision: 2,
+        styleBrief: null,
+        plan: null,
+        planRevision: 1,
+        analysisError: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        facts: [],
+        requirements: [],
+        conflicts: [],
+      },
+    }));
+    storage.copyProjectPrefix.mockResolvedValue(new Map());
+    vi.spyOn(service, "getAccessible").mockResolvedValue({ id: "copy" } as never);
+
+    await service.duplicate("user-1", "project-1", {});
+
+    expect(tx.project.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ workflow: "requirements_driven" }),
+    });
+    expect(tx.defenseWorkspace.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        defenseType: "hackathon",
+        analysisRevision: 2,
+        projectId: expect.any(String),
+      }),
+    });
+  });
+
+  it("deletes the complete project storage prefix before the cascading database row", async () => {
+    const { prisma, service, storage } = createHarness();
+    await service.remove("user-1", "project-1");
+    expect(storage.deleteProjectPrefix).toHaveBeenCalledWith("project-1");
+    expect(prisma.project.delete).toHaveBeenCalledWith({ where: { id: "project-1" } });
   });
 });

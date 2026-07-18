@@ -47,11 +47,12 @@ generationWorker.on("failed", (job, error) => {
 });
 
 exportWorker.on("failed", (job, error) => {
+  const data = job?.data as { projectId?: string; exportId?: string; type?: string } | undefined;
   captureExportError(error, {
-    projectId: job?.data?.projectId,
+    projectId: data?.projectId,
     jobId: job?.id,
-    exportId: job?.data?.exportId,
-    exportType: job?.data?.type,
+    exportId: data?.exportId,
+    exportType: data?.type,
     stage: "job_failed",
     queue: "exports",
   });

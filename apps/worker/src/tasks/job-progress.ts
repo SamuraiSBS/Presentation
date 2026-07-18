@@ -3,6 +3,12 @@ import { errorLogFields, logger } from "../observability.js";
 
 export const GENERATION_PROGRESS_STAGES = [
   "queued",
+  "extracting_sources",
+  "extracting_requirements",
+  "classifying_assets",
+  "building_defense_plan",
+  "checking_compliance",
+  "saving_report",
   "researching",
   "drafting_speech",
   "building_slides",
@@ -19,6 +25,12 @@ export type GenerationRetryClass = "transient" | "repairable_schema" | "fatal";
 
 const STAGE_META: Record<GenerationProgressStage, { label: string; percent: number }> = {
   queued: { label: "В очереди", percent: 0 },
+  extracting_sources: { label: "Разбираем материалы проекта", percent: 12 },
+  extracting_requirements: { label: "Выделяем факты и требования", percent: 36 },
+  classifying_assets: { label: "Проверяем стиль и изображения", percent: 62 },
+  building_defense_plan: { label: "Составляем план защиты", percent: 78 },
+  checking_compliance: { label: "Проверяем презентацию по ТЗ", percent: 55 },
+  saving_report: { label: "Сохраняем версию отчёта", percent: 90 },
   researching: { label: "Собираем факты и источники", percent: 15 },
   drafting_speech: { label: "Готовим текст выступления", percent: 35 },
   building_slides: { label: "Собираем слайды", percent: 60 },

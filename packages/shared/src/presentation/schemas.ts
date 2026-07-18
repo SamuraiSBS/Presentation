@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { contentPlaceholderSchema } from "../defense/schemas.js";
 import { sourceRefSchema } from "../projects/schemas.js";
 const unsupportedGeneratedTextPatterns = [
   /слайд\s+должен/i,
@@ -187,12 +188,13 @@ export type SlideVisualRow = z.infer<typeof slideVisualRowSchema>;
 
 export const slideVisualImageSchema = z.object({
   url: z.string().url(),
+  sourceId: z.string().trim().min(1).max(128).optional(),
   objectKey: z.string().optional(),
   alt: z.string().default(""),
   query: z.string().default(""),
   sourceUrl: z.string().url().optional(),
   sourceTitle: z.string().default(""),
-  provider: z.literal("tavily").default("tavily"),
+  provider: z.enum(["tavily", "user", "repository", "archive"]).default("tavily"),
   contentType: z.string().default(""),
   width: z.number().int().positive().optional(),
   height: z.number().int().positive().optional(),
@@ -388,6 +390,7 @@ export const slideSchema = z.object({
   keyConcepts: z.array(keyConceptSchema).max(5).default([]),
   visual: slideVisualSchema.default({ type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] }),
   highlights: z.array(highlightSchema).max(6).default([]),
+  placeholders: z.array(contentPlaceholderSchema).max(50).default([]),
   blocks: z.array(slideBlockSchema),
   canvas: slideCanvasSchema.optional(),
   speakerNotes: speakerNotesTextSchema,

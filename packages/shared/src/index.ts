@@ -6,8 +6,8 @@ export { scenarioSchema, projectStatusSchema, projectAccessRoleSchema, projectMe
 export type { Scenario, ProjectStatus, ProjectAccessRole, ProjectMemberRole, FolderColor, JobStatus, Source, UpdateSourceReviewInput, SourceRef } from "./projects/schemas.js";
 export { createProjectInputSchema, folderNameSchema, createFolderInputSchema, updateFolderInputSchema, updateProjectMetadataInputSchema, duplicateProjectInputSchema, createProjectInvitationInputSchema, updateProjectMemberInputSchema, projectListQuerySchema, updateSlideInputSchema, updateNarrationInputSchema, generatePresentationInputSchema } from "./projects/inputs.js";
 export type { CreateProjectInput, CreateFolderInput, UpdateFolderInput, UpdateProjectMetadataInput, DuplicateProjectInput, CreateProjectInvitationInput, UpdateProjectMemberInput, ProjectListQuery, UpdateSlideInput, UpdateNarrationInput, GeneratePresentationInput } from "./projects/inputs.js";
-export { exportTypeSchema, exportStatusSchema } from "./exports/schemas.js";
-export type { ExportType, ExportStatus } from "./exports/schemas.js";
+export { exportTypeSchema, exportStatusSchema, exportWarningAcknowledgementSchema, createExportInputSchema } from "./exports/schemas.js";
+export type { ExportType, ExportStatus, ExportWarningAcknowledgement, CreateExportInput } from "./exports/schemas.js";
 export { isoDateTimeSchema, userIdentitySummarySchema, projectSummarySchema, folderSummarySchema, projectMemberSchema, usageSummarySchema, dashboardSummarySchema } from "./projects/summaries.js";
 export type { UserIdentitySummary, ProjectSummary, FolderSummary, ProjectMember, UsageSummary, DashboardSummary } from "./projects/summaries.js";
 export { slideBlockSchema, slideKindSchema, slideLayoutSchema, visualTypeSchema, slideDefinitionSchema, keyConceptSchema, highlightSchema, presentationThemePresetSchema, presentationThemeMoodSchema, presentationThemeColorSchema, presentationThemeSchema, slideVisualItemSchema, slideVisualRowSchema, slideVisualImageSchema, mermaidDiagramKindSchema, mermaidDiagramSpecSchema, diagramGraphNodeSchema, diagramGraphEdgeSchema, diagramGraphSpecSchema, slideVisualSchema, canvasTextRunSchema, canvasTextElementSchema, canvasImageElementSchema, canvasShapeElementSchema, canvasElementSchema, canvasGradientStopSchema, canvasGradientBlobSchema, canvasBackgroundStyleSchema, slideCanvasSchema, slideSchema, speechScriptItemSchema } from "./presentation/schemas.js";
@@ -23,3 +23,7 @@ export { auditSlideCanvas } from "./presentation/canvas-audit.js";
 export { canvasBackgroundCss, slideBackgroundStyle } from "./presentation/canvas-background.js";
 export { sortCanvasElements } from "./presentation/canvas-helpers.js";
 export { ensureEditableCanvas, buildSlideCanvas, hasCustomSlideCanvas, hasMeasurableValue, metricLead, fittedFontSize, compactSourceRefs, assertNever } from "./presentation/canvas-builder.js";
+export * from "./defense/schemas.js";
+export * from "./defense/inputs.js";
+export * from "./defense/presets.js";
+export * from "./defense/compliance.js";

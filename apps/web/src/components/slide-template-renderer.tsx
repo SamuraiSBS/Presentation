@@ -59,6 +59,15 @@ function extractGeneratedTextForSlide(generatedText: string, slideOrder: number)
 }
 
 export function SlideTemplatePreview({ slide }: { slide: Slide }) {
+  return (
+    <>
+      <SlideTemplateContent slide={slide} />
+      <SlidePlaceholderNotice slide={slide} />
+    </>
+  );
+}
+
+function SlideTemplateContent({ slide }: { slide: Slide }) {
   const isDivider = slide.slideKind === "title" || slide.slideKind === "section";
   const imageUrl = slideImageUrl(slide);
   const hasVisualContent = hasSlideVisualContent(slide);
@@ -122,6 +131,18 @@ export function SlideTemplatePreview({ slide }: { slide: Slide }) {
         </section>
         {hasVisualContent ? <VisualBlock slide={slide} /> : null}
       </div>
+    </div>
+  );
+}
+
+function SlidePlaceholderNotice({ slide }: { slide: Slide }) {
+  const placeholders = (slide.placeholders || []).filter((item) => !item.resolved);
+  if (!placeholders.length) return null;
+  return (
+    <div className="slide-placeholder-notice" role="note" aria-label="Незаполненные данные">
+      <strong>Нужно заполнить</strong>
+      <span>{placeholders.slice(0, 2).map((item) => item.label).join(" · ")}</span>
+      {placeholders.length > 2 ? <small>+{placeholders.length - 2}</small> : null}
     </div>
   );
 }

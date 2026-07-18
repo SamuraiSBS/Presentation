@@ -19,12 +19,13 @@ import {
   type UpdateSourceReviewInput,
   type UpdateSlideInput,
   ensureEditableCanvas,
+  defensePlanSchema,
   planLimits,
   presentationSchema,
   slideCanvasSchema,
 } from "@studydeck/shared";
 import { ProjectAccessService } from "../access/project-access.service.js";
-import { conflict, resourceNotFound } from "../errors/api-error.js";
+import { badRequest, conflict, resourceNotFound } from "../errors/api-error.js";
 import { generationJobOptions } from "../jobs/job-options.js";
 import { errorLogFields, injectTraceContext, logger, withTraceSpan } from "../observability.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -153,7 +154,17 @@ export class ProjectsService {
     const access = await this.access.requireOwner(userId, id);
     const project = await this.prisma.project.findUniqueOrThrow({
       where: { id },
-      include: { sources: true, presentation: true },
+      include: {
+        sources: true,
+        presentation: true,
+        defenseWorkspace: {
+          include: {
+            facts: { include: { evidence: true } },
+            requirements: true,
+            conflicts: true,
+          },
+        },
+      },
     });
     const folderId = input.folderId !== undefined ? input.folderId : project.folderId;
     await this.requireOwnerFolder(access.project.userId, folderId);
@@ -173,6 +184,7 @@ export class ProjectsService {
             scenario: project.scenario,
             level: project.level,
             mode: project.mode,
+            workflow: project.workflow,
             slideCount: project.slideCount,
             status: duplicateStatus(project),
             speechDraft: project.speechDraft,
@@ -188,6 +200,7 @@ export class ProjectsService {
               projectId: destinationProjectId,
               label: source.label,
               type: source.type,
+              role: source.role,
               size: source.size,
               objectKey: source.objectKey ? keyMap.get(source.objectKey) ?? rewriteProjectKey(source.objectKey, project.id, destinationProjectId) : null,
               url: source.url,
@@ -198,6 +211,167 @@ export class ProjectsService {
             select: { id: true },
           });
           sourceIdMap.set(source.id, created.id);
+        }
+
+        for (const source of project.sources) {
+          const sourceId = sourceIdMap.get(source.id);
+          if (!sourceId) continue;
+          const metadata = source.metadata == null
+            ? undefined
+            : rewriteDefenseValue(
+              source.metadata,
+              sourceIdMap,
+              project.id,
+              destinationProjectId,
+              keyMap,
+            ) as Prisma.InputJsonValue;
+          const parentSourceId = source.parentSourceId ? sourceIdMap.get(source.parentSourceId) ?? null : null;
+          if (metadata !== undefined || parentSourceId) {
+            await tx.source.update({
+              where: { id: sourceId },
+              data: {
+                ...(metadata !== undefined ? { metadata } : {}),
+                ...(parentSourceId ? { parentSourceId } : {}),
+              },
+            });
+          }
+        }
+
+        if (project.defenseWorkspace) {
+          const workspace = await tx.defenseWorkspace.create({
+            data: {
+              projectId: destinationProjectId,
+              defenseType: project.defenseWorkspace.defenseType,
+              complianceMode: project.defenseWorkspace.complianceMode,
+              language: project.defenseWorkspace.language,
+              targetSlideCount: project.defenseWorkspace.targetSlideCount,
+              targetDurationSeconds: project.defenseWorkspace.targetDurationSeconds,
+              allowWebImages: project.defenseWorkspace.allowWebImages,
+              authorProfile: project.defenseWorkspace.authorProfile as Prisma.InputJsonValue,
+              standardPresetVersion: project.defenseWorkspace.standardPresetVersion,
+              analysisStatus: project.defenseWorkspace.analysisStatus,
+              analysisRevision: project.defenseWorkspace.analysisRevision,
+              styleBrief: project.defenseWorkspace.styleBrief == null
+                ? undefined
+                : rewriteDefenseValue(
+                  project.defenseWorkspace.styleBrief,
+                  sourceIdMap,
+                  project.id,
+                  destinationProjectId,
+                  keyMap,
+                ) as Prisma.InputJsonValue,
+              plan: undefined,
+              planRevision: project.defenseWorkspace.planRevision,
+              analysisError: null,
+            },
+          });
+          const entityIdMap = new Map(sourceIdMap);
+
+          for (const fact of project.defenseWorkspace.facts) {
+            const createdFact = await tx.projectFact.create({
+              data: {
+                workspaceId: workspace.id,
+                key: fact.key,
+                statement: fact.statement,
+                value: fact.value == null
+                  ? undefined
+                  : rewriteDefenseValue(
+                    fact.value,
+                    entityIdMap,
+                    project.id,
+                    destinationProjectId,
+                    keyMap,
+                  ) as Prisma.InputJsonValue,
+                state: fact.state,
+              },
+            });
+            entityIdMap.set(fact.id, createdFact.id);
+            if (fact.evidence.length) {
+              await tx.factEvidence.createMany({
+                data: fact.evidence.map((evidence) => ({
+                  factId: createdFact.id,
+                  confirmation: evidence.confirmation,
+                  sourceId: evidence.sourceId ? sourceIdMap.get(evidence.sourceId) ?? null : null,
+                  locator: evidence.locator,
+                  excerpt: evidence.excerpt,
+                  confirmedById: evidence.confirmedById,
+                  createdAt: evidence.createdAt,
+                })),
+              });
+            }
+          }
+
+          for (const requirement of project.defenseWorkspace.requirements) {
+            const createdRequirement = await tx.projectRequirement.create({
+              data: {
+                workspaceId: workspace.id,
+                key: requirement.key,
+                text: requirement.text,
+                priority: requirement.priority,
+                origin: requirement.origin,
+                state: requirement.state,
+                sourceId: requirement.sourceId ? sourceIdMap.get(requirement.sourceId) ?? null : null,
+                locator: requirement.locator,
+                excerpt: requirement.excerpt,
+                rule: requirement.rule == null
+                  ? undefined
+                  : rewriteDefenseValue(
+                    requirement.rule,
+                    entityIdMap,
+                    project.id,
+                    destinationProjectId,
+                    keyMap,
+                  ) as Prisma.InputJsonValue,
+                presetVersion: requirement.presetVersion,
+              },
+            });
+            entityIdMap.set(requirement.id, createdRequirement.id);
+          }
+
+          for (const conflictItem of project.defenseWorkspace.conflicts) {
+            const createdConflict = await tx.projectConflict.create({
+              data: {
+                workspaceId: workspace.id,
+                kind: conflictItem.kind,
+                summary: conflictItem.summary,
+                options: rewriteDefenseValue(
+                  conflictItem.options,
+                  entityIdMap,
+                  project.id,
+                  destinationProjectId,
+                  keyMap,
+                ) as Prisma.InputJsonValue,
+                state: conflictItem.state,
+                resolution: conflictItem.resolution == null
+                  ? undefined
+                  : rewriteDefenseValue(
+                    conflictItem.resolution,
+                    entityIdMap,
+                    project.id,
+                    destinationProjectId,
+                    keyMap,
+                  ) as Prisma.InputJsonValue,
+                resolvedById: conflictItem.resolvedById,
+                resolvedAt: conflictItem.resolvedAt,
+              },
+            });
+            entityIdMap.set(conflictItem.id, createdConflict.id);
+          }
+
+          if (project.defenseWorkspace.plan != null) {
+            await tx.defenseWorkspace.update({
+              where: { id: workspace.id },
+              data: {
+                plan: rewriteDefenseValue(
+                  project.defenseWorkspace.plan,
+                  entityIdMap,
+                  project.id,
+                  destinationProjectId,
+                  keyMap,
+                ) as Prisma.InputJsonValue,
+              },
+            });
+          }
         }
 
         if (project.presentation) {
@@ -246,13 +420,19 @@ export class ProjectsService {
     }, async () => {
       const access = await this.access.requireEditor(userId, id);
       const project = await this.getProjectDetail(id);
+      if (project.workflow === "requirements_driven") {
+        throw badRequest(
+          "DEFENSE_PLAN_CONFIRMATION_REQUIRED",
+          "Запускайте подготовку речи подтверждением плана защиты",
+        );
+      }
       await this.prisma.project.update({ where: { id: project.id }, data: { status: "script_queued", error: null } });
       const job = await this.prisma.generationJob.create({
         data: { projectId: project.id, kind: "narration", status: "queued" },
       });
       const queueJob = await this.generationQueue.add(
         "generate-narration",
-        { projectId: project.id, userId: access.project.userId, traceContext: injectTraceContext() },
+        { projectId: project.id, userId: access.project.userId, generationJobId: job.id, traceContext: injectTraceContext() },
         generationJobOptions(),
       );
       await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
@@ -288,6 +468,19 @@ export class ProjectsService {
     }, async () => {
       const access = await this.access.requireEditor(userId, id);
       let project = await this.getProjectDetail(id);
+      if (project.workflow === "requirements_driven") {
+        const workspace = await this.prisma.defenseWorkspace.findUnique({
+          where: { projectId: project.id },
+          select: { plan: true },
+        });
+        const plan = defensePlanSchema.safeParse(workspace?.plan);
+        if (!plan.success || plan.data.status !== "approved") {
+          throw badRequest(
+            "DEFENSE_PLAN_NOT_APPROVED",
+            "Подтвердите план защиты перед созданием презентации",
+          );
+        }
+      }
       if (input.speechDraft !== undefined) {
         await this.prisma.project.update({
           where: { id },
@@ -324,7 +517,7 @@ export class ProjectsService {
       });
       const queueJob = await this.generationQueue.add(
         "generate-presentation",
-        { projectId: project.id, userId: access.project.userId, traceContext: injectTraceContext() },
+        { projectId: project.id, userId: access.project.userId, generationJobId: job.id, traceContext: injectTraceContext() },
         generationJobOptions(),
       );
       await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
@@ -521,6 +714,32 @@ function duplicateStatus(project: { presentation: unknown; speechDraft: string |
 
 function rewriteProjectKey(value: string, sourceProjectId: string, destinationProjectId: string) {
   return value.replaceAll(`projects/${sourceProjectId}/`, `projects/${destinationProjectId}/`);
+}
+
+function rewriteDefenseValue(
+  value: unknown,
+  idMap: ReadonlyMap<string, string>,
+  sourceProjectId: string,
+  destinationProjectId: string,
+  keyMap: ReadonlyMap<string, string>,
+): unknown {
+  if (typeof value === "string") {
+    return idMap.get(value)
+      ?? keyMap.get(value)
+      ?? value
+        .replaceAll(`projects/${sourceProjectId}/`, `projects/${destinationProjectId}/`)
+        .replaceAll(`/api/projects/${sourceProjectId}/`, `/api/projects/${destinationProjectId}/`);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => rewriteDefenseValue(item, idMap, sourceProjectId, destinationProjectId, keyMap));
+  }
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [
+      key,
+      rewriteDefenseValue(nested, idMap, sourceProjectId, destinationProjectId, keyMap),
+    ]),
+  );
 }
 
 function extensionFromContentType(contentType: string) {

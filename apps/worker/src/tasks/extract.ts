@@ -1,6 +1,9 @@
 import path from "node:path";
 import JSZip from "jszip";
+import { XMLParser } from "fast-xml-parser";
 import mammoth from "mammoth";
+
+const xmlParser = new XMLParser({ ignoreAttributes: false, processEntities: false, parseTagValue: false, trimValues: false });
 
 export async function extractTextFromSource(label: string, buffer: Buffer) {
   const extension = path.extname(label).toLowerCase();
@@ -38,17 +41,23 @@ async function extractPptxText(buffer: Buffer) {
 
   for (const name of slideFiles) {
     const xml = await zip.files[name].async("string");
-    chunks.push(decodeXmlEntities(xml.replace(/<[^>]+>/g, " ")));
+    if (/<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error("PPTX XML declarations are not allowed");
+    const values: string[] = [];
+    collectPptxText(xmlParser.parse(xml), values);
+    chunks.push(values.join(" "));
   }
 
   return chunks.join("\n\n");
 }
 
-function decodeXmlEntities(text: string) {
-  return text
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'");
+function collectPptxText(value: unknown, result: string[]) {
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectPptxText(item, result));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (/(?:^|:)t$/i.test(key) && typeof child === "string") result.push(child);
+    else collectPptxText(child, result);
+  }
 }

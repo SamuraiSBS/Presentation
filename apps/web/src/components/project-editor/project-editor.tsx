@@ -15,6 +15,7 @@ import { MobileEditorNav, SaveIndicator } from "./editor-status";
 import type { DragState, ElementPatch, ProjectPayload, SimpleEditorTab, Tool, ViewMode, MobileEditorSection, SaveStatus } from "./editor-types";
 import { ObjectFloatingMenu } from "./object-floating-menu";
 import { SimplePropertiesPanel } from "./simple-properties-panel";
+import { DefenseCompliancePanel } from "@/components/defense/defense-compliance-panel";
 
 export function ProjectEditor({
   initialProject,
@@ -758,6 +759,7 @@ export function ProjectEditor({
     return (
       <section className="editor-workspace viewer-workspace" data-testid="project-editor">
         <div className="editor-top"><div><span className="status">Только просмотр</span><h1>{presentation.title}</h1></div><Link className="button" href={`/projects/${project.id}/export`}>Экспорт</Link></div>
+        {project.workflow === "requirements_driven" ? <DefenseCompliancePanel projectId={project.id} presentationRevision={project.presentationRevision || 0} slides={presentation.slides} canEdit={false} onSelectSlide={setActive} /> : null}
         <section className="viewer-editor">
           <aside className="slide-rail"><strong>Слайды</strong><div className="slide-rail-list">{presentation.slides.map((item, index) => <button className={`slide-thumb ${index === active ? "slide-thumb-active" : ""}`} key={item.id} type="button" onClick={() => setActive(index)}><span>{String(index + 1).padStart(2, "0")}</span><strong>{item.title}</strong></button>)}</div></aside>
           <main className="canvas-shell viewer-canvas-shell"><div className="viewer-toolbar"><span>Редактирование доступно владельцу и редакторам</span><Link href={`/projects/${project.id}/export`}>PDF и PPTX</Link></div><TemplatePreviewFrame slide={slide} theme={theme} scale={canvasScale} frameRef={frameRef} onSelectElement={() => undefined} /></main>
@@ -774,6 +776,8 @@ export function ProjectEditor({
         </div>
         <SaveIndicator status={saveStatus} />
       </div>
+
+      {project.workflow === "requirements_driven" ? <DefenseCompliancePanel projectId={project.id} presentationRevision={project.presentationRevision || 0} slides={presentation.slides} canEdit={canEdit} onSelectSlide={(index) => { setActive(index); setMobileSection("preview"); }} /> : null}
 
       {actionError ? <p className="form-error" role="alert">{actionError}</p> : null}
       <Dialog open={revisionConflict} onOpenChange={(open) => { if (!open) setRevisionConflict(false); }}>

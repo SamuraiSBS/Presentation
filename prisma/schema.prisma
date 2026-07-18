@@ -35,6 +35,93 @@ enum JobStatus {
 enum GenerationJobKind {
   narration
   presentation
+  requirements_analysis
+  compliance
+}
+
+enum ProjectWorkflow {
+  standard
+  requirements_driven
+}
+
+enum DefenseType {
+  hackathon
+  diploma
+}
+
+enum ComplianceMode {
+  strict
+  adaptive
+}
+
+enum DefenseAnalysisStatus {
+  draft
+  queued
+  analyzing
+  review_ready
+  ready
+  failed
+}
+
+enum SourceRole {
+  project_document
+  technical_spec
+  defense_spec
+  style_reference
+  screenshot
+  logo
+  supporting_image
+  repository_document
+  archive_document
+  web_image
+}
+
+enum RequirementPriority {
+  required
+  recommended
+  preference
+}
+
+enum RequirementOrigin {
+  builtin
+  source
+  user
+}
+
+enum RequirementState {
+  active
+  ignored
+}
+
+enum FactConfirmation {
+  source
+  user
+}
+
+enum FactState {
+  active
+  removed
+}
+
+enum ConflictState {
+  unresolved
+  resolved
+  ignored
+}
+
+enum ComplianceItemResult {
+  satisfied
+  partial
+  unsatisfied
+  ignored
+  needs_review
+}
+
+enum ComplianceReportStatus {
+  queued
+  processing
+  ready
+  failed
 }
 
 enum ExportType {
@@ -152,6 +239,8 @@ model User {
   adminActions          AdminAuditLog[]      @relation("AdminAuditActor")
   activityEvents        UserActivityEvent[]  @relation("ActivityUser")
   activityActions       UserActivityEvent[]  @relation("ActivityActor")
+  factConfirmations     FactEvidence[]       @relation("FactEvidenceConfirmer")
+  conflictResolutions   ProjectConflict[]    @relation("ConflictResolver")
 
   @@index([createdAt])
   @@index([lastSeenAt])
@@ -201,6 +290,7 @@ model Project {
   scenario             String
   level                String
   mode                 String
+  workflow             ProjectWorkflow     @default(standard)
   slideCount           Int
   status               ProjectStatus       @default(draft)
   speechDraft          String?             @db.Text
@@ -220,6 +310,7 @@ model Project {
   costEvents           CostEvent[]
   operationalEvents    OperationalEvent[]
   activityEvents       UserActivityEvent[]
+  defenseWorkspace     DefenseWorkspace?
 
   @@index([userId, updatedAt])
   @@index([folderId, updatedAt])
@@ -272,20 +363,163 @@ model ProjectInvitation {
 }
 
 model Source {
-  id        String   @id @default(cuid())
-  projectId String
-  label     String
-  type      String
-  size      Int      @default(0)
-  objectKey String?
-  url       String?
-  excerpt   String   @default("") @db.Text
-  text      String   @default("") @db.Text
-  included  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id             String               @id @default(cuid())
+  projectId      String
+  parentSourceId String?
+  label          String
+  type           String
+  role           SourceRole?
+  size           Int                  @default(0)
+  objectKey      String?
+  url            String?
+  excerpt        String               @default("") @db.Text
+  text           String               @default("") @db.Text
+  metadata       Json?
+  included       Boolean              @default(true)
+  createdAt      DateTime             @default(now())
+  project        Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parentSource   Source?              @relation("SourceChildren", fields: [parentSourceId], references: [id], onDelete: Cascade)
+  childSources   Source[]             @relation("SourceChildren")
+  factEvidence   FactEvidence[]
+  requirements   ProjectRequirement[]
 
   @@index([projectId])
+  @@index([parentSourceId])
+  @@index([projectId, role])
+}
+
+model DefenseWorkspace {
+  id                    String                @id @default(cuid())
+  projectId             String                @unique
+  defenseType           DefenseType
+  complianceMode        ComplianceMode
+  language              String                @default("ru")
+  targetSlideCount      Int                   @default(10)
+  targetDurationSeconds Int                   @default(420)
+  allowWebImages        Boolean               @default(false)
+  authorProfile         Json                  @default("{}")
+  standardPresetVersion String
+  analysisStatus        DefenseAnalysisStatus @default(draft)
+  analysisRevision      Int                   @default(0)
+  styleBrief            Json?
+  plan                  Json?
+  planRevision          Int                   @default(0)
+  analysisError         String?               @db.Text
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  project               Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  facts                 ProjectFact[]
+  requirements          ProjectRequirement[]
+  conflicts             ProjectConflict[]
+  complianceReports     ComplianceReport[]
+
+  @@index([analysisStatus, updatedAt])
+}
+
+model ProjectFact {
+  id          String           @id @default(cuid())
+  workspaceId String
+  key         String?
+  statement   String           @db.Text
+  value       Json?
+  state       FactState        @default(active)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  workspace   DefenseWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  evidence    FactEvidence[]
+
+  @@unique([workspaceId, key])
+  @@index([workspaceId, state])
+}
+
+model FactEvidence {
+  id            String           @id @default(cuid())
+  factId        String
+  confirmation  FactConfirmation
+  sourceId      String?
+  locator       String?
+  excerpt       String?          @db.Text
+  confirmedById String?
+  createdAt     DateTime         @default(now())
+  fact          ProjectFact      @relation(fields: [factId], references: [id], onDelete: Cascade)
+  source        Source?          @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  confirmedBy   User?            @relation("FactEvidenceConfirmer", fields: [confirmedById], references: [id], onDelete: SetNull)
+
+  @@index([factId])
+  @@index([sourceId])
+  @@index([confirmedById])
+}
+
+model ProjectRequirement {
+  id            String              @id @default(cuid())
+  workspaceId   String
+  key           String?
+  text          String              @db.Text
+  priority      RequirementPriority @default(required)
+  origin        RequirementOrigin
+  state         RequirementState    @default(active)
+  sourceId      String?
+  locator       String?
+  excerpt       String?             @db.Text
+  rule          Json?
+  presetVersion String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  workspace     DefenseWorkspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  source        Source?             @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, key])
+  @@index([workspaceId, state, priority])
+  @@index([sourceId])
+}
+
+model ProjectConflict {
+  id           String           @id @default(cuid())
+  workspaceId  String
+  kind         String
+  summary      String           @db.Text
+  options      Json
+  state        ConflictState    @default(unresolved)
+  resolution   Json?
+  resolvedById String?
+  resolvedAt   DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  workspace    DefenseWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  resolvedBy   User?            @relation("ConflictResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, state])
+  @@index([resolvedById])
+}
+
+model ComplianceReport {
+  id                   String                 @id @default(cuid())
+  workspaceId          String
+  status               ComplianceReportStatus @default(queued)
+  requestKey           String?
+  queueJobId           String?
+  presentationRevision Int
+  analysisRevision     Int
+  planRevision         Int
+  document             Json                   @default("{}")
+  requiredSatisfied    Int                    @default(0)
+  requiredTotal        Int                    @default(0)
+  recommendedSatisfied Int                    @default(0)
+  recommendedTotal     Int                    @default(0)
+  preferenceSatisfied  Int                    @default(0)
+  preferenceTotal      Int                    @default(0)
+  pdfObjectKey         String?
+  pdfStatus            ExportStatus?
+  pdfQueueJobId        String?
+  pdfRequestKey        String?
+  error                String?                @db.Text
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  workspace            DefenseWorkspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, requestKey])
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, status, createdAt])
 }
 
 model Presentation {
@@ -304,6 +538,7 @@ model GenerationJob {
   kind              GenerationJobKind @default(presentation)
   status            JobStatus         @default(queued)
   queueJobId        String?
+  requestKey        String?
   progressStage     String            @default("queued")
   progressLabel     String            @default("В очереди")
   progressPercent   Int               @default(0)
@@ -316,24 +551,25 @@ model GenerationJob {
   aiUsageEvents     AiUsageEvent[]
   costEvents        CostEvent[]
 
+  @@unique([projectId, kind, requestKey])
   @@index([projectId, createdAt])
   @@index([projectId, kind, createdAt])
 }
 
 model Export {
-  id                String             @id @default(cuid())
-  projectId         String
-  type              ExportType
-  status            ExportStatus       @default(queued)
-  objectKey         String?
-  error             String?
-  queueJobId        String?
+  id                   String             @id @default(cuid())
+  projectId            String
+  type                 ExportType
+  status               ExportStatus       @default(queued)
+  objectKey            String?
+  error                String?
+  queueJobId           String?
   presentationRevision Int
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  project           Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  costEvents        CostEvent[]
-  operationalEvents OperationalEvent[]
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  project              Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  costEvents           CostEvent[]
+  operationalEvents    OperationalEvent[]
 
   @@index([projectId, createdAt])
 }

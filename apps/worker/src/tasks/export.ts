@@ -1,6 +1,5 @@
 import type { Job } from "bullmq";
 import { createRequire } from "node:module";
-import { existsSync } from "node:fs";
 import sharp from "sharp";
 import {
   ensureEditableCanvas,
@@ -22,6 +21,11 @@ import { captureExportError, errorLogFields, logger, type TraceCarrier, withTrac
 import { getPrisma } from "../prisma.js";
 import { putObjectBuffer, readObjectBuffer } from "../storage.js";
 import { recordCostEvent, runWithUsageContext } from "../usage-ledger.js";
+import { renderHtmlToPdf } from "./pdf-renderer.js";
+import {
+  handleComplianceReportExportJob,
+  type ComplianceReportExportJobData,
+} from "./defense/jobs.js";
 
 const require = createRequire(import.meta.url);
 const PptxGenConstructor = require("pptxgenjs") as new () => {
@@ -58,12 +62,19 @@ type ExportJobData = {
   traceContext?: TraceCarrier;
 };
 
-export async function handleExportJob(job: Job<ExportJobData>) {
+export async function handleExportJob(job: Job<ExportJobData | ComplianceReportExportJobData>) {
+  if (job.name === "export-compliance-report") {
+    return handleComplianceReportExportJob(job as Job<ComplianceReportExportJobData>);
+  }
+  if (job.name !== "export-presentation") {
+    throw new Error(`Unsupported export job: ${job.name}`);
+  }
+  const exportJob = job as Job<ExportJobData>;
   const prisma = getPrisma();
-  const { projectId } = job.data;
+  const { projectId } = exportJob.data;
   const project = await prisma.project.findUnique({ where: { id: projectId }, select: { userId: true } });
   if (!project) throw new Error("Export project was not found");
-  return runWithUsageContext({ userId: project.userId, projectId, queueJobId: job.id ? String(job.id) : undefined, stage: "export" }, () => runExportJob(job));
+  return runWithUsageContext({ userId: project.userId, projectId, queueJobId: exportJob.id ? String(exportJob.id) : undefined, stage: "export" }, () => runExportJob(exportJob));
 }
 
 async function runExportJob(job: Job<ExportJobData>) {
@@ -146,6 +157,7 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
     slide.background = { color: theme.pptx.background };
     if (item.canvas) {
       await renderCanvasSlide(pptx, slide, item.canvas, theme);
+      renderPptxPlaceholders(pptx, slide, item, theme);
       slide.addNotes(item.speakerNotes);
       continue;
     }
@@ -197,10 +209,48 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
       await renderContentSlide(pptx, slide, item, imageData, theme);
     }
 
+    renderPptxPlaceholders(pptx, slide, item, theme);
     slide.addNotes(item.speakerNotes);
   }
 
   return pptx.write({ outputType: "nodebuffer" }) as Promise<Buffer>;
+}
+
+function renderPptxPlaceholders(
+  pptx: InstanceType<typeof PptxGenConstructor>,
+  slide: any,
+  item: ReturnType<typeof presentationSchema.parse>["slides"][number],
+  theme: ExportTheme,
+) {
+  const unresolved = item.placeholders.filter((placeholder) => !placeholder.resolved).slice(0, 3);
+  if (!unresolved.length) return;
+  const height = Math.min(1.15, 0.34 + unresolved.length * 0.22);
+  const y = WIDE_LAYOUT.height - height - 0.18;
+  slide.addShape(pptx.ShapeType.roundRect, {
+    x: 0.42,
+    y,
+    w: WIDE_LAYOUT.width - 0.84,
+    h: height,
+    rectRadius: 0.08,
+    fill: { color: "FFF0EC", transparency: 2 },
+    line: { color: "A73822", transparency: 4, width: 1 },
+  });
+  slide.addText(unresolved.map((placeholder) => ({
+    text: `Нужно заполнить: ${placeholder.label}`,
+    options: { breakLine: true, bullet: { type: "bullet" } },
+  })), {
+    x: 0.68,
+    y: y + 0.08,
+    w: WIDE_LAYOUT.width - 1.36,
+    h: height - 0.16,
+    fontFace: theme.fonts.body,
+    fontSize: 9.5,
+    color: "7A2416",
+    bold: true,
+    margin: 0.02,
+    fit: "shrink",
+    valign: "mid",
+  });
 }
 
 async function renderContentSlide(
@@ -881,29 +931,7 @@ async function renderDefaultContentSlide(slide: any, item: ReturnType<typeof pre
 export async function createPdf(presentation: ReturnType<typeof presentationSchema.parse>) {
   const document = ensureEditableCanvas(presentation);
   const html = await renderPdfHtml(document);
-  const puppeteer = await import("puppeteer-core");
-  const browser = await puppeteer.default.launch({
-    executablePath: chromiumExecutablePath(),
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-    headless: true,
-  });
-
-  try {
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 720, deviceScaleFactor: 1 });
-    await page.setContent(html, { waitUntil: "domcontentloaded" });
-    return Buffer.from(
-      await page.pdf({
-        printBackground: true,
-        width: "1280px",
-        height: "720px",
-        margin: { top: 0, right: 0, bottom: 0, left: 0 },
-        preferCSSPageSize: true,
-      }),
-    );
-  } finally {
-    await browser.close();
-  }
+  return renderHtmlToPdf(html, { viewportWidth: 1280, viewportHeight: 720, pageWidth: "1280px", pageHeight: "720px" });
 }
 
 export async function renderPdfHtml(presentation: ReturnType<typeof presentationSchema.parse>) {
@@ -912,7 +940,7 @@ export async function renderPdfHtml(presentation: ReturnType<typeof presentation
     presentation.slides.map(async (slide) => {
       if (slide.canvas) {
         const elements = await Promise.all(sortCanvasElements(slide.canvas.elements).map((element) => renderPdfElement(element)));
-        return `<section class="slide canvas-slide" style="background:${escapeHtml(canvasBackgroundCss(slide.canvas.backgroundStyle, slide.canvas.background))}">${elements.join("")}</section>`;
+        return `<section class="slide canvas-slide" style="background:${escapeHtml(canvasBackgroundCss(slide.canvas.backgroundStyle, slide.canvas.background))}">${elements.join("")}${pdfPlaceholderWarnings(slide)}</section>`;
       }
       return renderPdfTemplateSlide(slide, theme);
     }),
@@ -998,6 +1026,8 @@ export async function renderPdfHtml(presentation: ReturnType<typeof presentation
   .text { white-space: pre-wrap; overflow: hidden; }
   .image { width: 100%; height: 100%; display: block; border-radius: 18px; }
   .shape { width: 100%; height: 100%; }
+  .placeholder-warning { position: absolute; z-index: 20; left: 42px; right: 42px; bottom: 18px; display: grid; gap: 5px; margin: 0; border: 2px solid #a73822; border-radius: 12px; padding: 10px 16px; background: rgba(255, 240, 236, .97); color: #7a2416; font-size: 15px; line-height: 1.25; font-weight: 800; }
+  .placeholder-warning span { display: block; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>${slides.join("")}</body>
@@ -1009,7 +1039,15 @@ async function renderPdfTemplateSlide(slide: ReturnType<typeof presentationSchem
   const vars = pdfThemeVars(theme);
   const bg = slideBackgroundVariant(slide);
   const content = await pdfTemplateContent(slide, image);
-  return `<section class="slide template-slide" data-bg="${escapeHtml(bg)}" style="${vars}">${content}</section>`;
+  return `<section class="slide template-slide" data-bg="${escapeHtml(bg)}" style="${vars}">${content}${pdfPlaceholderWarnings(slide)}</section>`;
+}
+
+function pdfPlaceholderWarnings(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
+  const unresolved = slide.placeholders.filter((placeholder) => !placeholder.resolved).slice(0, 3);
+  if (!unresolved.length) return "";
+  return `<div class="placeholder-warning" role="note">${unresolved
+    .map((placeholder) => `<span>Нужно заполнить: ${escapeHtml(placeholder.label)}</span>`)
+    .join("")}</div>`;
 }
 
 async function pdfTemplateContent(slide: ReturnType<typeof presentationSchema.parse>["slides"][number], imageFigure: string) {
@@ -1274,21 +1312,6 @@ async function pdfImageSrc(element: CanvasImageElement) {
     logger.warn({ objectKey: element.objectKey, ...errorLogFields(error) }, "could not read pdf image");
     return element.url;
   }
-}
-
-function chromiumExecutablePath() {
-  const candidates = [
-    process.env.CHROMIUM_PATH,
-    process.env.PUPPETEER_EXECUTABLE_PATH,
-    "/usr/bin/chromium-browser",
-    "/usr/bin/chromium",
-    "/usr/bin/google-chrome-stable",
-  ].filter(Boolean) as string[];
-  const executable = candidates.find((candidate) => existsSync(candidate));
-  if (!executable) {
-    throw new Error("Chromium executable was not found. Set CHROMIUM_PATH or install chromium in the worker image.");
-  }
-  return executable;
 }
 
 function exportTheme(presentation: ReturnType<typeof presentationSchema.parse>): ExportTheme {

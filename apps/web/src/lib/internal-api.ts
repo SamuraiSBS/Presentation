@@ -145,6 +145,9 @@ function readableMessage(value: unknown, status: number): string {
     return candidate.slice(0, 500);
   }
 
+  const knownMessage = localizedApiMessage(candidate);
+  if (knownMessage) return knownMessage;
+
   const defaults: Record<number, string> = {
     400: "Проверьте введённые данные",
     401: "Нужно войти в аккаунт",
@@ -154,6 +157,21 @@ function readableMessage(value: unknown, status: number): string {
     429: "Лимит на этот месяц исчерпан",
   };
   return defaults[status] || "Сервис временно недоступен. Попробуйте ещё раз.";
+}
+
+function localizedApiMessage(message: string | undefined): string | undefined {
+  if (!message) return undefined;
+
+  const normalized = message.trim().toLowerCase();
+  if (normalized === "defense workspace not found") return "Рабочее пространство защиты не найдено.";
+  if (normalized === "project not found") return "Презентация не найдена.";
+  if (normalized === "parent source not found") return "Не найден связанный материал проекта.";
+  if (normalized === "presentation not generated yet") return "Презентация ещё не собрана.";
+  if (/^cannot (get|post|put|patch|delete) \/v1\//.test(normalized)) {
+    return "Сервис ещё не поддерживает это действие. Обновите приложение и попробуйте снова.";
+  }
+
+  return undefined;
 }
 
 function statusCode(status: number) {

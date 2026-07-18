@@ -1,4 +1,4 @@
-import type { CanvasElement, PresentationDocument, SlideCanvas } from "@studydeck/shared";
+import type { CanvasElement, PresentationDocument, ProjectWorkflow, SlideCanvas } from "@studydeck/shared";
 
 export type ProjectPayload = {
   id: string;
@@ -8,6 +8,7 @@ export type ProjectPayload = {
   presentation?: { document: PresentationDocument } | null;
   accessRole?: "owner" | "editor" | "viewer";
   presentationRevision?: number;
+  workflow?: ProjectWorkflow;
 };
 
 export type Tool = "select" | "text" | "shape";

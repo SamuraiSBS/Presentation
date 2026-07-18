@@ -1,4 +1,5 @@
 import type { Job } from "bullmq";
+import type { Prisma } from "@prisma/client";
 import { auditSlideCanvas, ensureEditableCanvas, type Source } from "@studydeck/shared";
 import { captureGenerationError, type TraceCarrier, withTraceSpan } from "../observability.js";
 import { getPrisma } from "../prisma.js";
@@ -15,51 +16,81 @@ import {
 import { generateNarrationDraft, generatePresentationFromNarration } from "./presentation.js";
 import { searchWebSources } from "./web-search.js";
 import { runWithUsageContext } from "../usage-ledger.js";
+import {
+  handleDefenseAnalysisJob,
+  handleDefenseComplianceJob,
+  type DefenseAnalysisJobData,
+  type DefenseComplianceJobData,
+} from "./defense/jobs.js";
+import {
+  applyDefenseGroundingToPresentation,
+  assertDefensePresentation,
+  buildDefenseGroundingBundle,
+  buildDefenseNarrationText,
+  defenseGroundingSource,
+  prepareDefenseGenerationProject,
+  type DefenseGroundingWorkspaceRow,
+} from "./defense/grounding.js";
 
 type GenerationJobData = {
   projectId: string;
   userId: string;
+  generationJobId?: string;
   traceContext?: TraceCarrier;
 };
 
-export async function handleGenerationJob(job: Job<GenerationJobData>) {
+type GenerationQueueJobData = GenerationJobData | DefenseAnalysisJobData | DefenseComplianceJobData;
+
+export async function handleGenerationJob(job: Job<GenerationQueueJobData>) {
+  if (job.name === "analyze-defense-brief") {
+    return handleDefenseAnalysisJob(job as Job<DefenseAnalysisJobData>);
+  }
+  if (job.name === "check-defense-compliance") {
+    return handleDefenseComplianceJob(job as Job<DefenseComplianceJobData>);
+  }
+  if (job.name !== "generate-narration" && job.name !== "generate-presentation") {
+    throw new Error(`Unsupported generation job: ${job.name}`);
+  }
+  const generationJob = job as Job<GenerationJobData>;
   const prisma = getPrisma();
-  const { projectId, traceContext } = job.data;
-  const kind = job.name === "generate-narration" ? "narration" : "presentation";
+  const { projectId, traceContext } = generationJob.data;
+  const kind = generationJob.name === "generate-narration" ? "narration" : "presentation";
+  const jobWhere = regularGenerationJobWhere(projectId, generationJob.id, kind, generationJob.data.generationJobId);
   const databaseJob = await prisma.generationJob.findFirst({
-    where: { projectId, queueJobId: job.id, kind },
+    where: jobWhere,
     select: { id: true },
   });
 
   return runWithUsageContext({
-    userId: job.data.userId,
+    userId: generationJob.data.userId,
     projectId,
     generationJobId: databaseJob?.id,
-    queueJobId: job.id ? String(job.id) : undefined,
+    queueJobId: generationJob.id ? String(generationJob.id) : undefined,
     stage: kind === "narration" ? "drafting_speech" : "building_slides",
-  }, () => runGenerationJob(job, kind, traceContext));
+  }, () => runGenerationJob(generationJob, kind, traceContext));
 }
 
 async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" | "presentation", traceContext?: TraceCarrier) {
   const prisma = getPrisma();
   const { projectId } = job.data;
+  const jobWhere = regularGenerationJobWhere(projectId, job.id, kind, job.data.generationJobId);
 
   await prisma.project.update({
     where: { id: projectId },
     data: { status: kind === "narration" ? "script_generating" : "generating", error: null },
   });
   await prisma.generationJob.updateMany({
-    where: { projectId, queueJobId: job.id, kind },
+    where: jobWhere,
     data: { status: "active", progressStage: "queued", progressLabel: "В очереди", progressPercent: 0, stageStartedAt: new Date() },
   });
 
   const stageStartedAt = new Map<GenerationProgressStage, number>();
   const setStage = async (stage: GenerationProgressStage) => {
-    const cancellation = await prisma.generationJob.findFirst({ where: { projectId, queueJobId: job.id, kind }, select: { cancelRequestedAt: true } });
+    const cancellation = await prisma.generationJob.findFirst({ where: jobWhere, select: { cancelRequestedAt: true } });
     if (cancellation?.cancelRequestedAt) throw new Error("Generation cancelled by administrator");
     stageStartedAt.set(stage, Date.now());
     await updateGenerationProgress(job, stage, (data) =>
-      prisma.generationJob.updateMany({ where: { projectId, queueJobId: job.id, kind }, data }),
+      prisma.generationJob.updateMany({ where: jobWhere, data }),
     );
   };
   const finishStage = (stage: GenerationProgressStage, error?: unknown) => {
@@ -68,14 +99,36 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
   };
 
   try {
-    const project = await prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { sources: true } });
+    const project = await prisma.project.findUniqueOrThrow({
+      where: { id: projectId },
+      include: {
+        sources: true,
+        defenseWorkspace: {
+          include: {
+            facts: { include: { evidence: true } },
+            requirements: true,
+            conflicts: true,
+            project: { include: { sources: true } },
+          },
+        },
+      },
+    });
+    if (project.workflow === "requirements_driven" && !project.defenseWorkspace) {
+      throw new Error("Requirements-driven project has no defense workspace");
+    }
+    const defenseBundle = project.workflow === "requirements_driven"
+      ? buildDefenseGroundingBundle(project.defenseWorkspace as DefenseGroundingWorkspaceRow)
+      : null;
+    const generationProject = defenseBundle ? prepareDefenseGenerationProject(project, defenseBundle) : project;
     await setStage("researching");
     const sources = await withTraceSpan("generation.research", {
       "studydeck.project_id": projectId,
       "studydeck.job_id": String(job.id || ""),
       "studydeck.stage": "research",
       "studydeck.provider": process.env.WEB_SEARCH_PROVIDER || "tavily",
-    }, () => prepareGenerationSources(project, { refreshWeb: kind === "narration" }), traceContext);
+    }, () => defenseBundle
+      ? Promise.resolve([defenseGroundingSource(project.id, defenseBundle)])
+      : prepareGenerationSources(project, { refreshWeb: kind === "narration" }), traceContext);
     finishStage("researching");
 
     if (kind === "narration") {
@@ -85,13 +138,14 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
         "studydeck.job_id": String(job.id || ""),
         "studydeck.stage": "speech",
         "studydeck.provider": process.env.AI_PROVIDER || "demo",
-      }, () => generateNarrationDraft(project, sources), traceContext);
+      }, () => generateNarrationDraft(generationProject, sources), traceContext);
       finishStage("drafting_speech");
       await setStage("saving");
+      const narrationText = defenseBundle ? buildDefenseNarrationText(defenseBundle) : draft.text;
       await prisma.project.update({
         where: { id: projectId },
         data: {
-          speechDraft: draft.text,
+          speechDraft: narrationText,
           speechDraftUpdatedAt: new Date(),
           status: "script_ready",
           error: null,
@@ -100,7 +154,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       finishStage("saving");
       await setStage("completed");
       await prisma.generationJob.updateMany({
-        where: { projectId, queueJobId: job.id, kind },
+        where: jobWhere,
         data: { status: "completed", progressStage: "completed", progressLabel: "Готово", progressPercent: 100 },
       });
       await prisma.userActivityEvent.create({ data: { userId: job.data.userId, projectId, type: "generation.completed", metadata: { kind } } });
@@ -118,15 +172,18 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       "studydeck.job_id": String(job.id || ""),
       "studydeck.stage": "slides",
       "studydeck.provider": process.env.AI_PROVIDER || "demo",
-    }, () => generatePresentationFromNarration(project, sources, speechDraft), traceContext);
+    }, () => generatePresentationFromNarration(generationProject, sources, speechDraft), traceContext);
     finishStage("building_slides");
+    const groundedPresentation = defenseBundle
+      ? applyDefenseGroundingToPresentation(generatedPresentation, defenseBundle, project.sources)
+      : generatedPresentation;
     await setStage("selecting_visuals");
     const presentationWithImages = await withTraceSpan("generation.visuals", {
       "studydeck.project_id": projectId,
       "studydeck.job_id": String(job.id || ""),
       "studydeck.stage": "visuals",
       "studydeck.provider": process.env.PRESENTATION_IMAGES_ENABLED === "false" ? "disabled" : process.env.WEB_SEARCH_PROVIDER || "tavily",
-    }, () => enrichPresentationImages(project, generatedPresentation), traceContext);
+    }, () => enrichPresentationImages(generationProject, groundedPresentation), traceContext);
     finishStage("selecting_visuals");
     await setStage("polishing");
     // The model may return a schema-valid but geometrically unsafe canvas. A
@@ -143,18 +200,19 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     if (unsafeCanvases.length) {
       throw new Error(`Presentation layout check failed: ${unsafeCanvases.slice(0, 8).join("; ")}`);
     }
+    if (defenseBundle) assertDefensePresentation(presentation, defenseBundle);
     finishStage("polishing");
     await setStage("saving");
     await prisma.presentation.upsert({
       where: { projectId },
       create: { projectId, document: presentation },
-      update: { document: presentation },
+      update: { document: presentation, revision: { increment: 1 } },
     });
     await prisma.project.update({ where: { id: projectId }, data: { status: "ready" } });
     finishStage("saving");
     await setStage("completed");
     await prisma.generationJob.updateMany({
-      where: { projectId, queueJobId: job.id, kind },
+      where: jobWhere,
       data: { status: "completed", progressStage: "completed", progressLabel: "Готово", progressPercent: 100 },
     });
     await prisma.userActivityEvent.create({ data: { userId: job.data.userId, projectId, type: "generation.completed", metadata: { kind } } });
@@ -177,7 +235,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       await prisma.project.update({ where: { id: projectId }, data: { status: "failed", error: message } });
     }
     await prisma.generationJob.updateMany({
-      where: { projectId, queueJobId: job.id, kind },
+      where: jobWhere,
       data: {
         status: willRetry ? "active" : "failed",
         error: message,
@@ -191,10 +249,22 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
   }
 }
 
+function regularGenerationJobWhere(
+  projectId: string,
+  queueJobId: string | undefined,
+  kind: "narration" | "presentation",
+  generationJobId?: string,
+): Prisma.GenerationJobWhereInput {
+  return generationJobId
+    ? { id: generationJobId, projectId, kind }
+    : { projectId, queueJobId, kind };
+}
+
 export async function prepareGenerationSources(project: {
   id: string;
   prompt: string;
   mode: string;
+  workflow?: string;
   speechDraft?: string | null;
   sources: Array<{
     id: string;
@@ -208,7 +278,10 @@ export async function prepareGenerationSources(project: {
     included?: boolean;
   }>;
 }, options: { refreshWeb?: boolean } = {}) {
-  const refreshWeb = options.refreshWeb ?? true;
+  // Requirements-driven projects may use the web for user-approved decorative
+  // images, but never as factual grounding. Keep that boundary server-side so
+  // a legacy `with_sources` mode cannot accidentally trigger Tavily research.
+  const refreshWeb = project.workflow === "requirements_driven" ? false : options.refreshWeb ?? true;
   const sources: Source[] = [];
 
   for (const source of project.sources) {

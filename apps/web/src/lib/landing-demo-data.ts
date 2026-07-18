@@ -91,6 +91,7 @@ export const LANDING_SHOWCASE_FIXTURES: readonly LandingShowcaseFixture[] = [
           blocks: [{ type: "callout", content: "ИИ помогает студенту работать с материалом осмысленно и последовательно." }],
           speakerNotes: "ИИ не заменяет обучение: он помогает быстрее увидеть пробелы, подобрать практику и подготовиться к защите.",
           timingSeconds: 35,
+          placeholders: [],
           sourceRefs: [],
         },
         {
@@ -120,6 +121,7 @@ export const LANDING_SHOWCASE_FIXTURES: readonly LandingShowcaseFixture[] = [
           blocks: [{ type: "bullets", items: ["Собрать контекст", "Объяснить сложное", "Проверить понимание"] }],
           speakerNotes: "Система собирает материал, предлагает объяснение и даёт студенту понятную следующую задачу.",
           timingSeconds: 40,
+          placeholders: [],
           sourceRefs: [],
         },
         {
@@ -149,6 +151,7 @@ export const LANDING_SHOWCASE_FIXTURES: readonly LandingShowcaseFixture[] = [
           blocks: [{ type: "bullets", items: ["ИИ ускоряет подготовку", "Преподаватель задаёт критерии", "Студент формулирует позицию"] }],
           speakerNotes: "Технология ускоряет рутину, а преподаватель помогает проверять аргументы и обсуждать сложные решения.",
           timingSeconds: 40,
+          placeholders: [],
           sourceRefs: [],
         },
         {
@@ -166,6 +169,7 @@ export const LANDING_SHOWCASE_FIXTURES: readonly LandingShowcaseFixture[] = [
           blocks: [{ type: "bullets", items: ["Тема превращается в маршрут", "Материал становится понятнее", "Речь остаётся собственной"] }],
           speakerNotes: "Сильный результат появляется, когда ИИ расширяет возможности студента, а не делает работу за него.",
           timingSeconds: 35,
+          placeholders: [],
           sourceRefs: [],
         },
       ],
@@ -228,6 +232,7 @@ export const LANDING_SHOWCASE_FIXTURES: readonly LandingShowcaseFixture[] = [
           blocks: [{ type: "callout", content: "Три государства оказались в центре решения, от которого зависела мировая безопасность." }],
           speakerNotes: "Осенью 1962 года противостояние СССР и США оказалось ближе всего к прямому ядерному столкновению.",
           timingSeconds: 35,
+          placeholders: [],
           sourceRefs: [],
         },
         {
@@ -257,6 +262,7 @@ export const LANDING_SHOWCASE_FIXTURES: readonly LandingShowcaseFixture[] = [
           blocks: [{ type: "bullets", items: ["14 октября", "22 октября", "28 октября"] }],
           speakerNotes: "Кризис развивался стремительно: от обнаружения ракет на Кубе до публичных переговоров и компромисса.",
           timingSeconds: 45,
+          placeholders: [],
           sourceRefs: [],
         },
         {
@@ -286,6 +292,7 @@ export const LANDING_SHOWCASE_FIXTURES: readonly LandingShowcaseFixture[] = [
           blocks: [{ type: "bullets", items: ["Блокада дала время", "Связь снизила риск ошибки", "Компромисс сохранил лицо сторонам"] }],
           speakerNotes: "Решение зависело не только от силы, но и от способности сохранить канал связи между противниками.",
           timingSeconds: 45,
+          placeholders: [],
           sourceRefs: [],
         },
         {
@@ -303,6 +310,7 @@ export const LANDING_SHOWCASE_FIXTURES: readonly LandingShowcaseFixture[] = [
           blocks: [{ type: "bullets", items: ["Появилась горячая линия", "Усилился контроль вооружений", "Компромисс стал частью стратегии"] }],
           speakerNotes: "После кризиса сверхдержавы начали создавать механизмы, которые снижают риск случайной эскалации.",
           timingSeconds: 35,
+          placeholders: [],
           sourceRefs: [],
         },
       ],
@@ -365,6 +373,7 @@ export const LANDING_SHOWCASE_FIXTURES: readonly LandingShowcaseFixture[] = [
           blocks: [{ type: "callout", content: "Городу нужна не только генерация, но и умное управление энергией." }],
           speakerNotes: "Город будущего не просто потребляет энергию: он умеет производить, хранить и распределять её точнее.",
           timingSeconds: 35,
+          placeholders: [],
           sourceRefs: [],
         },
         {
@@ -394,6 +403,7 @@ export const LANDING_SHOWCASE_FIXTURES: readonly LandingShowcaseFixture[] = [
           blocks: [{ type: "bullets", items: ["Произвести", "Сохранить", "Распределить"] }],
           speakerNotes: "Солнечные панели, ветер и накопители работают не по отдельности, а как связанная инфраструктура.",
           timingSeconds: 40,
+          placeholders: [],
           sourceRefs: [],
         },
         {
@@ -423,6 +433,7 @@ export const LANDING_SHOWCASE_FIXTURES: readonly LandingShowcaseFixture[] = [
           blocks: [{ type: "bullets", items: ["3 источника гибкости: генерация, накопление, управление", "24/7 баланс спроса и предложения", "1 городская сеть вместо разрозненных решений"] }],
           speakerNotes: "Устойчивость создаёт не один источник, а согласованная работа генерации, накопления и управления спросом.",
           timingSeconds: 40,
+          placeholders: [],
           sourceRefs: [],
         },
         {
@@ -440,6 +451,7 @@ export const LANDING_SHOWCASE_FIXTURES: readonly LandingShowcaseFixture[] = [
           blocks: [{ type: "bullets", items: ["Чище воздух", "Устойчивее инфраструктура", "Больше контроля у города и жителей"] }],
           speakerNotes: "Технологии становятся городскими решениями, когда помогают сделать среду чище, устойчивее и удобнее для жителей.",
           timingSeconds: 35,
+          placeholders: [],
           sourceRefs: [],
         },
       ],

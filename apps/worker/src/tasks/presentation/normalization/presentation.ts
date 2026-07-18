@@ -370,6 +370,7 @@ export function normalizeSlide(rawSlide: unknown, order: number, sources: Source
     visual,
     highlights,
     blocks,
+    placeholders: [],
     speakerNotes: normalizeSpeakerNotes(slide.speakerNotes, { title, thesis, bullets, definition, visual }, project, order, narrationSection?.text),
     timingSeconds: clampNumber(Number(slide.timingSeconds || 55), 20, 240),
     sourceRefs: sourceRefs.slice(0, 3).map((ref) => ({
@@ -716,6 +717,7 @@ export function buildFallbackSlide(order: number, project: ProjectInput, sources
     visual,
     highlights: normalizeHighlights([], thesis, bullets, slideKind),
     blocks,
+    placeholders: [],
     speakerNotes: narrationSection?.text || buildFallbackSpeakerNotes(project, order),
     timingSeconds: order === 1 || order === project.slideCount ? 45 : 55,
     sourceRefs: [sourceRefFromSource(source)],

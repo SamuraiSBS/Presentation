@@ -9,6 +9,7 @@ import type {
   ProjectMemberRole,
   ProjectStatus,
   ProjectSummary,
+  ProjectWorkflow,
   Source,
   UsageSummary as SharedUsageSummary,
   UserIdentitySummary,
@@ -46,6 +47,7 @@ export type ProjectDetail = {
   speechDraft?: string | null;
   prompt?: string;
   mode?: string;
+  workflow?: ProjectWorkflow;
   level?: string;
   sources?: Source[];
   exports?: ExportSummary[];

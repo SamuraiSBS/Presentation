@@ -7,5 +7,6 @@ import { SourcesService } from "./sources.service.js";
   imports: [ProjectAccessModule],
   controllers: [SourcesController],
   providers: [SourcesService],
+  exports: [SourcesService],
 })
 export class SourcesModule {}

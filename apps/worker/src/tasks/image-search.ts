@@ -9,6 +9,8 @@ type ProjectInput = {
   id: string;
   prompt: string;
   title: string;
+  workflow?: string;
+  allowWebImages?: boolean;
 };
 
 type TavilyImage = string | { url?: string; description?: string };
@@ -79,6 +81,9 @@ export async function enrichPresentationImages(
   presentation: PresentationDocument,
   dependencies: ImageSearchDependencies = {},
 ): Promise<PresentationDocument> {
+  if (project.workflow === "requirements_driven" && project.allowWebImages !== true) {
+    return presentation;
+  }
   if (!isPresentationImagesEnabled(dependencies)) {
     return presentation;
   }
@@ -201,6 +206,9 @@ export function shouldSearchForSlideImage(
   slide: PresentationDocument["slides"][number],
   direction?: DesignBriefSlideDirection,
 ) {
+  // A user/repository/archive image is evidence or an explicitly assigned
+  // project asset. Never replace any existing image with a stock web result.
+  if (slide.visual.image) return false;
   if (direction?.imageStrategy !== "real_photo") {
     return false;
   }
