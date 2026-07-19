@@ -31,6 +31,21 @@ describe("public defense repository ingestion", () => {
     expect(documents.map((item) => item.path)).toEqual(["README.md", "docs/spec.md"]);
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("src/index.ts"), expect.anything());
   });
+
+  it("keeps an extensionless root README discovered by GitHub", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/contents")) {
+        return jsonResponse([
+          { type: "file", name: "README", path: "README", url: "api-readme", download_url: "https://raw.githubusercontent.com/acme/demo/main/README" },
+        ], url);
+      }
+      return new Response("Project facts from the extensionless README.", { status: 200, headers: { "content-type": "text/plain" } });
+    }) as unknown as typeof fetch;
+
+    await expect(fetchPublicRepositoryDocuments("https://github.com/acme/demo", { fetch: fetchMock }))
+      .resolves.toMatchObject([{ path: "README" }]);
+  });
 });
 
 function jsonResponse(value: unknown, url: string) {

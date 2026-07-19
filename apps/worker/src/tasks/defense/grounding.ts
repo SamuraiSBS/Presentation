@@ -254,6 +254,23 @@ export function buildDefenseNarrationText(bundle: DefenseGroundingBundle) {
   }).join("\n\n");
 }
 
+export function assertDefenseNarrationReadiness(bundle: DefenseGroundingBundle) {
+  if (!bundle.facts.length && !bundle.requirements.length) {
+    throw new Error("Defense narration is blocked: insufficient evidence in the approved analysis");
+  }
+
+  const ungrounded = bundle.plan.slides.filter((slide) =>
+    requiresProjectEvidence(slide)
+      && !slide.factIds.length
+      && !slide.requirementIds.length
+      && !slide.assetSourceIds.length
+      && !slide.placeholders.length,
+  );
+  if (ungrounded.length) {
+    throw new Error(`Defense narration is blocked: missing evidence or placeholder for slides ${ungrounded.map((slide) => slide.order).join(", ")}`);
+  }
+}
+
 export function applyDefenseGroundingToPresentation(
   presentation: PresentationDocument,
   bundle: DefenseGroundingBundle,
@@ -274,15 +291,20 @@ export function applyDefenseGroundingToPresentation(
     ];
     const sourceRefs = collectSourceRefs(planSlide.factIds, planSlide.requirementIds, factById, requirementById, assetById);
     const imageAsset = pickSlideImage(planSlide.assetSourceIds, assetById, sourceById);
+    const thesis = slide.thesis.trim() || copy.thesis;
+    const bullets = slide.bullets.length ? slide.bullets : copy.bullets;
+    const speakerNotes = slide.speakerNotes.trim() || copy.speakerNotes;
     return {
       ...slide,
       title: planSlide.title,
-      thesis: copy.thesis,
-      bullets: copy.bullets,
-      blocks: copy.bullets.length
+      thesis,
+      bullets,
+      blocks: slide.blocks.length
+        ? slide.blocks
+        : bullets.length
         ? [{ type: "bullets" as const, items: copy.bullets }]
-        : [{ type: "callout" as const, content: copy.thesis }],
-      speakerNotes: copy.speakerNotes,
+        : [{ type: "callout" as const, content: thesis }],
+      speakerNotes,
       timingSeconds: planSlide.timingSeconds,
       placeholders,
       sourceRefs,
@@ -301,7 +323,7 @@ export function applyDefenseGroundingToPresentation(
   const document: PresentationDocument = {
     ...presentation,
     slideCount: bundle.plan.slides.length,
-    generatedText: buildDefenseNarrationText(bundle),
+    generatedText: presentation.generatedText,
     outline: bundle.plan.slides.map((slide) => slide.title),
     presentationTheme,
     narrativePlan: presentation.narrativePlan.map((item, index) => ({
@@ -309,7 +331,7 @@ export function applyDefenseGroundingToPresentation(
       slideOrder: index + 1,
       slideTitle: bundle.plan.slides[index]?.title || item.slideTitle,
       slidePurpose: bundle.plan.slides[index]?.purpose || item.slidePurpose,
-      keyMessage: bundle.plan.slides[index] ? groundedSlideCopy(bundle, bundle.plan.slides[index], index).thesis : item.keyMessage,
+      keyMessage: item.keyMessage.trim() || (bundle.plan.slides[index] ? groundedSlideCopy(bundle, bundle.plan.slides[index], index).thesis : item.keyMessage),
       audienceQuestion: "Главная мысль раздела защиты",
       transitionToNext: "",
     })),
@@ -317,7 +339,7 @@ export function applyDefenseGroundingToPresentation(
       ...item,
       slideOrder: index + 1,
       slideTitle: bundle.plan.slides[index]?.title || item.slideTitle,
-      text: bundle.plan.slides[index] ? groundedSlideCopy(bundle, bundle.plan.slides[index], index).speakerNotes : item.text,
+      text: item.text.trim() || (bundle.plan.slides[index] ? groundedSlideCopy(bundle, bundle.plan.slides[index], index).speakerNotes : item.text),
     })),
     slides,
   };
@@ -383,6 +405,11 @@ function groundedText(value: string, maxLength: number) {
     .trim();
   if (clean.length <= maxLength) return clean;
   return `${clean.slice(0, Math.max(1, maxLength - 1)).trim()}…`;
+}
+
+function requiresProjectEvidence(slide: DefenseGroundingBundle["plan"]["slides"][number]) {
+  if (slide.order === 1) return false;
+  return !/(?:^|\s)(?:итог[\p{L}]*|заключени[\p{L}]*|завершени[\p{L}]*|контакт[\p{L}]*)(?:$|\s)/iu.test(`${slide.title} ${slide.purpose}`);
 }
 
 export function assertDefensePresentation(presentation: PresentationDocument, bundle: DefenseGroundingBundle) {

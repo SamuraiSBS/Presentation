@@ -109,7 +109,7 @@ export function buildDefensePlan(input: DefensePlanBuilderInput): DefensePlanOut
   }
 
   for (const fact of confirmedFacts) {
-    targetSlideByText(slides, fact.statement).factIds.push(fact.id);
+    targetSlideForFact(slides, fact).factIds.push(fact.id);
   }
   for (const asset of input.assets) {
     targetSlideForAsset(slides, asset.role || "").assetSourceIds.push(asset.id);
@@ -117,13 +117,28 @@ export function buildDefensePlan(input: DefensePlanBuilderInput): DefensePlanOut
 
   addIdentityPlaceholders(slides[0], input.config);
   for (const conflict of input.conflicts.filter((item) => item.state === "unresolved")) {
-    const target = targetSlideByText(slides, conflict.summary);
+    const target = targetSlideByText(slides, conflict.summary, "conflict");
     target.placeholders.push({
       id: stableId(`conflict:${conflict.id}`),
       kind: "conflict",
       label: `Разрешите противоречие: ${conflict.summary}`,
       resolved: false,
       severity: "error",
+    });
+  }
+
+  // A plan section that is expected to make a project claim must either carry
+  // an approved grounding item or make the missing evidence visible.  This
+  // preserves a useful review path without letting narration fill a gap with
+  // plausible but unverified content.
+  for (const slide of slides) {
+    if (!requiresProjectEvidence(slide) || slide.factIds.length || slide.requirementIds.length || slide.assetSourceIds.length || slide.placeholders.length) continue;
+    slide.placeholders.push({
+      id: stableId(`evidence:${slide.id}`),
+      kind: "text",
+      label: `Добавьте подтверждённый факт для раздела «${slide.title}»`,
+      resolved: false,
+      severity: "warning",
     });
   }
 
@@ -192,12 +207,23 @@ function targetSlideForRequirement(
     const requestedOrder = Number(rule.order ?? rule.slideOrder ?? (typeof rule.position === "number" ? rule.position : 0));
     if (Number.isInteger(requestedOrder) && requestedOrder >= 1 && requestedOrder <= slides.length) return slides[requestedOrder - 1];
   }
-  return targetSlideByText(slides, requirement.text);
+  return targetSlideByText(slides, requirement.text, "requirement");
 }
 
-function targetSlideByText(slides: DefensePlanOutput["slides"], text: string) {
+function targetSlideForFact(
+  slides: DefensePlanOutput["slides"],
+  fact: DefensePlanBuilderInput["facts"][number],
+) {
+  return targetSlideByText(slides, fact.statement, "fact");
+}
+
+function targetSlideByText(
+  slides: DefensePlanOutput["slides"],
+  text: string,
+  kind: "fact" | "requirement" | "asset" | "conflict" = "fact",
+) {
   const match = bestTextMatch(slides, text);
-  return match.score ? match.slide : slides[Math.min(1, slides.length - 1)];
+  return match.score ? match.slide : leastLoadedRoleAwareSlide(slides, kind);
 }
 
 function bestTextMatch(slides: DefensePlanOutput["slides"], text: string) {
@@ -238,7 +264,39 @@ function targetSlideForAsset(slides: DefensePlanOutput["slides"], role: string) 
     return slides.find((slide) => /демонстрац|интерфейс|реализац|функц/iu.test(`${slide.title} ${slide.purpose}`)) || slides[Math.floor(slides.length / 2)];
   }
   if (role === "style_reference") return slides[0];
-  return slides[Math.min(1, slides.length - 1)];
+  return leastLoadedRoleAwareSlide(slides, "asset");
+}
+
+function leastLoadedRoleAwareSlide(
+  slides: DefensePlanOutput["slides"],
+  kind: "fact" | "requirement" | "asset" | "conflict",
+) {
+  const factualCandidates = slides.filter((slide) => requiresProjectEvidence(slide));
+  const candidates = factualCandidates.length ? factualCandidates : slides;
+  return [...candidates].sort((left, right) => {
+    const leftLoad = slideLoad(left, kind);
+    const rightLoad = slideLoad(right, kind);
+    return leftLoad - rightLoad || left.order - right.order;
+  })[0] || slides[0];
+}
+
+function slideLoad(slide: DefensePlanOutput["slides"][number], kind: "fact" | "requirement" | "asset" | "conflict") {
+  const capacity = Math.max(1, Math.floor(slide.timingSeconds / 35));
+  const exactLoad = kind === "fact"
+    ? slide.factIds.length
+    : kind === "requirement"
+      ? slide.requirementIds.length
+      : kind === "asset"
+        ? slide.assetSourceIds.length
+        : slide.placeholders.filter((placeholder) => placeholder.kind === "conflict").length;
+  const totalLoad = slide.factIds.length + slide.requirementIds.length + slide.assetSourceIds.length + slide.placeholders.length * 0.5;
+  return exactLoad / capacity + totalLoad / (capacity * 10);
+}
+
+function requiresProjectEvidence(slide: DefensePlanOutput["slides"][number]) {
+  if (slide.order === 1 || slide.order === 0) return false;
+  if (/(?:^|\s)(?:итог[\p{L}]*|заключени[\p{L}]*|завершени[\p{L}]*|контакт[\p{L}]*)(?:$|\s)/iu.test(`${slide.title} ${slide.purpose}`)) return false;
+  return true;
 }
 
 function addIdentityPlaceholders(slide: DefensePlanOutput["slides"][number], config: DefensePlanBuilderInput["config"]) {

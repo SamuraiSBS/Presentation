@@ -21,6 +21,7 @@ import {
   scoreUniversityTone,
   scoreVisualRhythm,
 } from "./presentation-quality.js";
+import { preserveAcceptedGeneratedText, preserveAcceptedNarration } from "./presentation/quality/orchestration.js";
 
 const source = {
   id: "source-1",
@@ -345,6 +346,67 @@ describe("presentation quality checks", () => {
     expect(repaired.slides[0].title).toBe("Concrete opening");
     expect(repaired.slides[1]).toEqual(presentation.slides[1]);
     expect(() => presentationSchema.parse(repaired)).not.toThrow();
+  });
+
+  it("preserves accepted narration when a visual-quality repair proposes replacement speech", () => {
+    const presentation = makePresentation();
+
+    const repaired = applyQualityRepairs(presentation, {
+      slides: [{
+        slideId: "slide-1",
+        title: "Improved opening title",
+        speakerNotes: "This replacement note is intentionally too short.",
+      }],
+      speechScript: [{
+        slideOrder: 1,
+        slideTitle: "Improved opening title",
+        text: "This replacement script is intentionally too short.",
+      }],
+    });
+
+    expect(repaired.slides[0].title).toBe("Improved opening title");
+    expect(repaired.slides[0].speakerNotes).toBe(presentation.slides[0].speakerNotes);
+    expect(repaired.speechScript[0].text).toBe(presentation.speechScript[0].text);
+    expect(repaired.speechScript[0].slideTitle).toBe("Improved opening title");
+  });
+
+  it("restores validated accepted narration after a later presentation repair", () => {
+    const presentation = makePresentation();
+    const acceptedNotes = [
+      "The opening defines the central analytical question for the university discussion and identifies why the evidence matters. It connects the first documented point to the research task so the audience can follow the reasoning. This framing supports the later conclusion without using a stock transition.",
+      "The conclusion links the practical finding to the analytical question and explains why the outcome matters for the proposed decision. It compares the final implication with the starting evidence instead of repeating a generic summary. This ending leaves the audience with a specific result to defend.",
+    ];
+    const acceptedNarration = presentation.slides.map((slide, index) =>
+      `\u0421\u043b\u0430\u0439\u0434 ${slide.order}: ${slide.title}\n${acceptedNotes[index]}`,
+    ).join("\n\n");
+    const regressed = presentationSchema.parse({
+      ...presentation,
+      generatedText: "A later repair replaced the accepted narration.",
+      slides: presentation.slides.map((slide) => ({ ...slide, speakerNotes: "Too short." })),
+      speechScript: presentation.speechScript.map((item) => ({ ...item, text: "Too short." })),
+    });
+    const project = {
+      id: "project-1",
+      title: "Quality deck",
+      prompt: "Prepare a university seminar report about a quality topic",
+      scenario: "university_report",
+      level: "university_student",
+      mode: "with_sources",
+      slideCount: 2,
+    } as const;
+
+    const restored = preserveAcceptedNarration(regressed, acceptedNarration, project);
+
+    expect(restored.generatedText).toBe(acceptedNarration);
+    expect(restored.slides.map((slide) => slide.speakerNotes)).toEqual(acceptedNotes);
+    expect(restored.speechScript.map((item) => item.text)).toEqual(acceptedNotes);
+  });
+
+  it("restores the accepted narration text instead of retaining a divergent generatedText", () => {
+    const presentation = makePresentation({ generatedText: "An altered generated text." });
+    const acceptedNarration = "\u0421\u043b\u0430\u0439\u0434 1: Accepted\nA complete accepted narration with enough words for the first slide. It remains the canonical speech text.\n\n\u0421\u043b\u0430\u0439\u0434 2: Conclusion\nA complete accepted narration with enough words for the final slide. It remains the canonical speech text.";
+
+    expect(preserveAcceptedGeneratedText(presentation, acceptedNarration).generatedText).toBe(acceptedNarration);
   });
 
   it("does not modify a valid presentation", async () => {

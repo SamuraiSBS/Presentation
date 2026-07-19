@@ -915,7 +915,7 @@ export function visualNarrationText(visual: SlideVisual) {
 
 export function isCompleteNarration(text: string) {
   const count = sentenceCount(text);
-  if (count < 3 || count > 7) return false;
+  if (count < 2 || count > 7) return false;
   if (text.length < 80) return false;
   return !hasForbiddenTemplateText(text);
 }

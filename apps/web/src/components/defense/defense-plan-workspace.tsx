@@ -54,6 +54,7 @@ export function DefensePlanWorkspace({ projectId, projectTitle, initialData }: {
   const canEdit = data.accessRole !== "viewer";
   const planLocked = plan?.status === "approved";
   const canEditPlan = canEdit && !planLocked;
+  const canStartNarration = canEdit && Boolean(plan);
   const busy = savePlan.isPending || rebuildPlan.isPending || confirmPlan.isPending || patchConfig.isPending;
   const total = plan ? defensePlanTiming(plan.slides) : 0;
   const overTarget = total > data.workspace.targetDurationSeconds;
@@ -108,12 +109,13 @@ export function DefensePlanWorkspace({ projectId, projectTitle, initialData }: {
   }
 
   async function approveAndStart() {
-    if (!canEditPlan) return;
-    if (!plan || overTarget || blankTitles) {
+    if (!canStartNarration) return;
+    if (!plan || (!planLocked && (overTarget || blankTitles))) {
       setError(overTarget ? "Сократите тайминг до целевой продолжительности перед подтверждением." : "Проверьте заголовки и задачи всех слайдов.");
       return;
     }
-    const confirmed = await run(() => confirmPlan.mutateAsync({ expectedAnalysisRevision: data.workspace.analysisRevision, expectedPlanRevision: data.workspace.planRevision }), "Не получилось подтвердить план. Обновите страницу и повторите попытку.");
+    const expectedPlanRevision = planLocked ? data.workspace.planRevision - 1 : data.workspace.planRevision;
+    const confirmed = await run(() => confirmPlan.mutateAsync({ expectedAnalysisRevision: data.workspace.analysisRevision, expectedPlanRevision }), "Не получилось запустить подготовку речи. Обновите страницу и повторите попытку.");
     if (!confirmed) return;
     router.push(`/projects/${projectId}/script`);
   }
@@ -173,9 +175,13 @@ export function DefensePlanWorkspace({ projectId, projectTitle, initialData }: {
       </div>
 
       {error ? <p className="form-error" role="alert">{error}</p> : null}
-      <footer className="defense-plan-toolbar"><div><strong>{dirty ? "Есть несохранённые изменения" : planLocked ? "План подтверждён" : "План сохранён как черновик"}</strong><span>{planLocked ? "План зафиксирован. Перейдите к речи и редактированию слайдов, чтобы не расходиться с утверждённой основой." : "Перед запуском речи сохраните порядок, формулировки и тайминг."}</span></div>{canEditPlan ? <div><Button variant="secondary" type="button" onClick={() => saveCurrent()} disabled={busy || !dirty}>{savePlan.isPending ? <LoaderCircle className="spin" size={18} /> : <Save size={18} />}Сохранить</Button><Button variant="secondary" type="button" onClick={buildPlan} disabled={busy}><RefreshCw size={18} />Пересобрать</Button><Dialog><DialogTrigger asChild><Button type="button" disabled={busy || dirty || overTarget}><Rocket size={18} />Подтвердить и готовить речь</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>Подтвердить план и запустить AI?</DialogTitle><DialogDescription>План станет основой речи. Запуск создаёт отдельный запрос к AI-провайдеру и может расходовать его платный баланс.</DialogDescription></DialogHeader><div className="ai-cost-warning"><ShieldCheck aria-hidden="true" /><div><strong>Перед запуском</strong><span>Проверьте баланс Yandex/OpenAI. Факты будут взяты только из подтверждённой основы.</span></div></div><div className="ui-dialog-actions"><DialogClose asChild><Button variant="secondary" type="button">Вернуться к плану</Button></DialogClose><Button type="button" onClick={approveAndStart} disabled={busy}>{confirmPlan.isPending ? <LoaderCircle className="spin" size={18} /> : <Rocket size={18} />}Запустить подготовку речи</Button></div></DialogContent></Dialog></div> : planLocked ? <div><Button asChild><Link href={`/projects/${projectId}/script`}>Открыть речь</Link></Button></div> : null}</footer>
+      <footer className="defense-plan-toolbar"><div><strong>{dirty ? "Есть несохранённые изменения" : planLocked ? "План подтверждён" : "План сохранён как черновик"}</strong><span>{planLocked ? "План зафиксирован. При сбое речи повторите подготовку по этой утверждённой основе." : "Перед запуском речи сохраните порядок, формулировки и тайминг."}</span></div>{canEditPlan ? <div><Button variant="secondary" type="button" onClick={() => saveCurrent()} disabled={busy || !dirty}>{savePlan.isPending ? <LoaderCircle className="spin" size={18} /> : <Save size={18} />}Сохранить</Button><Button variant="secondary" type="button" onClick={buildPlan} disabled={busy}><RefreshCw size={18} />Пересобрать</Button><NarrationConfirmation title="Подтвердить план и запустить AI?" description="План станет основой речи. Запуск создаёт отдельный запрос к AI-провайдеру и может расходовать его платный баланс." label="Подтвердить и готовить речь" pending={confirmPlan.isPending} busy={busy || dirty || overTarget} onConfirm={approveAndStart} /></div> : planLocked && canStartNarration ? <div><NarrationConfirmation title="Повторить подготовку речи?" description="Повтор использует уже подтверждённый план защиты и создаёт новый платный запрос к AI-провайдеру." label="Повторить подготовку речи" pending={confirmPlan.isPending} busy={busy} onConfirm={approveAndStart} /><Button variant="secondary" asChild><Link href={`/projects/${projectId}/script`}>Открыть речь</Link></Button></div> : null}</footer>
     </section>
   );
+}
+
+function NarrationConfirmation({ title, description, label, pending, busy, onConfirm }: { title: string; description: string; label: string; pending: boolean; busy: boolean; onConfirm: () => void | Promise<void> }) {
+  return <Dialog><DialogTrigger asChild><Button type="button" disabled={busy}><Rocket size={18} />{label}</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader><div className="ai-cost-warning"><ShieldCheck aria-hidden="true" /><div><strong>Перед запуском</strong><span>Проверьте баланс Yandex/OpenAI. Факты будут взяты только из подтверждённой основы.</span></div></div><div className="ui-dialog-actions"><DialogClose asChild><Button variant="secondary" type="button">Вернуться к плану</Button></DialogClose><DialogClose asChild><Button type="button" onClick={onConfirm} disabled={pending}>{pending ? <LoaderCircle className="spin" size={18} /> : <Rocket size={18} />}{label}</Button></DialogClose></div></DialogContent></Dialog>;
 }
 
 function normalizePlan(plan: DefensePlan): DefensePlan {

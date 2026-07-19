@@ -501,13 +501,13 @@ export function DefenseWizard({ usage, maxSlides }: { usage: UsageSummary; maxSl
               <WizardHeading title="Как проходит защита?" description="Выберите формат и пределы. Тип и режим можно изменить до подтверждения плана." />
               <fieldset className="defense-choice-group">
                 <legend>Тип защиты</legend>
-                <Choice checked={defenseType === "hackathon"} title="Хакатон" description="Демо, команда и результат · обычно 10 слайдов / 7 минут" onClick={() => chooseDefenseType("hackathon")} onKeyDown={(event) => selectRadioWithArrow(event, defenseType, ["hackathon", "diploma"], chooseDefenseType)} />
-                <Choice checked={defenseType === "diploma"} title="Диплом" description="Цель, требования, реализация и выводы · обычно 12 слайдов / 10 минут" onClick={() => chooseDefenseType("diploma")} onKeyDown={(event) => selectRadioWithArrow(event, defenseType, ["hackathon", "diploma"], chooseDefenseType)} />
+                <Choice checked={defenseType === "hackathon"} title="Хакатон" description="Демо, команда и результат · обычно 10 слайдов / 7 минут" onClick={() => chooseDefenseType("hackathon")} onKeyDown={(event) => selectRadioWithArrow(event, ["hackathon", "diploma"], chooseDefenseType)} />
+                <Choice checked={defenseType === "diploma"} title="Диплом" description="Цель, требования, реализация и выводы · обычно 12 слайдов / 10 минут" onClick={() => chooseDefenseType("diploma")} onKeyDown={(event) => selectRadioWithArrow(event, ["hackathon", "diploma"], chooseDefenseType)} />
               </fieldset>
               <fieldset className="defense-choice-group">
                 <legend>Следование ТЗ</legend>
-                <Choice checked={complianceMode === "strict"} title="Строго" description="Не хватает факта — показываем заполнитель, а не додумываем." onClick={() => { setComplianceMode("strict"); setConfigDirty(true); }} onKeyDown={(event) => selectRadioWithArrow(event, complianceMode, ["strict", "adaptive"], (value) => { setComplianceMode(value); setConfigDirty(true); })} />
-                <Choice checked={complianceMode === "adaptive"} title="Адаптивно" description="Обязательное сохраняем, подачу и порядок можно улучшить." onClick={() => { setComplianceMode("adaptive"); setConfigDirty(true); }} onKeyDown={(event) => selectRadioWithArrow(event, complianceMode, ["strict", "adaptive"], (value) => { setComplianceMode(value); setConfigDirty(true); })} />
+                <Choice checked={complianceMode === "strict"} title="Строго" description="Не хватает факта — показываем заполнитель, а не додумываем." onClick={() => { setComplianceMode("strict"); setConfigDirty(true); }} onKeyDown={(event) => selectRadioWithArrow(event, ["strict", "adaptive"], (value) => { setComplianceMode(value); setConfigDirty(true); })} />
+                <Choice checked={complianceMode === "adaptive"} title="Адаптивно" description="Обязательное сохраняем, подачу и порядок можно улучшить." onClick={() => { setComplianceMode("adaptive"); setConfigDirty(true); }} onKeyDown={(event) => selectRadioWithArrow(event, ["strict", "adaptive"], (value) => { setComplianceMode(value); setConfigDirty(true); })} />
               </fieldset>
               <div className="defense-number-row">
                 <label htmlFor="defense-slide-count">Слайдов<input id="defense-slide-count" className="input" type="number" min={4} max={Math.min(20, maxSlides)} value={targetSlideCount} aria-invalid={Boolean(fieldErrors.slides)} aria-describedby={fieldErrors.slides ? "defense-slide-count-error" : undefined} onChange={(event) => { setTargetSlideCount(Number(event.target.value)); setConfigDirty(true); }} /></label>
@@ -735,13 +735,14 @@ function authorFieldLabel(field: keyof DefenseAuthorProfile) {
   return ({ fullName: "ФИО", institution: "учебное заведение", department: "кафедра", group: "группа", supervisor: "руководитель", city: "город", year: "год", teamName: "команда", eventName: "название мероприятия" } as Record<keyof DefenseAuthorProfile, string>)[field];
 }
 
-function selectRadioWithArrow<T extends string>(event: KeyboardEvent<HTMLButtonElement>, current: T, options: readonly T[], onChange: (value: T) => void) {
+function selectRadioWithArrow<T extends string>(event: KeyboardEvent<HTMLButtonElement>, options: readonly T[], onChange: (value: T) => void) {
   const direction = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
   if (!direction) return;
   event.preventDefault();
-  const nextIndex = (options.indexOf(current) + direction + options.length) % options.length;
-  onChange(options[nextIndex]);
   const controls = event.currentTarget.closest("fieldset")?.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+  const currentIndex = controls ? Array.from(controls).indexOf(event.currentTarget) : -1;
+  const nextIndex = (Math.max(currentIndex, 0) + direction + options.length) % options.length;
+  onChange(options[nextIndex]);
   controls?.[nextIndex]?.focus();
 }
 

@@ -636,6 +636,7 @@ export class DefenseService {
     if (!parsed.success) throw badRequest("DEFENSE_PLAN_MISSING", "Сначала составьте план защиты");
     this.assertPlanMatchesWorkspace(workspace, parsed.data);
     await this.validatePlanReferences(projectId, workspace.id, parsed.data);
+    await this.assertNarrationReadiness(workspace, parsed.data);
     const repeatedConfirmation = parsed.data.status === "approved"
       && workspace.planRevision === input.expectedPlanRevision + 1;
     if (!repeatedConfirmation) this.assertPlanRevision(workspace, input.expectedPlanRevision);
@@ -1253,6 +1254,61 @@ export class DefenseService {
     }
   }
 
+  private async assertNarrationReadiness(
+    workspace: { id: string; projectId: string; analysisStatus: string },
+    plan: DefensePlan,
+  ) {
+    if (workspace.analysisStatus !== "review_ready") {
+      throw badRequest(
+        "DEFENSE_ANALYSIS_NOT_READY",
+        "Сначала завершите анализ материалов и проверьте найденные факты",
+      );
+    }
+
+    const [confirmedFacts, activeRequirements] = await Promise.all([
+      this.prisma.projectFact.count({
+        where: {
+          workspaceId: workspace.id,
+          state: "active",
+          evidence: {
+            some: {
+              OR: [
+                { confirmation: "user" },
+                {
+                  confirmation: "source",
+                  locator: { not: null },
+                  source: { is: { projectId: workspace.projectId, included: true } },
+                },
+              ],
+            },
+          },
+        },
+      }),
+      this.prisma.projectRequirement.count({ where: { workspaceId: workspace.id, state: "active" } }),
+    ]);
+    if (!confirmedFacts && !activeRequirements) {
+      throw badRequest(
+        "DEFENSE_INSUFFICIENT_EVIDENCE",
+        "В материалах пока нет подтверждённых фактов или требований. Добавьте материал и повторите анализ.",
+      );
+    }
+
+    const ungroundedSlides = plan.slides.filter((slide) =>
+      requiresProjectEvidence(slide)
+        && !slide.factIds.length
+        && !slide.requirementIds.length
+        && !slide.assetSourceIds.length
+        && !slide.placeholders.length,
+    );
+    if (ungroundedSlides.length) {
+      throw badRequest(
+        "DEFENSE_PLAN_EVIDENCE_GAP",
+        `Добавьте факт или заполнитель для разделов: ${ungroundedSlides.map((slide) => slide.order).join(", ")}`,
+        { slideOrders: ungroundedSlides.map((slide) => slide.order) },
+      );
+    }
+  }
+
   private assertPlanMatchesWorkspace(
     workspace: { targetSlideCount: number; targetDurationSeconds: number },
     plan: DefensePlan,
@@ -1309,6 +1365,11 @@ export class DefenseService {
 
 function presetVersion(defenseType: "hackathon" | "diploma") {
   return `${defenseType}-v1`;
+}
+
+function requiresProjectEvidence(slide: DefensePlan["slides"][number]) {
+  if (slide.order === 1) return false;
+  return !/(?:^|\s)(?:итог[\p{L}]*|заключени[\p{L}]*|завершени[\p{L}]*|контакт[\p{L}]*)(?:$|\s)/iu.test(`${slide.title} ${slide.purpose}`);
 }
 
 async function bumpAnalysisRevision(

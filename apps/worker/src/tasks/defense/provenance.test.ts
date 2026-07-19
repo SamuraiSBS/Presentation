@@ -20,4 +20,24 @@ describe("defense source provenance", () => {
     expect(result.chunks.map((item) => item.locator)).toEqual(["слайд 1", "слайд 2"]);
     expect(result.chunks[0].text).toBe("Первый экран");
   });
+
+  it("keeps Markdown headings, lists and fenced code in distinct stable evidence ranges", () => {
+    const chunks = chunkPlainText("source-1", [
+      "# О проекте",
+      "Сервис формирует презентации из подтверждённых материалов.",
+      "",
+      "## Возможности",
+      "- Пользователь подтверждает план до запуска речи.",
+      "",
+      "```bash",
+      "npm run test",
+      "```",
+    ].join("\n"));
+
+    expect(chunks.map((chunk) => chunk.locator)).toEqual(expect.arrayContaining([
+      expect.stringContaining("О проекте"),
+      expect.stringContaining("Возможности"),
+    ]));
+    expect(chunks.map((chunk) => chunk.text).join("\n")).toContain("npm run test");
+  });
 });

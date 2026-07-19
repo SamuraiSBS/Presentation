@@ -56,4 +56,28 @@ describe("defense plan builder", () => {
     expect(adaptive.slides[2].requirementIds).toContain("required-architecture");
     expect(adaptive.slides[3].requirementIds).not.toContain("recommended-risks");
   });
+
+  it("spreads unmatched confirmed facts across factual slides instead of piling them onto slide two", () => {
+    const plan = buildDefensePlan({
+      config: { defenseType: "diploma", complianceMode: "strict", targetSlideCount: 12, targetDurationSeconds: 600, authorProfile: {}, standardPresetVersion: "diploma-v1" },
+      presetSlides: Array.from({ length: 12 }, (_, index) => ({
+        key: `section-${index + 1}`,
+        title: index === 0 ? "Титульный слайд" : index === 11 ? "Завершение" : `Раздел защиты ${index + 1}`,
+        purpose: `Раскрыть тему раздела ${index + 1}`,
+      })),
+      requirements: [],
+      facts: Array.from({ length: 29 }, (_, index) => ({
+        id: `fact-${index + 1}`,
+        statement: `Подтверждённый факт без совпадения ${index + 1}`,
+        evidenceCount: 1,
+      })),
+      assets: [],
+      conflicts: [],
+    });
+
+    const factualLoads = plan.slides.slice(1, -1).map((slide) => slide.factIds.length);
+    expect(plan.slides[1].factIds.length).toBeLessThan(10);
+    expect(Math.max(...factualLoads) - Math.min(...factualLoads)).toBeLessThanOrEqual(1);
+    expect(plan.slides.filter((slide) => slide.factIds.length > 0)).toHaveLength(10);
+  });
 });

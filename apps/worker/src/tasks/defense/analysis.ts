@@ -95,9 +95,15 @@ export async function analyzeDefenseCandidates(
     }
   }
 
-  const parsed = raw === undefined
-    ? deterministicCandidateAnalysis(chunks)
-    : candidateAnalysisSchema.parse(raw);
+  // A provider may return syntactically valid JSON that still does not match
+  // the evidence contract (for example, facts as strings instead of objects).
+  // Do not let that malformed optional enrichment block the evidence-first
+  // workflow: fall back to literal, source-backed extraction instead.
+  const candidate = raw === undefined ? null : candidateAnalysisSchema.safeParse(raw);
+  const parsed = candidate?.success
+    ? candidate.data
+    : deterministicCandidateAnalysis(chunks);
+  if (candidate && !candidate.success) provider = "deterministic";
   const facts = parsed.facts
     .map((fact) => ({
       ...fact,

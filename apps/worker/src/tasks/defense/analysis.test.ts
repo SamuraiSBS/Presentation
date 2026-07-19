@@ -32,4 +32,13 @@ describe("defense candidate analysis", () => {
     expect(result.provider).toBe("deterministic");
     expect(result.facts[0]).toMatchObject({ evidenceChunkIds: ["source-1:0"] });
   });
+
+  it("falls back to literal extraction when a provider returns malformed facts", async () => {
+    const result = await analyzeDefenseCandidates(chunks, {
+      generate: async () => ({ facts: ["unsupported string"], requirements: [] }),
+    });
+
+    expect(result.provider).toBe("deterministic");
+    expect(result.facts[0]).toMatchObject({ evidenceChunkIds: ["source-1:0"] });
+  });
 });

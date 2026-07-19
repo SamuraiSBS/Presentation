@@ -386,9 +386,15 @@ describe("DefenseService job idempotency", () => {
         purpose: "Показать подтверждённую часть проекта",
         timingSeconds: 30,
         requirementIds: [],
-        factIds: [],
+        factIds: index === 1 ? ["fact-1"] : [],
         assetSourceIds: [],
-        placeholders: [],
+        placeholders: index === 0 ? [] : [{
+          id: `evidence-gap-${index + 1}`,
+          kind: "text" as const,
+          label: `Добавьте подтверждённый факт для раздела ${index + 1}`,
+          resolved: false as const,
+          severity: "warning" as const,
+        }],
         visualStrategy: "",
         origin: "user" as const,
       })),
@@ -397,6 +403,7 @@ describe("DefenseService job idempotency", () => {
     };
     access.requireEditor.mockResolvedValue({ project: { userId: "owner-1" }, role: "owner" });
     prisma.defenseWorkspace.findUnique.mockResolvedValue({ ...workspace, plan });
+    prisma.projectFact.count.mockResolvedValue(1);
     prisma.defenseWorkspace.updateMany.mockResolvedValue({ count: 1 });
     prisma.generationJob.findUnique.mockResolvedValue(null);
     prisma.generationJob.create.mockResolvedValue({
@@ -425,5 +432,35 @@ describe("DefenseService job idempotency", () => {
       expect.objectContaining({ projectId: "project-1", workspaceId: "workspace-1", planRevision: 2 }),
       expect.objectContaining({ jobId: "defense-narration-narration-1" }),
     );
+  });
+
+  it("rejects narration confirmation after failed analysis before it creates a job", async () => {
+    const { service, prisma, generationQueue, access } = fixture();
+    access.requireEditor.mockResolvedValue({ project: { userId: "owner-1" }, role: "owner" });
+    prisma.defenseWorkspace.findUnique.mockResolvedValue({
+      ...workspace,
+      analysisStatus: "failed",
+      plan: approvedPlan(),
+    });
+
+    await expect(service.confirmPlan("owner-1", "project-1", {
+      expectedAnalysisRevision: 3,
+      expectedPlanRevision: 1,
+    })).rejects.toThrow("Сначала завершите анализ");
+    expect(generationQueue.add).not.toHaveBeenCalled();
+  });
+
+  it("rejects an evidence-free plan before it queues narration", async () => {
+    const { service, prisma, generationQueue, access } = fixture();
+    access.requireEditor.mockResolvedValue({ project: { userId: "owner-1" }, role: "owner" });
+    prisma.defenseWorkspace.findUnique.mockResolvedValue({ ...workspace, plan: approvedPlan() });
+    prisma.projectFact.count.mockResolvedValue(0);
+    prisma.projectRequirement.count.mockResolvedValue(0);
+
+    await expect(service.confirmPlan("owner-1", "project-1", {
+      expectedAnalysisRevision: 3,
+      expectedPlanRevision: 1,
+    })).rejects.toThrow("пока нет подтверждённых фактов или требований");
+    expect(generationQueue.add).not.toHaveBeenCalled();
   });
 });

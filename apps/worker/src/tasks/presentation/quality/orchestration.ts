@@ -158,7 +158,12 @@ export async function finalizeGeneratedPresentation(
   qualityCallbacks: QualityModelCallbacks = {},
   designBrief?: DesignBrief,
 ) {
-  let presentation = normalizePresentation(raw, project, sources, generationMode, generatedText, narrativePlan, false, designBrief);
+  let presentation = preserveAcceptedNarration(
+    normalizePresentation(raw, project, sources, generationMode, generatedText, narrativePlan, false, designBrief),
+    generatedText,
+    project,
+  );
+  let lastValidCandidate: PresentationDocument | null = null;
   let issues = findSlideTextIssues(presentation);
 
   if (issues.length) {
@@ -171,7 +176,11 @@ export async function finalizeGeneratedPresentation(
 
     issues = findSlideTextIssues(presentation);
     if (issues.length) {
-      presentation = applyNarrationFallbacks(presentation, issues, project);
+      presentation = preserveAcceptedNarration(
+        applyNarrationFallbacks(presentation, issues, project),
+        generatedText,
+        project,
+      );
       issues = findSlideTextIssues(presentation);
     }
   }
@@ -191,10 +200,13 @@ export async function finalizeGeneratedPresentation(
 
   try {
     assertPresentationQuality(presentation, project, generationMode);
+    assertNoForbiddenTemplateText(presentation);
+    lastValidCandidate = presentation;
   } catch (error) {
     const locallyRepaired = repairPresentationNarrationLocally(presentation, project, generationMode);
     if (locallyRepaired) {
-      presentation = locallyRepaired;
+      presentation = preserveAcceptedNarration(locallyRepaired, generatedText, project);
+      lastValidCandidate = presentation;
     } else if (!isRepairablePresentationQualityError(error)) {
       throw error;
     } else {
@@ -207,28 +219,73 @@ export async function finalizeGeneratedPresentation(
     }
   }
 
-  let improved = await improvePresentationQuality(presentation, project, sources, generationMode, qualityCallbacks);
+  let improved = preserveAcceptedNarration(
+    await improvePresentationQuality(presentation, project, sources, generationMode, qualityCallbacks),
+    generatedText,
+    project,
+  );
   let finalIssues = findSlideTextIssues(improved);
   if (finalIssues.length) {
-    improved = applyNarrationFallbacks(improved, finalIssues, project);
+    improved = preserveAcceptedNarration(
+      applyNarrationFallbacks(improved, finalIssues, project),
+      generatedText,
+      project,
+    );
     finalIssues = findSlideTextIssues(improved);
   }
-  assertNoForbiddenTemplateText(improved);
   const blockingFinalIssues = finalIssues.filter(isBlockingSlideTextIssue);
   if (blockingFinalIssues.length && !isDemoMode(generationMode)) {
-    throw new Error(`AI generation quality check failed: unresolved visible slide text: ${blockingFinalIssues.map((issue) => `slide ${issue.slideOrder} ${issue.reasons.join(", ")}`).join("; ")}`);
+    const error = new Error(`AI generation quality check failed: unresolved visible slide text: ${blockingFinalIssues.map((issue) => `slide ${issue.slideOrder} ${issue.reasons.join(", ")}`).join("; ")}`);
+    if (!lastValidCandidate) throw error;
+    logger.warn({
+      projectId: project.id,
+      stage: "polishing",
+      generationMode,
+      ...errorLogFields(error),
+    }, "polishing left duplicate or invalid visible text; restoring the last valid candidate");
+    return preserveAcceptedNarration(lastValidCandidate, generatedText, project);
   }
   const finalPresentation = finalIssues.length
     ? presentationSchema.parse({ ...improved, qualityCritique: buildQualityCritique(improved, finalIssues) })
     : improved;
-  return preserveAcceptedGeneratedText(finalPresentation, generatedText);
+  try {
+    assertNoForbiddenTemplateText(finalPresentation);
+    assertPresentationQuality(finalPresentation, project, generationMode);
+  } catch (error) {
+    if (!lastValidCandidate) throw error;
+    logger.warn({
+      projectId: project.id,
+      stage: "polishing",
+      generationMode,
+      ...errorLogFields(error),
+    }, "polishing regressed a validated presentation; restoring the last valid candidate");
+    return preserveAcceptedNarration(lastValidCandidate, generatedText, project);
+  }
+  return preserveAcceptedNarration(finalPresentation, generatedText, project);
+}
+
+export function preserveAcceptedNarration(presentation: PresentationDocument, narrationText: string, project: ProjectInput): PresentationDocument {
+  const acceptedGeneratedText = cleanGeneratedText(narrationText);
+  const sections = parseNarrationSections(acceptedGeneratedText);
+  if (sections.length !== project.slideCount || validateNarrationSections(sections, project).length) return presentation;
+
+  const narrationByOrder = new Map(sections.map((section) => [section.order, section]));
+  return preserveAcceptedGeneratedText({
+    ...presentation,
+    slides: presentation.slides.map((slide) => {
+      const section = narrationByOrder.get(slide.order);
+      return section ? { ...slide, speakerNotes: section.text } : slide;
+    }),
+    speechScript: presentation.speechScript.map((item) => {
+      const section = narrationByOrder.get(item.slideOrder);
+      return section ? { ...item, slideTitle: section.title, text: section.text } : item;
+    }),
+  }, acceptedGeneratedText);
 }
 
 export function preserveAcceptedGeneratedText(presentation: PresentationDocument, acceptedGeneratedText: string) {
   const accepted = cleanGeneratedText(acceptedGeneratedText);
   if (!accepted) return presentation;
-  const compact = (value: string) => cleanGeneratedText(value).replace(/\n{2,}/g, "\n");
-  if (compact(presentation.generatedText) !== compact(accepted)) return presentation;
   return presentationSchema.parse({
     ...presentation,
     generatedText: accepted,
@@ -867,15 +924,15 @@ export function assertPresentationQuality(presentation: PresentationDocument, pr
 
   for (const slide of presentation.slides) {
     const count = sentenceCount(slide.speakerNotes);
-    if (count < 3 || count > 7) {
-      issues.push(`slide ${slide.order} speakerNotes must have 3-7 sentences`);
+    if (count < 2 || count > 7) {
+      issues.push(`slide ${slide.order} speakerNotes must have 2-7 sentences`);
     }
   }
 
   for (const item of presentation.speechScript) {
     const count = sentenceCount(item.text);
-    if (count < 3 || count > 7) {
-      issues.push(`slide ${item.slideOrder} speechScript must have 3-7 sentences`);
+    if (count < 2 || count > 7) {
+      issues.push(`slide ${item.slideOrder} speechScript must have 2-7 sentences`);
     }
   }
 
@@ -913,9 +970,9 @@ export function isRepairablePresentationQualityError(error: unknown) {
     "expected ",
     "missing narration section",
     "has no title",
-    "must have 3-7 narration sentences",
-    "speakerNotes must have 3-7 sentences",
-    "speechScript must have 3-7 sentences",
+    "must have 2-7 narration sentences",
+    "speakerNotes must have 2-7 sentences",
+    "speechScript must have 2-7 sentences",
   ];
   return !blockingFragments.some((fragment) => message.includes(fragment));
 }

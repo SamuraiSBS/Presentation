@@ -40,7 +40,10 @@ export async function extractSourceWithProvenance(input: {
 }
 
 export function chunkPlainText(sourceId: string, value: string, maxLength = 1400): ProvenanceChunk[] {
-  const paragraphs = String(value || "").replace(/\r/g, "").split(/\n{2,}/).map(cleanText).filter(Boolean);
+  const normalized = String(value || "").replace(/\r/g, "").trim();
+  if (hasMarkdownStructure(normalized)) return chunkStructuredMarkdown(sourceId, normalized, maxLength);
+
+  const paragraphs = normalized.split(/\n{2,}/).map(cleanText).filter(Boolean);
   const chunks: ProvenanceChunk[] = [];
   let current = "";
   let startParagraph = 1;
@@ -64,6 +67,83 @@ export function chunkPlainText(sourceId: string, value: string, maxLength = 1400
     current = current ? `${current}\n\n${paragraph}` : paragraph;
   });
   flush(paragraphs.length);
+  return chunks;
+}
+
+function hasMarkdownStructure(value: string) {
+  return /^(?:#{1,6}\s+|[-*+]\s+|```)/m.test(value);
+}
+
+function chunkStructuredMarkdown(sourceId: string, value: string, maxLength: number): ProvenanceChunk[] {
+  const blocks: Array<{ heading: string; startLine: number; endLine: number; text: string }> = [];
+  const lines = value.split("\n");
+  let heading = "";
+  let blockLines: string[] = [];
+  let startLine = 1;
+  let fenced = false;
+
+  const flush = (endLine: number) => {
+    const text = cleanText(blockLines.join("\n"));
+    if (text) blocks.push({ heading, startLine, endLine, text });
+    blockLines = [];
+  };
+
+  lines.forEach((line, index) => {
+    const lineNumber = index + 1;
+    const headingMatch = line.match(/^#{1,6}\s+(.+)$/);
+    if (headingMatch && !fenced) {
+      flush(lineNumber - 1);
+      heading = cleanText(headingMatch[1]);
+      startLine = lineNumber + 1;
+      return;
+    }
+    if (/^```/.test(line.trim())) {
+      if (blockLines.length) flush(lineNumber - 1);
+      fenced = !fenced;
+      blockLines = [line];
+      startLine = lineNumber;
+      if (!fenced) flush(lineNumber);
+      startLine = lineNumber + 1;
+      return;
+    }
+    if (!blockLines.length) startLine = lineNumber;
+    if (!line.trim() && !fenced) {
+      flush(lineNumber - 1);
+      startLine = lineNumber + 1;
+      return;
+    }
+    blockLines.push(line);
+  });
+  flush(lines.length);
+
+  return blocks.flatMap((block) => splitStructuredBlock(sourceId, block, maxLength));
+}
+
+function splitStructuredBlock(
+  sourceId: string,
+  block: { heading: string; startLine: number; endLine: number; text: string },
+  maxLength: number,
+): ProvenanceChunk[] {
+  const locator = block.heading
+    ? `раздел «${block.heading}», строки ${block.startLine}–${block.endLine}`
+    : `строки ${block.startLine}–${block.endLine}`;
+  const words = block.text.split(/\s+/).filter(Boolean);
+  const chunks: ProvenanceChunk[] = [];
+  let current: string[] = [];
+  let length = 0;
+  const flush = () => {
+    const text = current.join(" ");
+    if (text) chunks.push({ sourceId, locator, excerpt: text.slice(0, 360), text });
+    current = [];
+    length = 0;
+  };
+
+  for (const word of words) {
+    if (current.length && length + word.length + 1 > maxLength) flush();
+    current.push(word);
+    length += word.length + (current.length > 1 ? 1 : 0);
+  }
+  flush();
   return chunks;
 }
 

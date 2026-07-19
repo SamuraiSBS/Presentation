@@ -17,7 +17,9 @@ import { generatePresentation as generatePresentationFromOrchestrator } from "./
 import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./presentation/prompts/builders.js";
 import { normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
 import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
+import { applyNarrationFallbacks } from "./presentation/quality/orchestration.js";
 import { normalizeLayout as normalizeLayoutFromLayer } from "./presentation/normalization/presentation.js";
+import { normalizeNarrationText } from "./presentation/narration/processing.js";
 
 const originalEnv = { ...process.env };
 const forbiddenNarrationFragments = [
@@ -85,12 +87,116 @@ afterEach(() => {
 });
 
 describe("presentation compatibility facade", () => {
+  it("accepts a substantive two-sentence narration section", () => {
+    const narration = normalizeNarrationText(
+      [
+        "Слайд 1: Цель защиты",
+        "StudyDeck AI объединяет тему, источники и структуру презентации в один рабочий процесс для студента. На защите это позволяет последовательно объяснить замысел проекта, показать его функции и обосновать практическую ценность выбранного решения.",
+      ].join("\n"),
+      {
+        id: "project-short-narration",
+        title: "Защита StudyDeck AI",
+        prompt: "Подготовить защиту StudyDeck AI",
+        scenario: "university_report",
+        level: "university",
+        mode: "with_sources",
+        slideCount: 1,
+      },
+    );
+
+    const body = narration.split("\n").slice(1).join(" ");
+    expect(sentenceCount(body)).toBe(2);
+    expect(sentenceCount(body)).toBeLessThanOrEqual(7);
+  });
+
+  it("replaces a fragment-only narration section with a complete script", () => {
+    const narration = normalizeNarrationText(
+      ["Слайд 1: Спасибо", "Спасибо."].join("\n"),
+      {
+        id: "project-fragment-narration",
+        title: "Защита StudyDeck AI",
+        prompt: "Подготовить защиту StudyDeck AI",
+        scenario: "university_report",
+        level: "university",
+        mode: "with_sources",
+        slideCount: 1,
+      },
+    );
+
+    const body = narration.split("\n").slice(1).join(" ");
+    expect(sentenceCount(body)).toBeGreaterThanOrEqual(2);
+    expect(body.split(/\s+/).filter(Boolean).length).toBeGreaterThanOrEqual(25);
+    expect(body).not.toBe("Спасибо.");
+  });
+
   it("keeps public generation, planning, quality, and layout exports stable", () => {
     expect(generatePresentation).toBe(generatePresentationFromOrchestrator);
     expect(buildGenerationPrompt).toBe(buildGenerationPromptFromLayer);
     expect(normalizeNarrativePlan).toBe(normalizeNarrativePlanFromLayer);
     expect(findSlideTextIssues).toBe(findSlideTextIssuesFromLayer);
     expect(normalizeLayout).toBe(normalizeLayoutFromLayer);
+  });
+
+  it("repairs duplicated visible text on one slide without changing the rest of the deck", () => {
+    const project = {
+      id: "project-local-slide-repair",
+      title: "Защита StudyDeck AI",
+      prompt: "Подготовить связную защиту StudyDeck AI для студента.",
+      scenario: "project_defense",
+      level: "university",
+      mode: "fast_draft",
+      slideCount: 12,
+    };
+    const titles = Array.from({ length: 12 }, (_, index) => `Тема защиты ${index + 1}`);
+    const generated = presentationSchema.parse({
+      id: "presentation-local-slide-repair",
+      title: project.title,
+      scenario: project.scenario,
+      level: project.level,
+      slideCount: 12,
+      generationMode: "demo",
+      generatedText: titles.map((title, index) => [
+        `Слайд ${index + 1}: ${title}`,
+        `Раздел ${index + 1} объясняет отдельный подтверждённый аспект проекта. Пример для раздела ${index + 1} показывает практический смысл этой части. Вывод раздела ${index + 1} остаётся связанным с темой защиты.`,
+      ].join("\n")).join("\n\n"),
+      sources: [],
+      outline: titles,
+      narrativePlan: [],
+      speechScript: titles.map((title, index) => ({
+        slideOrder: index + 1,
+        slideTitle: title,
+        text: `Раздел ${index + 1} объясняет отдельный подтверждённый аспект проекта. Пример для раздела ${index + 1} показывает практический смысл этой части. Вывод раздела ${index + 1} остаётся связанным с темой защиты.`,
+      })),
+      slides: titles.map((title, index) => ({
+        id: `local-slide-${index + 1}`,
+        order: index + 1,
+        title,
+        layout: index === 0 ? "hero" : index === 11 ? "summary" : "bullets",
+        thesis: `Подтверждённый аспект проекта для темы ${index + 1}.`,
+        bullets: [`Практическая деталь темы ${index + 1}.`, `Отдельный вывод темы ${index + 1}.`],
+        blocks: [{ type: "bullets" as const, items: [`Практическая деталь темы ${index + 1}.`, `Отдельный вывод темы ${index + 1}.`] }],
+        speakerNotes: `Раздел ${index + 1} объясняет отдельный подтверждённый аспект проекта. Пример для раздела ${index + 1} показывает практический смысл этой части. Вывод раздела ${index + 1} остаётся связанным с темой защиты.`,
+        timingSeconds: 30,
+        sourceRefs: [],
+      })),
+    });
+    const duplicated = presentationSchema.parse({
+      ...generated,
+      slides: generated.slides.map((slide) => slide.order === 12
+        ? { ...slide, bullets: [slide.thesis, slide.thesis], blocks: [{ type: "bullets" as const, items: [slide.thesis, slide.thesis] }] }
+        : slide),
+    });
+    const issues = findSlideTextIssuesFromLayer(duplicated);
+    expect(issues).toContainEqual(expect.objectContaining({
+      slideOrder: 12,
+      reasons: expect.arrayContaining(["visible text is duplicated"]),
+    }));
+
+    const repaired = applyNarrationFallbacks(duplicated, issues, project);
+
+    expect(repaired.slides.slice(0, 11)).toEqual(duplicated.slides.slice(0, 11));
+    expect(findSlideTextIssuesFromLayer(repaired).find((issue) => issue.slideOrder === 12)?.reasons || [])
+      .not.toContain("visible text is duplicated");
   });
 });
 
@@ -310,7 +416,7 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("semantic and memorable");
     expect(prompt).toContain("keyConcepts: return an empty array");
     expect(prompt).toContain("highlights: return an empty array");
-    expect(prompt).toContain("3-7 sentence");
+    expect(prompt).toContain("2-7 sentence");
     expect(prompt).toContain("generatedText");
     expect(prompt).toContain("Do not generate a separate second story");
     expect(prompt).toContain("Do not write long text blocks");
@@ -1403,7 +1509,7 @@ describe("generatePresentation fallback behavior", () => {
           },
           [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Narration repair keeps each section concise and specific." }],
         ),
-      ).rejects.toThrow("must have 3-7 narration sentences");
+      ).rejects.toThrow("must have 2-7 narration sentences");
     } finally {
       global.fetch = originalFetch;
     }

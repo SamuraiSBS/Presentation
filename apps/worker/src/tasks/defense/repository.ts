@@ -118,7 +118,10 @@ async function downloadRepositoryFiles(
   const documents: RepositoryDocument[] = [];
   let totalBytes = 0;
   for (const item of items) {
-    if (!item.url || !isRepositoryDocumentPath(item.path)) continue;
+    // The repository listing has already limited this collection to README
+    // and docs entries.  A root README is allowed to be extensionless, so do
+    // not discard it with the generic extension filter at download time.
+    if (!item.url || !isRepositoryDocument(item.path)) continue;
     const response = await fetchWithLimits(item.url, fetchImpl, limits, item.headers);
     const length = Number(response.headers.get("content-length") || 0);
     if (length > limits.maxFileBytes) throw new Error("Repository document exceeds the size limit");
@@ -177,6 +180,12 @@ function isRepositoryDocumentPath(value: string) {
   const segments = normalized.toLowerCase().split("/");
   const filename = segments.at(-1) || "";
   return /^readme(?:\.|$)/i.test(filename) || segments[0] === "docs" || segments[0] === "documentation";
+}
+
+function isRepositoryDocument(value: string) {
+  const normalized = String(value || "").replace(/\\/g, "/");
+  const filename = normalized.split("/").at(-1) || "";
+  return /^readme$/i.test(filename) || isRepositoryDocumentPath(normalized);
 }
 
 type GitHubContent = { type: "file" | "dir"; name: string; path: string; url: string; download_url?: string | null };

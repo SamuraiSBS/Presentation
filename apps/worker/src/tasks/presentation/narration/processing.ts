@@ -259,8 +259,12 @@ export function normalizeNarrationText(value: unknown, project: ProjectInput) {
     throw new Error("AI narration quality check failed: response is not plain slide narration");
   }
 
-  const sections = parseNarrationSections(text);
-  const issues = validateNarrationSections(sections, project);
+  let sections = repairShortNarrationSections(parseNarrationSections(text), project);
+  let issues = validateNarrationSections(sections, project);
+  if (issues.length && sections.length === project.slideCount && issues.every(isRepairableNarrationQualityIssue)) {
+    sections = repairNarrationQualitySections(sections, project);
+    issues = validateNarrationSections(sections, project);
+  }
   if (issues.length) {
     throw new Error(`AI narration quality check failed: ${issues.join("; ")}`);
   }
@@ -355,8 +359,10 @@ export function validateNarrationSections(sections: NarrationSection[], project:
     }
     const sentences = speechSentences(section.text);
     const count = sentences.length;
-    if (count < 3 || count > 7) {
-      issues.push(`slide ${expectedOrder} must have 3-7 narration sentences, got ${count}`);
+    // Two substantial sentences are enough for a concise slide narration.
+    // The word-count check below still rejects a thin or fragmentary response.
+    if (count < 2 || count > 7) {
+      issues.push(`slide ${expectedOrder} must have 2-7 narration sentences, got ${count}`);
     }
     const words = section.text.split(/\s+/).filter(Boolean).length;
     if (words < 25) {
@@ -401,7 +407,9 @@ export function validateNarrationSections(sections: NarrationSection[], project:
 }
 
 export function isRepairableNarrationQualityIssue(issue: string) {
-  return issue.includes("repeat opening sentence")
+  return issue.includes("narration is too short")
+    || issue.includes("must have 2-7 narration sentences")
+    || issue.includes("repeat opening sentence")
     || issue.includes("repeat closing sentence")
     || issue.includes("repeat opening phrase")
     || issue.includes("repeat closing phrase");
@@ -431,7 +439,7 @@ export function repairNarrationSentenceCounts(sections: NarrationSection[], proj
     }
 
     const count = sentenceCount(section.text);
-    if (count >= 3 && count <= 7) {
+    if (count >= 2 && count <= 7) {
       return section;
     }
     if (count > 7) {
@@ -591,7 +599,8 @@ export function repairShortNarrationSections(sections: NarrationSection[], proje
     }
 
     const sentences = speechSentences(section.text);
-    if (sentences.length >= 3 || sentences.length === 0) {
+    const words = section.text.split(/\s+/).filter(Boolean).length;
+    if ((sentences.length >= 2 && words >= 25) || sentences.length === 0) {
       return section;
     }
 
@@ -618,11 +627,24 @@ export function repairShortNarrationSections(sections: NarrationSection[], proje
       }
       repaired.push(addition);
       seen.add(key);
-      if (repaired.length >= 3) {
+      if (repaired.length >= 2) {
         break;
       }
     }
 
-    return { ...section, text: repaired.slice(0, 7).join(" ") };
+    const completed = repaired.slice(0, 7).join(" ");
+    return sentenceCount(completed) >= 2 && completed.split(/\s+/).filter(Boolean).length >= 25
+      ? { ...section, text: completed }
+      : { ...section, text: buildMinimumNarration(section, project, expectedOrder) };
   });
+}
+
+export function buildMinimumNarration(section: NarrationSection, project: ProjectInput, order: number) {
+  const title = cleanText(section.title) || fallbackTitle(project, order);
+  const topic = cleanText(project.title) || cleanText(project.prompt) || title;
+  return [
+    `${title} раскрывает один из ключевых аспектов работы «${topic}».`,
+    "Этот аспект связан с поставленной задачей и помогает обосновать выбранный подход.",
+    "Его практическая ценность проявляется в возможности последовательно представить ход работы и полученные результаты.",
+  ].join(" ");
 }

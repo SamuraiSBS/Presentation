@@ -713,17 +713,17 @@ export function applyQualityRepairs(presentation: PresentationDocument, rawRepai
           bullets: Array.isArray(repair.bullets) ? repair.bullets.map(cleanText).filter(Boolean).slice(0, 5) : slide.bullets,
           blocks: Array.isArray(repair.blocks) ? repair.blocks : slide.blocks,
           visual: repair.visual ? { ...slide.visual, ...repair.visual } : slide.visual,
-          speakerNotes: cleanText(repair.speakerNotes) || slide.speakerNotes,
+          // The accepted narration is the canonical, evidence-reviewed speech.
+          // Polishing may improve visible slide content, but must never replace it.
+          speakerNotes: slide.speakerNotes,
           sourceRefs: Array.isArray(repair.sourceRefs) ? repair.sourceRefs : slide.sourceRefs,
         };
       })
     : presentation.slides;
 
-  const requestedSpeechScript = Array.isArray(response.speechScript) ? response.speechScript : [];
   const speechScript = presentation.speechScript.map((item) => {
     const slide = slides.find((candidate) => candidate.order === item.slideOrder);
-    const requested = requestedSpeechScript.find((candidate: any) => Number(candidate?.slideOrder) === item.slideOrder);
-    return slide ? { ...item, ...(requested || {}), slideOrder: item.slideOrder, slideTitle: slide.title, text: slide.speakerNotes } : item;
+    return slide ? { ...item, slideOrder: item.slideOrder, slideTitle: slide.title, text: slide.speakerNotes } : item;
   });
   const repairedGeneratedText = cleanMultilineText(response.generatedText);
   const generatedText = keepsExpectedNarrationSections(repairedGeneratedText, presentation)

@@ -3,6 +3,7 @@ import { presentationSchema } from "@studydeck/shared";
 import {
   applyDefenseGroundingToPresentation,
   assertDefensePresentation,
+  assertDefenseNarrationReadiness,
   buildDefenseGroundingBundle,
   buildDefenseNarrationText,
   defenseGroundingSource,
@@ -39,7 +40,10 @@ describe("defense grounding", () => {
     const grounded = applyDefenseGroundingToPresentation(fixturePresentation(), bundle, workspace.project.sources);
     expect(grounded.slides[0].placeholders).toHaveLength(1);
     expect(grounded.slides[1].timingSeconds).toBe(20);
-    expect(grounded.slides[1].thesis).toBe("Сценарий проверен на 12 пользователях");
+    expect(grounded.slides[1].thesis).toBe("Содержание раздела 2");
+    expect(grounded.slides[1].speakerNotes).toBe("Речь для раздела 2.");
+    expect(grounded.generatedText).toBe("Черновик речи");
+    expect(grounded.speechScript[1].text).toBe("Речь для раздела 2.");
     expect(grounded.slides[1].sourceRefs[0]).toMatchObject({ sourceId: "source-spec", page: "стр. 2" });
     expect(grounded.slides[1].visual.image).toMatchObject({
       objectKey: "projects/project-1/screens/dashboard.png",
@@ -92,6 +96,24 @@ describe("defense grounding", () => {
     expect(bundle.facts.find((fact) => fact.id === "fact-user-confirmed")?.evidence).toEqual([
       expect.objectContaining({ confirmation: "user", confirmedById: "user-1" }),
     ]);
+  });
+
+  it("blocks narration when the approved plan has no facts or requirements to ground it", () => {
+    const workspace = fixtureWorkspace();
+    workspace.facts = [];
+    workspace.requirements = [];
+    const plan = workspace.plan as unknown as { slides: Array<{ factIds: string[]; requirementIds: string[] }> };
+    workspace.plan = {
+      ...plan,
+      slides: plan.slides.map((slide) => ({
+        ...slide,
+        factIds: [],
+        requirementIds: [],
+      })),
+    } as never;
+
+    const bundle = buildDefenseGroundingBundle(workspace);
+    expect(() => assertDefenseNarrationReadiness(bundle)).toThrow("insufficient evidence");
   });
 });
 

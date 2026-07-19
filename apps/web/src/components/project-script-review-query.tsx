@@ -37,6 +37,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
   const updateSource = useUpdateSourceReview(project.id);
   const canEdit = project.accessRole !== "viewer";
   const draft = useMemo(() => serializeSpeechSections(sections), [sections]);
+  const hasSavedSpeechDraft = Boolean(project.speechDraft?.trim());
   const isTextReady = project.status === "script_ready" || project.status === "ready" || Boolean(project.speechDraft);
   const isWaitingForText = project.status === "script_queued" || project.status === "script_generating";
   const isFinalGeneration = project.status === "queued" || project.status === "generating";
@@ -198,7 +199,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
         </>
       ) : null}
 
-      {project.status === "failed" ? <section className="panel script-error-panel" role="alert"><h2>Шаг не завершён</h2><p className="muted">{project.error ? userError(new Error(project.error), "AI-провайдер не завершил запрос. Проверьте баланс и повторите действие.") : "AI-провайдер не завершил запрос. Проверьте баланс и повторите действие."}</p>{canEdit ? (draft ? <AiConfirmation title="Повторить AI-сборку слайдов?" description="Повтор создаст новый платный запрос к AI-провайдеру." confirmLabel="Повторить платный запрос" pending={acceptSpeech.isPending} onConfirm={acceptAndGenerate} /> : <AiConfirmation title="Повторить AI-подготовку текста?" description="Повтор создаст новый платный запрос к AI-провайдеру." confirmLabel="Повторить платный запрос" pending={startNarration.isPending} onConfirm={startText} />) : null}</section> : null}
+      {project.status === "failed" ? <section className="panel script-error-panel" role="alert"><h2>Шаг не завершён</h2><p className="muted">{project.error ? userError(new Error(project.error), "AI-провайдер не завершил запрос. Проверьте баланс и повторите действие.") : "AI-провайдер не завершил запрос. Проверьте баланс и повторите действие."}</p>{canEdit ? (project.workflow === "requirements_driven" ? <Button asChild><Link href={`/projects/${project.id}/defense/plan`}><ShieldCheck size={18} />Открыть подтверждённый план защиты</Link></Button> : hasSavedSpeechDraft ? <AiConfirmation title="Повторить AI-сборку слайдов?" description="Повтор создаст новый платный запрос к AI-провайдеру." confirmLabel="Повторить платный запрос" pending={acceptSpeech.isPending} onConfirm={acceptAndGenerate} /> : <AiConfirmation title="Повторить AI-подготовку текста?" description="Повтор создаст новый платный запрос к AI-провайдеру." confirmLabel="Повторить платный запрос" pending={startNarration.isPending} onConfirm={startText} />) : null}</section> : null}
       {actionError ? <p className="form-error" role="alert">{actionError}</p> : null}
     </section>
   );
@@ -233,6 +234,9 @@ function statusLabel(status: string, canEdit: boolean) {
 }
 
 function userError(error: unknown, fallback: string) {
+  if (error instanceof Error && /AI narration quality check failed/i.test(error.message)) {
+    return "AI подготовил неполный текст выступления. Мы не смогли автоматически исправить его; повторите генерацию.";
+  }
   if (error instanceof Error && /[А-Яа-яЁё]/.test(error.message) && !/<[^>]+>|\b(?:error|failed|invalid|internal)\b/i.test(error.message)) return error.message;
   return fallback;
 }

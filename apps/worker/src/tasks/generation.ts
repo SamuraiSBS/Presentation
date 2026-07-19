@@ -25,8 +25,8 @@ import {
 import {
   applyDefenseGroundingToPresentation,
   assertDefensePresentation,
+  assertDefenseNarrationReadiness,
   buildDefenseGroundingBundle,
-  buildDefenseNarrationText,
   defenseGroundingSource,
   prepareDefenseGenerationProject,
   type DefenseGroundingWorkspaceRow,
@@ -119,6 +119,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     const defenseBundle = project.workflow === "requirements_driven"
       ? buildDefenseGroundingBundle(project.defenseWorkspace as DefenseGroundingWorkspaceRow)
       : null;
+    if (defenseBundle) assertDefenseNarrationReadiness(defenseBundle);
     const generationProject = defenseBundle ? prepareDefenseGenerationProject(project, defenseBundle) : project;
     await setStage("researching");
     const sources = await withTraceSpan("generation.research", {
@@ -141,11 +142,14 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       }, () => generateNarrationDraft(generationProject, sources), traceContext);
       finishStage("drafting_speech");
       await setStage("saving");
-      const narrationText = defenseBundle ? buildDefenseNarrationText(defenseBundle) : draft.text;
       await prisma.project.update({
         where: { id: projectId },
         data: {
-          speechDraft: narrationText,
+          // The approved defense plan and its confirmed facts are already
+          // supplied to the model through generationProject and sources. Do
+          // not replace the completed narration with the plan's technical
+          // requirements after generation.
+          speechDraft: draft.text,
           speechDraftUpdatedAt: new Date(),
           status: "script_ready",
           error: null,
