@@ -151,7 +151,6 @@
   grid-template-columns: minmax(0, 0.92fr) minmax(30rem, 1.08fr);
   align-items: stretch;
   gap: clamp(2rem, 5vw, 5rem);
-  min-height: min(46rem, calc(100dvh - 6rem));
   overflow: hidden;
   border-radius: min(1.5rem, 4vw);
   padding: clamp(1.5rem, 5vw, 4.5rem);
@@ -255,6 +254,7 @@
   display: grid;
   align-content: start;
   gap: clamp(0.875rem, 2vw, 1.25rem);
+  margin: 0;
   min-width: 0;
   padding: clamp(0.875rem, 2vw, 1.25rem);
   border-radius: 1rem;
@@ -404,7 +404,7 @@
 
 .hero-demo-slide-stack {
   position: relative;
-  align-self: stretch;
+  align-self: center;
   min-width: 0;
   min-height: 13.5rem;
 }
@@ -1150,8 +1150,6 @@
   .landing-page { padding-top: 1rem; }
 
   .landing-hero {
-    height: calc(100dvh - 5.75rem);
-    min-height: 0;
     gap: clamp(1.25rem, 3vw, 2.5rem);
     padding: clamp(1.25rem, 3vw, 2rem);
   }
@@ -1166,6 +1164,81 @@
   .landing-hero-actions { margin-top: 1.25rem; }
   .hero-generation-demo { gap: 0.75rem; padding: 0.875rem; }
   .hero-demo-canvas { min-height: min(21rem, calc(100dvh - 17rem)); padding: 0.75rem; }
+}
+
+@media (min-width: 48.0625rem) {
+  .landing-hero {
+    height: calc(100dvh - 4.5rem - clamp(2rem, 6vw, 6rem));
+    min-height: 0;
+  }
+
+  .hero-generation-demo { align-self: center; }
+}
+
+@media (min-width: 48.0625rem) and (max-height: 56rem) {
+  .landing-hero { height: calc(100dvh - 6.5rem); }
+}
+
+@media (min-width: 68.0625rem) {
+  .landing-hero {
+    padding: 4.5rem;
+  }
+
+  .landing-hero-copy {
+    position: relative;
+    bottom: 0;
+    justify-content: space-between;
+  }
+
+  .hero-generation-demo {
+    position: static;
+    bottom: auto;
+    align-self: stretch;
+    height: 100%;
+    box-sizing: border-box;
+  }
+
+  .landing-hero h1 {
+    font-size: clamp(3rem, 4.85vw, 4.25rem);
+  }
+
+  .landing-hero-lead { margin-top: 1.25rem; }
+  .landing-hero-path { margin-top: 1.5rem; }
+  .landing-hero-actions { margin-top: 1.5rem; }
+
+  .hero-demo-slide-stack {
+    bottom: clamp(1.5rem, 3vw, 3.5rem);
+  }
+}
+
+@media (min-width: 68.0625rem) and (max-height: 50rem) {
+  .landing-hero {
+    padding: 1.5rem;
+  }
+
+  .landing-hero-copy {
+    bottom: 0.5rem;
+    justify-content: center;
+  }
+
+  .hero-generation-demo {
+    position: relative;
+    bottom: 0.4375rem;
+    align-self: center;
+    height: auto;
+  }
+
+  .landing-hero h1 {
+    font-size: clamp(3rem, 4.3vw, 4rem);
+  }
+
+  .landing-hero-lead { margin-top: 1rem; }
+  .landing-hero-path { margin-top: 1rem; }
+  .landing-hero-actions { margin-top: 1.25rem; }
+}
+
+@media (min-width: 68.0625rem) and (min-height: 56.0625rem) {
+  .hero-demo-canvas { min-height: 29.75rem; }
 }
 
 .landing-final-cta-speech-sheet > span { display: flex; align-items: center; gap: 0.375rem; color: #5b2bc1; font-size: 0.75rem; font-weight: 900; }
