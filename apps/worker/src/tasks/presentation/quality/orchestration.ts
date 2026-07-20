@@ -430,7 +430,7 @@ export async function critiquePresentationQualityWithYandex(
     apiKey,
     QUALITY_CRITIC_SYSTEM_PROMPT,
     buildQualityCriticPrompt(presentation, deterministic),
-    { jsonSchema: qualityCritiqueJsonSchema },
+    { jsonSchema: qualityCritiqueJsonSchema, modelTier: "economy" },
   );
   return qualityCritiqueSchema.parse(parseJsonText(outputText));
 }

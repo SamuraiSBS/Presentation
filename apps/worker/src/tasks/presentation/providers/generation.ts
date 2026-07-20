@@ -106,6 +106,7 @@ type GenerateStructuredOptions<T> = {
   strict?: boolean;
   maxAttempts?: number;
   temperature?: number;
+  yandexModelTier?: YandexModelTier;
 };
 
 type GenerateAndValidateOptions<T> = {
@@ -143,6 +144,7 @@ import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, Q
 import { buildResearchBrief, buildDesignBrief, logStructuredGenerationValidationFailure, buildDeckStory, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "../planning/builders.js";
 import { shouldRetryNarration, requestYandexText, normalizeNarrationText } from "../narration/processing.js";
 import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildGenerationPrompt } from "../prompts/builders.js";
+import type { YandexModelTier } from "../prompts/builders.js";
 import { ensureDesignBriefDirections } from "../normalization/presentation.js";
 import { finalizeGeneratedPresentation, repairSlideTextWithOpenAI, repairSlideTextWithYandex, critiquePresentationQualityWithOpenAI, critiquePresentationQualityWithYandex, repairPresentationQualityWithOpenAI, repairPresentationQualityWithYandex } from "../quality/orchestration.js";
 import { parseJsonText } from "../utilities.js";
@@ -398,6 +400,7 @@ export async function generateNarrativePlanWithProvider(
     schemaName: "studydeck_narrative_plan",
     parse: (value) => normalizeNarrativePlan(value, project),
     jsonSchema: narrativePlanJsonSchema,
+    yandexModelTier: "economy",
     ...options,
   });
 }
@@ -422,6 +425,7 @@ export async function generateDesignBriefWithProvider(
       parse: (value): DesignBrief => ensureDesignBriefDirections(designBriefSchema.parse(parseJsonOutput(value)), project, narrativePlan),
       jsonSchema: designBriefJsonSchema,
       maxAttempts: 1,
+      yandexModelTier: "economy",
       ...options,
     });
   } catch (error) {
@@ -466,6 +470,7 @@ export async function generateStructuredWithProvider<T>({
   strict = true,
   maxAttempts = 2,
   temperature = 0.25,
+  yandexModelTier = "primary",
 }: GenerateStructuredOptions<T>): Promise<T> {
   if (provider === "openai") {
     const sdkGenerateText = openAIGenerateText || generateText;
@@ -516,7 +521,10 @@ export async function generateStructuredWithProvider<T>({
     provider,
     call: (attempt, repairPrompt) => {
       logStructuredGenerationAttempt(provider, schemaName, attempt);
-      return requestYandexText(apiKey, system, repairPrompt || withJsonPromptRules(prompt), schemaJson ? { jsonSchema: schemaJson } : { jsonObject: true });
+      return requestYandexText(apiKey, system, repairPrompt || withJsonPromptRules(prompt), {
+        ...(schemaJson ? { jsonSchema: schemaJson } : { jsonObject: true }),
+        modelTier: yandexModelTier,
+      });
     },
     repair: (error, previousValue) => buildStructuredRepairPrompt(prompt, schemaName, error, previousValue),
   });

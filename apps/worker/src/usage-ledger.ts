@@ -169,10 +169,24 @@ function priceFor(provider: string, model: string, at: Date): Price | null {
     const price = openAI[model];
     return price && price.effectiveFrom <= at ? price : null;
   }
+  const yandexCurrent: Record<string, Price> = {
+    // Synchronous RUB rates, including VAT. The legacy yandexgpt/latest alias
+    // resolves to Pro 5 during its supported lifetime.
+    "yandexgpt": yandexPrice("1200", "yandex-ai-studio-pricing-2026-07-20"),
+    "yandexgpt-5-pro": yandexPrice("1200", "yandex-ai-studio-pricing-2026-07-20"),
+    "yandexgpt-5-lite": yandexPrice("200", "yandex-ai-studio-pricing-2026-07-20"),
+  };
+  const catalogPrice = yandexCurrent[model.trim().toLowerCase()];
+  if (catalogPrice && catalogPrice.effectiveFrom <= at) return catalogPrice;
+
   const input = process.env.YANDEX_INPUT_PRICE_RUB_PER_MILLION;
   const output = process.env.YANDEX_OUTPUT_PRICE_RUB_PER_MILLION;
   if (!input || !output) return null;
   return { input, output, currency: "RUB", version: process.env.YANDEX_PRICING_VERSION || "env", effectiveFrom: new Date(process.env.YANDEX_PRICE_EFFECTIVE_FROM || "2026-07-11T00:00:00Z") };
+}
+
+function yandexPrice(rate: string, version: string): Price {
+  return { input: rate, cached: rate, output: rate, currency: "RUB", version, effectiveFrom: new Date("2026-05-01T00:00:00Z") };
 }
 
 export function calculateProviderCost(provider: "openai" | "yandex", model: string, at: Date, usage: NormalizedUsage) {

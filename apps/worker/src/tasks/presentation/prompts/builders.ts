@@ -175,6 +175,9 @@ export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[
     "- audienceQuestion формулирует вопрос, на который отвечает слайд;",
     "- transitionToNext объясняет, почему после этого слайда логично перейти к следующему;",
     "- transitionToNext для последнего слайда должен быть пустой строкой;",
+    "- последний narrative item — это сильный учебный итог: keyMessage отвечает на главный вопрос темы, slidePurpose требует синтеза предыдущих смысловых шагов, а audienceQuestion (если нужен) идет только после вывода;",
+    "- для последнего narrative item заранее задай 2–3 разные supporting conclusions, которые опираются на уже запланированные причины, примеры или последствия; не добавляй новых доказательств;",
+    "- не планируй отдельный slide только со словами «Спасибо за внимание», «Вопросы?» или «Мы рассмотрели…»; короткая подпись допустима только после содержательного вывода;",
     "- не писать мета-фразы для пользователя вроде \"этот слайд показывает\";",
     "- не выдумывать точные факты, если их нет в источниках.",
     `Материалы только для внутренней фактологии; не показывать названия источников пользователю:\n${formatSourceText(sources)}`,
@@ -400,7 +403,9 @@ export function buildGenerationPrompt(
     "- vary sentence length. Do not make every paragraph the same rhythm.",
     "Required deck structure:",
     "- slide 1 must have slideKind title;",
-    "- the final slide must have slideKind summary and contain a human conclusion plus 3-5 key takeaways in bullets;",
+    "- the final slide must have slideKind summary and contain one short audience-facing answer to the central question plus 2-3 distinct, topic-specific takeaways in bullets;",
+    "- the final summary must synthesize earlier narrativePlan jobs and fixed narration without introducing a new fact, date, number, cause, or recommendation;",
+    "- never use a standalone final slide with only «Спасибо за внимание», «Вопросы?» or «Мы рассмотрели…»; a small thank-you/questions caption is allowed only after a real conclusion;",
     "- include slideKind section divider slides between major chapters when the deck has enough slides;",
     "- all other study slides must have slideKind content.",
     "Required JSON fields: id, title, scenario, level, slideCount, generatedText, sources, outline, narrativePlan, designBrief, speechScript, slides.",
@@ -428,6 +433,9 @@ export function buildGenerationPrompt(
     "- blocks: keep a backward-compatible fallback using callout, quote, or bullets; mirror the chosen layout instead of always returning bullets.",
     "Slide-facing text style:",
     "- every visible title, thesis, bullet, block, definition, and visual item must be a complete thought; never end visible text with an unfinished phrase such as 'the first thing to note is rich';",
+    "- every layout slot is independent: never begin a bullet, block, or visual explanation as the grammatical continuation of another slot;",
+    "- give each slide one distinct takeaway that matches its slideBlueprint and narrativePlan job; do not repeat the same central claim on another slide without a new stage, example, cause, or consequence;",
+    "- do not repeat a thesis verbatim in a bullet, block, visual item, or definition; each visible point must add new information;",
     "- use the same clear study-report style as the narration, but much shorter;",
     "- visible slide text must be a compressed version of the matching speech section, not a separate template phrase;",
     "- do not write 'Главная идея связана с темой', 'Материал стоит разбирать по смысловым частям', or similar filler;",
@@ -437,6 +445,7 @@ export function buildGenerationPrompt(
     "- do not refer to the slide itself with phrases like 'на слайде показано', 'этот слайд помогает', or 'текст на слайде';",
     "- if the source material is thin, write a cautious general explanation instead of inventing facts or visuals.",
     "- never write generic filler such as 'Финальный вывод раскрывается через контекст, причины и последствия', 'Главные факты лучше воспринимаются, когда между ними видна связь', 'Точная формулировка помогает перейти от факта к смыслу', or similar universal placeholder phrases.",
+    "- on the summary slide, thesis must be a complete conclusion rather than the project title or a courtesy phrase; every supporting bullet must be a distinct complete point, not a sentence fragment or a repeat of the thesis;",
     "Narration rules:",
     "- speakerNotes must be the matching generatedText section body or a very close 2-7 sentence restatement, guided by the matching narrativePlan item;",
     "- speechScript must contain one matching 2-7 sentence item for every slide and must duplicate or closely restate the matching speakerNotes;",
@@ -518,15 +527,32 @@ export function formatSourceText(sources: Source[]) {
     .slice(0, 18000);
 }
 
-export function getYandexModelUri() {
+export type YandexModelTier = "primary" | "economy";
+
+export function getYandexModelConfig(tier: YandexModelTier = "primary") {
+  if (tier === "economy") {
+    const model = process.env.YANDEX_ECONOMY_MODEL_NAME?.trim() || "yandexgpt-5-lite";
+    if (process.env.YANDEX_ECONOMY_MODEL_URI?.trim()) {
+      return { model, uri: process.env.YANDEX_ECONOMY_MODEL_URI.trim() };
+    }
+    if (!process.env.YANDEX_FOLDER_ID?.trim()) {
+      throw new Error("YANDEX_FOLDER_ID or YANDEX_ECONOMY_MODEL_URI is required for Yandex generation");
+    }
+    return { model, uri: `gpt://${process.env.YANDEX_FOLDER_ID}/${model}` };
+  }
+
+  const model = process.env.YANDEX_MODEL_NAME?.trim() || "yandexgpt";
   if (process.env.YANDEX_MODEL_URI?.trim()) {
-    return process.env.YANDEX_MODEL_URI.trim();
+    return { model, uri: process.env.YANDEX_MODEL_URI.trim() };
   }
 
   if (!process.env.YANDEX_FOLDER_ID?.trim()) {
     throw new Error("YANDEX_FOLDER_ID or YANDEX_MODEL_URI is required for Yandex generation");
   }
 
-  const modelName = process.env.YANDEX_MODEL_NAME || "yandexgpt";
-  return `gpt://${process.env.YANDEX_FOLDER_ID}/${modelName}/latest`;
+  return { model, uri: `gpt://${process.env.YANDEX_FOLDER_ID}/${model}/latest` };
+}
+
+export function getYandexModelUri(tier: YandexModelTier = "primary") {
+  return getYandexModelConfig(tier).uri;
 }

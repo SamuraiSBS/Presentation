@@ -134,13 +134,14 @@ type YandexTextOptions = {
   jsonSchema?: unknown;
   temperature?: number;
   maxTokens?: number;
+  modelTier?: YandexModelTier;
 };
 
 type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief" | "deckStory" | "designBrief" | "slideBlueprints" | "slideTextPlans">>;
 
 import type { YandexCompletionResponse } from "../constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
-import { getYandexModelUri } from "../prompts/builders.js";
+import { getYandexModelConfig, type YandexModelTier } from "../prompts/builders.js";
 import { emptyVisual, fallbackTitle, buildSlideNarration, buildNarrationFromContent, sentenceCount, speechSentences, sentenceEdgeKey, fallbackSlideText, buildFallbackSpeakerNotes } from "../normalization/presentation.js";
 import { looksLikeSentenceFragment, qualityIssuesForText, textSimilarity, significantTokens, normalizeForQuality, normalizeExactForQuality, hasForbiddenTemplateText } from "../quality/orchestration.js";
 import { cleanMultilineText, cleanText, sanitizeSpeechText } from "../utilities.js";
@@ -162,6 +163,7 @@ export function shouldRetryNarration(error: unknown) {
 
 export async function requestYandexText(apiKey: string, systemText: string, userText: string, options: YandexTextOptions = {}) {
   const startedAt = new Date();
+  const model = getYandexModelConfig(options.modelTier);
   const useJsonSchema = options.jsonSchema && isYandexJsonSchemaCompatible(options.jsonSchema);
   const responseFormat = useJsonSchema
     ? { json_schema: { schema: options.jsonSchema } }
@@ -177,7 +179,7 @@ export async function requestYandexText(apiKey: string, systemText: string, user
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      modelUri: getYandexModelUri(),
+      modelUri: model.uri,
       completionOptions: {
         stream: false,
         temperature: options.temperature ?? 0.25,
@@ -207,7 +209,7 @@ export async function requestYandexText(apiKey: string, systemText: string, user
   const usage = payload.result?.usage || payload.usage;
   await recordAiUsage({
     provider: "yandex",
-    model: process.env.YANDEX_MODEL_NAME || "yandexgpt",
+    model: model.model,
     operation: options.jsonSchema || options.jsonObject ? "structured_generation" : "text_generation",
     providerRequestId: payload.requestId || response.headers.get("x-request-id") || undefined,
     usage: usage ? {
@@ -226,7 +228,7 @@ export async function requestYandexText(apiKey: string, systemText: string, user
 
   return outputText;
   } catch (error) {
-    await recordAiUsage({ provider: "yandex", model: process.env.YANDEX_MODEL_NAME || "yandexgpt", operation: options.jsonSchema || options.jsonObject ? "structured_generation" : "text_generation", startedAt, error });
+    await recordAiUsage({ provider: "yandex", model: model.model, operation: options.jsonSchema || options.jsonObject ? "structured_generation" : "text_generation", startedAt, error });
     throw error;
   }
 }
