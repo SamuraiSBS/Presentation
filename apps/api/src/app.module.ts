@@ -3,6 +3,7 @@ import { BullModule } from "@nestjs/bullmq";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { BillingModule } from "./billing/billing.module.js";
 import { AuthModule } from "./auth/auth.module.js";
+import { AdminModule } from "./admin/admin.module.js";
 import { CollaborationModule } from "./collaboration/collaboration.module.js";
 import { DashboardModule } from "./dashboard/dashboard.module.js";
 import { DefenseModule } from "./defense/defense.module.js";
@@ -29,6 +30,7 @@ import { UsersModule } from "./users/users.module.js";
     }),
     PrismaModule,
     AuthModule,
+    AdminModule,
     HealthModule,
     ProjectsModule,
     SourcesModule,
