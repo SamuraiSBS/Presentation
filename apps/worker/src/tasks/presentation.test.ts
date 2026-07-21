@@ -137,6 +137,34 @@ describe("presentation compatibility facade", () => {
     expect(normalizeLayout).toBe(normalizeLayoutFromLayer);
   });
 
+  it("makes the final narrative job a substantive synthesis instead of a thank-you slide", () => {
+    const project = {
+      id: "project-closing-plan",
+      title: "История Porsche 911",
+      prompt: "Подготовь учебную презентацию об истории Porsche 911",
+      scenario: "lesson",
+      level: "university",
+      mode: "with_sources",
+      slideCount: 5,
+    } as const;
+    const plan = normalizeNarrativePlan([
+      { slideOrder: 1, slideTitle: "Porsche 911", slidePurpose: "Открыть тему.", keyMessage: "Porsche 911 стал заметной спортивной моделью.", audienceQuestion: "Почему модель важна?", transitionToNext: "Далее." },
+      { slideOrder: 2, slideTitle: "Дизайн", slidePurpose: "Разобрать дизайн.", keyMessage: "Узнаваемый дизайн связывает поколения.", audienceQuestion: "Что менялось?", transitionToNext: "Далее." },
+      { slideOrder: 3, slideTitle: "Техника", slidePurpose: "Разобрать технику.", keyMessage: "Инженерные решения развивали модель.", audienceQuestion: "Что изменилось?", transitionToNext: "Далее." },
+      { slideOrder: 4, slideTitle: "Преемственность", slidePurpose: "Связать изменения.", keyMessage: "Преемственность сохранила характер модели.", audienceQuestion: "Что объединяет поколения?", transitionToNext: "Далее." },
+      { slideOrder: 5, slideTitle: "Спасибо за внимание", slidePurpose: "Спасибо.", keyMessage: "Спасибо за внимание.", audienceQuestion: "Вопросы?", transitionToNext: "Далее." },
+    ], project);
+
+    expect(plan.at(-1)).toMatchObject({
+      slideOrder: 5,
+      transitionToNext: "",
+    });
+    expect(plan.at(-1)?.slideTitle).not.toBe("Спасибо за внимание");
+    expect(plan.at(-1)?.keyMessage).not.toBe("Спасибо за внимание.");
+    expect(plan.at(-1)?.slidePurpose).toContain("2–3");
+    expect(buildGenerationPrompt(project, [], "", plan)).toContain("never use a standalone final slide");
+  });
+
   it("repairs duplicated visible text on one slide without changing the rest of the deck", () => {
     const project = {
       id: "project-local-slide-repair",
@@ -256,7 +284,7 @@ function mockYandexTwoStep(
   let callCount = 0;
   const titles = narrationText
     .split("\n")
-    .map((line) => line.match(/^РЎР»Р°Р№Рґ\s+\d+\s*:\s*(.+)$/i)?.[1])
+    .map((line) => line.match(/^\S+\s+\d+\s*:\s*(.+)$/)?.[1])
     .filter((title): title is string => Boolean(title));
   const narrativePlan = narrativePlanForTitles(titles.length ? titles : ["Intro"]);
   global.fetch = async (_input, init) => {
@@ -930,11 +958,12 @@ describe("generatePresentation fallback behavior", () => {
     expect(directions[0]?.visualRole).toBe("hero");
     expect(directions.at(-1)?.visualRole).toBe("summary");
     expect(directions.at(-1)?.imageStrategy).toBe("none");
-    const imageDirections = directions.filter((direction) =>
-      direction.imageStrategy === "real_photo" || direction.imageStrategy === "generated_illustration",
+    const contentDirections = directions.filter((direction) => direction.visualRole !== "hero" && direction.visualRole !== "summary");
+    const visualDirections = contentDirections.filter((direction) =>
+      direction.imageStrategy === "real_photo" || direction.imageStrategy === "diagram",
     );
-    expect(imageDirections.length).toBeGreaterThanOrEqual(Math.ceil((directions.length - 1) * 0.5));
-    expect(imageDirections.length).toBeLessThanOrEqual(Math.ceil((directions.length - 1) * 0.7));
+    expect(visualDirections.length).toBeGreaterThanOrEqual(Math.ceil(contentDirections.length * 0.6));
+    expect(visualDirections.length).toBeLessThanOrEqual(Math.floor(contentDirections.length * 0.75));
     expect(directions.some((direction) => direction.imageStrategy === "diagram")).toBe(true);
     expect(directions.some((direction) => direction.imageStrategy === "none")).toBe(true);
     expect(directions[0]?.sceneTextMode).toBe("hero_phrase");
@@ -943,6 +972,9 @@ describe("generatePresentation fallback behavior", () => {
     for (let index = 2; index < directions.length; index += 1) {
       expect(new Set(directions.slice(index - 2, index + 1).map((item) => item.layoutIntent)).size).toBeGreaterThan(1);
       expect(new Set(directions.slice(index - 2, index + 1).map((item) => item.sceneTextMode)).size).toBeGreaterThan(1);
+    }
+    for (let index = 2; index < contentDirections.length; index += 1) {
+      expect(contentDirections.slice(index - 2, index + 1).some((direction) => direction.imageStrategy !== "none")).toBe(true);
     }
   });
 
@@ -1183,7 +1215,7 @@ describe("generatePresentation fallback behavior", () => {
       expect(presentation.designBrief?.slideDirections[0].sceneTextMode).toBe("visual_labels");
       expect(presentation.presentationTheme?.themeId).toBe("editorialMagazine");
       expect(presentation.slides[0].thesis).toContain("Внешний успех");
-      expect(presentation.slides[1].bullets).toContain("Нужны принципы");
+      expect(presentation.slides[1].bullets.every((bullet) => bullet.trim().length > 0)).toBe(true);
       expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
@@ -2175,9 +2207,10 @@ describe("generatePresentation fallback behavior", () => {
       );
 
       expect(presentation.generationMode).toBe("yandex");
-      expect(presentation.slides[0].blocks[0]).toEqual({ type: "bullets", items: ["A real generated point"] });
+      expect(presentation.slides[0].blocks).toEqual([{ type: "bullets", items: presentation.slides[0].bullets }]);
       expect(presentation.slides[0].bullets.length).toBeGreaterThanOrEqual(2);
-      expect(presentation.slides[0].bullets[0]).toBe("A real generated point");
+      expect(presentation.slides[0].bullets[0]).toContain("Home premieres");
+      expect(presentation.slides[0].bullets).not.toContain(presentation.slides[0].thesis);
       expect(presentation.slides[0].visual.description).toBeTruthy();
       expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(3);
       expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(7);
@@ -2187,7 +2220,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("normalizes string blocks returned by Yandex", async () => {
+  it("rebuilds a non-aligned string block from canonical narration", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -2222,10 +2255,7 @@ describe("generatePresentation fallback behavior", () => {
       );
 
       expect(() => presentationSchema.parse(presentation)).not.toThrow();
-      expect(presentation.slides[0].blocks).toContainEqual({
-        type: "callout",
-        content: "Civil society includes organizations and relationships between citizens and the state.",
-      });
+      expect(presentation.slides[0].blocks).toEqual([{ type: "bullets", items: presentation.slides[0].bullets }]);
     } finally {
       global.fetch = originalFetch;
     }

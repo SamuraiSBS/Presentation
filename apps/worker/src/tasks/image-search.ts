@@ -96,6 +96,7 @@ export async function enrichPresentationImages(
   const warn = dependencies.warn || ((message, error) => logger.warn({ ...errorLogFields(error) }, message));
 
   const slides = [];
+  const fallbackDirections = new Map<number, DesignBriefSlideDirection>();
   for (const slide of presentation.slides) {
     const direction = presentation.designBrief?.slideDirections.find((item) => item.slideOrder === slide.order);
     if (!shouldSearchForSlideImage(slide, direction)) {
@@ -154,6 +155,10 @@ export async function enrichPresentationImages(
       }
 
       if (!image && lastDownloadError) throw lastDownloadError;
+      if (!image) {
+        const fallback = safeVisualFallback(direction, slide);
+        if (fallback) fallbackDirections.set(fallback.slideOrder, fallback);
+      }
       slides.push(image
         ? {
             ...slide,
@@ -177,6 +182,12 @@ export async function enrichPresentationImages(
   return {
     ...presentation,
     slides,
+    designBrief: presentation.designBrief && fallbackDirections.size
+      ? {
+          ...presentation.designBrief,
+          slideDirections: presentation.designBrief.slideDirections.map((direction) => fallbackDirections.get(direction.slideOrder) || direction),
+        }
+      : presentation.designBrief,
   };
 }
 
@@ -185,21 +196,19 @@ export function buildSlideImageQuery(
   slide: PresentationDocument["slides"][number],
   direction?: DesignBriefSlideDirection,
 ) {
-  const subject = shorten(cleanText(direction?.visualPrompt || slide.visual.description || slide.title), 120);
+  const visualPrompt = cleanText(direction?.visualPrompt || slide.visual.description || slide.title);
+  const historical = /\b(?:history|historical|first generation|generation|vintage|classic|19\d{2}|20\d{2})\b|(?:истори|поколени|архив|\b\d{4}\b)/iu.test(`${slide.title} ${visualPrompt}`);
   const medium = direction?.imageStrategy === "generated_illustration"
-    ? "clear editorial illustration"
-    : "official documentary photograph";
-  const parts = [
-    subject,
-    shorten(project.title, 72),
+    ? "editorial illustration"
+    : historical
+      ? "historical photograph"
+      : "documentary photograph";
+  return sanitizeImageQuery([
+    shorten(visualPrompt, 120),
     shorten(slide.title, 64),
+    shorten(project.title, 72),
     medium,
-  ]
-    .map(cleanText)
-    .filter(Boolean);
-
-  const query = shorten(unique(parts).slice(0, 4).join(" "), Math.min(TAVILY_QUERY_SAFE_LENGTH, 240));
-  return query.length <= TAVILY_QUERY_MAX_LENGTH ? query : query.slice(0, TAVILY_QUERY_MAX_LENGTH);
+  ].join(" "));
 }
 
 export function shouldSearchForSlideImage(
@@ -343,7 +352,44 @@ function imageCandidateRelevance(candidate: ImageCandidate, context: ImageCandid
   const brandMatches = brandTokens.filter((token) => candidateTokens.has(token)).length;
   const tokenMatches = queryTokens.filter((token) => candidateTokens.has(token)).length;
   if (brandTokens.length && brandMatches === 0) return 0;
-  return brandMatches * 12 + tokenMatches * 3;
+  const anchorTokens = specificImageTokens([context.slideTitle, context.query].map(cleanText).join(" "));
+  const anchorMatches = anchorTokens.filter((token) => candidateTokens.has(token)).length;
+  const requiresExactAnchor = anchorTokens.some((token) => /\d/.test(token));
+  if (requiresExactAnchor && anchorMatches === 0) return 0;
+  const hasSourceMetadata = Boolean(cleanText(candidate.sourceTitle) || cleanText(candidate.sourceUrl));
+  const unsuitableFormat = /\.(?:html?|svg)(?:$|[?#])/i.test(candidate.url);
+  const historicalRequest = /\b(?:historical|first generation|vintage|classic|19\d{2})\b|(?:истори|поколени|архив)/iu.test(queryText);
+  const modernConflict = historicalRequest && /\b(?:20(?:1[8-9]|2\d)|modern|latest|new model)\b|(?:современ|новейш)/iu.test(candidateText);
+  const confirmsHistoricalAnchor = /\b(?:historical|first generation|vintage|classic|archive|19\d{2})\b|(?:истори|поколени|архив)/iu.test(candidateText);
+  if (modernConflict && !confirmsHistoricalAnchor) return 0;
+  return brandMatches * 12 + anchorMatches * 7 + tokenMatches * 3 + (hasSourceMetadata ? 2 : 0) - (unsuitableFormat ? 12 : 0) - (modernConflict ? 18 : 0);
+}
+
+function specificImageTokens(value: string) {
+  return unique(
+    cleanText(value)
+      .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+      .split(/\s+/)
+      .map((token) => token.toLowerCase())
+      .filter((token) => token.length >= 3 && !IMAGE_RELEVANCE_STOP_WORDS.has(token) && !GENERIC_IMAGE_QUERY_TOKENS.has(token))
+      .filter((token) => /\d/.test(token) || token.length >= 5),
+  );
+}
+
+const GENERIC_IMAGE_QUERY_TOKENS = new Set([
+  "slide", "topic", "study", "student", "students", "university", "education", "classroom", "context", "explain", "explains",
+  "model", "history", "historical", "photograph", "documentary", "picture", "image", "photo", "presentation",
+  "слайд", "тема", "учебный", "студент", "университет", "образование", "контекст", "объяснение", "модель", "история", "фотография",
+]);
+
+export function sanitizeImageQuery(value: string) {
+  const tokens = cleanText(value)
+    .replace(/\b(?:presentation|educational|image|picture|photo)\s+(?:image|picture|photo)\b/gi, " ")
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  const query = unique(tokens).slice(0, 18).join(" ");
+  return shorten(query, Math.min(TAVILY_QUERY_SAFE_LENGTH, 220)).slice(0, TAVILY_QUERY_MAX_LENGTH).trim();
 }
 
 function meaningfulImageTokens(value: string) {
@@ -564,7 +610,26 @@ function uniqueByUrl(candidates: ImageCandidate[]) {
 }
 
 function buildImageAlt(title: string, description: string) {
-  return shorten(cleanText(description) || `Иллюстрация к слайду: ${cleanText(title)}`, 180);
+  const subject = cleanText(description);
+  const exactTitle = cleanText(title);
+  return shorten(subject ? `${exactTitle}: ${subject}` : `Иллюстрация к слайду: ${exactTitle}`, 180);
+}
+
+function safeVisualFallback(
+  direction: DesignBriefSlideDirection | undefined,
+  slide: PresentationDocument["slides"][number],
+) {
+  if (!direction || direction.imageStrategy !== "real_photo" || slide.visual.image) return undefined;
+  const diagramFriendly = direction.visualRole === "compare" || direction.visualRole === "sequence" || direction.visualRole === "evidence" || direction.visualRole === "explain" || direction.visualRole === "context";
+  return {
+    ...direction,
+    layoutIntent: diagramFriendly ? "diagram" as const : "statement" as const,
+    imageStrategy: diagramFriendly ? "diagram" as const : "none" as const,
+    sceneTextMode: diagramFriendly ? "visual_labels" as const : "talk_sentences" as const,
+    visualPrompt: diagramFriendly
+      ? `Explanatory diagram for ${cleanText(slide.title)}`
+      : `Text-led conclusion for ${cleanText(slide.title)}`,
+  };
 }
 
 function extensionFromContentType(contentType: string) {

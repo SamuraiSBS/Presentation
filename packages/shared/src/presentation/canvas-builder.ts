@@ -1,6 +1,7 @@
 import type { SourceRef } from "../projects/schemas.js";
 import type { DesignBriefSlideDirection, SceneTextMode } from "../generation/schemas.js";
 import { resolvePresentationTheme } from "./themes.js";
+import { presentationLayoutCapacity } from "./layouts.js";
 import type {
   CanvasBackgroundStyle,
   CanvasElement,
@@ -19,6 +20,8 @@ import { slideBackgroundStyle } from "./canvas-background.js";
 import {
   CANVAS_SAFE_BOTTOM,
   cleanCanvasText,
+  compactCanvasTextToFit,
+  estimatedCharactersPerLine,
   elementsVisuallyOverlap,
   estimatedTextHeight,
   MIN_GENERATED_BODY_FONT_SIZE,
@@ -27,9 +30,11 @@ import {
   sortCanvasElements,
   STUDYDECK_EDITORIAL_THEME_ID,
 } from "./canvas-helpers.js";
+import { presentationTypography, typographyForCanvasText } from "./typography.js";
+import { formatSlideAttribution } from "./attribution.js";
 
-const READABLE_BODY_FONT_SIZE = 30;
-const READABLE_PLAQUE_FONT_SIZE = 24;
+const READABLE_BODY_FONT_SIZE = presentationTypography.body.preferredPx;
+const READABLE_PLAQUE_FONT_SIZE = presentationTypography.label.preferredPx;
 const PLAQUE_PADDING_X = 18;
 const PLAQUE_PADDING_Y = 12;
 const EDITORIAL_MARGIN_X = 72;
@@ -75,6 +80,10 @@ type BuildSlideCanvasOptions = {
 };
 
 export function buildSlideCanvas(slide: Slide, theme: PresentationTheme, options: BuildSlideCanvasOptions = {}): SlideCanvas {
+  // Canvas is a projection of the structured slide, not its source of truth.
+  // Keep the rich narration intact while reducing this projection to the
+  // capacity of the chosen composition before any font-size fallback occurs.
+  slide = constrainSlideToLayoutCapacity(slide);
   if (theme.themeId === STUDYDECK_EDITORIAL_THEME_ID) {
     return buildStudyDeckEditorialCanvas(slide, theme, options.designDirection);
   }
@@ -91,6 +100,7 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme, options
   if (slide.slideKind === "title" || slide.slideKind === "section") {
     if (premium) {
       addPremiumHeroCanvas(slide, theme, elements, designDirection);
+      addSlideAttributionCanvas(slide, theme, elements);
       return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: finalizeGeneratedElements(elements, theme) };
     }
 
@@ -107,6 +117,7 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme, options
     elements.push(
       textElement(`${slide.id}-title`, slide.title, 178, isTitleSlide ? 118 : 188, 924, 148, 5, {
         role: "title",
+        typographyRole: isTitleSlide ? "deckTitle" : "slideTitle",
         fontSize: fittedFontSize(slide.title, 58, 38, 148),
         fontFamily: theme.fonts.heading,
         color: text,
@@ -128,12 +139,14 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme, options
     if (isTitleSlide) addTitleMiniPointGrid(slide, theme, elements, Math.max(430, bodyY + bodyHeight + 36));
     else addMiniPointRow(slide, theme, elements, 296, 512);
 
+    addSlideAttributionCanvas(slide, theme, elements);
     return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: finalizeGeneratedElements(elements, theme) };
   }
 
   const directed = premium ? addPremiumDirectedCanvas(slide, theme, elements, designDirection) : false;
   if (directed) {
     addFallbackImageCanvas(slide, elements);
+    addSlideAttributionCanvas(slide, theme, elements);
     return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: finalizeGeneratedElements(elements, theme) };
   }
 
@@ -154,6 +167,7 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme, options
   else addDefaultContentCanvas(slide, theme, elements);
 
   addFallbackImageCanvas(slide, elements);
+  addSlideAttributionCanvas(slide, theme, elements);
 
   return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: finalizeGeneratedElements(elements, theme) };
 }
@@ -199,6 +213,8 @@ function buildStudyDeckEditorialCanvas(
   } else {
     addEditorialNarrativeCanvas(slide, theme, elements);
   }
+
+  addSlideAttributionCanvas(slide, theme, elements, muted);
 
   return {
     version: 3,
@@ -296,7 +312,7 @@ function addEditorialImageCanvas(slide: Slide, theme: PresentationTheme, element
   const support = editorialSupportItems(slide, thesis, 2);
 
   elements.push(
-    imageElement(`${slide.id}-editorial-image`, image, imageX, 0, 576, 720, 2, 1, "cover"),
+    imageElement(`${slide.id}-editorial-image`, image, imageX, 0, 576, 720, 2, 1, imageFitForVisual(slide)),
     shapeElement(`${slide.id}-editorial-accent`, "rect", textX, 58, 68, 6, 3, theme.colors.accent, theme.colors.accent, 0, 1),
     textElement(`${slide.id}-editorial-title`, slide.title, textX, 88, textWidth, 124, 5, {
       role: "title",
@@ -545,6 +561,7 @@ function addEditorialSequenceVisual(slide: Slide, theme: PresentationTheme, elem
     elements.push(
       textElement(`${slide.id}-editorial-step-${index}-number`, String(index + 1).padStart(2, "0"), x, 226, columnWidth, 46, 5, {
         role: "body",
+        typographyRole: "label",
         fontSize: 30,
         fontFamily: theme.fonts.heading,
         color: index % 2 ? theme.colors.accentAlt : theme.colors.accent,
@@ -554,6 +571,7 @@ function addEditorialSequenceVisual(slide: Slide, theme: PresentationTheme, elem
       shapeElement(`${slide.id}-editorial-step-${index}-rule`, "rect", x, 292, columnWidth, 3, 4, theme.colors.line, theme.colors.line, 0, 1),
       textElement(`${slide.id}-editorial-step-${index}-text`, compactSummaryPoint(item, 11), x, 326, columnWidth, 176, 5, {
         role: "body",
+        typographyRole: "supporting",
         fontSize: 23,
         autoFit: false,
         fontFamily: theme.fonts.body,
@@ -886,7 +904,7 @@ function addPremiumSplitImageCanvas(slide: Slide, theme: PresentationTheme, elem
   const bodyY = 310;
   const bodyHeight = Math.max(148, estimatedTextHeight(bodyText, READABLE_BODY_FONT_SIZE, 548));
   if (image) {
-    elements.push(imageElement(`${slide.id}-premium-image`, image, fullBleed ? 0 : 700, 0, fullBleed ? 1280 : 580, 720, 1, fullBleed ? 0.34 : 0.9, "cover"));
+    elements.push(imageElement(`${slide.id}-premium-image`, image, fullBleed ? 0 : 700, 0, fullBleed ? 1280 : 580, 720, 1, fullBleed ? 0.34 : 0.9, imageFitForVisual(slide)));
     elements.push(shapeElement(`${slide.id}-premium-copy-wash`, "rect", 0, 0, fullBleed ? 740 : 710, 720, 2, theme.colors.background, theme.colors.background, 0, fullBleed ? 0.84 : 0.96));
   }
   elements.push(
@@ -1603,7 +1621,7 @@ function addDefaultContentCanvas(slide: Slide, theme: PresentationTheme, element
     }),
   );
   if (image) {
-    elements.push(imageElement(`${slide.id}-image`, image, 645, 65, 566, 562, 3, 1, "cover"));
+    elements.push(imageElement(`${slide.id}-image`, image, 645, 65, 566, 562, 3, 1, imageFitForVisual(slide)));
   }
 }
 
@@ -1757,7 +1775,7 @@ function addImageFocusCanvas(slide: Slide, theme: PresentationTheme, elements: C
     fontFamily: theme.fonts.body,
     color: theme.colors.muted,
   }));
-  if (image) elements.push(imageElement(`${slide.id}-image`, image, 638, 69, 571, 552, 3, 1, "cover"));
+  if (image) elements.push(imageElement(`${slide.id}-image`, image, 638, 69, 571, 552, 3, 1, imageFitForVisual(slide)));
   addMiniPointRow(slide, theme, elements, 79, Math.max(520, bodyY + bodyHeight + 36), { rightBoundary: 610, maxBottom: 680 });
 }
 
@@ -1992,7 +2010,6 @@ function addEvidenceCanvas(slide: Slide, theme: PresentationTheme, elements: Can
       }),
     );
   });
-  addSourceRefsCanvas(slide, theme, elements);
 }
 
 function addProblemSolutionCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
@@ -2054,16 +2071,27 @@ function addExplainExampleCanvas(slide: Slide, theme: PresentationTheme, element
   );
 }
 
-function addSourceRefsCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
-  compactSourceRefs(slide.sourceRefs, 3).forEach((ref, index) => {
-    elements.push(textElement(`${slide.id}-source-${index}`, ref, 86 + index * 370, 575, 344, 48, 4, {
-      role: "caption",
-      fontSize: 14,
-      autoFit: false,
-      fontFamily: theme.fonts.body,
-      color: theme.colors.muted,
-    }));
-  });
+function addSlideAttributionCanvas(
+  slide: Slide,
+  theme: PresentationTheme,
+  elements: CanvasElement[],
+  color = theme.colors.muted,
+) {
+  if (elements.some((element) => element.type === "text" && element.typographyRole === "sourceCredit")) return;
+  const attribution = formatSlideAttribution(slide.sourceRefs, slide.visual.image);
+  if (!attribution) return;
+  const editorialFooterOrder = elements.find((element) => element.type === "text" && element.id.endsWith("-editorial-footer-order"));
+  const width = editorialFooterOrder ? Math.max(120, editorialFooterOrder.x - 96) : 1136;
+  elements.push(textElement(`${slide.id}-source-credit`, attribution, 72, 684, width, 20, 12, {
+    role: "caption",
+    typographyRole: "sourceCredit",
+    fontSize: presentationTypography.sourceCredit.preferredPx,
+    autoFit: false,
+    fontFamily: theme.fonts.body,
+    color,
+    align: "left",
+    valign: "middle",
+  }));
 }
 
 function addFallbackImageCanvas(slide: Slide, elements: CanvasElement[]) {
@@ -2262,6 +2290,7 @@ function textElement(
     id,
     type: "text",
     role: options.role || "free",
+    typographyRole: options.typographyRole,
     x,
     y,
     w,
@@ -2286,24 +2315,34 @@ function textElement(
 }
 
 function fitCanvasTextElement(element: CanvasTextElement): CanvasTextElement {
+  const typography = typographyForCanvasText(element);
   const minimum = minimumReadableFontSize(element);
   const requestedFontSize = Math.max(element.fontSize, minimum);
-  if (element.autoFit === false) {
-    return {
-      ...element,
-      fontSize: requestedFontSize,
-      h: Math.max(element.h, estimatedTextHeight(element.text, requestedFontSize, element.w)),
-    };
-  }
   let fontSize = requestedFontSize;
-  while (fontSize > minimum && estimatedTextHeight(element.text, fontSize, element.w) > element.h) {
+  while (element.autoFit !== false && fontSize > minimum && estimatedTextHeight(element.text, fontSize, element.w) > element.h) {
     fontSize -= 1;
   }
+  const text = addCanvasWordBreaks(
+    compactCanvasTextToFit(element.text, fontSize, element.w, element.h, typography.lineHeight),
+    estimatedCharactersPerLine(fontSize, element.w),
+  );
   return {
     ...element,
     fontSize,
-    h: Math.max(element.h, estimatedTextHeight(element.text, fontSize, element.w)),
+    text,
+    runs: [{ text }],
   };
+}
+
+function addCanvasWordBreaks(value: string, charactersPerLine: number) {
+  if (charactersPerLine < 2) return value;
+  return value.replace(/\S+/g, (token) => {
+    if (token.replace(/\u200B/g, "").length <= charactersPerLine) return token;
+    return token
+      .split(/\u200B/)
+      .flatMap((segment) => segment.match(new RegExp(`.{1,${charactersPerLine}}`, "gu")) || [])
+      .join("\u200B");
+  });
 }
 
 function resizeTextPlaques(elements: CanvasElement[]) {
@@ -2460,6 +2499,15 @@ function imageElement(
     sourceHeight: image.height,
     byteSize: image.byteSize,
   };
+}
+
+function imageFitForVisual(slide: Slide): CanvasImageElement["fit"] {
+  const metadata = [slide.visual?.image?.alt, slide.visual?.image?.query, slide.visual?.description].filter(Boolean).join(" ");
+  // Documentary photos benefit from cover, while documents, maps and technical
+  // figures lose their subject when cropped into an editorial column.
+  return /\b(?:diagram|technical|document|map|archive|blueprint|scheme|chart)\b|(?:схем|диаграм|документ|карт|архив|чертеж|график)/iu.test(metadata)
+    ? "contain"
+    : "cover";
 }
 
 function quoteText(slide: Slide) {
@@ -2630,6 +2678,40 @@ function slideBodyText(slide: Slide) {
     .filter(Boolean)
     .join(" ");
   return sentencePreview(text || slide.title, 360);
+}
+
+function constrainSlideToLayoutCapacity(slide: Slide): Slide {
+  const capacity = presentationLayoutCapacity(slide.layout);
+  const textLimit = Math.max(72, Math.round(capacity.minColumnWidth * 0.56));
+  const compact = (value: string, limit = textLimit) => sentencePreview(value, limit);
+  const bullets = Array.isArray(slide.bullets) ? slide.bullets : [];
+  const blocks = Array.isArray(slide.blocks) ? slide.blocks : [];
+  const visual = slide.visual || {
+    type: "none",
+    title: "",
+    description: "",
+    leftLabel: "",
+    rightLabel: "",
+    items: [],
+    rows: [],
+  };
+  const visualItems = Array.isArray(visual.items) ? visual.items : [];
+  const visualRows = Array.isArray(visual.rows) ? visual.rows : [];
+  return {
+    ...slide,
+    title: compact(slide.title || "", Math.max(52, Math.round(capacity.minColumnWidth * 0.32))),
+    thesis: compact(slide.thesis || "", textLimit),
+    bullets: bullets.slice(0, capacity.maxItems).map((item) => compact(item, textLimit)),
+    blocks: blocks.map((block) => block.type === "bullets"
+      ? { ...block, items: block.items.slice(0, capacity.maxItems).map((item) => compact(item, textLimit)) }
+      : { ...block, content: compact(block.content, textLimit) }),
+    visual: {
+      ...visual,
+      description: compact(visual.description, textLimit),
+      items: visualItems.slice(0, capacity.maxItems).map((item) => ({ ...item, label: compact(item.label, 64), text: compact(item.text, textLimit) })),
+      rows: visualRows.slice(0, capacity.maxItems).map((row) => ({ ...row, label: compact(row.label, 64), left: compact(row.left, textLimit), right: compact(row.right, textLimit) })),
+    },
+  };
 }
 
 function splitCanvasSentences(value: string) {

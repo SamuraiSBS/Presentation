@@ -25,9 +25,11 @@ describe("image search helpers", () => {
     const second = buildSlideImageQuery(project, presentation.slides[1], presentation.designBrief?.slideDirections[1]);
 
     expect(first).toContain("University students using an AI tutor in a real lecture hall");
-    expect(first).toContain("AI in education");
+    expect(first).toContain("AI");
+    expect(first).toContain("education");
     expect(first).toContain("Classroom context");
-    expect(second).toContain("Teacher workflow");
+    expect(second).toContain("teacher");
+    expect(second).toContain("workflow");
     expect(first).not.toContain("educational presentation image");
     expect(first).not.toEqual(second);
   });
@@ -118,6 +120,69 @@ describe("image search helpers", () => {
     );
 
     expect(selected?.url).toBe("https://cdn.example.com/bmw-m3.jpg");
+  });
+
+  it("keeps model and era anchors in a first-generation automotive query", () => {
+    const presentation = fixturePresentation();
+    const query = buildSlideImageQuery(
+      { id: "porsche", title: "Porsche 911 history", prompt: "Explain the model line" },
+      { ...presentation.slides[0], title: "Porsche 911 first generation" },
+      {
+        slideOrder: 1,
+        visualRole: "context",
+        layoutIntent: "split_image_text",
+        imageStrategy: "real_photo",
+        visualPrompt: "Porsche 911 first generation historical photograph",
+      },
+    );
+
+    expect(query).toContain("Porsche");
+    expect(query).toContain("911");
+    expect(query).toContain("first generation");
+    expect(query).toContain("historical photograph");
+    expect(query).not.toContain("presentation image");
+  });
+
+  it("ranks a historical model candidate above a modern conflicting result", () => {
+    const selected = chooseImageCandidate([
+      { url: "https://cdn.example.com/porsche-911-2024.jpg", description: "Modern 2024 Porsche 911", sourceTitle: "New model" },
+      { url: "https://cdn.example.com/porsche-911-1964.jpg", description: "Porsche 911 first generation historical photograph 1964", sourceTitle: "Archive" },
+    ], new Set(), new Set(), {
+      query: "Porsche 911 first generation historical photograph",
+      slideTitle: "Porsche 911 first generation",
+      projectTitle: "Porsche 911 history",
+    });
+
+    expect(selected?.url).toBe("https://cdn.example.com/porsche-911-1964.jpg");
+  });
+
+  it("falls back to a diagram rather than keeping an irrelevant stock result", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    const deck = {
+      ...presentation,
+      slides: [{ ...presentation.slides[0], title: "Porsche 911 first generation", slideKind: "content" as const }],
+      designBrief: {
+        ...presentation.designBrief!,
+        slideDirections: [{
+          slideOrder: 1,
+          visualRole: "context" as const,
+          layoutIntent: "split_image_text" as const,
+          imageStrategy: "real_photo" as const,
+          visualPrompt: "Porsche 911 first generation historical photograph",
+        }],
+      },
+    };
+    const enriched = await enrichPresentationImages(
+      { id: "porsche", title: "Porsche 911 history", prompt: "Explain the model line" },
+      deck,
+      {
+        searchImages: async () => [{ url: "https://cdn.example.com/porsche-911-2024.jpg", description: "Modern 2024 Porsche 911", sourceTitle: "New model" }],
+      },
+    );
+
+    expect(enriched.slides[0].visual.image).toBeUndefined();
+    expect(enriched.designBrief?.slideDirections[0]).toMatchObject({ imageStrategy: "diagram", layoutIntent: "diagram" });
   });
 
   it("searches concrete real-photo slides and skips diagram slides", async () => {

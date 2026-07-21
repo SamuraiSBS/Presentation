@@ -286,6 +286,7 @@ export type CanvasTextRun = z.infer<typeof canvasTextRunSchema>;
 export const canvasTextElementSchema = canvasElementBaseSchema.extend({
   type: z.literal("text"),
   role: z.enum(["title", "body", "caption", "free"]).default("free"),
+  typographyRole: z.enum(["deckTitle", "slideTitle", "mainClaim", "body", "supporting", "label", "sourceCredit", "slideNumber"]).optional(),
   text: z.string().max(1000).default(""),
   runs: z.array(canvasTextRunSchema).default([]),
   fontSize: z.number().int().min(8).max(160).default(28),

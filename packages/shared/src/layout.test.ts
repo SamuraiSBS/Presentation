@@ -21,7 +21,7 @@ describe("slide layouts", () => {
     const canvas = buildSlideCanvas(deck.slides[0], resolvePresentationTheme(deck));
 
     expect(canvas.elements.some((element) => element.id.includes("-evidence-thesis"))).toBe(true);
-    expect(canvas.elements.some((element) => element.id.includes("-source-0"))).toBe(true);
+    expect(canvas.elements.some((element) => element.id.includes("-source-credit"))).toBe(true);
   });
 
   it("keeps the full layout and theme matrix inside the slide with real gradient backgrounds", () => {

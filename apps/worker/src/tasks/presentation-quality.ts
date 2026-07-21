@@ -1,6 +1,8 @@
 import {
   auditSlideCanvas,
   ensureEditableCanvas,
+  normalizeSourceRefs,
+  sourceRefFromSource,
   hasCustomSlideCanvas,
   presentationSchema,
   resolvePresentationTheme,
@@ -13,6 +15,7 @@ import {
   type Source,
 } from "@studydeck/shared";
 import { errorLogFields, logger } from "../observability.js";
+import { STOP_WORDS } from "./presentation/constants.js";
 
 export type QualityProjectInput = {
   id: string;
@@ -22,6 +25,8 @@ export type QualityProjectInput = {
   level: string;
   mode: string;
   slideCount: number;
+  generationBrief?: unknown;
+  researchBrief?: unknown;
 };
 
 export type GenerationMode = "openai" | "yandex" | "demo" | "demo-fallback";
@@ -47,6 +52,32 @@ type QualityTextEntry = {
   slide: Slide;
   field: string;
   value: string;
+};
+
+export type TopicProfile = {
+  tokens: string[];
+  anchors: string[];
+};
+
+export type SlideSemanticContract = {
+  slideOrder: number;
+  narrativeTitle: string;
+  keyMessage: string;
+  acceptedNarration: string;
+  speakerNotes: string;
+  speechScript: string;
+  visibleText: string;
+};
+
+export type SlideSpeechAlignmentScore = {
+  slideOrder: number;
+  score: number;
+  visibleToAccepted: number;
+  visibleToKeyMessage: number;
+  notesToScript: number;
+  notesToAccepted: number;
+  scriptToAccepted: number;
+  hasMatchingScript: boolean;
 };
 
 const QUALITY_SCORE_THRESHOLD = 82;
@@ -138,6 +169,88 @@ export function hasUnsupportedSpecificity(text: string, sources: Source[]) {
   return facts.some((fact) => !sourceText.includes(normalizeQualityText(fact)));
 }
 
+function factualSlideText(slide: Slide) {
+  return [
+    slide.title,
+    slide.thesis,
+    ...slide.bullets,
+    ...slide.blocks.flatMap((block) => block.type === "bullets" ? block.items : [block.content]),
+    slide.definition?.term,
+    slide.definition?.text,
+    slide.visual.title,
+    slide.visual.description,
+    ...slide.visual.items.flatMap((item) => [item.label, item.text]),
+    ...slide.visual.rows.flatMap((row) => [row.label, row.left, row.right]),
+  ].filter(Boolean).join(" ");
+}
+
+function hasHighRiskClaim(text: string) {
+  if (hasPreciseFact(text)) return true;
+  const namedEntity = /\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})+\b/u.test(text);
+  const historicalEvent = /\b(?:war|revolution|treaty|crisis|election|войн[аы]|революци[яи]|договор|кризис|выборы)\b/iu.test(text);
+  const causal = /\b(?:because|therefore|causes?|leads?\s+to|results?\s+in|потому\s+что|приводит\s+к|вызывает|стало\s+причиной)\b/iu.test(text);
+  const comparative = /\b(?:most|least|best|largest|first|superior|наиболее|сам(?:ый|ая|ое|ые)|лучше|крупнейш)\b/iu.test(text);
+  return historicalEvent || comparative || (namedEntity && causal);
+}
+
+function matchingSourceForSlide(slide: Slide, sources: Source[]) {
+  const text = factualSlideText(slide);
+  const byId = new Map(sources.map((source) => [source.id, source]));
+  return slide.sourceRefs.some((reference) => {
+    const source = byId.get(reference.sourceId);
+    return Boolean(source && sourceSupportsClaim(text, source, reference.excerpt));
+  });
+}
+
+function sourceSupportsClaim(claim: string, source: Source, referenceExcerpt = "") {
+  const sourceText = normalizeQualityText([source.label, source.excerpt, source.url, referenceExcerpt].filter(Boolean).join(" "));
+  if (!sourceText) return false;
+  const preciseValues = claim.match(/\b(?:\d{4}|\d{1,3}(?:[.,]\d+)?\s*(?:%|млн|млрд|лет|года|годов))\b/giu) || [];
+  if (preciseValues.length) return preciseValues.every((value) => sourceText.includes(normalizeQualityText(value)));
+  const claimTerms = normalizeQualityText(claim)
+    .match(/[\p{L}\p{N}]{4,}/gu)?.filter((term) => !SOURCE_MATCH_STOP_WORDS.has(term)) || [];
+  const overlap = new Set(claimTerms.filter((term) => sourceText.includes(term)));
+  return overlap.size >= 2;
+}
+
+function generalizeSlideClaims(slide: Slide): Slide {
+  const generalize = (value: string) => generalizeUnsupportedClaim(value);
+  return {
+    ...slide,
+    // The title is the deck's thematic anchor, not a standalone factual
+    // assertion. Keep it intact while generalizing unsupported body claims.
+    title: slide.title,
+    thesis: generalize(slide.thesis),
+    bullets: slide.bullets.map(generalize),
+    blocks: slide.blocks.map((block) => block.type === "bullets"
+      ? { ...block, items: block.items.map(generalize) }
+      : { ...block, content: generalize(block.content) }),
+    definition: slide.definition ? { term: generalize(slide.definition.term), text: generalize(slide.definition.text) } : null,
+    visual: {
+      ...slide.visual,
+      title: generalize(slide.visual.title),
+      description: generalize(slide.visual.description),
+      items: slide.visual.items.map((item) => ({ ...item, label: generalize(item.label), text: generalize(item.text) })),
+      rows: slide.visual.rows.map((row) => ({ ...row, label: generalize(row.label), left: generalize(row.left), right: generalize(row.right) })),
+    },
+  };
+}
+
+function generalizeUnsupportedClaim(value: string) {
+  return cleanText(value)
+    .replace(/\b(?:18|19|20)\d{2}\b/g, "в рассматриваемый период")
+    .replace(/\b\d{1,3}(?:[.,]\d+)?\s*%/g, "заметно")
+    .replace(/\b\d{1,3}(?:[.,]\d+)?\s*(?:млн|млрд|лет|года|годов)\b/giu, "несколько")
+    .replace(/\b(?:most|least|best|largest|first|superior)\b/giu, "notable")
+    .replace(/\b(?:наиболее|сам(?:ый|ая|ое|ые)|лучше|крупнейш\w*)\b/giu, "важный")
+    .replace(/\b(?:because|therefore|causes?|leads?\s+to|results?\s+in)\b/giu, "is associated with")
+    .replace(/\b(?:потому\s+что|приводит\s+к|вызывает|стало\s+причиной)\b/giu, "связан с");
+}
+
+const SOURCE_MATCH_STOP_WORDS = new Set([
+  "about", "after", "before", "their", "there", "which", "these", "those", "этого", "также", "после", "среди", "когда", "который", "которые", "может", "важный",
+]);
+
 export function isVisibleTextTooLong(slide: Slide) {
   const visibleText = [slide.title, slide.thesis, ...slide.bullets, ...slide.blocks.flatMap((block) => block.type === "bullets" ? block.items : [block.content])].join(" ");
   return wordCount(slide.title) > 12
@@ -156,12 +269,7 @@ export function isVisibleTextTooLong(slide: Slide) {
 
 export function hasWeakConclusion(slide: Slide, project: QualityProjectInput) {
   if (slide.order !== project.slideCount && slide.slideKind !== "summary") return false;
-  const text = normalizeQualityText([slide.title, slide.thesis, ...slide.bullets, slide.speakerNotes].join(" "));
-  const topicTokens = significantTokens(`${project.title} ${project.prompt}`).slice(0, 8);
-  const conclusionWords = ["вывод", "итог", "значит", "поэтому", "важно", "conclusion", "result"];
-  const hasTopic = topicTokens.length === 0 || topicTokens.some((token) => text.includes(token));
-  const hasConclusion = conclusionWords.some((word) => text.includes(normalizeQualityText(word)));
-  return !hasTopic || !hasConclusion || wordCount(slide.speakerNotes) < 35;
+  return inspectConclusion(slide, project).weak;
 }
 
 export function scoreSpeechNaturalness(presentation: PresentationDocument): QualityDimensionScore {
@@ -215,11 +323,12 @@ export function scoreSlideBrevity(presentation: PresentationDocument): QualityDi
 
 export function scoreVisualRhythm(presentation: PresentationDocument): QualityDimensionScore {
   const layoutIssues = findLayoutRhythmIssues(presentation).length;
+  const visualPlanIssues = findVisualPlanIssues(presentation).length;
   const textOnlySlides = presentation.slides.filter((slide) =>
     slide.visual.type === "none" || (!slide.visual.description && !slide.visual.image && !slide.visual.items.length && !slide.visual.rows.length),
   ).length;
   const layouts = new Set(presentation.slides.map((slide) => slide.layout)).size;
-  let penalty = Math.min(35, layoutIssues * 12);
+  let penalty = Math.min(40, layoutIssues * 12 + visualPlanIssues * 9);
   penalty += ratioPenalty(textOnlySlides, presentation.slides.length, 35);
   if (presentation.slides.length >= 4 && layouts < 3) penalty += 15;
   const score = clamp(Math.round(100 - penalty), 0, 100);
@@ -232,15 +341,11 @@ export function scoreSourceGrounding(
   presentation: PresentationDocument,
   sources: Source[] = presentation.sources,
 ): QualityDimensionScore {
-  const unsupported = presentation.slides.filter((slide) =>
-    hasUnsupportedSpecificity([slide.title, slide.thesis, ...slide.bullets, slide.speakerNotes].join(" "), sources),
-  ).length;
+  const unsupported = findFactualRiskIssues(presentation, sources).length;
   const preciseSlides = presentation.slides.filter((slide) =>
-    hasPreciseFact([slide.title, slide.thesis, ...slide.bullets, slide.speakerNotes].join(" ")),
+    hasHighRiskClaim(factualSlideText(slide)),
   ).length;
-  const unreferenced = sources.length
-    ? presentation.slides.filter((slide) => hasPreciseFact([slide.thesis, ...slide.bullets].join(" ")) && !slide.sourceRefs.length).length
-    : 0;
+  const unreferenced = unsupported;
   const denominator = Math.max(1, preciseSlides);
   const score = clamp(Math.round(100
     - ratioPenalty(unsupported, denominator, 65)
@@ -288,6 +393,273 @@ export function findGenericTextIssues(presentation: PresentationDocument): Quali
     });
   }
   return issues;
+}
+
+/**
+ * Checks the text that a listener can actually see in each independent layout
+ * slot. Labels are intentionally treated differently from propositions: a
+ * label such as "1963" or "Carrera RS" is valid without a final stop, while a
+ * thesis, bullet, block or visual explanation must stand on its own.
+ */
+export function findVisibleTextIntegrityIssues(presentation: PresentationDocument): QualityIssue[] {
+  return presentation.slides.flatMap((slide) => visibleTextIntegrityEntries(slide).flatMap((entry) => {
+    const reason = visibleTextIntegrityReason(entry.value, entry.label);
+    if (!reason) return [];
+    return [{
+      slideId: slide.id,
+      severity: entry.label ? "minor" as const : "major" as const,
+      category: "generic_text" as const,
+      field: entry.field,
+      message: `Visible text is incomplete: ${reason}.`,
+      repairInstruction: "Replace this field with one complete, self-contained formulation from the accepted narration. Do not continue a sentence from another layout slot.",
+    }];
+  }));
+}
+
+/** Detects safe, exact repetitions inside one slide before they escape into export. */
+export function findIntraSlideDuplicateIssues(presentation: PresentationDocument): QualityIssue[] {
+  const issues: QualityIssue[] = [];
+  for (const slide of presentation.slides) {
+    const seen = new Map<string, string>();
+    for (const entry of visibleTextIntegrityEntries(slide).filter((entry) => !entry.label)) {
+      // Blocks are a layout-dependent renderer fallback. Their relation to
+      // visible bullets is resolved by layout normalization, while this pass
+      // targets independently rendered thesis, bullet, and visual fields.
+      if (entry.field.startsWith("blocks.")) continue;
+      const key = normalizedMessage(entry.value);
+      if (!key || key.length < 8) continue;
+      const duplicateOf = seen.get(key);
+      if (!duplicateOf) {
+        seen.set(key, entry.field);
+        continue;
+      }
+      issues.push({
+        slideId: slide.id,
+        severity: "major",
+        category: "duplicate",
+        field: entry.field,
+        message: `Visible text duplicates ${duplicateOf} on the same slide.`,
+        repairInstruction: "Remove the exact duplicate. If the layout needs another point, derive a distinct short point from the accepted narration without adding unsupported facts.",
+      });
+    }
+  }
+  return issues;
+}
+
+/**
+ * Finds repeated central messages anywhere in the deck, not only on adjacent
+ * slides. Topic anchors that occur on most slides are removed first so a
+ * repeated subject name alone does not create a false positive.
+ */
+export function findDeckWideDuplicateIssues(presentation: PresentationDocument): QualityIssue[] {
+  const signatures = presentation.slides.map((slide) => ({
+    slide,
+    central: normalizedMessage(slide.thesis),
+    tokens: deckMessageTokens(slide),
+  }));
+  const frequency = new Map<string, number>();
+  signatures.forEach(({ tokens }) => new Set(tokens).forEach((token) => frequency.set(token, (frequency.get(token) || 0) + 1)));
+  const anchorLimit = Math.ceil(presentation.slides.length * 0.6);
+  const filtered = signatures.map((signature) => ({
+    ...signature,
+    tokens: signature.tokens.filter((token) => (frequency.get(token) || 0) < anchorLimit),
+  }));
+  const issues: QualityIssue[] = [];
+
+  for (let leftIndex = 0; leftIndex < filtered.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < filtered.length; rightIndex += 1) {
+      const left = filtered[leftIndex];
+      const right = filtered[rightIndex];
+      const sameCentralClaim = left.central.length >= 18 && left.central === right.central;
+      const similarity = jaccardSimilarity(left.tokens, right.tokens);
+      const intersection = left.tokens.filter((token) => right.tokens.includes(token)).length;
+      if (!sameCentralClaim && !(left.tokens.length >= 6 && right.tokens.length >= 6 && similarity >= 0.9 && intersection >= 5)) continue;
+      issues.push({
+        slideId: right.slide.id,
+        severity: sameCentralClaim || similarity >= 0.9 ? "blocker" : "major",
+        category: "duplicate",
+        field: "keyMessage",
+        message: `Slide ${right.slide.order} repeats the central message of slide ${left.slide.order}.`,
+        repairInstruction: "Replace the repeated central claim with this slide's distinct narrative-plan job, example, cause, consequence, stage, or conclusion. Preserve sourceRefs and do not invent facts.",
+      });
+    }
+  }
+  return issues;
+}
+
+/**
+ * Builds a compact, local-only topic vocabulary. It deliberately combines the
+ * project request with the already accepted narration and story plan, so a
+ * generic word such as "conflict" is never treated as globally forbidden.
+ */
+export function buildTopicProfile(presentation: PresentationDocument, project: QualityProjectInput): TopicProfile {
+  const brief = project.generationBrief && typeof project.generationBrief === "object" ? project.generationBrief as Record<string, unknown> : {};
+  const research = project.researchBrief && typeof project.researchBrief === "object" ? project.researchBrief as Record<string, unknown> : {};
+  const projectText = [
+    project.title,
+    project.prompt,
+    ...pickBriefText(brief, ["topic", "angle", "audience", "goal", "vocabulary", "keywords"]),
+    ...pickBriefText(research, ["topic", "angle", "vocabulary"]),
+  ].join(" ");
+  const narrativeText = presentation.narrativePlan.flatMap((item) => [item.slideTitle, item.keyMessage, item.slidePurpose]).join(" ");
+  const sourceText = presentation.sources.flatMap((source) => [source.label, String(source.excerpt || "").slice(0, 240)]).join(" ");
+  const projectTokens = topicTokens(projectText);
+  const narrativeTokens = topicTokens(narrativeText);
+  const sourceTokens = topicTokens(sourceText);
+  const tokens = uniqueTokens([...projectTokens, ...narrativeTokens, ...sourceTokens]);
+  const anchors = uniqueTokens([...projectTokens, ...narrativeTokens]).slice(0, 36);
+  return { tokens, anchors: anchors.length ? anchors : tokens.slice(0, 20) };
+}
+
+/**
+ * Detects a substantial mismatch between visible text and the accepted speech
+ * for the same slide. This is intentionally contextual: a deck about a
+ * conflict supplies conflict-related anchors itself and therefore does not
+ * trigger merely because it contains words such as "crisis" or "negotiation".
+ */
+export function findTopicRelevanceIssues(
+  presentation: PresentationDocument,
+  project: QualityProjectInput,
+): QualityIssue[] {
+  const profile = buildTopicProfile(presentation, project);
+  if (profile.anchors.length < 2) return [];
+
+  return presentation.slides.flatMap((slide) => {
+    const visible = visibleSlideText(slide);
+    const visibleTokens = uniqueTokens(topicTokens(visible));
+    // Short title and transition slides do not carry enough semantic evidence.
+    if (visibleTokens.length < 7) return [];
+
+    const script = presentation.speechScript.find((item) => item.slideOrder === slide.order)?.text || "";
+    const narrative = presentation.narrativePlan.find((item) => item.slideOrder === slide.order);
+    const acceptedContext = [slide.speakerNotes, script, narrative?.slideTitle, narrative?.keyMessage, narrative?.slidePurpose].join(" ");
+    const contextTokens = uniqueTokens(topicTokens(acceptedContext));
+    const anchorMatches = overlapCount(visibleTokens, profile.anchors);
+    const contextMatches = overlapCount(visibleTokens, contextTokens);
+    const unmatched = visibleTokens.filter((token) => !matchesAny(token, profile.anchors) && !matchesAny(token, contextTokens));
+    const foreignSignals = foreignDomainSignalCount(visible);
+    // One or two topic echoes (for example, a deck title prepended to a
+    // pasted paragraph) are not enough to make a long foreign passage valid.
+    const hasStrongMismatch = (anchorMatches <= 2
+      && contextMatches <= 2
+      && unmatched.length >= 5
+      && (foreignSignals >= 2 || (profile.anchors.length >= 5 && visibleTokens.length >= 10)))
+      || (foreignSignals >= 3 && anchorMatches <= 4 && unmatched.length >= 5);
+
+    if (!hasStrongMismatch) return [];
+    return [{
+      slideId: slide.id,
+      severity: "major" as const,
+      category: "off_topic" as const,
+      field: "visibleText",
+      message: "Visible slide text diverges from the project topic and accepted narration.",
+      repairInstruction: "Rewrite every visible field from the accepted narration and matching narrative-plan item. Keep speakerNotes and speechScript unchanged.",
+    }];
+  });
+}
+
+/**
+ * Makes the accepted narration explicit at the same seam as the generated
+ * slide content.  It deliberately reads generatedText first: notes and the
+ * script are projections of accepted narration, not competing authorities.
+ */
+export function buildSlideSemanticContracts(presentation: PresentationDocument): SlideSemanticContract[] {
+  const acceptedByOrder = new Map(parseAcceptedNarrationSections(presentation.generatedText)
+    .map((section) => [section.order, section]));
+  const scriptsByOrder = new Map<number, typeof presentation.speechScript>();
+  for (const item of presentation.speechScript) {
+    const items = scriptsByOrder.get(item.slideOrder) || [];
+    items.push(item);
+    scriptsByOrder.set(item.slideOrder, items);
+  }
+
+  return presentation.slides.map((slide) => {
+    const narrative = presentation.narrativePlan.find((item) => item.slideOrder === slide.order);
+    const accepted = acceptedByOrder.get(slide.order);
+    const scripts = scriptsByOrder.get(slide.order) || [];
+    return {
+      slideOrder: slide.order,
+      narrativeTitle: narrative?.slideTitle || accepted?.title || slide.title,
+      keyMessage: narrative?.keyMessage || "",
+      acceptedNarration: accepted?.text || "",
+      speakerNotes: slide.speakerNotes,
+      speechScript: scripts.length === 1 ? scripts[0].text : "",
+      visibleText: visibleSlideText(slide),
+    };
+  });
+}
+
+export function scoreSlideSpeechAlignment(contract: SlideSemanticContract): SlideSpeechAlignmentScore {
+  const visibleToAccepted = semanticOverlap(contract.visibleText, contract.acceptedNarration);
+  const visibleToKeyMessage = semanticOverlap(contract.visibleText, contract.keyMessage);
+  const notesToScript = semanticOverlap(contract.speakerNotes, contract.speechScript);
+  const notesToAccepted = semanticOverlap(contract.speakerNotes, contract.acceptedNarration);
+  const scriptToAccepted = semanticOverlap(contract.speechScript, contract.acceptedNarration);
+  const coverage = [visibleToAccepted, visibleToKeyMessage, notesToScript, notesToAccepted, scriptToAccepted]
+    .filter((value) => Number.isFinite(value));
+  return {
+    slideOrder: contract.slideOrder,
+    score: coverage.length ? Math.round(coverage.reduce((total, value) => total + value, 0) / coverage.length * 100) : 0,
+    visibleToAccepted,
+    visibleToKeyMessage,
+    notesToScript,
+    notesToAccepted,
+    scriptToAccepted,
+    hasMatchingScript: Boolean(contract.speechScript.trim()),
+  };
+}
+
+/**
+ * Finds only consequential mismatches.  A compact title may use a synonym
+ * or omit most narration words, so it is not rejected unless the visible
+ * content has essentially no shared anchors or carries a foreign domain.
+ */
+export function findSlideSpeechAlignmentIssues(presentation: PresentationDocument): QualityIssue[] {
+  const contracts = buildSlideSemanticContracts(presentation);
+  const scriptsByOrder = new Map<number, typeof presentation.speechScript>();
+  for (const item of presentation.speechScript) {
+    const items = scriptsByOrder.get(item.slideOrder) || [];
+    items.push(item);
+    scriptsByOrder.set(item.slideOrder, items);
+  }
+
+  return contracts.flatMap((contract) => {
+    const slide = presentation.slides.find((candidate) => candidate.order === contract.slideOrder)!;
+    const scripts = scriptsByOrder.get(contract.slideOrder) || [];
+    const score = scoreSlideSpeechAlignment(contract);
+    const issues: QualityIssue[] = [];
+    const isContentSlide = slide.slideKind !== "title" && slide.slideKind !== "summary";
+    const matchingTitle = scripts.length === 1 && scripts[0].slideTitle === slide.title;
+
+    if (scripts.length !== 1 || !matchingTitle || (isContentSlide && (!contract.acceptedNarration.trim() || !contract.speakerNotes.trim() || !contract.speechScript.trim()))) {
+      issues.push({
+        slideId: slide.id,
+        severity: "major",
+        category: "bad_narration",
+        field: "speechScript",
+        message: "The slide must have one ordered speech-script item with the current slide title and accepted narration.",
+        repairInstruction: "Restore speaker notes and the speech-script item from accepted generated narration for this slide order.",
+      });
+    }
+
+    const visibleTokens = uniqueTokens(topicTokens(contract.visibleText));
+    const acceptedTokens = uniqueTokens(topicTokens(`${contract.acceptedNarration} ${contract.keyMessage}`));
+    const visibleCoverage = Math.max(score.visibleToAccepted, score.visibleToKeyMessage);
+    const softThreshold = slide.slideKind === "title" || slide.slideKind === "summary" ? 0.18 : 0.34;
+    const hasForeignDomain = foreignDomainSignalCount(contract.visibleText) >= 2;
+    const lacksSharedAnchors = visibleTokens.length >= 7 && acceptedTokens.length >= 4 && visibleCoverage < softThreshold;
+    if (lacksSharedAnchors && (hasForeignDomain || visibleCoverage < 0.2)) {
+      issues.push({
+        slideId: slide.id,
+        severity: "major",
+        category: "off_topic",
+        field: "visibleText",
+        message: "Visible slide text does not express the accepted narration for the same slide order.",
+        repairInstruction: "Rewrite only visible slide fields from the accepted narration; keep accepted narration unchanged.",
+      });
+    }
+    return issues;
+  });
 }
 
 export function findRepeatedTitleIssues(presentation: PresentationDocument): QualityIssue[] {
@@ -460,6 +832,164 @@ export function findVisualDescriptionIssues(presentation: PresentationDocument):
   return [...slideIssues, ...designIssues];
 }
 
+/**
+ * These checks use the post-enrichment document. A photo direction alone is
+ * not coverage: it becomes coverage only after an image was actually kept.
+ */
+export function findVisualPlanIssues(presentation: PresentationDocument, project?: QualityProjectInput): QualityIssue[] {
+  const contentSlides = presentation.slides.filter((slide) => slide.slideKind === "content");
+  if (!contentSlides.length) return [];
+  const directionByOrder = new Map((presentation.designBrief?.slideDirections || []).map((direction) => [direction.slideOrder, direction]));
+  const hasVisualSupport = (slide: Slide) => {
+    const direction = directionByOrder.get(slide.order);
+    return Boolean(slide.visual.image)
+      || direction?.imageStrategy === "diagram"
+      || ["process_diagram", "comparison_diagram", "cause_effect_diagram", "timeline", "mind_map", "schema"].includes(slide.visual.type);
+  };
+  const issues: QualityIssue[] = [];
+  const concreteTopic = isConcreteVisualTopic(presentation, project);
+  const supported = contentSlides.filter(hasVisualSupport);
+
+  if (concreteTopic && contentSlides.length >= 3 && supported.length / contentSlides.length < 0.6) {
+    issues.push({
+      severity: "major",
+      category: "bad_visual",
+      field: "designBrief.slideDirections.imageStrategy",
+      message: "Concrete topic visual coverage is below the 60% target after image enrichment.",
+      repairInstruction: "Convert the weakest text-led content directions to explanatory diagrams; do not insert an unrelated stock image.",
+    });
+  }
+
+  for (let index = 2; index < contentSlides.length; index += 1) {
+    const run = contentSlides.slice(index - 2, index + 1);
+    if (!run.every((slide) => !hasVisualSupport(slide))) continue;
+    issues.push({
+      slideId: run[2].id,
+      severity: "major",
+      category: "bad_visual",
+      field: "designBrief.slideDirections.imageStrategy",
+      message: "Three consecutive content slides are text-only.",
+      repairInstruction: "Turn this slide into a diagram or an anchored photo scene; keep the summary text-led.",
+    });
+  }
+
+  for (const slide of contentSlides) {
+    const direction = directionByOrder.get(slide.order);
+    if (direction?.imageStrategy !== "real_photo") continue;
+    const anchors = slideSpecificVisualAnchors(slide, presentation);
+    if (anchors.length && !containsVisualAnchor(direction.visualPrompt, anchors)) {
+      issues.push({
+        slideId: slide.id,
+        severity: "major",
+        category: "bad_visual",
+        field: "designBrief.slideDirections.visualPrompt",
+        message: "Real-photo direction omits the slide-specific entity, model, place, or era anchor.",
+        repairInstruction: "Use the slide-specific anchor in the query, or switch to a diagram when a relevant photo is not available.",
+      });
+    }
+    if (slide.visual.image?.provider === "tavily" && anchors.length && !containsVisualAnchor([
+      slide.visual.image.alt,
+      slide.visual.image.sourceTitle,
+      slide.visual.image.sourceUrl,
+    ].join(" "), anchors)) {
+      issues.push({
+        slideId: slide.id,
+        severity: "major",
+        category: "bad_visual",
+        field: "visual.image",
+        message: "Downloaded image metadata does not confirm a strong slide-specific anchor.",
+        repairInstruction: "Discard this Tavily result and use a diagram or a candidate whose metadata matches the slide entity and era.",
+      });
+    }
+  }
+
+  const imageOwners = new Map<string, Slide[]>();
+  for (const slide of contentSlides) {
+    const image = slide.visual.image;
+    if (!image?.objectKey || image.provider !== "tavily") continue;
+    imageOwners.set(image.objectKey, [...(imageOwners.get(image.objectKey) || []), slide]);
+  }
+  for (const [objectKey, slides] of imageOwners) {
+    if (slides.length < 2) continue;
+    slides.slice(1).forEach((slide) => issues.push({
+      slideId: slide.id,
+      severity: "major",
+      category: "bad_visual",
+      field: "visual.image.objectKey",
+      message: `Downloaded image objectKey ${objectKey} repeats on multiple slides.`,
+      repairInstruction: "Use a distinct relevant candidate or replace this repeated Tavily image with a diagram.",
+    }));
+  }
+  return issues;
+}
+
+/** Safe local repair: it changes generated direction and Tavily assets only. */
+export function applyVisualPlanFallbacks(presentation: PresentationDocument, issues: QualityIssue[]): PresentationDocument {
+  if (!presentation.designBrief || !issues.some((issue) => issue.category === "bad_visual")) return presentation;
+  const affectedIds = new Set(issues
+    .filter((issue) => !issue.message.includes("Three consecutive"))
+    .map((issue) => issue.slideId)
+    .filter((id): id is string => Boolean(id)));
+  const needsCoverageRepair = issues.some((issue) => issue.message.includes("visual coverage") || issue.message.includes("Three consecutive"));
+  const duplicateAssetIds = new Set(issues.filter((issue) => issue.field === "visual.image.objectKey").map((issue) => issue.slideId).filter((id): id is string => Boolean(id)));
+  const slides = presentation.slides.map((slide) => {
+    if (!duplicateAssetIds.has(slide.id) || slide.visual.image?.provider !== "tavily") return slide;
+    return { ...slide, visual: { ...slide.visual, image: undefined } };
+  });
+  const slideByOrder = new Map(slides.map((slide) => [slide.order, slide]));
+  const coverageFallbackOrders = new Set<number>();
+  if (needsCoverageRepair) {
+    const contentDirections = presentation.designBrief.slideDirections.filter((direction) => slideByOrder.get(direction.slideOrder)?.slideKind === "content");
+    const actualVisuals = contentDirections.filter((direction) => {
+      const slide = slideByOrder.get(direction.slideOrder);
+      return Boolean(slide?.visual.image) || direction.imageStrategy === "diagram";
+    }).length;
+    let remaining = Math.max(0, Math.ceil(contentDirections.length * 0.6) - actualVisuals);
+    for (const direction of contentDirections) {
+      if (!remaining || direction.imageStrategy !== "none") continue;
+      coverageFallbackOrders.add(direction.slideOrder);
+      remaining -= 1;
+    }
+  }
+  const directions = presentation.designBrief.slideDirections.map((direction) => {
+    const slide = slideByOrder.get(direction.slideOrder);
+    if (!slide || slide.slideKind === "summary") return slide?.slideKind === "summary"
+      ? { ...direction, layoutIntent: "summary" as const, imageStrategy: "none" as const, sceneTextMode: "takeaway" as const }
+      : direction;
+    const needsFallback = affectedIds.has(slide.id) || coverageFallbackOrders.has(direction.slideOrder);
+    if (!needsFallback || slide.visual.image) return direction;
+    return {
+      ...direction,
+      layoutIntent: "diagram" as const,
+      imageStrategy: "diagram" as const,
+      sceneTextMode: "visual_labels" as const,
+      visualPrompt: `Explanatory diagram for ${cleanText(slide.title)}`,
+    };
+  });
+  return presentationSchema.parse({ ...presentation, slides, designBrief: { ...presentation.designBrief, slideDirections: directions } });
+}
+
+function isConcreteVisualTopic(presentation: PresentationDocument, project?: QualityProjectInput) {
+  const text = [presentation.title, project?.title, project?.prompt, ...presentation.slides.map((slide) => slide.title)].filter(Boolean).join(" ");
+  return /\b(?:porsche|bmw|mercedes|ferrari|car|vehicle|aircraft|ship|museum|painting|building|factory|laboratory|battle|city|country|person|product|device|model)\b|(?:автомобил|машин|самолет|корабл|музе|картина|здани|завод|лаборатор|город|стран|модель|\b\d{3,4}\b)/iu.test(text);
+}
+
+function slideSpecificVisualAnchors(slide: Slide, presentation: PresentationDocument) {
+  const narrative = presentation.narrativePlan.find((item) => item.slideOrder === slide.order);
+  return uniqueTokens([
+    slide.title,
+    narrative?.slideTitle || "",
+    narrative?.keyMessage || "",
+  ].join(" ").match(/[\p{L}\p{N}-]+/gu)?.map((token) => token.toLowerCase()).filter((token) => (
+    /\d/.test(token) || /^(?:porsche|bmw|mercedes|ferrari|tesla|911|carrera)$/i.test(token)
+  )) || []);
+}
+
+function containsVisualAnchor(value: string, anchors: string[]) {
+  const tokens = new Set(cleanText(value).toLowerCase().match(/[\p{L}\p{N}-]+/gu) || []);
+  return anchors.some((anchor) => tokens.has(anchor));
+}
+
 export function findDuplicateSlideIssues(presentation: PresentationDocument): QualityIssue[] {
   const issues: QualityIssue[] = [];
   for (let index = 1; index < presentation.slides.length; index += 1) {
@@ -481,30 +1011,138 @@ export function findDuplicateSlideIssues(presentation: PresentationDocument): Qu
 
 export function findFactualRiskIssues(presentation: PresentationDocument, sources: Source[]): QualityIssue[] {
   return presentation.slides.flatMap((slide) => {
-    const text = [slide.title, slide.thesis, ...slide.bullets, slide.speakerNotes].join(" ");
-    if (!hasUnsupportedSpecificity(text, sources)) return [];
+    const text = factualSlideText(slide);
+    if (!hasHighRiskClaim(text) || matchingSourceForSlide(slide, sources)) return [];
     return [{
       slideId: slide.id,
       severity: "minor" as const,
       category: "factual_risk" as const,
-      message: "Precise dates, names, or numbers appear without source material.",
-      repairInstruction: "Keep unsupported claims general or attach source-backed references.",
+      message: "A precise visible claim has no matching source reference or source context.",
+      repairInstruction: "Attach a matching existing source reference when its excerpt supports the claim; otherwise make the wording more general without inventing citation metadata.",
     }];
+  });
+}
+
+/**
+ * Repairs provenance deterministically: attach only a source whose available
+ * label/excerpt actually supports the claim, otherwise remove false precision.
+ */
+export function applySourceGroundingRepairs(
+  presentation: PresentationDocument,
+  sources: Source[] = presentation.sources,
+): PresentationDocument {
+  return presentationSchema.parse({
+    ...presentation,
+    slides: presentation.slides.map((slide) => {
+      const sourceRefs = normalizeSourceRefs(slide.sourceRefs, sources);
+      const normalized = { ...slide, sourceRefs };
+      const text = factualSlideText(normalized);
+      if (!hasHighRiskClaim(text) || matchingSourceForSlide(normalized, sources)) return normalized;
+
+      const matching = sources.find((source) => sourceSupportsClaim(text, source));
+      if (matching) {
+        return { ...normalized, sourceRefs: normalizeSourceRefs([...sourceRefs, sourceRefFromSource(matching)], sources) };
+      }
+      return generalizeSlideClaims(normalized);
+    }),
   });
 }
 
 export function findWeakConclusionIssues(presentation: PresentationDocument, project: QualityProjectInput): QualityIssue[] {
   return presentation.slides.flatMap((slide) => {
-    if (!hasWeakConclusion(slide, project)) return [];
+    if (slide.order !== project.slideCount && slide.slideKind !== "summary") return [];
+    const inspection = inspectConclusion(slide, project, presentation);
+    if (!inspection.weak) return [];
     return [{
       slideId: slide.id,
       severity: "major" as const,
-      category: "bad_narration" as const,
-      field: "speakerNotes",
-      message: "Final slide conclusion is too generic or not tied to the project topic.",
-      repairInstruction: "Rewrite the final slide with a topic-specific human conclusion and concrete takeaways.",
+      category: inspection.offTopic ? "off_topic" as const : "bad_narration" as const,
+      field: inspection.offTopic ? "visibleText" : "speakerNotes",
+      message: inspection.offTopic
+        ? "Final slide conclusion develops a different topic from the project."
+        : `Final slide conclusion is weak: ${inspection.reasons.join(", ")}.`,
+      repairInstruction: inspection.offTopic
+        ? "Rebuild the final summary from accepted narration, the project takeaway, and earlier narrative-plan beats. Do not add facts."
+        : "Rewrite the final slide with one complete topic-specific conclusion and 2-3 distinct takeaways grounded in earlier narrative-plan beats.",
     }];
   });
+}
+
+type ConclusionInspection = {
+  weak: boolean;
+  offTopic: boolean;
+  reasons: string[];
+};
+
+function inspectConclusion(
+  slide: Slide,
+  project: QualityProjectInput,
+  presentation?: PresentationDocument,
+): ConclusionInspection {
+  const visible = [slide.title, slide.thesis, ...slide.bullets].map(cleanText).filter(Boolean);
+  const visibleText = visible.join(" ");
+  const normalized = normalizeQualityText(visibleText);
+  const topicAnchors = uniqueTokens(significantTokens(`${project.title} ${project.prompt}`)).slice(0, 10);
+  const visibleTokens = uniqueTokens(significantTokens(visibleText));
+  const hasTopicAnchor = topicAnchors.length === 0 || overlapCount(visibleTokens, topicAnchors) > 0;
+  const genericEnding = isGenericConclusionEnding(normalized);
+  const completeThesis = isCompleteConclusionStatement(slide.thesis);
+  const supporting = uniqueConclusionPoints(slide.bullets);
+  const duplicatedSupport = supporting.some((point, index) =>
+    supporting.slice(index + 1).some((other) => semanticOverlap(point, other) >= 0.8),
+  );
+  const matchedNarrativeBeats = presentation && presentation.slides.length >= 5
+    ? countMatchedNarrativeBeats(visibleText, presentation, slide.order)
+    : 0;
+  const insufficientBeatCoverage = Boolean(presentation && presentation.slides.length >= 5 && matchedNarrativeBeats < 2);
+  const substantiallyDifferentTopic = !genericEnding
+    && !hasTopicAnchor
+    && foreignDomainSignalCount(visibleText) >= 2;
+  const reasons = [
+    ...(genericEnding ? ["courtesy or recap phrase without a conclusion"] : []),
+    ...(!hasTopicAnchor ? ["missing project topic anchors"] : []),
+    ...(!completeThesis ? ["main conclusion is not a complete statement"] : []),
+    ...(supporting.length < 2 ? ["fewer than two supporting takeaways"] : []),
+    ...(duplicatedSupport ? ["supporting takeaways repeat each other"] : []),
+    ...(insufficientBeatCoverage ? ["does not synthesize two earlier narrative beats"] : []),
+  ];
+  return { weak: reasons.length > 0, offTopic: substantiallyDifferentTopic, reasons };
+}
+
+function isGenericConclusionEnding(value: string) {
+  const text = normalizeQualityText(value);
+  if (!text) return true;
+  return /^(?:спасибо(?: за внимание)?|вопросы|thank you|questions)(?:\s*[!?.,]*)?$/iu.test(text)
+    || /^(?:мы рассмотрели|we considered|we have considered|в этой презентации рассмотрели)\b/iu.test(text)
+    || /^(?:итог|вывод|conclusion|summary)\s*[!?.,]*$/iu.test(text);
+}
+
+function isCompleteConclusionStatement(value: string) {
+  const text = cleanText(value);
+  if (wordCount(text) < 4 || isGenericConclusionEnding(text)) return false;
+  if (isClearlyIncompleteShortText(text) || /(?:\b(?:и|но|или|потому что|because|and|but|or|with|для|из|в|на)\s*)$/iu.test(text)) return false;
+  return /[.!?]$/.test(text);
+}
+
+function uniqueConclusionPoints(values: string[]) {
+  const points: string[] = [];
+  for (const value of values.map(cleanText)) {
+    // Supporting slots may be concise slide phrases, but they must still be
+    // independently readable rather than grammatical continuations.
+    if (wordCount(value) < 3 || isGenericConclusionEnding(value) || isClearlyIncompleteShortText(value)) continue;
+    if (points.some((point) => semanticOverlap(point, value) >= 0.8)) continue;
+    points.push(value);
+  }
+  return points;
+}
+
+function countMatchedNarrativeBeats(visibleText: string, presentation: PresentationDocument, conclusionOrder: number) {
+  const conclusionTokens = uniqueTokens(significantTokens(visibleText));
+  const beats = presentation.narrativePlan
+    .filter((item) => item.slideOrder < conclusionOrder)
+    .map((item) => `${item.slideTitle} ${item.keyMessage} ${item.slidePurpose}`)
+    .filter((item) => significantTokens(item).length >= 2);
+  return beats.filter((beat) => overlapCount(conclusionTokens, uniqueTokens(significantTokens(beat))) >= 2).length;
 }
 
 export function findUniversityToneIssues(
@@ -538,6 +1176,17 @@ export function findShortNarrationIssues(presentation: PresentationDocument): Qu
 
 export function findExportReadinessIssues(presentation: PresentationDocument): QualityIssue[] {
   return presentation.slides.flatMap((slide) => {
+    const theme = resolvePresentationTheme({
+      title: presentation.title,
+      scenario: presentation.scenario,
+      level: presentation.level,
+      presentationTheme: presentation.presentationTheme,
+      designBrief: presentation.designBrief,
+    });
+    // A custom canvas belongs to the user. It can be reported by export
+    // diagnostics, but quality repair must never replace it with generated art.
+    if (hasCustomSlideCanvas(slide, theme)) return [];
+    const canvasIssue = slide.canvas ? auditSlideCanvas(slide.canvas)[0] : "canvas is missing";
     const singleSlide = presentationSchema.parse({
       ...presentation,
       slideCount: 1,
@@ -551,9 +1200,9 @@ export function findExportReadinessIssues(presentation: PresentationDocument): Q
       slideId: slide.id,
       severity: "major" as const,
       category: "schema_risk" as const,
-      field: "canvas",
-      message: "The slide canvas is missing or unsafe for export.",
-      repairInstruction: "Rebuild the generated canvas without changing a user-edited custom canvas.",
+      field: canvasIssue ? `canvas.${canvasIssue.split(" ")[0]}` : "canvas",
+      message: `The generated slide canvas is unsafe for export: ${canvasIssue || "unknown canvas issue"}.`,
+      repairInstruction: "Shorten visible text or use a roomier generated layout, then rebuild the canvas without changing a user-edited custom canvas.",
     }];
   });
 }
@@ -587,15 +1236,21 @@ export function critiquePresentationDeterministically(
 ): QualityCritique {
   const issues = dedupeIssues([
     ...findGenericTextIssues(presentation),
+    ...findVisibleTextIntegrityIssues(presentation),
+    ...findIntraSlideDuplicateIssues(presentation),
     ...findRepeatedTitleIssues(presentation),
     ...findLongSlideTextIssues(presentation),
     ...findNarrationMetaIssues(presentation),
     ...findLayoutRhythmIssues(presentation),
     ...findVisualDescriptionIssues(presentation),
+    ...findVisualPlanIssues(presentation, project),
     ...findDuplicateSlideIssues(presentation),
+    ...findDeckWideDuplicateIssues(presentation),
     ...findRepeatedSentenceStartIssues(presentation),
     ...findFactualRiskIssues(presentation, sources),
     ...(project ? findWeakConclusionIssues(presentation, project) : []),
+    ...(project ? findTopicRelevanceIssues(presentation, project) : []),
+    ...findSlideSpeechAlignmentIssues(presentation),
     ...findUniversityToneIssues(presentation, project),
     ...findShortNarrationIssues(presentation),
     ...findExportReadinessIssues(presentation),
@@ -618,7 +1273,7 @@ export async function improvePresentationQuality(
   provider: GenerationMode,
   options: ImprovePresentationQualityOptions = {},
 ): Promise<PresentationDocument> {
-  let best = presentationSchema.parse(presentation);
+  let best = rebuildGeneratedCanvases(applySourceGroundingRepairs(presentationSchema.parse(presentation), sources));
   let bestCritique = critiquePresentationDeterministically(best, sources, project);
   const initialCritique = bestCritique;
   let modelCritique = bestCritique;
@@ -671,6 +1326,147 @@ export async function improvePresentationQuality(
     }
   }
 
+  const unresolvedTopicIssues = findTopicRelevanceIssues(best, project);
+  if (unresolvedTopicIssues.length) {
+    const beforeTopicRepair = bestCritique.score;
+    const fallbackSource = unresolvedTopicIssues.every((issue) => {
+      const slide = best.slides.find((candidate) => candidate.id === issue.slideId);
+      const script = slide && best.speechScript.find((item) => item.slideOrder === slide.order)?.text;
+      return Boolean((slide?.speakerNotes || script || "").trim());
+    }) ? "accepted_narration" : "narrative_plan";
+    const fallback = rebuildTopicRepairedCanvases(
+      applyTopicRelevanceFallbacks(best, unresolvedTopicIssues, project),
+      new Set(unresolvedTopicIssues.map((issue) => issue.slideId).filter((id): id is string => Boolean(id))),
+    );
+    const fallbackCritique = critiquePresentationDeterministically(fallback, sources, project);
+    if (fallbackCritique.score >= bestCritique.score || !findTopicRelevanceIssues(fallback, project).length) {
+      best = fallback;
+      bestCritique = fallbackCritique;
+    }
+    logger.warn({
+      projectId: project.id,
+      stage: "polishing",
+      provider,
+      category: "off_topic",
+      repairStrategy: "accepted_narration",
+      fallbackSource,
+      slideOrders: unresolvedTopicIssues.map((issue) => best.slides.find((slide) => slide.id === issue.slideId)?.order).filter(Boolean),
+      repairedSlideCount: unresolvedTopicIssues.length,
+      beforeScore: beforeTopicRepair,
+      afterScore: bestCritique.score,
+    }, "presentation topic relevance repaired");
+  }
+
+  const conclusionIssues = findWeakConclusionIssues(best, project)
+    // A lone absent anchor can be an intentionally compact title in an
+    // otherwise coherent deck. Preserve that valid compatibility case; all
+    // generic, incomplete, duplicate, off-topic, or unsynthesized endings
+    // still receive the deterministic new-generation repair below.
+    .filter((issue) => issue.category === "off_topic" || !/: missing project topic anchors\.?$/iu.test(issue.message));
+  if (conclusionIssues.length) {
+    const affectedSlideIds = new Set(conclusionIssues
+      .map((issue) => issue.slideId)
+      .filter((id): id is string => Boolean(id)));
+    const fallback = rebuildTopicRepairedCanvases(
+      applyConclusionFallbacks(best, conclusionIssues, project),
+      affectedSlideIds,
+    );
+    const fallbackCritique = critiquePresentationDeterministically(fallback, sources, project);
+    if (fallbackCritique.score >= bestCritique.score || !findWeakConclusionIssues(fallback, project).length) {
+      best = fallback;
+      bestCritique = fallbackCritique;
+    }
+    logger.warn({
+      projectId: project.id,
+      stage: "polishing",
+      provider,
+      category: "conclusion",
+      slideOrders: [...affectedSlideIds].map((id) => best.slides.find((slide) => slide.id === id)?.order).filter(Boolean),
+      repairedSlideCount: affectedSlideIds.size,
+    }, "presentation conclusion repaired from accepted narration and narrative beats");
+  }
+
+  const alignmentIssues = findSlideSpeechAlignmentIssues(best);
+  if (alignmentIssues.length) {
+    const affectedSlideIds = new Set(alignmentIssues
+      .filter((issue) => issue.field === "visibleText")
+      .map((issue) => issue.slideId)
+      .filter((id): id is string => Boolean(id)));
+    const fallback = rebuildTopicRepairedCanvases(
+      applySlideSpeechAlignmentFallbacks(best, alignmentIssues, project),
+      affectedSlideIds,
+    );
+    const fallbackCritique = critiquePresentationDeterministically(fallback, sources, project);
+    if (fallbackCritique.score >= bestCritique.score || !findSlideSpeechAlignmentIssues(fallback).length) {
+      best = fallback;
+      bestCritique = fallbackCritique;
+    }
+    logger.warn({
+      projectId: project.id,
+      stage: "polishing",
+      provider,
+      category: "slide_speech_alignment",
+      slideOrders: alignmentIssues.map((issue) => best.slides.find((slide) => slide.id === issue.slideId)?.order).filter(Boolean),
+      repairedSlideCount: new Set(alignmentIssues.map((issue) => issue.slideId).filter(Boolean)).size,
+    }, "presentation slide and speech alignment repaired");
+  }
+
+  const contentIssues = [
+    ...findVisibleTextIntegrityIssues(best),
+    ...findIntraSlideDuplicateIssues(best),
+    // Exact deck-wide central-claim repeats are safe to replace locally from
+    // the matching narrative-plan job. Softer semantic matches stay in the
+    // targeted model-repair path to avoid flattening legitimate timelines.
+    ...findDeckWideDuplicateIssues(best).filter((issue) => issue.severity === "blocker"),
+  ];
+  if (contentIssues.length) {
+    const affectedSlideIds = new Set(contentIssues
+      .map((issue) => issue.slideId)
+      .filter((id): id is string => Boolean(id)));
+    const fallback = rebuildTopicRepairedCanvases(
+      applyVisibleTextIntegrityFallbacks(best, contentIssues, project),
+      affectedSlideIds,
+    );
+    const fallbackCritique = critiquePresentationDeterministically(fallback, sources, project);
+    const remaining = [
+      ...findVisibleTextIntegrityIssues(fallback),
+      ...findIntraSlideDuplicateIssues(fallback),
+      ...findDeckWideDuplicateIssues(fallback).filter((issue) => issue.severity === "blocker"),
+    ];
+    if (fallbackCritique.score >= bestCritique.score || !remaining.length) {
+      best = fallback;
+      bestCritique = fallbackCritique;
+    }
+    logger.warn({
+      projectId: project.id,
+      stage: "polishing",
+      provider,
+      category: "visible_text_integrity",
+      slideOrders: [...affectedSlideIds].map((id) => best.slides.find((slide) => slide.id === id)?.order).filter(Boolean),
+      repairedSlideCount: affectedSlideIds.size,
+    }, "presentation duplicate or fragment repair applied");
+  }
+
+  const visualPlanIssues = findVisualPlanIssues(best, project);
+  if (visualPlanIssues.length) {
+    const affectedSlideIds = new Set(visualPlanIssues.map((issue) => issue.slideId).filter((id): id is string => Boolean(id)));
+    const directionBefore = new Map((best.designBrief?.slideDirections || []).map((direction) => [direction.slideOrder, JSON.stringify(direction)]));
+    const plannedFallback = applyVisualPlanFallbacks(best, visualPlanIssues);
+    plannedFallback.designBrief?.slideDirections.forEach((direction) => {
+      if (directionBefore.get(direction.slideOrder) !== JSON.stringify(direction)) {
+        const slide = plannedFallback.slides.find((candidate) => candidate.order === direction.slideOrder);
+        if (slide) affectedSlideIds.add(slide.id);
+      }
+    });
+    const fallback = rebuildTopicRepairedCanvases(plannedFallback, affectedSlideIds);
+    const fallbackCritique = critiquePresentationDeterministically(fallback, sources, project);
+    if (fallbackCritique.score >= bestCritique.score || !findVisualPlanIssues(fallback, project).length) {
+      best = fallback;
+      bestCritique = fallbackCritique;
+    }
+    logger.warn({ projectId: project.id, stage: "polishing", provider, category: "bad_visual", repairedSlideCount: affectedSlideIds.size }, "presentation visual-plan fallback applied");
+  }
+
   logger.info({
     projectId: project.id,
     stage: "polishing",
@@ -716,7 +1512,7 @@ export function applyQualityRepairs(presentation: PresentationDocument, rawRepai
           // The accepted narration is the canonical, evidence-reviewed speech.
           // Polishing may improve visible slide content, but must never replace it.
           speakerNotes: slide.speakerNotes,
-          sourceRefs: Array.isArray(repair.sourceRefs) ? repair.sourceRefs : slide.sourceRefs,
+          sourceRefs: normalizeSourceRefs(Array.isArray(repair.sourceRefs) ? repair.sourceRefs : slide.sourceRefs, presentation.sources),
         };
       })
     : presentation.slides;
@@ -738,6 +1534,277 @@ export function applyQualityRepairs(presentation: PresentationDocument, rawRepai
     outline,
     speechScript,
     slides,
+  });
+}
+
+/**
+ * Last-resort, deterministic repair for leaked visible copy. The canonical
+ * accepted narration remains untouched; this function only derives compact
+ * screen text from it or, if unavailable, from the existing narrative plan.
+ */
+export function applyTopicRelevanceFallbacks(
+  presentation: PresentationDocument,
+  issues: QualityIssue[],
+  project: QualityProjectInput,
+): PresentationDocument {
+  const affected = new Set(issues
+    .filter((issue) => issue.category === "off_topic" && issue.field === "visibleText")
+    .map((issue) => issue.slideId)
+    .filter((id): id is string => Boolean(id)));
+  if (!affected.size) return presentation;
+
+  return rebuildVisibleContentFromAcceptedNarration(presentation, affected, project);
+}
+
+/**
+ * Deterministic final repair for incomplete fields and duplicate content. It
+ * derives a compact visible surface from accepted narration while preserving
+ * speaker notes, source refs, and any user-created canvas.
+ */
+export function applyVisibleTextIntegrityFallbacks(
+  presentation: PresentationDocument,
+  issues: QualityIssue[],
+  project: QualityProjectInput,
+): PresentationDocument {
+  const affected = new Set(issues
+    .filter((issue) => issue.category === "duplicate" || issue.message.startsWith("Visible text is incomplete:"))
+    .map((issue) => issue.slideId)
+    .filter((id): id is string => Boolean(id)));
+  const fieldsBySlide = new Map<string, Set<string>>();
+  issues.forEach((issue) => {
+    if (!issue.slideId) return;
+    const fields = fieldsBySlide.get(issue.slideId) || new Set<string>();
+    if (issue.field) fields.add(issue.field);
+    fieldsBySlide.set(issue.slideId, fields);
+  });
+  return affected.size ? rebuildVisibleContentFromAcceptedNarration(presentation, affected, project, fieldsBySlide) : presentation;
+}
+
+/**
+ * New-generation-only conclusion repair. It never deletes or edits slides in
+ * a stored deck: improvePresentationQuality invokes it while building a new
+ * document, and export/view paths do not call this function. The accepted
+ * narration remains canonical; the summary surface is rebuilt from it and
+ * from already planned story beats instead of fabricated closing facts.
+ */
+export function applyConclusionFallbacks(
+  presentation: PresentationDocument,
+  issues: QualityIssue[],
+  project: QualityProjectInput,
+): PresentationDocument {
+  const affected = new Set(issues
+    .filter((issue) => issue.category === "bad_narration" || issue.category === "off_topic")
+    .map((issue) => issue.slideId)
+    .filter((id): id is string => Boolean(id)));
+  if (!affected.size) return presentation;
+
+  const slides = presentation.slides.map((slide) => {
+    if (!affected.has(slide.id)) return slide;
+    const narrative = presentation.narrativePlan.find((item) => item.slideOrder === slide.order);
+    const script = presentation.speechScript.find((item) => item.slideOrder === slide.order)?.text || "";
+    const accepted = acceptedNarrationSentences([slide.speakerNotes, script]);
+    const earlierBeats = presentation.narrativePlan
+      .filter((item) => item.slideOrder < slide.order)
+      .flatMap((item) => [item.keyMessage, item.slidePurpose])
+      .map(cleanText)
+      .filter((item) => item && !isGenericConclusionEnding(item));
+    const topicAnchors = uniqueTokens(significantTokens(`${project.title} ${project.prompt}`));
+    const conclusionCandidates = [
+      ...accepted,
+      narrative?.keyMessage || "",
+      narrative?.slidePurpose || "",
+      ...earlierBeats,
+    ].map(cleanText).filter(Boolean);
+    const mainCandidate = conclusionCandidates.find((candidate) =>
+      wordCount(candidate) >= 4 && (topicAnchors.length === 0 || overlapCount(significantTokens(candidate), topicAnchors) > 0),
+    ) || conclusionCandidates.find((candidate) => wordCount(candidate) >= 4) || narrative?.keyMessage || project.title;
+    const thesis = ensureTopicAnchoredConclusion(compactSentence(mainCandidate, 26), project, topicAnchors);
+    const bullets = uniqueCompactSentences([
+      ...earlierBeats,
+      ...accepted.slice(1),
+      narrative?.keyMessage || "",
+      narrative?.slidePurpose || "",
+    ], thesis)
+      .filter((point) => !isGenericConclusionEnding(point))
+      .slice(0, 3);
+    const supporting = ensureConclusionSupportingPoints(bullets, thesis, conclusionCandidates, project, topicAnchors);
+    const titleCandidate = narrative?.slideTitle || slide.title;
+    const title = isGenericConclusionEnding(titleCandidate)
+      ? `Что показывает ${project.title}`
+      : compactTitle(titleCandidate);
+    return {
+      ...slide,
+      title,
+      slideKind: "summary" as const,
+      layout: "summary" as const,
+      thesis,
+      bullets: supporting,
+      blocks: [{ type: "bullets" as const, items: supporting }],
+      // The accepted narration and source refs are evidence-reviewed; do not
+      // replace either one just to make the compact final surface look nicer.
+      speakerNotes: slide.speakerNotes,
+    };
+  });
+  const speechScript = presentation.speechScript.map((item) => {
+    const slide = slides.find((candidate) => candidate.order === item.slideOrder);
+    return slide ? { ...item, slideTitle: slide.title, text: slide.speakerNotes } : item;
+  });
+  const narrativePlan = presentation.narrativePlan.map((item) => {
+    const slide = slides.find((candidate) => candidate.order === item.slideOrder);
+    if (!slide || !affected.has(slide.id)) return item;
+    return {
+      ...item,
+      slideTitle: slide.title,
+      keyMessage: slide.thesis,
+      slidePurpose: `${item.slidePurpose} Синтезировать предыдущие смысловые шаги без новых фактов.`,
+      transitionToNext: "",
+    };
+  });
+  return presentationSchema.parse({
+    ...presentation,
+    slideCount: slides.length,
+    outline: slides.map((slide) => slide.title),
+    narrativePlan,
+    slides,
+    speechScript,
+  });
+}
+
+function ensureTopicAnchoredConclusion(
+  value: string,
+  project: QualityProjectInput,
+  anchors: string[],
+) {
+  const conclusion = compactSentence(value, 26);
+  if (!anchors.length || overlapCount(significantTokens(conclusion), anchors) > 0) return conclusion;
+  const topic = cleanText(project.title || project.prompt);
+  const stem = conclusion.replace(/[.!?]+$/g, "").replace(/^./u, (char) => char.toLowerCase());
+  return compactSentence(`${topic}: ${stem}`, 26);
+}
+
+function ensureConclusionSupportingPoints(
+  points: string[],
+  thesis: string,
+  candidates: string[],
+  project: QualityProjectInput,
+  anchors: string[],
+) {
+  const result = [...points];
+  for (const candidate of candidates) {
+    const point = ensureTopicAnchoredConclusion(compactSentence(candidate, 18), project, anchors);
+    if (!isCompleteConclusionStatement(point) || semanticOverlap(point, thesis) >= 0.8) continue;
+    if (result.some((existing) => semanticOverlap(existing, point) >= 0.8)) continue;
+    result.push(point);
+    if (result.length >= 3) break;
+  }
+  if (result.length < 2) {
+    const topic = cleanText(project.title || project.prompt);
+    result.push(compactSentence(`${topic} сохраняет значение через связь уже раскрытых причин и последствий`, 18));
+  }
+  return result.slice(0, 3);
+}
+
+function rebuildVisibleContentFromAcceptedNarration(
+  presentation: PresentationDocument,
+  affected: Set<string>,
+  project: QualityProjectInput,
+  fieldsBySlide?: Map<string, Set<string>>,
+): PresentationDocument {
+
+  const slides = presentation.slides.map((slide) => {
+    if (!affected.has(slide.id)) return slide;
+    const affectedFields = fieldsBySlide?.get(slide.id);
+    const replaceAllVisible = !affectedFields || affectedFields.has("keyMessage");
+    const needsField = (prefix: string) => replaceAllVisible || [...affectedFields || []].some((field) => field === prefix || field.startsWith(`${prefix}.`));
+    const script = presentation.speechScript.find((item) => item.slideOrder === slide.order)?.text || "";
+    const narrative = presentation.narrativePlan.find((item) => item.slideOrder === slide.order);
+    const sentences = acceptedNarrationSentences([slide.speakerNotes, script]);
+    const fallbackSentences = acceptedNarrationSentences([narrative?.keyMessage || "", narrative?.slidePurpose || ""]);
+    const candidates = sentences.length ? sentences : fallbackSentences;
+    const title = compactTitle(narrative?.slideTitle || candidates[0] || project.title || slide.title);
+    const thesis = compactSentence(candidates[0] || narrative?.keyMessage || `${project.title} раскрывается через ключевой пример.` , 26);
+    const bullets = uniqueCompactSentences(candidates.slice(1), thesis);
+    const safeBullets = bullets.length >= 2
+      ? bullets.slice(0, 3)
+      : uniqueCompactSentences([narrative?.keyMessage || "", narrative?.slidePurpose || "", ...candidates], thesis).slice(0, 3);
+    const candidateBullets = safeBullets.length >= 2
+      ? safeBullets
+      : [compactSentence(narrative?.keyMessage || thesis, 18), compactSentence(narrative?.slidePurpose || `${project.title}: ключевой вывод.`, 18)].filter(Boolean);
+    const repairedBullets = candidateBullets.filter((bullet) => normalizedMessage(bullet) !== normalizedMessage(thesis));
+    const blockContent = compactSentence(
+      narrative?.audienceQuestion || narrative?.slidePurpose || candidates.at(-1) || `${title} \u0440\u0430\u0441\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u043a\u043b\u044e\u0447\u0435\u0432\u043e\u0439 \u0432\u044b\u0432\u043e\u0434.`,
+      18,
+    );
+    const visual = {
+      ...slide.visual,
+      title: "",
+      description: `Academic visual supporting ${title}.`,
+      leftLabel: slide.visual.leftLabel ? compactTitle(repairedBullets[0] || title) : "",
+      rightLabel: slide.visual.rightLabel ? compactTitle(repairedBullets[1] || title) : "",
+      items: slide.visual.items.map((item, index) => ({
+        ...item,
+        label: compactTitle(repairedBullets[index] || title),
+        text: repairedBullets[index] || thesis,
+      })),
+      rows: slide.visual.rows.map((row, index) => ({
+        ...row,
+        label: compactTitle(repairedBullets[index] || title),
+        left: repairedBullets[index] || thesis,
+        right: repairedBullets[index + 1] || repairedBullets[0] || thesis,
+      })),
+    };
+    return {
+      ...slide,
+      title: needsField("title") ? title : slide.title,
+      thesis: needsField("thesis") ? thesis : slide.thesis,
+      bullets: needsField("bullets") ? repairedBullets.slice(0, 3) : slide.bullets,
+      blocks: needsField("blocks") ? [{ type: "callout" as const, content: blockContent }] : slide.blocks,
+      definition: slide.definition && (needsField("definition") || replaceAllVisible) ? { term: compactTitle(title), text: thesis } : slide.definition,
+      visual: needsField("visual") ? visual : slide.visual,
+      // Speaker notes are accepted evidence-reviewed narration and must remain canonical.
+      speakerNotes: slide.speakerNotes,
+    };
+  });
+  const speechScript = presentation.speechScript.map((item) => {
+    const slide = slides.find((candidate) => candidate.order === item.slideOrder);
+    return slide ? { ...item, slideTitle: slide.title, text: slide.speakerNotes } : item;
+  });
+  return presentationSchema.parse({ ...presentation, outline: slides.map((slide) => slide.title), slides, speechScript });
+}
+
+/**
+ * Restores whichever projection of accepted narration is damaged.  Visible
+ * copy is repaired through the existing compact-screen-text fallback; notes,
+ * script ordering and the accepted generatedText itself are never rewritten
+ * to fit leaked screen text.
+ */
+export function applySlideSpeechAlignmentFallbacks(
+  presentation: PresentationDocument,
+  issues: QualityIssue[],
+  project: QualityProjectInput,
+): PresentationDocument {
+  const visibleIssues = issues.filter((issue) => issue.category === "off_topic" && issue.field === "visibleText");
+  const visibleRepaired = visibleIssues.length
+    ? applyTopicRelevanceFallbacks(presentation, visibleIssues, project)
+    : presentation;
+  const acceptedByOrder = new Map(parseAcceptedNarrationSections(visibleRepaired.generatedText)
+    .map((section) => [section.order, section]));
+  if (acceptedByOrder.size !== visibleRepaired.slides.length) return visibleRepaired;
+
+  const slides = visibleRepaired.slides.map((slide) => {
+    const accepted = acceptedByOrder.get(slide.order);
+    return accepted ? { ...slide, speakerNotes: accepted.text } : slide;
+  });
+  const speechScript = slides.map((slide) => ({
+    slideOrder: slide.order,
+    slideTitle: slide.title,
+    text: acceptedByOrder.get(slide.order)?.text || slide.speakerNotes,
+  }));
+  return presentationSchema.parse({
+    ...visibleRepaired,
+    outline: slides.map((slide) => slide.title),
+    slides,
+    speechScript,
   });
 }
 
@@ -895,6 +1962,26 @@ function rebuildGeneratedCanvases(presentation: PresentationDocument): Presentat
   });
 }
 
+function rebuildTopicRepairedCanvases(presentation: PresentationDocument, affectedSlideIds: Set<string>): PresentationDocument {
+  if (!affectedSlideIds.size) return presentation;
+  const theme = resolvePresentationTheme({
+    title: presentation.title,
+    scenario: presentation.scenario,
+    level: presentation.level,
+    presentationTheme: presentation.presentationTheme,
+    designBrief: presentation.designBrief,
+  });
+  const rebuilt = ensureEditableCanvas(presentation);
+  return presentationSchema.parse({
+    ...presentation,
+    presentationTheme: rebuilt.presentationTheme,
+    slides: presentation.slides.map((slide) => {
+      if (!affectedSlideIds.has(slide.id) || hasCustomSlideCanvas(slide, theme)) return slide;
+      return { ...slide, canvas: rebuilt.slides.find((candidate) => candidate.id === slide.id)?.canvas };
+    }),
+  });
+}
+
 function weakestDimensionNames(critique: QualityCritique): Array<keyof QualityDimensions> {
   if (!critique.dimensions) return [];
   const entries = qualityDimensionNames().map((name) => [name, critique.dimensions![name].score] as const);
@@ -954,10 +2041,207 @@ function slideMeaningTokens(slide: Slide) {
 }
 
 function significantTokens(value: string) {
+  return topicTokens(value);
+}
+
+function topicTokens(value: string) {
   return normalizeQualityText(value)
     .split(/\s+/)
     .map((token) => token.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
-    .filter((token) => token.length >= 4);
+    .map(topicStem)
+    .filter((token) => token.length >= 4 && !STOP_WORDS.has(token));
+}
+
+function semanticOverlap(left: string, right: string) {
+  const leftTokens = uniqueTokens(topicTokens(left));
+  const rightTokens = uniqueTokens(topicTokens(right));
+  if (!leftTokens.length || !rightTokens.length) return 0;
+  return overlapCount(leftTokens, rightTokens) / Math.min(leftTokens.length, rightTokens.length);
+}
+
+function parseAcceptedNarrationSections(value: string) {
+  const text = cleanMultilineText(value);
+  const sections: Array<{ order: number; title: string; text: string }> = [];
+  const header = /(?:^|\n)\s*(?:slide|слайд)\s+(\d+)\s*:\s*([^\n]+)\n([\s\S]*?)(?=(?:\n\s*(?:slide|слайд)\s+\d+\s*:)|$)/giu;
+  for (const match of text.matchAll(header)) {
+    const order = Number(match[1]);
+    const title = cleanText(match[2]);
+    const narration = cleanText(match[3]);
+    if (order > 0 && title && narration) sections.push({ order, title, text: narration });
+  }
+  return sections;
+}
+
+function topicStem(token: string) {
+  const normalized = token.replace(/ё/g, "е");
+  if (/^[а-я]+$/u.test(normalized) && normalized.length >= 7) {
+    return normalized.replace(/(?:иями|ями|ами|ого|ему|ыми|ими|иях|иях|ость|ости|ение|ения|ений|овать|ировать|ского|скому|ская|ские|ный|ная|ные|ами|ями|ах|ях|ов|ев|ом|ем|ой|ий|ый|ая|ое|ие|ы|и|а|я|у|ю|е)$/u, "") || normalized;
+  }
+  return normalized.replace(/(?:ing|tion|ions|ment|ments|ed|es|s)$/u, "");
+}
+
+function uniqueTokens(tokens: string[]) {
+  return [...new Set(tokens)];
+}
+
+function matchesAny(token: string, candidates: string[]) {
+  return candidates.some((candidate) => candidate === token || (candidate.length >= 5 && token.length >= 5 && (candidate.startsWith(token) || token.startsWith(candidate))));
+}
+
+function overlapCount(left: string[], right: string[]) {
+  return left.filter((token) => matchesAny(token, right)).length;
+}
+
+function pickBriefText(value: Record<string, unknown>, fields: string[]) {
+  return fields.flatMap((field) => {
+    const item = value[field];
+    return Array.isArray(item) ? item.map((entry) => String(entry || "")) : typeof item === "string" ? [item] : [];
+  });
+}
+
+function visibleSlideText(slide: Slide) {
+  return [
+    slide.title,
+    slide.thesis,
+    ...slide.bullets,
+    ...slide.blocks.flatMap((block) => block.type === "bullets" ? block.items : [block.content]),
+    slide.definition?.term || "",
+    slide.definition?.text || "",
+    slide.visual.title,
+    ...slide.visual.items.flatMap((item) => [item.label, item.text]),
+    ...slide.visual.rows.flatMap((row) => [row.label, row.left, row.right]),
+  ].join(" ");
+}
+
+function foreignDomainSignalCount(text: string) {
+  const normalized = normalizeQualityText(text);
+  const clusters = [
+    ["международ", "напряж", "лидер", "переговор", "дипломат", "миров", "эскалац", "сверхдержав"],
+    ["клетк", "фотосинт", "организм", "генет", "биолог"],
+    ["инфляц", "безработ", "валют", "центробанк", "бюджет"],
+  ];
+  return Math.max(0, ...clusters.map((cluster) => cluster.filter((signal) => normalized.includes(signal)).length));
+}
+
+function acceptedNarrationSentences(values: string[]) {
+  const seen = new Set<string>();
+  return values.flatMap((value) => cleanText(value).split(/(?<=[.!?])\s+/))
+    .map((sentence) => cleanText(sentence))
+    .filter((sentence) => sentence.split(/\s+/).length >= 4)
+    .filter((sentence) => {
+      const key = normalizeQualityText(sentence);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function compactTitle(value: string) {
+  return cleanText(value).replace(/[.!?]+$/g, "").split(/\s+/).slice(0, 12).join(" ") || "Ключевой вывод";
+}
+
+function compactSentence(value: string, maxWords: number) {
+  const words = cleanText(value).replace(/[.!?]+$/g, "").split(/\s+/).filter(Boolean).slice(0, maxWords);
+  return words.length ? `${words.join(" ")}.` : "";
+}
+
+function uniqueCompactSentences(values: string[], thesis: string) {
+  const thesisKey = normalizeQualityText(thesis);
+  const seen = new Set<string>([thesisKey]);
+  return values.map((value) => compactSentence(value, 18)).filter((value) => {
+    const key = normalizeQualityText(value);
+    if (!key || seen.has(key) || value.split(/\s+/).length < 4) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+type VisibleTextIntegrityEntry = {
+  field: string;
+  value: string;
+  label: boolean;
+};
+
+function visibleTextIntegrityEntries(slide: Slide): VisibleTextIntegrityEntry[] {
+  return [
+    { field: "title", value: slide.title, label: true },
+    { field: "thesis", value: slide.thesis, label: false },
+    ...slide.bullets.map((value, index) => ({ field: `bullets.${index}`, value, label: false })),
+    ...slide.blocks.flatMap((block, index) => block.type === "bullets"
+      ? block.items.map((value, itemIndex) => ({ field: `blocks.${index}.items.${itemIndex}`, value, label: false }))
+      : [{ field: `blocks.${index}.content`, value: block.content, label: false }]),
+    ...(slide.definition ? [
+      { field: "definition.term", value: slide.definition.term, label: true },
+      { field: "definition.text", value: slide.definition.text, label: false },
+    ] : []),
+    { field: "visual.title", value: slide.visual.title, label: true },
+    ...slide.visual.items.flatMap((item, index) => [
+      { field: `visual.items.${index}.label`, value: item.label, label: true },
+      { field: `visual.items.${index}.text`, value: item.text, label: false },
+    ]),
+    ...slide.visual.rows.flatMap((row, index) => [
+      { field: `visual.rows.${index}.label`, value: row.label, label: true },
+      { field: `visual.rows.${index}.left`, value: row.left, label: false },
+      { field: `visual.rows.${index}.right`, value: row.right, label: false },
+    ]),
+    { field: "visual.leftLabel", value: slide.visual.leftLabel, label: true },
+    { field: "visual.rightLabel", value: slide.visual.rightLabel, label: true },
+  ];
+}
+
+function visibleTextIntegrityReason(value: string, label: boolean): string {
+  const text = cleanText(value);
+  // Visual labels and optional presentation fields may be intentionally empty.
+  if (!text) return "";
+  if (hasUnclosedPairedMarks(text)) return "unclosed quotation mark or bracket";
+  if (label) return "";
+  const words = text.split(/\s+/).filter(Boolean);
+  if (endsWithDanglingConnector(text)) return "ends with a dangling connector";
+  if (startsWithDependentFragment(text)) return "starts as a continuation from another slot";
+  if (endsWithKnownDanglingPredicate(text)) return "ends with an incomplete predicate";
+  if (words.length <= 3 && isClearlyIncompleteShortText(text)) return "too short to form an independent statement";
+  return "";
+}
+
+function endsWithDanglingConnector(value: string) {
+  return /(?:^|[^\p{L}])(?:in|on|at|to|and|or|but|for|with|of|by|from|в|на|и|но|для|к|с|из|от|по|о)\s*[.!?…]*$/iu.test(value);
+}
+
+function startsWithDependentFragment(value: string) {
+  return /^(?:continuing|including|based\s+on|which|that|because|while|although|продолжая|включая|основываясь|котор(?:ый|ая|ое|ые)|поскольку|так\s+как|если|чтобы)(?:\s|,)/iu.test(cleanText(value));
+}
+
+function endsWithKnownDanglingPredicate(value: string) {
+  const normalized = cleanText(value).replace(/[.!?…]+$/g, "").toLocaleLowerCase();
+  return /(?:\b(?:shows|showed|demonstrates|demonstrated|explains|explained|allows|allowed|remains|became|becomes|is|are|was|were|will|can|could|may|might|should|has|have|had)|(?:показал|показывает|объясняет|позволит|позволяет|остается|остался|стал|стала|является))$/iu.test(normalized);
+}
+
+function isClearlyIncompleteShortText(value: string) {
+  const normalized = cleanText(value).toLocaleLowerCase();
+  return /^(?:and|or|but|because|which|that|to|of|for|with|в|на|и|но|для|к|с|из|от|по|о)(?:\s|$)/iu.test(normalized)
+    || endsWithKnownDanglingPredicate(normalized);
+}
+
+function hasUnclosedPairedMarks(value: string) {
+  const pairs: Array<[string, string]> = [["(", ")"], ["[", "]"], ["{", "}"], ["«", "»"]];
+  if (pairs.some(([open, close]) => [...value].filter((char) => char === open).length !== [...value].filter((char) => char === close).length)) return true;
+  const doubleQuotes = [...value].filter((char) => char === '"').length;
+  return doubleQuotes % 2 !== 0;
+}
+
+function normalizedMessage(value: string) {
+  return normalizeQualityText(value)
+    .replace(/^(?:overall|in summary|it is important to note that|важно отметить что|в целом|итак)\s+/iu, "")
+    .replace(/[.!?]+$/g, "")
+    .trim();
+}
+
+function deckMessageTokens(slide: Slide) {
+  return uniqueTokens(
+    cleanText([slide.title, slide.thesis, ...slide.bullets, ...slide.blocks.flatMap((block) => block.type === "bullets" ? block.items : [block.content])].join(" "))
+      .toLocaleLowerCase()
+      .match(/[\p{L}\p{N}]+/gu)?.filter((token) => (token.length >= 4 || /^\d{4}$/.test(token)) && !STOP_WORDS.has(token)) || [],
+  );
 }
 
 function jaccardSimilarity(left: string[], right: string[]) {

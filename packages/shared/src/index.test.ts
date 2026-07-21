@@ -1231,7 +1231,7 @@ describe("shared contracts", () => {
     expect(supportItems).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: "text",
-        fontSize: 24,
+        fontSize: 27,
       }),
     ]));
     expect(canvas.elements.find((element) => element.id === "slide-summary-summary-support-0-backplate")).toMatchObject({
@@ -1241,7 +1241,7 @@ describe("shared contracts", () => {
     expect(canvas.elements.find((element) => element.id === "slide-summary-summary-final")).toMatchObject({
       type: "text",
       text: slide.bullets[3],
-      fontSize: 24,
+      fontSize: 27,
     });
     expect(canvas.elements.find((element) => element.id === "slide-summary-summary-final-bg")).toMatchObject({
       type: "shape",
@@ -1349,7 +1349,7 @@ describe("shared contracts", () => {
       .sort((left, right) => left.y - right.y);
 
     expect(supportText).toHaveLength(3);
-    expect(supportText[1]).toMatchObject({ fontSize: 24 });
+    expect(supportText[1]).toMatchObject({ fontSize: 27 });
     expect(supportText[1].h).toBeLessThanOrEqual(110);
     supportBackplates.slice(1).forEach((backplate, index) => {
       expect(supportBackplates[index].y + supportBackplates[index].h).toBeLessThanOrEqual(backplate.y);
@@ -1673,7 +1673,7 @@ describe("shared contracts", () => {
       slides: [{ ...parsed.slides[0], canvas: previous }],
     }).slides[0].canvas!;
 
-    expect(upgraded.elements.find((element) => element.id === "slide-summary-summary-support-0")).toMatchObject({ fontSize: 24, h: 55 });
+    expect(upgraded.elements.find((element) => element.id === "slide-summary-summary-support-0")).toMatchObject({ fontSize: 27, h: 55 });
     const finalLabel = upgraded.elements.find((element) => element.id === "slide-summary-summary-final-label");
     expect(finalLabel).toMatchObject({ x: 94, w: 270, h: 68, fontSize: 24 });
     expect(finalLabel?.y).toBeGreaterThanOrEqual(558);
@@ -2066,6 +2066,53 @@ describe("shared contracts", () => {
     expect(canvas.version).toBe(3);
     expect(canvas.elements.some((element) => element.id.endsWith("-backplate"))).toBe(false);
     expect(canvas.elements.some((element) => element.id.endsWith("-editorial-footer-order"))).toBe(true);
+    expect(auditSlideCanvas(canvas)).toEqual([]);
+  });
+
+  it("keeps editorial sequence text, attribution, and long engineering terms within the canvas audit budget", () => {
+    const theme = PREMIUM_PRESENTATION_THEMES.studydeckEditorial;
+    const parsed = presentationSchema.parse({
+      id: "presentation-editorial-sequence",
+      title: "Porsche 911 engineering",
+      scenario: "university_report",
+      level: "university_student",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Transmission development"],
+      presentationTheme: theme,
+      speechScript: [{ slideOrder: 1, slideTitle: "Transmission development", text: "Narration." }],
+      slides: [{
+        id: "slide-editorial-sequence",
+        order: 1,
+        title: "Transmission development",
+        slideKind: "content",
+        layout: "process",
+        thesis: "PorscheDoppelkupplungsgetriebe changed how the 911 combines fast shifts with everyday usability.",
+        bullets: [
+          "Engineers preserve the rear-engine layout.",
+          "Chassis tuning balances traction and feedback.",
+          "Dual-clutch shifting reduces interruption under acceleration.",
+          "The driver experiences a familiar identity with modern control.",
+        ],
+        visual: { type: "none" },
+        blocks: [],
+        speakerNotes: "Narration.",
+        timingSeconds: 45,
+        sourceRefs: [{ sourceId: "accepted-speech", label: "Accepted speech", excerpt: "Reviewed narration text" }],
+      }],
+    });
+
+    const canvas = buildSlideCanvas(parsed.slides[0], theme);
+    const sourceCredit = canvas.elements.find((element) => element.id.endsWith("-source-credit"));
+    const footerOrder = canvas.elements.find((element) => element.id.endsWith("-editorial-footer-order"));
+
+    expect(canvas.elements.filter((element) => element.id.includes("editorial-step-") && element.type === "text")).not.toHaveLength(0);
+    expect(sourceCredit).toMatchObject({ type: "text" });
+    expect(footerOrder).toMatchObject({ type: "text" });
+    if (sourceCredit?.type === "text" && footerOrder?.type === "text") {
+      expect(sourceCredit.x + sourceCredit.w).toBeLessThanOrEqual(footerOrder.x - 24);
+    }
     expect(auditSlideCanvas(canvas)).toEqual([]);
   });
 

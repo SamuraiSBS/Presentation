@@ -276,9 +276,16 @@ export function preserveAcceptedNarration(presentation: PresentationDocument, na
       const section = narrationByOrder.get(slide.order);
       return section ? { ...slide, speakerNotes: section.text } : slide;
     }),
-    speechScript: presentation.speechScript.map((item) => {
-      const section = narrationByOrder.get(item.slideOrder);
-      return section ? { ...item, slideTitle: section.title, text: section.text } : item;
+    // Rebuild this projection by slide order rather than mutating its current
+    // array. That prevents a missing or shifted item from moving narration to
+    // a neighbouring slide and keeps the title aligned with normalized canvas.
+    speechScript: presentation.slides.map((slide) => {
+      const section = narrationByOrder.get(slide.order);
+      return {
+        slideOrder: slide.order,
+        slideTitle: slide.title,
+        text: section?.text || slide.speakerNotes,
+      };
     }),
   }, acceptedGeneratedText);
 }
@@ -537,6 +544,7 @@ export function buildQualityCriticPrompt(presentation: PresentationDocument, det
     "Ask: can a university student read this aloud naturally; are slides brief; is visual rhythm intentional; are claims grounded; will export preserve the design?",
     "Use severity blocker, major or minor. Use category generic_text, off_topic, too_long, duplicate, bad_narration, bad_visual, factual_risk or schema_risk.",
     "Prefer field-level issues with slideId when a single slide can be repaired.",
+    "Treat the project topic and narrative plan as the semantic source of truth. Flag an off-topic slide when its visible text only repeats the project name but then develops a different subject from the matching narration or narrative item.",
     "Do not quote or repeat full source text.",
     JSON.stringify({
       deterministic,
@@ -546,6 +554,11 @@ export function buildQualityCriticPrompt(presentation: PresentationDocument, det
         level: presentation.level,
         slideCount: presentation.slideCount,
         outline: presentation.outline,
+        narrativePlan: presentation.narrativePlan.map((item) => ({
+          slideOrder: item.slideOrder,
+          slideTitle: item.slideTitle,
+          keyMessage: item.keyMessage,
+        })),
         slides,
       },
     }),
@@ -585,7 +598,11 @@ export function buildQualityRepairPrompt(presentation: PresentationDocument, iss
     "Return JSON { slides: [...] }. Each slide item must include slideId or slideOrder plus changed fields only.",
     "You may change title, thesis, bullets, blocks, visual.description and speakerNotes when the issue explicitly requires it.",
     "For visual rhythm issues you may also choose a schema-valid layout and make the visual description concrete; the worker will rebuild generated canvases.",
+    "For visual coverage or image-relevance issues, change the design direction toward a specific anchored photo or a useful diagram; never add a random stock image and never edit a user canvas.",
     "For weak speech, rewrite speakerNotes from the accepted narration and keep the matching speechScript aligned.",
+    "For off_topic issues, preserve accepted narration exactly and rewrite every visible field only from that narration and the matching narrative-plan item. A topic word at the start does not make unrelated later text acceptable.",
+    "Each visible field must be a complete standalone audience-facing formulation. Never start a bullet, block, or visual text as a continuation of another layout slot, and never leave it ending on a connector or incomplete predicate.",
+    "Give every slide one distinct narrative-plan takeaway. Remove exact thesis/bullet or repeated visible copies; replace a repeated deck-level claim with that slide's own example, stage, cause, consequence, or conclusion.",
     "Replace template transitions, filler, and watery phrases with topic-specific causes, examples, consequences, concrete mechanisms, and a clear conclusion.",
     "Do not write about slide structure, transitions, next sections, or what the presentation will explain; write the actual subject matter.",
     "Do not invent precise facts, dates, names, numbers, or citations. Preserve existing sourceRefs.",

@@ -1,4 +1,23 @@
 import type { SlideKind, SlideLayout, SlideLayoutDefinition } from "./schemas.js";
+
+export type LayoutCapacity = {
+  minColumnWidth: number;
+  maxTextLines: number;
+  maxItems: number;
+};
+
+/** Capacity budget for generated 1280×720 layouts; text is shortened before font size is reduced. */
+export const PRESENTATION_LAYOUT_CAPACITY: Record<SlideLayout, LayoutCapacity> = {
+  hero: { minColumnWidth: 760, maxTextLines: 4, maxItems: 3 }, summary: { minColumnWidth: 420, maxTextLines: 5, maxItems: 4 },
+  statement: { minColumnWidth: 760, maxTextLines: 5, maxItems: 1 }, bullets: { minColumnWidth: 620, maxTextLines: 5, maxItems: 4 },
+  "two-column": { minColumnWidth: 360, maxTextLines: 5, maxItems: 3 }, quote: { minColumnWidth: 720, maxTextLines: 5, maxItems: 1 },
+  definition: { minColumnWidth: 420, maxTextLines: 5, maxItems: 3 }, timeline: { minColumnWidth: 250, maxTextLines: 3, maxItems: 3 },
+  comparison: { minColumnWidth: 360, maxTextLines: 4, maxItems: 3 }, process: { minColumnWidth: 250, maxTextLines: 3, maxItems: 3 },
+  "image-focus": { minColumnWidth: 480, maxTextLines: 5, maxItems: 3 }, "case-study": { minColumnWidth: 300, maxTextLines: 4, maxItems: 3 },
+  "question-answer": { minColumnWidth: 300, maxTextLines: 4, maxItems: 3 }, "myth-fact": { minColumnWidth: 420, maxTextLines: 4, maxItems: 3 },
+  metrics: { minColumnWidth: 260, maxTextLines: 3, maxItems: 3 }, evidence: { minColumnWidth: 440, maxTextLines: 4, maxItems: 3 },
+  "problem-solution": { minColumnWidth: 300, maxTextLines: 4, maxItems: 3 }, "explain-example": { minColumnWidth: 410, maxTextLines: 4, maxItems: 3 },
+};
 export const SLIDE_LAYOUT_DEFINITIONS: SlideLayoutDefinition[] = [
   { id: "hero", label: "Титульный", description: "Название и вводный тезис", kinds: ["title", "section"], requirements: [], fallback: "hero" },
   { id: "summary", label: "Итоги", description: "Главные выводы презентации", kinds: ["summary"], requirements: [], fallback: "summary" },
@@ -34,6 +53,10 @@ const HIDDEN_SLIDE_LAYOUTS = new Set<SlideLayout>([
 
 export function slideLayoutDefinition(layout: SlideLayout) {
   return SLIDE_LAYOUT_DEFINITIONS.find((item) => item.id === layout) || SLIDE_LAYOUT_DEFINITIONS[0];
+}
+
+export function presentationLayoutCapacity(layout: SlideLayout) {
+  return PRESENTATION_LAYOUT_CAPACITY[layout];
 }
 
 export function slideLayoutOptions(kind: SlideKind) {

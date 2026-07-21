@@ -3,8 +3,9 @@ import { createRequire } from "node:module";
 import sharp from "sharp";
 import {
   ensureEditableCanvas,
+  canvasTextLineHeight,
   canvasBackgroundCss,
-  compactSourceRefs,
+  formatSlideAttribution,
   hasMeasurableValue,
   metricLead,
   presentationSchema,
@@ -26,6 +27,7 @@ import {
   handleComplianceReportExportJob,
   type ComplianceReportExportJobData,
 } from "./defense/jobs.js";
+import { preparePresentationForExport } from "./export-preflight.js";
 
 const require = createRequire(import.meta.url);
 const PptxGenConstructor = require("pptxgenjs") as new () => {
@@ -85,6 +87,30 @@ async function runExportJob(job: Job<ExportJobData>) {
   try {
     const presentationRow = await prisma.presentation.findUniqueOrThrow({ where: { projectId } });
     const presentation = presentationSchema.parse(presentationRow.document);
+    const project = await prisma.project.findUniqueOrThrow({
+      where: { id: projectId },
+      select: { id: true, title: true, prompt: true, scenario: true, level: true, mode: true, slideCount: true },
+    });
+    const preflight = await preparePresentationForExport(presentation, {
+      format: type,
+      project,
+      readObject: readObjectBuffer,
+    });
+    logger.info({
+      projectId,
+      exportId,
+      format: type,
+      passed: preflight.report.passed,
+      repaired: preflight.report.repaired,
+      unresolvedCategories: [...new Set(preflight.report.slideIssues.flatMap((issue) => issue.categories))],
+      slideOrders: preflight.report.slideIssues
+        .map((issue) => preflight.document.slides.find((slide) => slide.id === issue.slideId)?.order)
+        .filter((order): order is number => Boolean(order)),
+      fallback: preflight.report.repaired ? "quality_pipeline_and_canvas_rebuild" : "none",
+    }, "presentation export preflight");
+    if (!preflight.report.passed) {
+      throw new Error("Presentation export preflight could not produce a safe document");
+    }
     const key = `projects/${projectId}/exports/${exportId}.${type}`;
     const buffer = await withTraceSpan("generation.export", {
       "studydeck.project_id": projectId,
@@ -92,7 +118,7 @@ async function runExportJob(job: Job<ExportJobData>) {
       "studydeck.export_id": exportId,
       "studydeck.export_type": type,
       "studydeck.stage": "export",
-    }, () => type === "pptx" ? createPptx(presentation) : createPdf(presentation), job.data.traceContext);
+    }, () => type === "pptx" ? createPptx(preflight.document) : createPdf(preflight.document), job.data.traceContext);
     const contentType =
       type === "pptx"
         ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -137,7 +163,7 @@ async function runExportJob(job: Job<ExportJobData>) {
 }
 
 export async function createPptx(presentation: ReturnType<typeof presentationSchema.parse>) {
-  const document = ensureEditableCanvas(presentation);
+  const document = exportCanvasDocument(presentation);
   const pptx = new PptxGenConstructor();
   pptx.defineLayout(WIDE_LAYOUT);
   pptx.layout = WIDE_LAYOUT.name;
@@ -209,11 +235,32 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
       await renderContentSlide(pptx, slide, item, imageData, theme);
     }
 
+    renderPptxAttribution(slide, item, theme);
     renderPptxPlaceholders(pptx, slide, item, theme);
     slide.addNotes(item.speakerNotes);
   }
 
   return pptx.write({ outputType: "nodebuffer" }) as Promise<Buffer>;
+}
+
+function renderPptxAttribution(
+  slide: any,
+  item: ReturnType<typeof presentationSchema.parse>["slides"][number],
+  theme: ExportTheme,
+) {
+  const attribution = formatSlideAttribution(item.sourceRefs, item.visual.image);
+  if (!attribution) return;
+  slide.addText(attribution, {
+    x: 0.75,
+    y: 7.12,
+    w: 11.82,
+    h: 0.18,
+    fontFace: theme.fonts.body,
+    fontSize: 7.5,
+    color: theme.pptx.muted,
+    fit: "shrink",
+    margin: 0,
+  });
 }
 
 function renderPptxPlaceholders(
@@ -338,8 +385,11 @@ function renderCanvasText(slide: any, element: CanvasTextElement, theme: ExportT
     align: element.align,
     valign: element.valign === "middle" ? "mid" : element.valign,
     rotate: element.rotation,
-    fit: element.autoFit === true ? "shrink" : "none",
-    lineSpacingMultiple: 1.14,
+    // Generated canvases already compact text and bound font size in the
+    // shared builder. Letting PptxGenJS shrink again can silently produce
+    // 12–16 pt body text, so PPTX receives the semantic canvas size verbatim.
+    fit: "none",
+    lineSpacingMultiple: canvasTextLineHeight(element),
     margin: 0,
   });
 }
@@ -749,10 +799,6 @@ async function renderImageFocusSlide(slide: any, item: ReturnType<typeof present
     fit: "contain",
     altText: item.visual.image?.alt,
   });
-  const attribution = imageAttribution(item);
-  if (attribution) {
-    slide.addText(attribution, { x: 6.65, y: 6.58, w: 5.95, h: 0.24, fontFace: theme.fonts.body, fontSize: 7, color: theme.pptx.muted, align: "right", fit: "shrink" });
-  }
 }
 
 function renderThreePanelSlide(
@@ -848,9 +894,6 @@ function renderEvidenceSlide(
     slide.addShape(pptx.ShapeType.ellipse, { x, y: y + 0.06, w: 0.22, h: 0.22, fill: { color: theme.pptx.accentAlt }, line: { transparency: 100 } });
     slide.addText(text, { x: x + 0.38, y, w: 5.25, h: 0.72, fontFace: theme.fonts.body, fontSize: 14, color: theme.pptx.muted, fit: "shrink" });
   });
-  compactSourceRefs(item.sourceRefs, 3).forEach((source, index) => {
-    slide.addText(source, { x: 0.9 + index * 3.9, y: 6.35, w: 3.65, h: 0.38, fontFace: theme.fonts.body, fontSize: 7, color: theme.pptx.muted, fit: "shrink" });
-  });
 }
 
 function renderProblemSolutionSlide(
@@ -911,27 +954,21 @@ async function renderDefaultContentSlide(slide: any, item: ReturnType<typeof pre
       fit: "contain",
       altText: item.visual.image?.alt,
     });
-    const attribution = imageAttribution(item);
-    if (attribution) {
-      slide.addText(attribution, {
-        x: 6.72,
-        y: 6.62,
-        w: 5.9,
-        h: 0.24,
-        fontFace: theme.fonts.body,
-        fontSize: 7,
-        color: theme.pptx.muted,
-        align: "right",
-        fit: "shrink",
-      });
-    }
   }
 }
 
 export async function createPdf(presentation: ReturnType<typeof presentationSchema.parse>) {
-  const document = ensureEditableCanvas(presentation);
-  const html = await renderPdfHtml(document);
+  const html = await renderPdfHtml(exportCanvasDocument(presentation));
   return renderHtmlToPdf(html, { viewportWidth: 1280, viewportHeight: 720, pageWidth: "1280px", pageHeight: "720px" });
+}
+
+function exportCanvasDocument(presentation: ReturnType<typeof presentationSchema.parse>) {
+  // Export jobs always arrive here after preflight. This compatibility branch
+  // preserves the old template renderer for genuinely legacy, no-canvas
+  // presentations while keeping visual-director documents on their canvas
+  // source of truth for direct library callers and existing integrations.
+  if (presentation.slides.some((slide) => slide.canvas)) return ensureEditableCanvas(presentation);
+  return presentation.designBrief ? ensureEditableCanvas(presentation) : presentation;
 }
 
 export async function renderPdfHtml(presentation: ReturnType<typeof presentationSchema.parse>) {
@@ -1026,6 +1063,7 @@ export async function renderPdfHtml(presentation: ReturnType<typeof presentation
   .text { white-space: pre-wrap; overflow: hidden; }
   .image { width: 100%; height: 100%; display: block; border-radius: 18px; }
   .shape { width: 100%; height: 100%; }
+  .template-attribution { position: absolute; z-index: 15; left: 72px; right: 72px; bottom: 16px; margin: 0; color: var(--slide-muted); font-size: 10px; line-height: 1.1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .placeholder-warning { position: absolute; z-index: 20; left: 42px; right: 42px; bottom: 18px; display: grid; gap: 5px; margin: 0; border: 2px solid #a73822; border-radius: 12px; padding: 10px 16px; background: rgba(255, 240, 236, .97); color: #7a2416; font-size: 15px; line-height: 1.25; font-weight: 800; }
   .placeholder-warning span { display: block; overflow-wrap: anywhere; }
 </style>
@@ -1039,7 +1077,9 @@ async function renderPdfTemplateSlide(slide: ReturnType<typeof presentationSchem
   const vars = pdfThemeVars(theme);
   const bg = slideBackgroundVariant(slide);
   const content = await pdfTemplateContent(slide, image);
-  return `<section class="slide template-slide" data-bg="${escapeHtml(bg)}" style="${vars}">${content}${pdfPlaceholderWarnings(slide)}</section>`;
+  const attribution = formatSlideAttribution(slide.sourceRefs, slide.visual.image);
+  const footer = attribution ? `<p class="template-attribution">${escapeHtml(attribution)}</p>` : "";
+  return `<section class="slide template-slide" data-bg="${escapeHtml(bg)}" style="${vars}">${content}${footer}${pdfPlaceholderWarnings(slide)}</section>`;
 }
 
 function pdfPlaceholderWarnings(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
@@ -1129,8 +1169,7 @@ function cards(items: string[], type: string, labels: string[] = []) {
 
 function evidence(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
   const items = sequenceItems(slide).slice(0, 4);
-  const sources = compactSourceRefs(slide.sourceRefs, 3);
-  return `${title(slide)}<p class="template-evidence-thesis">${escapeHtml(slide.thesis || slideBodyText(slide))}</p><div class="template-evidence-list">${items.map((item) => `<div class="template-evidence-item">${escapeHtml(item)}</div>`).join("")}</div>${sources.length ? `<div class="template-sources">${sources.map((source) => `<small>${escapeHtml(source)}</small>`).join("")}</div>` : ""}`;
+  return `${title(slide)}<p class="template-evidence-thesis">${escapeHtml(slide.thesis || slideBodyText(slide))}</p><div class="template-evidence-list">${items.map((item) => `<div class="template-evidence-item">${escapeHtml(item)}</div>`).join("")}</div>`;
 }
 
 function problemSolution(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
@@ -1175,8 +1214,7 @@ async function pdfSlideImageFigure(slide: ReturnType<typeof presentationSchema.p
   if (!image) return "";
   const src = await pdfSlideImageSrc(slide);
   if (!src) return "";
-  const caption = image.sourceTitle || image.sourceUrl;
-  return `<figure class="template-image"><img src="${escapeHtml(src)}" alt="${escapeHtml(image.alt || "")}" />${caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ""}</figure>`;
+  return `<figure class="template-image"><img src="${escapeHtml(src)}" alt="${escapeHtml(image.alt || "")}" /></figure>`;
 }
 
 async function pdfSlideImageSrc(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
@@ -1261,7 +1299,9 @@ function pdfTextStyle(element: CanvasTextElement) {
     "display:flex",
     "flex-direction:column",
     `justify-content:${element.valign === "middle" ? "center" : element.valign === "bottom" ? "flex-end" : "flex-start"}`,
-    "line-height:1.14",
+    `line-height:${canvasTextLineHeight(element)}`,
+    "overflow-wrap:anywhere",
+    "word-break:normal",
   ].join(";");
 }
 
@@ -1415,12 +1455,6 @@ function contentTypeFromObjectKey(objectKey: string) {
   if (lower.endsWith(".png")) return "image/png";
   if (lower.endsWith(".webp")) return "image/webp";
   return "image/jpeg";
-}
-
-function imageAttribution(slide: ReturnType<typeof presentationSchema.parse>["slides"][number]) {
-  const image = slide.visual.image;
-  if (!image) return "";
-  return [image.sourceTitle, image.sourceUrl].filter(Boolean).join(" - ");
 }
 
 function sentencePreview(value: string) {

@@ -8,11 +8,14 @@ export { createProjectInputSchema, folderNameSchema, createFolderInputSchema, up
 export type { CreateProjectInput, CreateFolderInput, UpdateFolderInput, UpdateProjectMetadataInput, DuplicateProjectInput, CreateProjectInvitationInput, UpdateProjectMemberInput, ProjectListQuery, UpdateSlideInput, UpdateNarrationInput, GeneratePresentationInput } from "./projects/inputs.js";
 export { exportTypeSchema, exportStatusSchema, exportWarningAcknowledgementSchema, createExportInputSchema } from "./exports/schemas.js";
 export type { ExportType, ExportStatus, ExportWarningAcknowledgement, CreateExportInput } from "./exports/schemas.js";
+export { exportPreflightFormatSchema, exportPreflightSlideIssueSchema, exportPreflightReportSchema } from "./exports/preflight.js";
+export type { ExportPreflightFormat, ExportPreflightSlideIssue, ExportPreflightReport } from "./exports/preflight.js";
 export { isoDateTimeSchema, userIdentitySummarySchema, projectSummarySchema, folderSummarySchema, projectMemberSchema, usageSummarySchema, dashboardSummarySchema } from "./projects/summaries.js";
 export type { UserIdentitySummary, ProjectSummary, FolderSummary, ProjectMember, UsageSummary, DashboardSummary } from "./projects/summaries.js";
 export { slideBlockSchema, slideKindSchema, slideLayoutSchema, visualTypeSchema, slideDefinitionSchema, keyConceptSchema, highlightSchema, presentationThemePresetSchema, presentationThemeMoodSchema, presentationThemeColorSchema, presentationThemeSchema, slideVisualItemSchema, slideVisualRowSchema, slideVisualImageSchema, mermaidDiagramKindSchema, mermaidDiagramSpecSchema, diagramGraphNodeSchema, diagramGraphEdgeSchema, diagramGraphSpecSchema, slideVisualSchema, canvasTextRunSchema, canvasTextElementSchema, canvasImageElementSchema, canvasShapeElementSchema, canvasElementSchema, canvasGradientStopSchema, canvasGradientBlobSchema, canvasBackgroundStyleSchema, slideCanvasSchema, slideSchema, speechScriptItemSchema } from "./presentation/schemas.js";
 export type { SlideBlock, SlideKind, SlideLayout, SlideLayoutRequirement, SlideLayoutDefinition, VisualType, SlideDefinition, KeyConcept, Highlight, PresentationThemePreset, PresentationThemeMood, PresentationTheme, SlideVisualItem, SlideVisualRow, SlideVisualImage, MermaidDiagramKind, MermaidDiagramSpec, DiagramGraphNode, DiagramGraphEdge, DiagramGraphSpec, SlideVisual, CanvasTextRun, CanvasTextElement, CanvasImageElement, CanvasShapeElement, CanvasElement, CanvasBackgroundStyle, SlideCanvas, Slide, SpeechScriptItem } from "./presentation/schemas.js";
-export { SLIDE_LAYOUT_DEFINITIONS, slideLayoutDefinition, slideLayoutOptions } from "./presentation/layouts.js";
+export { SLIDE_LAYOUT_DEFINITIONS, PRESENTATION_LAYOUT_CAPACITY, slideLayoutDefinition, slideLayoutOptions, presentationLayoutCapacity } from "./presentation/layouts.js";
+export type { LayoutCapacity } from "./presentation/layouts.js";
 export { generationProgressStageSchema, generationJobKindSchema, slideNarrativeSchema, deckStorySchema, slideTextPlanSchema, researchBriefSchema, sceneTextModeSchema, designBriefSlideDirectionSchema, designBriefSchema, slideBlueprintSchema, visualStrategySchema, diagramSpecSchema, qualityIssueSchema, qualityDimensionScoreSchema, qualityDimensionsSchema, qualityCritiqueSchema, generationPipelineArtifactsSchema, generationBriefSchema } from "./generation/schemas.js";
 export type { GenerationProgressStage, GenerationJobKind, SlideNarrative, DeckStory, SlideTextPlan, ResearchBrief, SceneTextMode, DesignBriefSlideDirection, DesignBrief, SlideBlueprint, VisualStrategy, DiagramSpec, QualityIssue, QualityDimensionScore, QualityDimensions, QualityCritique, GenerationPipelineArtifacts, GenerationBrief } from "./generation/schemas.js";
 export { presentationSchema } from "./presentation/document.js";
@@ -21,7 +24,10 @@ export { PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS, resolvePre
 export type { PremiumPresentationThemeId } from "./presentation/themes.js";
 export { auditSlideCanvas } from "./presentation/canvas-audit.js";
 export { canvasBackgroundCss, slideBackgroundStyle } from "./presentation/canvas-background.js";
-export { sortCanvasElements } from "./presentation/canvas-helpers.js";
+export { sortCanvasElements, compactCanvasTextToFit, minimumReadableFontSize, minimumTextColumnWidth, textSlotCapacity } from "./presentation/canvas-helpers.js";
+export { presentationTypography, typographyForCanvasText, typographyRoleForCanvasText, canvasTextLineHeight } from "./presentation/typography.js";
+export type { PresentationTypographyRole } from "./presentation/typography.js";
+export { normalizeSourceRefs, sourceRefFromSource, formatSourceReference, formatImageAttribution, formatSlideAttribution } from "./presentation/attribution.js";
 export { ensureEditableCanvas, buildSlideCanvas, hasCustomSlideCanvas, hasMeasurableValue, metricLead, fittedFontSize, compactSourceRefs, assertNever } from "./presentation/canvas-builder.js";
 export * from "./defense/schemas.js";
 export * from "./defense/inputs.js";

@@ -194,23 +194,9 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
       order % 5 === 0 ? "visual_statement" :
       researchBrief.facts.length > 0 && order % 4 === 0 ? "evidence" :
       "explain";
-    const concreteScene = isConcreteVisualScene(sceneText);
-    const layoutIntent: DesignBrief["slideDirections"][number]["layoutIntent"] =
-      visualRole === "hero" && concreteScene && hasGroundedVisualContext ? "split_image_text" :
-      visualRole === "hero" ? "statement" :
-      visualRole === "summary" ? "summary" :
-      visualRole === "compare" ? "comparison" :
-      visualRole === "sequence" ? "timeline" :
-      visualRole === "evidence" ? "evidence_board" :
-      visualRole === "quote" ? "quote_spread" :
-      visualRole === "problem" || visualRole === "visual_statement" ? "statement" :
-      (visualRole === "context" || visualRole === "explain" || visualRole === "evidence") && concreteScene && hasGroundedVisualContext ? "split_image_text" :
-      visualRole === "explain" && (isExplanationHeavyScene(sceneText) || order % 3 === 0) ? "diagram" :
-      "cards";
-    const imageStrategy: DesignBrief["slideDirections"][number]["imageStrategy"] =
-      layoutIntent === "timeline" || layoutIntent === "diagram" || layoutIntent === "comparison" ? "diagram" :
-      layoutIntent === "split_image_text" ? "real_photo" :
-      "none";
+    const visualNeed = classifyVisualNeed(project, plan, visualRole, hasGroundedVisualContext);
+    const layoutIntent = visualNeed.layoutIntent;
+    const imageStrategy = visualNeed.imageStrategy;
     const sceneTextMode = buildSceneTextMode(order, project.slideCount, visualRole, layoutIntent, imageStrategy);
     return {
       slideOrder: order,
@@ -273,6 +259,39 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
     imageStrategy: "Use concrete visual descriptions only when they are grounded in the topic or source excerpts.",
     slideDirections: directions,
   });
+}
+
+/**
+ * Translate the narrative job into the existing direction fields.  Keeping
+ * this private avoids another public enum while making the visual choice
+ * semantic rather than an alternating template pattern.
+ */
+function classifyVisualNeed(
+  project: ProjectInput,
+  plan: SlideNarrative,
+  visualRole: DesignBrief["slideDirections"][number]["visualRole"],
+  hasGroundedVisualContext: boolean,
+) {
+  const scene = `${plan.slideTitle} ${plan.keyMessage} ${plan.slidePurpose}`;
+  const concreteScene = isConcreteVisualScene(`${scene} ${project.title}`) || hasSpecificVisualAnchor(`${scene} ${project.title}`);
+  const timeline = /\b(?:timeline|history|historical|chronolog\w*|era|generation|first generation|19\d{2}|20\d{2})\b|(?:истори|хронолог|эпох|поколени|\b\d{4}\b)/iu.test(scene);
+  const comparison = /\b(?:compare|comparison|versus|\bvs\b|difference)\b|(?:сравнен|различи|противопостав)/iu.test(scene);
+  const process = isExplanationHeavyScene(scene) || /\b(?:cause|effect|mechanism|system|workflow|structure)\b|(?:причин|следств|механизм|систем|процесс)/iu.test(scene);
+
+  if (visualRole === "summary") return { layoutIntent: "summary" as const, imageStrategy: "none" as const };
+  if (comparison || visualRole === "compare") return { layoutIntent: "comparison" as const, imageStrategy: "diagram" as const };
+  if (timeline || visualRole === "sequence") return { layoutIntent: "timeline" as const, imageStrategy: "diagram" as const };
+  if (process) return { layoutIntent: "diagram" as const, imageStrategy: "diagram" as const };
+  if (visualRole === "evidence") return { layoutIntent: "evidence_board" as const, imageStrategy: "diagram" as const };
+  if (visualRole === "quote" || visualRole === "visual_statement" || visualRole === "problem") {
+    return { layoutIntent: visualRole === "quote" ? "quote_spread" as const : "statement" as const, imageStrategy: "none" as const };
+  }
+  if (concreteScene && hasGroundedVisualContext) return { layoutIntent: "split_image_text" as const, imageStrategy: "real_photo" as const };
+  return { layoutIntent: visualRole === "hero" ? "statement" as const : "cards" as const, imageStrategy: "none" as const };
+}
+
+function hasSpecificVisualAnchor(value: string) {
+  return /\b(?:[A-Z][A-Za-z]{2,}|[A-Z]{2,}|\d{3,4})\b/.test(cleanText(value));
 }
 
 export function logStructuredGenerationValidationFailure(provider: AiGenerationMode | undefined, schemaName: string, attempt: number, error: unknown) {
@@ -372,54 +391,46 @@ export function balanceDeterministicVisualDirections(
   narrativePlan: SlideNarrative[],
   hasGroundedVisualContext: boolean,
 ) {
-  if (!hasGroundedVisualContext || directions.length < 3) {
+  if (!hasGroundedVisualContext || directions.length < 3 || !hasConcreteVisualTopic(project, narrativePlan)) {
     return diversifySceneTextModes(directions, project, narrativePlan);
   }
 
-  const visualSlideCount = Math.max(1, directions.length - 1);
-  const minimumImages = Math.ceil(visualSlideCount * 0.5);
-  const maximumImages = Math.max(minimumImages, Math.ceil(visualSlideCount * 0.7));
-  const imageStrategies = new Set(["real_photo"]);
-  let imageCount = directions.filter((direction) => imageStrategies.has(direction.imageStrategy)).length;
+  const contentIndexes = directions
+    .map((direction, index) => ({ direction, index }))
+    .filter(({ direction }) => direction.slideOrder !== 1 && direction.visualRole !== "summary");
+  if (!contentIndexes.length) return diversifySceneTextModes(directions, project, narrativePlan);
+
+  const minimumVisuals = Math.ceil(contentIndexes.length * 0.6);
+  const maximumVisuals = Math.max(minimumVisuals, Math.floor(contentIndexes.length * 0.75));
+  const isVisual = (direction: DesignBrief["slideDirections"][number]) => direction.imageStrategy === "real_photo" || direction.imageStrategy === "diagram";
+  let visualCount = contentIndexes.filter(({ direction }) => isVisual(direction)).length;
   const balanced = [...directions];
 
-  for (let index = 0; index < balanced.length && imageCount < minimumImages; index += 1) {
+  for (const { index } of contentIndexes) {
+    if (visualCount >= minimumVisuals) break;
     const direction = balanced[index];
     const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, direction.slideOrder);
-    const sceneText = `${plan.slideTitle} ${plan.keyMessage} ${project.title}`;
-    if (
-      direction.visualRole === "summary" ||
-      direction.visualRole === "evidence" ||
-      direction.visualRole === "quote" ||
-      direction.imageStrategy === "diagram" ||
-      !isConcreteVisualScene(sceneText) &&
-      !isConcreteVisualScene(project.title)
-    ) continue;
-
-    balanced[index] = {
-      ...direction,
-      layoutIntent: "split_image_text",
-      imageStrategy: "real_photo",
-      sceneTextMode: "visual_labels",
-      visualPrompt: buildDeterministicVisualPrompt(project, plan, "real_photo", "split_image_text"),
-    };
-    imageCount += 1;
+    if (isVisual(direction) || direction.visualRole === "quote") continue;
+    const need = classifyVisualNeed(project, plan, direction.visualRole, true);
+    const strategy = need.imageStrategy === "none" ? "diagram" as const : need.imageStrategy;
+    const layout = need.imageStrategy === "none" ? "diagram" as const : need.layoutIntent;
+    balanced[index] = { ...direction, layoutIntent: layout, imageStrategy: strategy, sceneTextMode: "visual_labels", visualPrompt: buildDeterministicVisualPrompt(project, plan, strategy, layout) };
+    visualCount += 1;
   }
 
-  for (let index = balanced.length - 1; index >= 0 && imageCount > maximumImages; index -= 1) {
-    const direction = balanced[index];
-    if (!imageStrategies.has(direction.imageStrategy)) continue;
-    const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, direction.slideOrder);
-    const replacementLayout = direction.visualRole === "hero" ? "statement" as const : "diagram" as const;
-    const replacementStrategy = direction.visualRole === "hero" ? "none" as const : "diagram" as const;
-    balanced[index] = {
+  for (let index = contentIndexes.length - 1; index >= 0 && visualCount > maximumVisuals; index -= 1) {
+    const directionIndex = contentIndexes[index].index;
+    const direction = balanced[directionIndex];
+    if (!isVisual(direction) || direction.visualRole === "evidence" || direction.visualRole === "sequence" || direction.visualRole === "compare") continue;
+    const plan = narrativePlan[directionIndex] || buildFallbackNarrativeItem(project, direction.slideOrder);
+    balanced[directionIndex] = {
       ...direction,
-      layoutIntent: replacementLayout,
-      imageStrategy: replacementStrategy,
-      sceneTextMode: direction.visualRole === "hero" ? "hero_phrase" : "visual_labels",
-      visualPrompt: buildDeterministicVisualPrompt(project, plan, replacementStrategy, replacementLayout),
+      layoutIntent: "cards",
+      imageStrategy: "none",
+      sceneTextMode: "talk_sentences",
+      visualPrompt: buildDeterministicVisualPrompt(project, plan, "none", "cards"),
     };
-    imageCount -= 1;
+    visualCount -= 1;
   }
 
   if (!balanced.some((direction) => direction.imageStrategy === "diagram")) {
@@ -441,7 +452,23 @@ export function balanceDeterministicVisualDirections(
     }
   }
 
+  for (let index = 2; index < contentIndexes.length; index += 1) {
+    const run = contentIndexes.slice(index - 2, index + 1).map(({ index: directionIndex }) => balanced[directionIndex]);
+    if (run.every((direction) => direction.imageStrategy === "none")) {
+      const directionIndex = contentIndexes[index].index;
+      const direction = balanced[directionIndex];
+      const plan = narrativePlan[directionIndex] || buildFallbackNarrativeItem(project, direction.slideOrder);
+      balanced[directionIndex] = { ...direction, layoutIntent: "diagram", imageStrategy: "diagram", sceneTextMode: "visual_labels", visualPrompt: buildDeterministicVisualPrompt(project, plan, "diagram", "diagram") };
+    }
+  }
+
   return diversifySceneTextModes(balanced, project, narrativePlan);
+}
+
+function hasConcreteVisualTopic(project: ProjectInput, narrativePlan: SlideNarrative[]) {
+  return isConcreteVisualScene(`${project.title} ${project.prompt}`)
+    || hasSpecificVisualAnchor(`${project.title} ${project.prompt}`)
+    || narrativePlan.some((plan) => isConcreteVisualScene(`${plan.slideTitle} ${plan.keyMessage}`) || hasSpecificVisualAnchor(`${plan.slideTitle} ${plan.keyMessage}`));
 }
 
 export function diversifySceneTextModes(
@@ -645,7 +672,7 @@ export function normalizeNarrativePlan(raw: unknown, project: ProjectInput): Sli
     const rawItem = inputItems[index] && typeof inputItems[index] === "object" ? (inputItems[index] as Partial<SlideNarrative>) : {};
     const fallback = buildFallbackNarrativeItem(project, order);
     const slideTitle = cleanNarrativeField(rawItem.slideTitle, "title") || fallback.slideTitle;
-    normalized.push({
+    const item: SlideNarrative = {
       slideOrder: order,
       slideTitle,
       slidePurpose: cleanNarrativeField(rawItem.slidePurpose, "purpose") || fallback.slidePurpose,
@@ -655,10 +682,38 @@ export function normalizeNarrativePlan(raw: unknown, project: ProjectInput): Sli
         order === project.slideCount
           ? ""
           : cleanNarrativeField(rawItem.transitionToNext, "transition") || fallback.transitionToNext,
-    });
+    };
+    normalized.push(order === project.slideCount ? normalizeConclusionNarrativeItem(item, project) : item);
   }
 
   return normalized;
+}
+
+/**
+ * A summary is a narrative job, not a courtesy slide. Keep the existing
+ * SlideNarrative contract, but make its final item explicit enough for every
+ * later stage (narration, screen text, and repair) to synthesize the deck.
+ */
+export function normalizeConclusionNarrativeItem(item: SlideNarrative, project: ProjectInput): SlideNarrative {
+  const fallback = buildFallbackNarrativeItem(project, project.slideCount);
+  const title = isGenericConclusionEnding(item.slideTitle) ? fallback.slideTitle : item.slideTitle;
+  const keyMessage = isGenericConclusionEnding(item.keyMessage) ? fallback.keyMessage : item.keyMessage;
+  const purpose = cleanText(item.slidePurpose);
+  const conclusionPurpose = "Сформулировать ответ на главный вопрос темы, связать его с предыдущими смысловыми шагами и оставить 2–3 разных подтвержденных вывода без новых фактов.";
+  return {
+    ...item,
+    slideTitle: title,
+    keyMessage,
+    slidePurpose: purpose.includes("2–3") || purpose.includes("2-3") ? purpose : `${purpose || fallback.slidePurpose} ${conclusionPurpose}`,
+    audienceQuestion: isGenericConclusionEnding(item.audienceQuestion) ? fallback.audienceQuestion : item.audienceQuestion,
+    transitionToNext: "",
+  };
+}
+
+function isGenericConclusionEnding(value: unknown) {
+  const text = cleanText(value).toLowerCase().replace(/[.!?]+$/g, "").trim();
+  if (!text) return true;
+  return /^(?:спасибо(?:\s+за\s+внимание)?|вопросы\??|thank\s+you|questions\??|мы\s+рассмотрели.*)$/iu.test(text);
 }
 
 export function parseNarrativePlanRaw(raw: unknown) {
@@ -723,16 +778,16 @@ export function buildFallbackNarrativeItem(project: ProjectInput, order: number,
   const topic = projectTopic(project);
   return {
     slideOrder: order,
-    slideTitle: title,
+    slideTitle: order === project.slideCount && isGenericConclusionEnding(title) ? `Что показывает ${topic}` : title,
     slidePurpose:
       order === 1
         ? `Задать понятный контекст темы «${topic}» и показать, с какого вопроса начинается выступление.`
         : order === project.slideCount
-          ? `Собрать главный вывод по теме «${topic}» и оставить аудитории ясную итоговую мысль.`
+        ? `Собрать ответ на главный вопрос темы «${topic}», связать его с предыдущими смысловыми шагами и оставить 2–3 разных подтвержденных вывода.`
           : `Раскрыть важную часть темы «${topic}» через отдельный смысловой шаг выступления.`,
     keyMessage:
       order === project.slideCount
-        ? `Главный вывод должен быть связан с темой «${topic}» и объяснен простыми словами.`
+        ? `Тема «${topic}» требует цельного вывода: центральная мысль должна опираться на уже раскрытые причины, примеры или последствия.`
         : `Тема «${topic}» становится понятнее через конкретный аспект: ${title}.`,
     audienceQuestion:
       order === 1

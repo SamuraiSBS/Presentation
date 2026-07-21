@@ -1,0 +1,38 @@
+diff --git a/apps/worker/src/tasks/presentation/prompts/builders.ts b/apps/worker/src/tasks/presentation/prompts/builders.ts
+--- a/apps/worker/src/tasks/presentation/prompts/builders.ts
++++ b/apps/worker/src/tasks/presentation/prompts/builders.ts
+@@ -518,15 +518,32 @@ export function formatSourceText(sources: Source[]) {
+ 
+-export function getYandexModelUri() {
++export type YandexModelTier = "primary" | "economy";
++
++export function getYandexModelConfig(tier: YandexModelTier = "primary") {
++  if (tier === "economy") {
++    const model = process.env.YANDEX_ECONOMY_MODEL_NAME?.trim() || "yandexgpt-5-lite";
++    if (process.env.YANDEX_ECONOMY_MODEL_URI?.trim()) {
++      return { model, uri: process.env.YANDEX_ECONOMY_MODEL_URI.trim() };
++    }
++    if (!process.env.YANDEX_FOLDER_ID?.trim()) {
++      throw new Error("YANDEX_FOLDER_ID or YANDEX_ECONOMY_MODEL_URI is required for Yandex generation");
++    }
++    return { model, uri: `gpt://${process.env.YANDEX_FOLDER_ID}/${model}` };
++  }
++
++  const model = process.env.YANDEX_MODEL_NAME?.trim() || "yandexgpt";
+   if (process.env.YANDEX_MODEL_URI?.trim()) {
+-    return process.env.YANDEX_MODEL_URI.trim();
++    return { model, uri: process.env.YANDEX_MODEL_URI.trim() };
+   }
+ 
+   if (!process.env.YANDEX_FOLDER_ID?.trim()) {
+     throw new Error("YANDEX_FOLDER_ID or YANDEX_MODEL_URI is required for Yandex generation");
+   }
+ 
+-  const modelName = process.env.YANDEX_MODEL_NAME || "yandexgpt";
+-  return `gpt://${process.env.YANDEX_FOLDER_ID}/${modelName}/latest`;
++  return { model, uri: `gpt://${process.env.YANDEX_FOLDER_ID}/${model}/latest` };
++}
++
++export function getYandexModelUri(tier: YandexModelTier = "primary") {
++  return getYandexModelConfig(tier).uri;
+ }

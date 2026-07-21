@@ -38,6 +38,8 @@ import {
   researchBriefSchema,
   resolvePresentationTheme,
   mermaidDiagramSpecSchema,
+  normalizeSourceRefs as normalizeSharedSourceRefs,
+  sourceRefFromSource as sharedSourceRefFromSource,
   slideBlueprintSchema,
   slideNarrativeSchema,
   slideTextPlanSchema,
@@ -140,7 +142,7 @@ type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief"
 
 import type { YandexCompletionResponse } from "../constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
-import { buildResearchBrief, buildDesignBrief, completeVisualPrompt, buildSceneTextMode, diversifySceneTextModes, normalizeNarrativePlan, parseNarrativePlanRaw, buildFallbackNarrativeItem, cleanNarrativeField } from "../planning/builders.js";
+import { buildResearchBrief, buildDesignBrief, completeVisualPrompt, buildSceneTextMode, balanceDeterministicVisualDirections, normalizeNarrativePlan, parseNarrativePlanRaw, buildFallbackNarrativeItem, cleanNarrativeField } from "../planning/builders.js";
 import { parseNarrationSections, isGenericNarrationSentence, isPromptEchoSentence } from "../narration/processing.js";
 import { looksLikeSentenceFragment, firstCompleteScreenSentence, shortenCompleteSentence, isCompleteScreenSentence, assertRawGenerationQuality, assertPresentationQuality, pickCanonicalGeneratedText, normalizeForQuality, hasForbiddenTemplateText } from "../quality/orchestration.js";
 import { normalizeGeneratedText, buildFallbackGeneratedText, cleanText, projectTopic, cleanPresentationTitle, sanitizeScreenText, sanitizeSpeechText, shortenSentence, shortenWords, clampNumber } from "../utilities.js";
@@ -282,8 +284,6 @@ export function ensureDesignBriefDirections(brief: DesignBrief, project: Project
     });
   }
 
-  const maximumImages = Math.max(1, Math.ceil(Math.max(1, project.slideCount - 1) * 0.7));
-  let imageCount = 0;
   const slideDirections = normalized.slideDirections.map((direction) => {
     const plan = narrativePlan[direction.slideOrder - 1] || buildFallbackNarrativeItem(project, direction.slideOrder);
     if (direction.slideOrder === project.slideCount || direction.visualRole === "summary") {
@@ -311,31 +311,21 @@ export function ensureDesignBriefDirections(brief: DesignBrief, project: Project
         visualPrompt: completeVisualPrompt(project, plan, direction.imageStrategy, direction.layoutIntent, direction.visualPrompt),
       };
     }
-    imageCount += 1;
-    if (imageCount <= maximumImages) {
-      return {
-        ...direction,
-        sceneTextMode: "visual_labels" as const,
-        visualPrompt: completeVisualPrompt(project, plan, "real_photo", direction.layoutIntent, direction.visualPrompt),
-      };
-    }
     return {
       ...direction,
-      layoutIntent: direction.visualRole === "hero" ? "statement" as const : "cards" as const,
-      imageStrategy: "none" as const,
-      sceneTextMode: direction.visualRole === "hero" ? "hero_phrase" as const : "talk_sentences" as const,
-      visualPrompt: completeVisualPrompt(project, plan, "none", direction.visualRole === "hero" ? "statement" : "cards", direction.visualPrompt),
+      sceneTextMode: "visual_labels" as const,
+      visualPrompt: completeVisualPrompt(project, plan, "real_photo", direction.layoutIntent, direction.visualPrompt),
     };
   });
 
-  return designBriefSchema.parse({ ...normalized, slideDirections: diversifySceneTextModes(slideDirections, project, narrativePlan) });
+  const hasGroundedVisualContext = normalized.slideDirections.some((direction) => direction.imageStrategy !== "none")
+    || /\b(?:[A-Z][A-Za-z]{2,}|\d{3,4})\b/.test(`${project.title} ${project.prompt}`);
+  return designBriefSchema.parse({ ...normalized, slideDirections: balanceDeterministicVisualDirections(slideDirections, project, narrativePlan, hasGroundedVisualContext) });
 }
 
 export function normalizeSlide(rawSlide: unknown, order: number, sources: Source[], project: ProjectInput, narrationSection?: NarrationSection): Slide {
   const slide = rawSlide && typeof rawSlide === "object" ? (rawSlide as Partial<Slide>) : {};
-  const sourceRefs = Array.isArray(slide.sourceRefs) && slide.sourceRefs.length
-    ? slide.sourceRefs
-    : [sourceRefFromSource(sources[(order - 1) % sources.length])];
+  const sourceRefs = normalizeSharedSourceRefs(slide.sourceRefs, sources);
   const rawBlocks = Array.isArray(slide.blocks) ? slide.blocks.map(normalizeBlock).filter((block): block is SlideBlock => Boolean(block)) : [];
   const slideKind = normalizeSlideKind(slide.slideKind, order, project.slideCount);
   const title = shortenWords(sanitizeScreenText(slide.title) || narrationSection?.title || fallbackTitle(project, order), slideKind === "title" ? 12 : 8);
@@ -373,12 +363,7 @@ export function normalizeSlide(rawSlide: unknown, order: number, sources: Source
     placeholders: [],
     speakerNotes: normalizeSpeakerNotes(slide.speakerNotes, { title, thesis, bullets, definition, visual }, project, order, narrationSection?.text),
     timingSeconds: clampNumber(Number(slide.timingSeconds || 55), 20, 240),
-    sourceRefs: sourceRefs.slice(0, 3).map((ref) => ({
-      sourceId: cleanText(ref.sourceId) || sources[0]?.id || "src-prompt",
-      label: cleanText(ref.label) || sources.find((source) => source.id === ref.sourceId)?.label || "Материал",
-      excerpt: cleanText(ref.excerpt) || sources.find((source) => source.id === ref.sourceId)?.excerpt || "",
-      page: ref.page || null,
-    })),
+    sourceRefs,
   };
 }
 
@@ -679,18 +664,19 @@ export function normalizeSources(sources: Source[], project: ProjectInput): Sour
       objectKey: source.objectKey || undefined,
       url: source.url || undefined,
     }))
-    .filter((source) => source.id && source.excerpt);
+    .filter((source) => source.id);
 
   return normalized.length
     ? normalized
     : [{ id: "src-prompt", label: "Запрос пользователя", type: "PROMPT", size: 0, excerpt: project.prompt }];
 }
 
-export function sourceRefFromSource(source: Source | undefined) {
+export function sourceRefFromSource(inputSource: Source | undefined) {
+  if (inputSource) return sharedSourceRefFromSource(inputSource);
   return {
-    sourceId: source?.id || "src-prompt",
-    label: source?.label || "Запрос пользователя",
-    excerpt: source?.excerpt || "",
+    sourceId: "src-prompt",
+    label: "Запрос пользователя",
+    excerpt: "",
     page: null,
   };
 }

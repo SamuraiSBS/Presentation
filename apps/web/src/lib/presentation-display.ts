@@ -1,6 +1,7 @@
 import {
   buildSlideCanvas,
   ensureEditableCanvas,
+  normalizeSourceRefs,
   resolvePresentationTheme,
   type CanvasImageElement,
   type Highlight,
@@ -209,7 +210,7 @@ export function sanitizePresentationForDisplay(document: DisplayPresentationInpu
       highlights,
       blocks,
       speakerNotes,
-      sourceRefs: [],
+      sourceRefs: normalizeSourceRefs(slide.sourceRefs, document.sources || []),
       timingSeconds: slide.timingSeconds || (index === 0 ? 45 : 55),
     };
   });
@@ -217,7 +218,7 @@ export function sanitizePresentationForDisplay(document: DisplayPresentationInpu
   return ensureDisplayCanvasImages(ensureEditableCanvas({
     ...document,
     generatedText: sanitizeGeneratedTextForDisplay(document.generatedText),
-    sources: [],
+    sources: document.sources || [],
     narrativePlan: document.narrativePlan ?? [],
     presentationTheme: resolvePresentationTheme({
       title: document.title,

@@ -1,5 +1,16 @@
-import { CANVAS_SAFE_BOTTOM, elementsVisuallyOverlap, estimatedTextHeight, minimumReadableFontSize, sortCanvasElements } from "./canvas-helpers.js";
+import {
+  CANVAS_SAFE_BOTTOM,
+  CANVAS_SAFE_MARGIN_X,
+  CANVAS_SAFE_TOP,
+  elementsVisuallyOverlap,
+  estimatedTextHeight,
+  minimumReadableFontSize,
+  minimumTextColumnWidth,
+  sortCanvasElements,
+  textSlotCapacity,
+} from "./canvas-helpers.js";
 import type { CanvasElement, CanvasShapeElement, CanvasTextElement, SlideCanvas } from "./schemas.js";
+import { typographyRoleForCanvasText } from "./typography.js";
 
 export function auditSlideCanvas(canvas: SlideCanvas) {
   const issues: string[] = [];
@@ -18,8 +29,25 @@ export function auditSlideCanvas(canvas: SlideCanvas) {
 
     const minFontSize = minimumReadableFontSize(element);
     if (element.fontSize < minFontSize) issues.push(`${element.id} uses ${element.fontSize}px text below the ${minFontSize}px readable minimum`);
+    if (element.autoFit && element.fontSize <= minFontSize) issues.push(`${element.id} enables autoFit at the readable minimum`);
     if (estimatedTextHeight(element.text, element.fontSize, element.w) > element.h * 1.14) {
       issues.push(`${element.id} text does not fit its box`);
+    }
+    const capacity = textSlotCapacity(element);
+    const isDecorativeGlyph = /^[«»“”"'`]+$/u.test(element.text.trim());
+    if (!isDecorativeGlyph && element.w < minimumTextColumnWidth(element)) {
+      issues.push(`${element.id} uses a ${Math.round(element.w)}px text column below its readable minimum`);
+    }
+    if (element.text.length > capacity.maxCharacters * 1.15) {
+      issues.push(`${element.id} exceeds its ${capacity.maxLines}-line text capacity`);
+    }
+    if (hasUnbreakableOverflow(element.text, capacity.charactersPerLine)) {
+      issues.push(`${element.id} contains a long word or URL that can overflow its text box`);
+    }
+    const typographyRole = typographyRoleForCanvasText(element);
+    const isFooterException = typographyRole === "sourceCredit" || typographyRole === "slideNumber";
+    if (!isFooterException && (element.x < CANVAS_SAFE_MARGIN_X || element.y < CANVAS_SAFE_TOP || element.x + element.w > canvas.width - CANVAS_SAFE_MARGIN_X || element.y + element.h > CANVAS_SAFE_BOTTOM)) {
+      issues.push(`${element.id} is outside the readable safe margins`);
     }
     const container = element.groupId
       ? visible.find((candidate): candidate is CanvasShapeElement =>
@@ -86,7 +114,24 @@ function isTextBackplateBehindText(background: CanvasElement, text: CanvasElemen
 }
 
 function isDecorativeRuleBehindText(shape: CanvasElement, text: CanvasElement) {
-  return shape.type === "shape" && text.type === "text" && shape.zIndex < text.zIndex && (shape.h <= 8 || shape.w <= 8);
+  if (/-sequence-line$/.test(shape.id) && /-step-\d+-num$/.test(text.id)) return true;
+  return shape.type === "shape" && text.type === "text" && shape.zIndex < text.zIndex && (shape.h <= 8 || shape.w <= 8)
+    && !intersectsGlyphArea(shape, text);
+}
+
+function hasUnbreakableOverflow(value: string, charactersPerLine: number) {
+  return value.split(/\s+/).some((token) =>
+    token.split(/\u200B/).some((segment) => segment.length > charactersPerLine),
+  );
+}
+
+function intersectsGlyphArea(shape: CanvasElement, text: CanvasElement) {
+  const insetX = Math.min(12, text.w * 0.08);
+  const insetY = Math.min(8, text.h * 0.12);
+  const glyphArea = { x: text.x + insetX, y: text.y + insetY, w: Math.max(1, text.w - insetX * 2), h: Math.max(1, text.h - insetY * 2) };
+  const overlapX = Math.min(shape.x + shape.w, glyphArea.x + glyphArea.w) - Math.max(shape.x, glyphArea.x);
+  const overlapY = Math.min(shape.y + shape.h, glyphArea.y + glyphArea.h) - Math.max(shape.y, glyphArea.y);
+  return overlapX > 1 && overlapY > 1;
 }
 
 function isSoftBackgroundBehindText(background: CanvasElement, text: CanvasElement) {

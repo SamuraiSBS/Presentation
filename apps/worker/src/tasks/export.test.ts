@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
 import JSZip from "jszip";
 import sharp from "sharp";
-import { PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS } from "@studydeck/shared";
+import { ensureEditableCanvas, PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS, presentationSchema } from "@studydeck/shared";
 import { describe, expect, it, vi } from "vitest";
 // @ts-expect-error Vitest must use the TypeScript source, not a stale local JS emit.
 import { createPdf, createPptx, fitPptxImage, renderPdfHtml } from "./export.ts";
+import { preparePresentationForExport } from "./export-preflight.js";
 
 vi.mock("../storage.js", () => ({
   readObjectBuffer: vi.fn(async () => Buffer.from(
@@ -15,6 +16,49 @@ vi.mock("../storage.js", () => ({
 }));
 
 describe("createPptx", () => {
+  it("uses one shared attribution string in the canvas, PPTX, and PDF", async () => {
+    const document = ensureEditableCanvas(presentationSchema.parse({
+      id: "attribution-deck",
+      title: "Attribution",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      generatedText: "Attribution slide.",
+      sources: [{ id: "src-1", label: "Research archive", type: "WEB", excerpt: "Source context." }],
+      outline: ["Attribution"],
+      narrativePlan: [],
+      speechScript: [{ slideOrder: 1, slideTitle: "Attribution", text: "Narration." }],
+      slides: [{
+        id: "slide-1", order: 1, title: "Attribution", slideKind: "content", layout: "bullets",
+        thesis: "The source footer stays compact.", bullets: ["One visible point", "One supported point"], definition: null,
+        keyConcepts: [],
+        visual: {
+          type: "image", title: "", description: "Archive photograph", leftLabel: "", rightLabel: "", items: [], rows: [],
+          image: {
+            url: "https://cdn.example.com/archive.jpg", objectKey: "images/archive.jpg", alt: "Archive photograph", query: "archive",
+            sourceTitle: "Archive collection", sourceUrl: "https://images.example.org/archive?long=query", provider: "tavily", contentType: "image/jpeg", warnings: [],
+          },
+        },
+        highlights: [], blocks: [{ type: "bullets", items: ["One visible point", "One supported point"] }],
+        speakerNotes: "Narration.", timingSeconds: 45, placeholders: [],
+        sourceRefs: [{ sourceId: "src-1", label: "Research archive", excerpt: "Source context.", page: null }],
+      }],
+    }));
+    const attribution = "Источники: [1] Research archive · Фото: Archive collection";
+    const canvasCredit = document.slides[0].canvas?.elements.find((element) => element.type === "text" && element.typographyRole === "sourceCredit");
+
+    expect(canvasCredit).toMatchObject({ text: attribution });
+    expect((document.slides[0].canvas?.elements.filter((element) => element.type === "text" && element.typographyRole === "sourceCredit") || [])).toHaveLength(1);
+
+    const pptx = await JSZip.loadAsync(await createPptx(document));
+    const pptxSlide = await pptx.file("ppt/slides/slide1.xml")?.async("string");
+    const pdf = await renderPdfHtml(document);
+    expect(pptxSlide).toContain(attribution);
+    expect(pdf).toContain(attribution);
+    expect((pptxSlide?.match(/Archive collection/g) || [])).toHaveLength(1);
+  });
+
   it("prepares cover and contain images without relying on PptxGenJS sizing", async () => {
     const data = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
     const cover = await fitPptxImage(data, { x: 0, y: 0, w: 2.5, h: 5 }, "cover");
@@ -25,7 +69,7 @@ describe("createPptx", () => {
     expect(contain).toMatchObject({ x: 6.75, y: 0.72, w: 5.75, h: 5.75 });
   });
 
-  it("creates a wide deck without visible source text", async () => {
+  it("creates a wide deck with a compact source footer", async () => {
     const buffer = await createPptx({
       id: "presentation-1",
       title: "Русское кино после 2010 года",
@@ -119,7 +163,7 @@ describe("createPptx", () => {
     expect(slideXml).toContain("онлайн-премьеры");
     expect(slideXml).toContain("Франшиза");
     expect(slideXml).toContain("Изменения");
-    expect(slideXml).not.toContain("Источник");
+    expect(slideXml).toContain("Источники: [1] Источник о кино");
   });
 
   it("creates a pptx when slide image metadata has no cached object", async () => {
@@ -360,8 +404,8 @@ describe("createPptx", () => {
     const slideXml = await zip.file("ppt/slides/slide1.xml")?.async("string");
 
     expect(slideXml).toContain("The claim is supported");
-    expect(slideXml).toContain("Research notes");
-    expect(slideXml).toContain("p. 4");
+    expect(slideXml).toContain("Источники: [1] Research notes");
+    expect((slideXml?.match(/Research notes/g) || [])).toHaveLength(1);
   });
 
   it("exports visual director canvas variants", async () => {
@@ -408,6 +452,122 @@ describe("createPptx", () => {
 
     expect(buffer.subarray(0, 5).toString("utf8")).toBe("%PDF-");
     expect(buffer.length).toBeGreaterThan(1000);
+  });
+});
+
+describe("export preflight", () => {
+  const project = {
+    id: "project-preflight",
+    title: "Porsche 911",
+    prompt: "Подготовь учебную презентацию об истории Porsche 911.",
+    scenario: "lesson",
+    level: "university",
+    mode: "openai",
+    slideCount: 1,
+  };
+  const readAvailableObject = async (objectKey: string) => {
+    if (objectKey === "projects/p/slides/missing.png") throw new Error("not found");
+    return Buffer.from("fixture-binary");
+  };
+
+  it("rebuilds unsafe generated canvas before serialization and keeps formats on the same visible text", async () => {
+    const source = generatedPreflightDeck();
+    const unsafe = presentationSchema.parse({
+      ...source,
+      slides: source.slides.map((slide) => ({
+        ...slide,
+        canvas: {
+          ...slide.canvas!,
+          elements: slide.canvas!.elements.map((element) => element.type === "text" && element.role === "body"
+            ? { ...element, fontSize: 8, h: 28 }
+            : element),
+        },
+      })),
+    });
+    const result = await preparePresentationForExport(unsafe, { format: "pptx", project, readObject: readAvailableObject });
+    const body = result.document.slides[0].canvas!.elements.find((element) => element.type === "text" && element.role === "body");
+
+    expect(result.initialReport.slideIssues[0]?.categories).toContain("typography_overflow");
+    expect(result.report).toMatchObject({ passed: true, repaired: true, format: "pptx" });
+    expect(body).toMatchObject({ type: "text" });
+    expect((body as { fontSize: number }).fontSize).toBeGreaterThan(8);
+
+    const [pptx, html] = await Promise.all([createPptx(result.document), renderPdfHtml(result.document)]);
+    const zip = await JSZip.loadAsync(pptx);
+    const xml = await zip.file("ppt/slides/slide1.xml")?.async("string");
+    expect(xml).toContain(result.document.slides[0].title);
+    expect(html).toContain(result.document.slides[0].title);
+    for (const element of result.document.slides[0].canvas!.elements) {
+      if (element.type === "text" && element.text.trim()) {
+        expect(xml).toContain(element.text);
+        expect(html).toContain(element.text);
+      }
+    }
+  });
+
+  it("uses a safe generated fallback for a missing binary image without changing custom canvas", async () => {
+    const source = generatedPreflightDeck();
+    const withMissingImage = presentationSchema.parse({
+      ...source,
+      slides: source.slides.map((slide) => ({
+        ...slide,
+        visual: {
+          ...slide.visual,
+          image: {
+            url: "https://cdn.example.com/missing.png",
+            objectKey: "projects/p/slides/missing.png",
+            alt: "Missing fixture image",
+            query: "fixture",
+            sourceTitle: "Fixture source",
+            provider: "tavily",
+            contentType: "image/png",
+            warnings: [],
+          },
+        },
+      })),
+    });
+    const result = await preparePresentationForExport(withMissingImage, { format: "pdf", project, readObject: readAvailableObject });
+
+    expect(result.initialReport.slideIssues[0]?.categories).toContain("missing_image_object");
+    expect(result.report.passed).toBe(true);
+    expect(result.document.slides[0].visual.image).toBeUndefined();
+    expect(result.document.slides[0].canvas!.elements.some((element) => element.type === "image")).toBe(false);
+
+    const custom = presentationSchema.parse({
+      ...generatedPreflightDeck(),
+      slides: generatedPreflightDeck().slides.map((slide) => ({
+        ...slide,
+        canvas: {
+          ...slide.canvas!,
+          elements: [...slide.canvas!.elements, customCanvasMarker(slide.id)],
+        },
+      })),
+    });
+    const before = JSON.stringify(custom.slides[0].canvas);
+    const customResult = await preparePresentationForExport(custom, { format: "pptx", project, readObject: readAvailableObject });
+    expect(JSON.stringify(customResult.document.slides[0].canvas)).toBe(before);
+  });
+
+  it("keeps legacy no-canvas decks on the template fallback and repairs Porsche-like fragments in generated slides", async () => {
+    const legacy = presentationSchema.parse({
+      ...canvasDeck(),
+      slides: canvasDeck().slides.map(({ canvas: _canvas, ...slide }) => slide),
+    });
+    const legacyResult = await preparePresentationForExport(legacy, { format: "pdf", project, readObject: readAvailableObject });
+    expect(legacyResult.report).toMatchObject({ passed: true, repaired: false });
+    await expect(renderPdfHtml(legacyResult.document)).resolves.toContain("template-slide");
+
+    const source = generatedPreflightDeck();
+    const corrupted = presentationSchema.parse({
+      ...source,
+      slides: source.slides.map((slide) => ({
+        ...slide,
+        thesis: "Porsche 911 показал.",
+        bullets: ["Международный конфликт меняет границы государств."],
+      })),
+    });
+    const repaired = await preparePresentationForExport(corrupted, { format: "pptx", project, readObject: readAvailableObject });
+    expect(repaired.document.slides[0].thesis).not.toBe("Porsche 911 показал.");
   });
 });
 
@@ -513,6 +673,33 @@ function canvasDeck() {
         sourceRefs: [],
       },
     ],
+  };
+}
+
+function generatedPreflightDeck() {
+  const source = canvasDeck();
+  return ensureEditableCanvas(presentationSchema.parse({
+    ...source,
+    slides: source.slides.map(({ canvas: _canvas, ...slide }) => slide),
+  }));
+}
+
+function customCanvasMarker(slideId: string) {
+  return {
+    id: `${slideId}-custom-canvas-marker`,
+    type: "shape" as const,
+    shape: "rect" as const,
+    x: 0,
+    y: 0,
+    w: 1,
+    h: 1,
+    rotation: 0,
+    zIndex: -1,
+    opacity: 0,
+    locked: true,
+    fill: "#000000",
+    stroke: "#000000",
+    strokeWidth: 0,
   };
 }
 
