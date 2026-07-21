@@ -15,13 +15,14 @@ import {
 } from "./presentation.js";
 import { generatePresentation as generatePresentationFromOrchestrator } from "./presentation/orchestrator.js";
 import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./presentation/prompts/builders.js";
+import { buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
 import { normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
 import { sourceEvidenceForSlide } from "./presentation/planning/builders.js";
 import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
 import { applyNarrationFallbacks } from "./presentation/quality/orchestration.js";
 import { looksLikeSentenceFragment } from "./presentation/quality/orchestration.js";
 import { normalizeLayout as normalizeLayoutFromLayer } from "./presentation/normalization/presentation.js";
-import { normalizeNarrationText } from "./presentation/narration/processing.js";
+import { normalizeNarrationText, parseNarrationSections, validateNarrationSections } from "./presentation/narration/processing.js";
 import { shortenSentence } from "./presentation/utilities.js";
 
 const originalEnv = { ...process.env };
@@ -90,6 +91,59 @@ afterEach(() => {
 });
 
 describe("presentation compatibility facade", () => {
+  it("flags ten-slide narration outside its ten-to-twelve-minute Russian speech budget", () => {
+    const project = {
+      id: "speech-budget",
+      title: "BMW history",
+      prompt: "Explain BMW history",
+      scenario: "university_report",
+      level: "university_student",
+      mode: "with_sources",
+      slideCount: 10,
+    };
+    const narration = (wordsPerSlide: number) => Array.from({ length: 10 }, (_, index) => {
+      const words = Array.from({ length: wordsPerSlide }, (_, word) => `fact${index}-${word}`).join(" ");
+      return `\u0421\u043b\u0430\u0439\u0434 ${index + 1}: BMW ${index + 1}\n${words}.`;
+    }).join("\n\n");
+
+    const shortIssues = validateNarrationSections(parseNarrationSections(narration(129)), project);
+    const longIssues = validateNarrationSections(parseNarrationSections(narration(157)), project);
+    expect(shortIssues.some((issue) => issue.includes("duration is below 10 minutes"))).toBe(true);
+    expect(longIssues.some((issue) => issue.includes("duration exceeds 12 minutes"))).toBe(true);
+  });
+
+  it.each([
+    [6, "5–7 минут", "5-7 minutes"],
+    [8, "7–9 минут", "7-9 minutes"],
+    [10, "10–12 минут", "10-12 minutes"],
+    [12, "12–15 минут", "12-15 minutes"],
+    [14, "15+ минут", "15+ minutes"],
+  ])("puts the %s-slide duration contract into narrative and narration prompts", (slideCount, narrativeDuration, narrationDuration) => {
+    const project = {
+      id: `speech-prompt-${slideCount}`,
+      title: "BMW history",
+      prompt: "Explain BMW history",
+      scenario: "university_report",
+      level: "university_student",
+      mode: "with_sources",
+      slideCount,
+    };
+    const narrativePrompt = buildNarrativePlanPrompt(project, []);
+    const narrationPrompt = buildNarrationPrompt(project, []);
+    expect(narrativePrompt).toContain(narrativeDuration);
+    expect(narrationPrompt).toContain(narrationDuration);
+    expect(`${narrativePrompt}\n${narrationPrompt}`).not.toContain("7-10");
+  });
+
+  it("allocates the ten-slide narration target across title, content, and conclusion", () => {
+    const project = { id: "speech-plan", title: "BMW history", prompt: "Explain BMW history", scenario: "university_report", level: "university_student", mode: "with_sources", slideCount: 10 };
+    const plan = normalizeNarrativePlan([], project);
+    expect(plan[0].speechWordTarget).toBe(90);
+    expect(plan.at(-1)?.speechWordTarget).toBe(140);
+    expect(plan.slice(1, -1).every((item) => item.speechWordTarget === 150)).toBe(true);
+    expect(plan.reduce((total, item) => total + (item.speechWordTarget || 0), 0)).toBe(1430);
+  });
+
   it("never shortens visible copy into an ellipsis or treats an incomplete source excerpt as evidence", () => {
     const longSentence = "This complete sentence remains intact even when its configured display limit is shorter than the source sentence.";
 

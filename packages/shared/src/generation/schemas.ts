@@ -60,6 +60,11 @@ export const slideNarrativeSchema = z.object({
   storyJob: z.string().trim().min(1).optional(),
   supportedFactSourceIds: z.array(z.string().trim().min(1)).optional(),
   entityAssertions: z.array(entityAssertionSchema).optional(),
+  // New narration planning fields. Optional keeps persisted legacy decks readable.
+  bridgeFromPrevious: z.string().trim().optional(),
+  evidenceOrExplanation: z.string().trim().optional(),
+  whyItMatters: z.string().trim().optional(),
+  speechWordTarget: z.number().int().positive().optional(),
 });
 export type SlideNarrative = z.infer<typeof slideNarrativeSchema>;
 

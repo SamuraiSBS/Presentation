@@ -2,7 +2,7 @@
 
 Этот пакет реализует только новые генерации StudyDeck в D:\presentation.
 
-Решения владельца: выступление 7–10 минут; современная Gamma-подача; только реальные документальные фотографии; пользователь не видит технические ошибки, служебные fallback-фразы и промежуточный сломанный deck; старые презентации не мигрируются.
+Решения владельца: современная Gamma-подача; только реальные документальные фотографии; пользователь не видит технические ошибки, служебные fallback-фразы и промежуточный сломанный deck; старые презентации не мигрируются. Длительность новой речи определяется выбранным объёмом: 6 слайдов — 5–7 минут, 8 — 7–9, 10 — 10–12, 12 — 12–15, 14 — от 15 минут.
 
 ## BMW-регрессия
 
@@ -19,11 +19,12 @@
 
 1. 01-grounded-story-and-fact-contract.md
 2. 02-seven-to-ten-minute-speech-director.md
-3. 03-silent-production-quality-gate.md
-4. 04-real-documentary-photo-fulfillment.md
-5. 05-modern-gamma-canvas-and-density.md
-6. 06-canonical-document-and-export-parity.md
-7. 07-user-safe-retries-and-release-verification.md
+3. 08-slide-count-duration-contract-correction.md — corrective prompt после уже реализованного 02
+4. 03-silent-production-quality-gate.md
+5. 04-real-documentary-photo-fulfillment.md
+6. 05-modern-gamma-canvas-and-density.md
+7. 06-canonical-document-and-export-parity.md
+8. 07-user-safe-retries-and-release-verification.md
 
 ## Общее начало каждого нового чата
 
@@ -37,7 +38,7 @@
 
 ## Определение ready для новой генерации
 
-Новый deck получает ready только когда он тематически связан, factual claims имеют provenance или безопасно обобщены, речь занимает 7–10 минут, видимый текст не содержит шаблонных/служебных фраз, visual direction выполнен или честно перестроен, canvas проходит audit, а web, editor, PPTX и PDF используют один канонический документ.
+Новый deck получает ready только когда он тематически связан, factual claims имеют provenance или безопасно обобщены, речь попадает в диапазон выбранного числа слайдов, видимый текст не содержит шаблонных/служебных фраз, visual direction выполнен или честно перестроен, canvas проходит audit, а web, editor, PPTX и PDF используют один канонический документ.
 
 ## Общая проверка
 
@@ -50,4 +51,3 @@
     git diff --check
 
 Для runtime-проверки запускай только затронутые сервисы. Worker/shared generation logic требует worker rebuild; для web-only используй npm run dev:web:fast. Remote deploy не выполнять без отдельного запроса.
-

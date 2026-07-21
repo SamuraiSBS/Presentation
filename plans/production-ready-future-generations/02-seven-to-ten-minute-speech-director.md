@@ -21,7 +21,13 @@ BMW regression: 10 слайдов содержали 389 слов, около т
 
 ## Реализация
 
-1. Добавь shared deterministic timing budget для university_student и easy_professional. Используй один documented Russian-speaking-rate helper. Target total words: 900–1200; title 45–75, content 85–130, conclusion 70–110 слов. Budget зависит от slide count/scenario и не применяется при display/export legacy deck.
+1. Добавь shared deterministic timing budget для university_student и easy_professional. Используй один documented Russian-speaking-rate helper. Целевое число слов вычисляется из **фактического количества слайдов**, их ролей и целевой длительности, а не берётся фиксированным для любого deck:
+   - сначала выбери целевую длительность в диапазоне 7–10 минут и переведи её в общий word budget по единой скорости русской речи;
+   - выдели долю на title, content и conclusion по их ролям, затем распредели оставшийся бюджет между фактическими content slides;
+   - задай допустимый диапазон на слайд, но не требуй 85–130 слов от title, transition или финала;
+   - пример для 10 слайдов: ориентир 900–1200 слов, title 45–75, content обычно 85–130, conclusion 70–110;
+   - 6 слайдов не должны искусственно получать текст 10-слайдовой презентации, а 14 слайдов не должны получать по 50–60 слов без объяснения.
+   Budget не применяется при display/export legacy deck.
 
 2. Создавай narration plan до final slide text. Для content slide обязательны bridge from prior beat, grounded explanation/evidence, why it matters и natural transition. Финал отвечает на central question без общего filler.
 
@@ -35,10 +41,12 @@ BMW regression: 10 слайдов содержали 389 слов, около т
 
 1. Ten-slide fixture на 389 слов получает duration issue и repair/regen path.
 2. Fixture на 1,450 слов получает over-duration issue.
-3. Повтор «мощность, дизайн и инновации» в трёх sections ловится semantic repetition.
-4. «Тема важна и интересна» не проходит quality gate.
-5. Final section отвечает на central question и не повторяет предпоследний slide.
-6. Repeated repair сохраняет более полный accepted narration.
+3. Шестислайдовый fixture проходит с рассчитанным для 6 слайдов бюджетом и не проверяется против диапазона для 10 слайдов.
+4. Четырнадцатислайдовый fixture получает пропорциональный общий budget и минимально достаточный текст для каждого смыслового слайда.
+5. Повтор «мощность, дизайн и инновации» в трёх sections ловится semantic repetition.
+6. «Тема важна и интересна» не проходит quality gate.
+7. Final section отвечает на central question и не повторяет предпоследний slide.
+8. Repeated repair сохраняет более полный accepted narration.
 
 ## Проверка
 
@@ -49,5 +57,4 @@ BMW regression: 10 слайдов содержали 389 слов, около т
 
 ## Готово, когда
 
-Новая 10-slide university presentation получает 7–10 минут речи без ручной доработки; экран и речь дополняют, а не дублируют друг друга; DOCX использует тот же accepted speech script.
-
+Новая university presentation с любым поддерживаемым количеством слайдов получает 7–10 минут речи с бюджетом, пропорциональным её структуре; экран и речь дополняют, а не дублируют друг друга; DOCX использует тот же accepted speech script.

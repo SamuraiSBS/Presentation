@@ -140,6 +140,7 @@ type YandexTextOptions = {
 type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief" | "deckStory" | "designBrief" | "slideBlueprints" | "slideTextPlans">>;
 
 import type { YandexCompletionResponse } from "../constants.js";
+import { getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
 import { normalizeNarrationText, parseNarrationSections } from "../narration/processing.js";
 import { fallbackTitle, sentenceCount, firstSentence, lastSentence, wordCount, normalizeTitleKey, isGenericSlideTitle } from "../normalization/presentation.js";
@@ -703,6 +704,7 @@ export function normalizeNarrativePlan(raw: unknown, project: ProjectInput): Sli
   const value = parseNarrativePlanRaw(raw);
   const inputItems = Array.isArray(value) ? value : [];
   const normalized: SlideNarrative[] = [];
+  const timingBudget = getRussianStudentSpeechTimingBudget(project);
 
   for (let index = 0; index < project.slideCount; index += 1) {
     const order = index + 1;
@@ -724,6 +726,12 @@ export function normalizeNarrativePlan(raw: unknown, project: ProjectInput): Sli
         ? rawItem.supportedFactSourceIds.filter((sourceId): sourceId is string => typeof sourceId === "string" && Boolean(sourceId.trim()))
         : [],
       entityAssertions: Array.isArray(rawItem.entityAssertions) ? rawItem.entityAssertions : [],
+      bridgeFromPrevious: order === 1 ? "" : cleanNarrativeField(rawItem.bridgeFromPrevious, "transition"),
+      evidenceOrExplanation: cleanNarrativeField(rawItem.evidenceOrExplanation, "message") || cleanNarrativeField(rawItem.keyMessage, "message") || fallback.keyMessage,
+      whyItMatters: cleanNarrativeField(rawItem.whyItMatters, "purpose") || cleanNarrativeField(rawItem.slidePurpose, "purpose") || fallback.slidePurpose,
+      speechWordTarget: timingBudget
+        ? (order === 1 ? timingBudget.titleWordTarget : order === project.slideCount ? timingBudget.conclusionWordTarget : timingBudget.contentWordTarget)
+        : undefined,
     };
     normalized.push(order === project.slideCount ? normalizeConclusionNarrativeItem(item, project) : item);
   }
@@ -846,5 +854,8 @@ export function buildFallbackNarrativeItem(project: ProjectInput, order: number,
       : `Раскрыть отдельную роль в истории темы: ${title}.`,
     supportedFactSourceIds: [],
     entityAssertions: [],
+    bridgeFromPrevious: order === 1 ? "" : `Link the preceding beat to ${title}.`,
+    evidenceOrExplanation: `Explain the supported point about ${title}.`,
+    whyItMatters: `Show how ${title} contributes to the central question.`,
   };
 }

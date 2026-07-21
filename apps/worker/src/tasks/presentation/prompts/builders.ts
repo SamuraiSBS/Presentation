@@ -141,8 +141,10 @@ type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief"
 import type { YandexCompletionResponse } from "../constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
 import { cleanMultilineText } from "../utilities.js";
+import { getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
 
 export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[], _researchBrief?: ResearchBrief) {
+  const timingBudget = getRussianStudentSpeechTimingBudget(project);
   return [
     "Верни JSON-массив narrativePlan для StudyDeck презентации.",
     `Тема и запрос пользователя: ${project.prompt}`,
@@ -151,6 +153,9 @@ export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[
     `Уровень аудитории: ${project.level}`,
     `Ровно слайдов: ${project.slideCount}`,
     `Режим: ${project.mode}`,
+    timingBudget
+      ? `Контракт речи: ${timingBudget.label}, ${timingBudget.minMinutes}${timingBudget.maxMinutes === undefined ? "+" : `–${timingBudget.maxMinutes}`} минут; цель ${timingBudget.targetMinutes} минут / ${timingBudget.targetWords} слов. Распредели ${timingBudget.titleWordTarget} слов на обложку, ${timingBudget.contentWordTarget} на каждый содержательный слайд и ${timingBudget.conclusionWordTarget} на вывод.`
+      : "",
     STUDENT_CREATION_BRIEF_LINES,
     `Верни ровно ${project.slideCount} элементов, без markdown и без пояснений.`,
     "Каждый элемент должен иметь строго такой вид:",
@@ -162,6 +167,10 @@ export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[
         keyMessage: "...",
         audienceQuestion: "...",
         transitionToNext: "...",
+        bridgeFromPrevious: "...",
+        evidenceOrExplanation: "...",
+        whyItMatters: "...",
+        speechWordTarget: 100,
       },
       null,
       2,
@@ -257,6 +266,7 @@ export function buildDesignBriefPrompt(
 
 export function buildNarrationPrompt(project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[] = [], researchBrief?: ResearchBrief) {
   const planText = formatNarrativePlanForPrompt(narrativePlan);
+  const timingBudget = getRussianStudentSpeechTimingBudget(project);
   return [
     "Write the complete speech text for a StudyDeck presentation.",
     `User topic and request: ${project.prompt}`,
@@ -274,7 +284,9 @@ export function buildNarrationPrompt(project: ProjectInput, sources: Source[], n
     "- every section starts with `Слайд N: semantic title`;",
     "- N must run from 1 through the exact slide count without gaps;",
     "- after each title line, write 3-7 complete sentences; vary the count naturally instead of padding every slide to the same size;",
-    "- target roughly 45-90 spoken words per slide and about 35-55 seconds of reading time per slide;",
+    timingBudget
+      ? `- use the fixed Russian spoken-rate budget of ${timingBudget.wordsPerMinute} words/minute: ${timingBudget.minWords}${timingBudget.maxWords === undefined ? "+" : `-${timingBudget.maxWords}`} words total (${timingBudget.minMinutes}${timingBudget.maxMinutes === undefined ? "+" : `-${timingBudget.maxMinutes}`} minutes); target ${timingBudget.targetWords} words (${timingBudget.targetMinutes} minutes); title ${timingBudget.titleWordTarget}, content ${timingBudget.contentWordTarget}, conclusion ${timingBudget.conclusionWordTarget} words;`
+      : "- target roughly 45-90 spoken words per slide and about 35-55 seconds of reading time per slide;",
     "- do not use bullet lists, markdown, JSON, citations, source names, or comments.",
     "University speech rules:",
     "- write as a prepared university student: natural, confident, easy to read aloud, and professional without bureaucratic wording;",
@@ -293,6 +305,7 @@ export function buildNarrationPrompt(project: ProjectInput, sources: Source[], n
     "- the section title must match or closely follow slideTitle;",
     "- each section must answer audienceQuestion;",
     "- each section must develop keyMessage;",
+    "- each content section must realize bridgeFromPrevious, evidenceOrExplanation, and whyItMatters as natural content rather than labels or meta commentary;",
     "- follow transitionToNext by meaning, but never write mechanical phrases like `перейдем к следующему слайду`.",
     "Style model:",
     "- close to a university student report: direct, academic without stiffness, and easy to read aloud;",
@@ -312,6 +325,7 @@ export function buildNarrationPrompt(project: ProjectInput, sources: Source[], n
     "- do not write about `почему раздел важен`, `связь с разделом`, or `значение события` unless those exact ideas are real facts of the topic;",
     "- do not invent precise facts, dates, names, numbers, images, or examples when the source material does not support them;",
     "- do not repeat the user request as the speech text.",
+    "- do not use unsupported promotional labels such as unique, iconic, benchmark, or revolutionary without factual context.",
     `Source material for internal factual grounding only; do not show source labels to the user:\n${formatSourceText(sources)}`,
   ]
     .filter(Boolean)

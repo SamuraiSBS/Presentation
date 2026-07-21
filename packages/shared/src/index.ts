@@ -18,6 +18,8 @@ export { SLIDE_LAYOUT_DEFINITIONS, PRESENTATION_LAYOUT_CAPACITY, slideLayoutDefi
 export type { LayoutCapacity } from "./presentation/layouts.js";
 export { generationProgressStageSchema, generationJobKindSchema, entityAssertionSchema, factualTopicProfileSchema, slideNarrativeSchema, deckStorySchema, slideTextPlanSchema, researchBriefSchema, sceneTextModeSchema, designBriefSlideDirectionSchema, designBriefSchema, slideBlueprintSchema, visualStrategySchema, diagramSpecSchema, qualityIssueSchema, qualityDimensionScoreSchema, qualityDimensionsSchema, qualityCritiqueSchema, generationPipelineArtifactsSchema, generationBriefSchema } from "./generation/schemas.js";
 export type { GenerationProgressStage, GenerationJobKind, EntityAssertion, FactualTopicProfile, SlideNarrative, DeckStory, SlideTextPlan, ResearchBrief, SceneTextMode, DesignBriefSlideDirection, DesignBrief, SlideBlueprint, VisualStrategy, DiagramSpec, QualityIssue, QualityDimensionScore, QualityDimensions, QualityCritique, GenerationPipelineArtifacts, GenerationBrief } from "./generation/schemas.js";
+export { RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE, RUSSIAN_STUDENT_SPEECH_TIMING_PRESETS, getRussianStudentSpeechTimingBudget, russianSpeechMinutesFromWords } from "./generation/speech-timing.js";
+export type { SpeechTimingBudget, SpeechTimingProject } from "./generation/speech-timing.js";
 export { presentationSchema } from "./presentation/document.js";
 export type { PresentationDocument } from "./presentation/document.js";
 export { PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS, resolvePremiumPresentationTheme, resolveThemeFromDesignBrief, resolvePresentationTheme } from "./presentation/themes.js";

@@ -10,14 +10,13 @@ import type { UsageSummary } from "@/lib/account-types";
 import { canCreateProject } from "@/lib/account-types";
 import { formatResetDate } from "@/lib/project-ui";
 import { ApiClientError, apiJson } from "@/lib/project-queries";
+import { RUSSIAN_STUDENT_SPEECH_TIMING_PRESETS, getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
 
-const slideOptions = [
-  { count: 6, label: "Короткое выступление", description: "5-7 минут" },
-  { count: 8, label: "Доклад на паре", description: "7-9 минут" },
-  { count: 10, label: "Обычная презентация", description: "10-12 минут" },
-  { count: 12, label: "Подробный доклад", description: "12-15 минут" },
-  { count: 14, label: "Защита проекта", description: "от 15 минут" },
-];
+const slideOptions = RUSSIAN_STUDENT_SPEECH_TIMING_PRESETS.map((preset) => ({
+  count: preset.slideCount,
+  label: preset.label,
+  description: preset.maxMinutes === undefined ? `от ${preset.minMinutes} минут` : `${preset.minMinutes}-${preset.maxMinutes} минут`,
+}));
 
 const projectTitleLimit = 140;
 const studentGenerationBrief = {
@@ -351,12 +350,18 @@ function projectTitleFromTopic(topic: string) {
   return `${normalized.slice(0, projectTitleLimit - 3).trimEnd()}...`;
 }
 
-function studentPrompt(topic: string, slideCount: number, audience: "school" | "university") {
+export function studentPrompt(topic: string, slideCount: number, audience: "school" | "university") {
   const audienceCopy = audience === "school"
     ? "школьную презентацию с понятными формулировками, подходящими для выступления перед классом"
     : "академическую, но лёгкую для устного выступления студенческую презентацию";
+  const timingBudget = audience === "university"
+    ? getRussianStudentSpeechTimingBudget({ slideCount, level: "university_student", mode: "with_sources" })
+    : null;
   return [
     `Подготовь ${audienceCopy} на ${slideCount} слайдов по теме: ${topic}.`,
+    timingBudget
+      ? `Длительность выступления: ${timingBudget.minMinutes}${timingBudget.maxMinutes === undefined ? "+" : `-${timingBudget.maxMinutes}`} минут; ориентир ${timingBudget.targetWords} слов при ${timingBudget.wordsPerMinute} словах в минуту.`
+      : "",
     "Слайды должны быть короткими и визуально аккуратными: один сильный тезис, минимум текста, изображения, схемы или диаграммы там, где они помогают объяснению.",
     audience === "school" ? "Основное объяснение перенеси в заметки докладчика: текст должен звучать естественно для школьника." : "Основное объяснение перенеси в заметки докладчика: текст должен звучать профессионально и естественно для студента.",
     "Результат должен одинаково хорошо смотреться в веб-превью и в экспорте PPTX/PDF.",

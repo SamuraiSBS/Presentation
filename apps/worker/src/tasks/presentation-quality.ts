@@ -6,6 +6,8 @@ import {
   hasCustomSlideCanvas,
   presentationSchema,
   resolvePresentationTheme,
+  getRussianStudentSpeechTimingBudget,
+  russianSpeechMinutesFromWords,
   type PresentationDocument,
   type QualityCritique,
   type QualityDimensionScore,
@@ -1251,6 +1253,27 @@ export function findShortNarrationIssues(presentation: PresentationDocument): Qu
   });
 }
 
+export function findSpeechTimingIssues(presentation: PresentationDocument, project?: QualityProjectInput): QualityIssue[] {
+  if (!project) return [];
+  const budget = getRussianStudentSpeechTimingBudget(project);
+  if (!budget) return [];
+  const words = presentation.speechScript.reduce((total, item) => total + wordCount(item.text), 0);
+  const minutes = russianSpeechMinutesFromWords(words, budget.wordsPerMinute);
+  if (words >= budget.minWords && (budget.maxWords === undefined || words <= budget.maxWords)) return [];
+  const tooShort = words < budget.minWords;
+  return [{
+    severity: "blocker",
+    category: "bad_narration",
+    field: "generatedText, speakerNotes, speechScript",
+    message: tooShort
+      ? `Speech duration is below ${budget.minMinutes} minutes: ${words} words (${minutes.toFixed(1)} min).`
+      : `Speech duration exceeds ${budget.maxMinutes} minutes: ${words} words (${minutes.toFixed(1)} min).`,
+    repairInstruction: tooShort
+      ? "Regenerate or expand only the accepted grounded narration to the timing budget; explain the significance of existing facts and do not invent new facts. Then synchronize speakerNotes and speechScript."
+      : "Regenerate or compress accepted narration to the timing budget without losing grounded facts; then synchronize speakerNotes and speechScript.",
+  }];
+}
+
 export function findExportReadinessIssues(presentation: PresentationDocument): QualityIssue[] {
   return presentation.slides.flatMap((slide) => {
     const theme = resolvePresentationTheme({
@@ -1332,6 +1355,7 @@ export function critiquePresentationDeterministically(
     ...findSlideSpeechAlignmentIssues(presentation),
     ...findUniversityToneIssues(presentation, project),
     ...findShortNarrationIssues(presentation),
+    ...findSpeechTimingIssues(presentation, project),
     ...findExportReadinessIssues(presentation),
   ]);
   return scorePresentationQuality(presentation, issues, sources, project);

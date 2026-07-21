@@ -21,6 +21,7 @@ import {
   findLongSlideTextIssues,
   findNarrationMetaIssues,
   findRepeatedTitleIssues,
+  findSpeechTimingIssues,
   findVisualDescriptionIssues,
   findFactualRiskIssues,
   applySourceGroundingRepairs,
@@ -118,6 +119,25 @@ function makeSlide(order: number, title: string, thesis: string, bullets: string
 }
 
 describe("presentation quality checks", () => {
+  it("uses selected slide-count bounds, including an open-ended fourteen-slide floor", () => {
+    const presentation = (words: number) => ({
+      speechScript: [{ slideOrder: 1, slideTitle: "Speech", text: Array.from({ length: words }, () => "слово").join(" ") }],
+    }) as PresentationDocument;
+    const project = (slideCount: number) => ({ id: `timing-${slideCount}`, title: "Тема", prompt: "Тема", scenario: "university_report", level: "university_student", mode: "with_sources", slideCount });
+
+    expect(findSpeechTimingIssues(presentation(1287), project(10))).toHaveLength(1); // 9.9 min
+    expect(findSpeechTimingIssues(presentation(1300), project(10))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(1560), project(10))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(1573), project(10))).toHaveLength(1); // 12.1 min
+    expect(findSpeechTimingIssues(presentation(1300), project(12))).toHaveLength(1);
+    expect(findSpeechTimingIssues(presentation(1560), project(12))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(1950), project(14))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(2600), project(14))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(900), project(6))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(900), project(7))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(900), { ...project(10), mode: "export" })).toHaveLength(0);
+  });
+
   it("flags courtesy-only and recap-only endings as weak conclusions", () => {
     const project = { id: "porsche-closing", title: "История Porsche 911", prompt: "Объясни развитие Porsche 911", scenario: "lesson", level: "university", mode: "with_sources", slideCount: 2 } as const;
     const thankYou = makePresentation({

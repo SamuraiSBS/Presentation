@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { generateText, Output } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
+import { getRussianStudentSpeechTimingBudget, russianSpeechMinutesFromWords } from "@studydeck/shared";
 import { captureGenerationError, errorLogFields, logger } from "../../../observability.js";
 import { normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
 import {
@@ -342,6 +343,7 @@ export function parseNarrationHeader(line: string) {
 
 export function validateNarrationSections(sections: NarrationSection[], project: ProjectInput) {
   const issues: string[] = [];
+  const budget = getRussianStudentSpeechTimingBudget(project);
   if (sections.length !== project.slideCount) {
     issues.push(`expected ${project.slideCount} narration sections, got ${sections.length}`);
   }
@@ -370,7 +372,10 @@ export function validateNarrationSections(sections: NarrationSection[], project:
     if (words < 25) {
       issues.push(`slide ${expectedOrder} narration is too short for a word-for-word speech, got ${words} words`);
     }
-    if (words > 130) {
+    const roleTarget = budget
+      ? (index === 0 ? budget.titleWordTarget : index === project.slideCount - 1 ? budget.conclusionWordTarget : budget.contentWordTarget)
+      : 0;
+    if (words > (budget ? Math.ceil(roleTarget * 1.35) : 130)) {
       issues.push(`slide ${expectedOrder} narration is too long for one slide, got ${words} words`);
     }
     const genericSentence = sentences.find(isGenericNarrationSentence);
@@ -403,6 +408,17 @@ export function validateNarrationSections(sections: NarrationSection[], project:
   const repeatedClosing = repeatedSentenceEdge(sections, "last");
   if (repeatedClosing) {
     issues.push(`narration sections repeat closing phrase: ${repeatedClosing}`);
+  }
+
+  if (budget && sections.length === project.slideCount) {
+    const totalWords = sections.reduce((total, section) => total + section.text.split(/\s+/).filter(Boolean).length, 0);
+    const minutes = russianSpeechMinutesFromWords(totalWords, budget.wordsPerMinute);
+    if (totalWords < budget.minWords) {
+      issues.push(`narration duration is below ${budget.minMinutes} minutes: ${totalWords} words (${minutes.toFixed(1)} min)`);
+    }
+    if (budget.maxWords !== undefined && totalWords > budget.maxWords) {
+      issues.push(`narration duration exceeds ${budget.maxMinutes} minutes: ${totalWords} words (${minutes.toFixed(1)} min)`);
+    }
   }
 
   return issues;
