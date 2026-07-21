@@ -18,10 +18,13 @@ import {
   type UpdateProjectMetadataInput,
   type UpdateSourceReviewInput,
   type UpdateSlideInput,
+  buildSlideCanvas,
+  hasCustomSlideCanvas,
   ensureEditableCanvas,
   defensePlanSchema,
   planLimits,
   presentationSchema,
+  resolvePresentationTheme,
   slideCanvasSchema,
 } from "@studydeck/shared";
 import { ProjectAccessService } from "../access/project-access.service.js";
@@ -577,6 +580,17 @@ export class ProjectsService {
     if (scriptItem) {
       if (input.title !== undefined) scriptItem.slideTitle = input.title;
       if (input.speakerNotes !== undefined) scriptItem.text = input.speakerNotes;
+    }
+    // Text fields and generated canvas are two projections of one saved
+    // document. Recompose only known generated art; a custom canvas remains
+    // exactly as the editor authored it.
+    if (input.canvas === undefined && (input.title !== undefined || input.thesis !== undefined || input.bullets !== undefined || input.layout !== undefined || input.visual !== undefined || input.blocks !== undefined)) {
+      const theme = resolvePresentationTheme(document);
+      if (!hasCustomSlideCanvas(slide, theme)) {
+        slide.canvas = buildSlideCanvas(slide, theme, {
+          designDirection: document.designBrief?.slideDirections.find((direction) => direction.slideOrder === slide.order),
+        });
+      }
     }
 
     const updated = await this.prisma.presentation.updateMany({

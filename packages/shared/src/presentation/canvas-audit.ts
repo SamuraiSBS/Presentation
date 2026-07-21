@@ -90,6 +90,34 @@ export function auditGeneratedCanvasText(
   return issues;
 }
 
+/**
+ * Checks the persisted projection of a generated slide.  This is deliberately
+ * narrower than a visual audit: custom canvases are user-authored and must not
+ * be reconstructed just because their text does not mirror a generated slot.
+ */
+export function auditCanonicalSlideCanvas(slide: {
+  id: string;
+  title: string;
+  thesis: string;
+  bullets?: string[];
+  visual?: { type?: string; image?: { url?: string } };
+  canvas?: SlideCanvas;
+}) {
+  if (slide.canvas?.elements.some((element) => element.id === `${slide.id}-custom-canvas-marker`)) return [];
+  const issues = auditGeneratedCanvasText(slide.canvas, slide);
+  if (slide.visual?.type === "image" && !slide.visual.image?.url) {
+    issues.push("image visual has no canonical image URL");
+  }
+  if (!slide.canvas) return issues;
+  const text = slide.canvas.elements
+    .filter((element): element is CanvasTextElement => element.type === "text")
+    .map((element) => element.text.trim())
+    .filter(Boolean);
+  const fallback = /(?:коротко\s+и\s+по\s+существу|short\s+and\s+to\s+the\s+point)/iu;
+  if (text.some((value) => fallback.test(value))) issues.push("canvas contains a synthetic fallback phrase");
+  return issues;
+}
+
 export function repairUnsafeGeneratedElements(elements: CanvasElement[]) {
   const optionalPlaquesUnsafe = elements.some((element) =>
     /-mini-\d+(?:-shape)?$/.test(element.id) && element.y + element.h > CANVAS_SAFE_BOTTOM,

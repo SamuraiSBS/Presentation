@@ -232,12 +232,16 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     };
     finishStage("polishing");
     await setStage("saving");
-    await prisma.presentation.upsert({
-      where: { projectId },
-      create: { projectId, document: presentation },
-      update: { document: presentation, revision: { increment: 1 } },
-    });
-    await prisma.project.update({ where: { id: projectId }, data: { status: "ready" } });
+    // The release capability, persisted canvas and ready status describe one
+    // revision. Do not expose ready if writing that canonical document fails.
+    await prisma.$transaction([
+      prisma.presentation.upsert({
+        where: { projectId },
+        create: { projectId, document: presentation },
+        update: { document: presentation, revision: { increment: 1 } },
+      }),
+      prisma.project.update({ where: { id: projectId }, data: { status: "ready" } }),
+    ]);
     finishStage("saving");
     await setStage("completed");
     await prisma.generationJob.updateMany({

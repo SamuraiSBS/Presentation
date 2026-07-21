@@ -61,6 +61,7 @@ type ExportJobData = {
   exportId: string;
   projectId: string;
   type: "pdf" | "pptx";
+  presentationRevision: number;
   traceContext?: TraceCarrier;
 };
 
@@ -81,11 +82,14 @@ export async function handleExportJob(job: Job<ExportJobData | ComplianceReportE
 
 async function runExportJob(job: Job<ExportJobData>) {
   const prisma = getPrisma();
-  const { exportId, projectId, type } = job.data;
+  const { exportId, projectId, type, presentationRevision } = job.data;
   await prisma.export.update({ where: { id: exportId }, data: { status: "processing" } });
 
   try {
     const presentationRow = await prisma.presentation.findUniqueOrThrow({ where: { projectId } });
+    if (presentationRow.revision !== presentationRevision) {
+      throw new Error("Presentation changed before export rendering; request a new export for the current revision");
+    }
     const presentation = presentationSchema.parse(presentationRow.document);
     const project = await prisma.project.findUniqueOrThrow({
       where: { id: projectId },
@@ -147,7 +151,11 @@ async function runExportJob(job: Job<ExportJobData>) {
       measurement: "calculated",
       exportId,
     });
-    await prisma.export.update({ where: { id: exportId }, data: { status: "ready", objectKey: key } });
+    const current = await prisma.presentation.findUniqueOrThrow({ where: { projectId }, select: { revision: true } });
+    if (current.revision !== presentationRevision) {
+      throw new Error("Presentation changed during export rendering; stale artifact was not published");
+    }
+    await prisma.export.updateMany({ where: { id: exportId, presentationRevision }, data: { status: "ready", objectKey: key } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Export failed";
     captureExportError(error, {
@@ -967,6 +975,7 @@ function exportCanvasDocument(presentation: ReturnType<typeof presentationSchema
   // preserves the old template renderer for genuinely legacy, no-canvas
   // presentations while keeping visual-director documents on their canvas
   // source of truth for direct library callers and existing integrations.
+  if (presentation.productionQualityGate) return presentation;
   if (presentation.slides.some((slide) => slide.canvas)) return ensureEditableCanvas(presentation);
   return presentation.designBrief ? ensureEditableCanvas(presentation) : presentation;
 }

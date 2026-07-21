@@ -57,6 +57,23 @@ describe("sanitizePresentationForDisplay", () => {
     expect(JSON.stringify(document.slides[0])).not.toContain("\u043a\u043e\u0440\u043e\u0442\u043a\u043e \u0438 \u043f\u043e \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443");
   });
 
+  it("keeps canonical released text and canvas unchanged", () => {
+    const source = {
+      id: "canonical-release",
+      title: "BMW history",
+      scenario: "lesson",
+      level: "university",
+      slideCount: 1,
+      generationMode: "openai",
+      productionQualityGate: { version: 1, capability: "silent-production-quality-gate" },
+      generatedText: "BMW history.",
+      sources: [], outline: ["BMW history"], narrativePlan: [],
+      speechScript: [{ slideOrder: 1, slideTitle: "BMW history", text: "Canonical narration." }],
+      slides: [{ id: "slide-1", order: 1, title: "BMW history", thesis: "A saved thesis.", bullets: ["A saved bullet."], layout: "statement", blocks: [], speakerNotes: "Canonical narration.", timingSeconds: 45, placeholders: [], sourceRefs: [], canvas: { version: 2, width: 1280, height: 720, background: "#fff", elements: [] } }],
+    } as any;
+    expect(sanitizePresentationForDisplay(source)).toEqual(source);
+  });
+
   it("derives structured fields for legacy slides", () => {
     const document = sanitizePresentationForDisplay({
       id: "presentation-1",

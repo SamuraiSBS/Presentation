@@ -1331,6 +1331,9 @@ export function findVisualFulfillmentIssues(presentation: PresentationDocument):
 export function findCanvasCanonicalContentIssues(presentation: PresentationDocument): QualityIssue[] {
   return presentation.slides.flatMap((slide) => slide.canvas?.elements.some((element) => element.id === `${slide.id}-custom-canvas-marker`)
     ? []
+    // Generation repairs text before its final deterministic canvas rebuild.
+    // Keep this gate on stable generated slots; deeper persisted canonicality
+    // is enforced again by export preflight for the released revision.
     : auditGeneratedCanvasText(slide.canvas, slide).map((message) => ({
         slideId: slide.id,
         severity: "blocker" as const,

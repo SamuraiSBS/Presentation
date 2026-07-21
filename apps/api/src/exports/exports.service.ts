@@ -117,7 +117,7 @@ export class ExportsService {
         queueJob = await enqueueOrRetryJob(
           this.exportsQueue,
           "export-presentation",
-          { exportId: created.id, projectId, type, traceContext: injectTraceContext() },
+          { exportId: created.id, projectId, type, presentationRevision: project.presentation.revision, traceContext: injectTraceContext() },
           { attempts: 2, jobId: `presentation-export-${created.id}` },
         );
       } catch (error) {

@@ -505,6 +505,18 @@ describe("export preflight", () => {
     }
   });
 
+  it("does not silently repair a released canonical revision for export", async () => {
+    const source = generatedPreflightDeck();
+    const released = presentationSchema.parse({
+      ...source,
+      productionQualityGate: { version: 1, capability: "silent-production-quality-gate" },
+      slides: source.slides.map((slide) => ({ ...slide, canvas: undefined })),
+    });
+    const result = await preparePresentationForExport(released, { format: "pptx", project, readObject: readAvailableObject });
+    expect(result.report).toMatchObject({ passed: false, repaired: false });
+    expect(result.document).toEqual(released);
+  });
+
   it("uses a safe generated fallback for a missing binary image without changing custom canvas", async () => {
     const source = generatedPreflightDeck();
     const withMissingImage = presentationSchema.parse({

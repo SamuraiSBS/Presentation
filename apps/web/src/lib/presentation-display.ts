@@ -126,27 +126,16 @@ export function restoreStoredImageUrls(document: PresentationDocument, projectId
       const hasCustomMarker = slide.canvas?.elements.some((element) => element.id === `${slide.id}-custom-canvas-marker`);
       let canvas = slide.canvas;
 
-      if (storedVisualImage && canvas && !hasCustomMarker && !canvas.elements.some((element) => element.type === "image")) {
+      // A released canvas is the canonical projection. Legacy documents may
+      // still use the old asset-only representation, so keep that narrowly
+      // scoped compatibility repair outside the production capability.
+      if (!document.productionQualityGate && storedVisualImage && canvas && !hasCustomMarker && !canvas.elements.some((element) => element.type === "image")) {
         const generatedCanvas = buildSlideCanvas(
-          {
-            ...slide,
-            visual: {
-              ...slide.visual,
-              image: { ...storedVisualImage, url: visualAssetUrl },
-            },
-          },
+          { ...slide, visual: { ...slide.visual, image: { ...storedVisualImage, url: visualAssetUrl } } },
           document.presentationTheme || resolvePresentationTheme(document),
-          {
-            designDirection: document.designBrief?.slideDirections.find((direction) => direction.slideOrder === slide.order),
-          },
+          { designDirection: document.designBrief?.slideDirections.find((direction) => direction.slideOrder === slide.order) },
         );
-        canvas = {
-          ...canvas,
-          elements: [
-            ...generatedCanvas.elements.filter((element) => element.type === "image"),
-            ...canvas.elements,
-          ],
-        };
+        canvas = { ...canvas, elements: [...generatedCanvas.elements.filter((element) => element.type === "image"), ...canvas.elements] };
       }
 
       return {
@@ -182,14 +171,32 @@ export function restoreStoredImageUrls(document: PresentationDocument, projectId
 
 export function sanitizePresentationForDisplay(document: DisplayPresentationInput): PresentationDocument {
   const isReleasedProductionDocument = document.productionQualityGate?.capability === "silent-production-quality-gate";
+  if (isReleasedProductionDocument) {
+    // New documents reached this capability only after the worker audited and
+    // persisted them. Never derive text, narration, or canvas content here.
+    return {
+      ...document,
+      generatedText: document.generatedText || "",
+      narrativePlan: document.narrativePlan || [],
+      sources: document.sources || [],
+      speechScript: document.speechScript || [],
+      slides: document.slides.map((slide) => ({
+        ...slide,
+        thesis: slide.thesis || "",
+        bullets: slide.bullets || [],
+        blocks: slide.blocks || [],
+        sourceRefs: slide.sourceRefs || [],
+      })),
+    } as PresentationDocument;
+  }
   const outline = Array.isArray(document.outline) ? document.outline.map(cleanText).filter(Boolean) : [];
   const outlineTitleCounts = countTitles(outline);
   const slides = document.slides.map((slide, index) => {
     const blocks = normalizeBlocksForDisplay(slide.blocks);
     const title = repairSlideTitle(slide.title, index, outline, outlineTitleCounts, blocks);
     const slideKind = normalizeSlideKind(slide.slideKind, index, document.slides.length);
-    const thesis = normalizeThesis(slide.thesis, blocks, isReleasedProductionDocument ? "" : title);
-    const bullets = normalizeBullets(slide.bullets, blocks, isReleasedProductionDocument ? "" : title, slideKind);
+    const thesis = normalizeThesis(slide.thesis, blocks, title);
+    const bullets = normalizeBullets(slide.bullets, blocks, title, slideKind);
     const definition = normalizeDefinition(slide.definition);
     const keyConcepts = normalizeKeyConcepts(slide.keyConcepts, title, bullets, slideKind);
     const highlights = normalizeHighlights(slide.highlights, thesis, bullets, slideKind);

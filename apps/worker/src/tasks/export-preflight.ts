@@ -1,5 +1,6 @@
 import {
   auditSlideCanvas,
+  auditCanonicalSlideCanvas,
   buildSlideCanvas,
   hasCustomSlideCanvas,
   presentationSchema,
@@ -46,6 +47,13 @@ export async function preparePresentationForExport(
   const parsed = presentationSchema.parse(input);
   const initialIssues = await collectIssues(parsed, options);
   const initialReport = toReport(options.format, initialIssues, false);
+
+  // A released document is already a persisted canonical revision. Export may
+  // validate it, but may not silently manufacture a different in-memory
+  // revision for one of the serializers.
+  if (parsed.productionQualityGate) {
+    return { document: parsed, report: initialReport, initialReport };
+  }
 
   // A fully legacy document is deliberately allowed through the template
   // renderer. Mixed or generated documents are normalized to the shared
@@ -110,6 +118,18 @@ async function collectIssues(document: PresentationDocument, options: ExportPref
       }
     }
 
+    for (const message of auditCanonicalSlideCanvas(slide)) {
+      issues.push({
+        slideId: slide.id,
+        category: "canonical_content",
+        repairable: !custom,
+        blocking: Boolean(document.productionQualityGate),
+      });
+      // The report is category-oriented; one canonicality entry per slide is
+      // enough to route the document back through the persisted repair path.
+      break;
+    }
+
     for (const objectKey of imageObjectKeys(slide)) {
       try {
         await options.readObject(objectKey);
@@ -132,7 +152,11 @@ async function collectIssues(document: PresentationDocument, options: ExportPref
     }
   }
 
-  return dedupeIssues(issues);
+  // A released document cannot be repaired only for this export. Any defect
+  // must be handled through the normal persisted revision path first.
+  return dedupeIssues(issues.map((issue) => document.productionQualityGate
+    ? { ...issue, blocking: true }
+    : issue));
 }
 
 function removeUnavailableGeneratedImages(document: PresentationDocument, issues: Issue[]): PresentationDocument {
