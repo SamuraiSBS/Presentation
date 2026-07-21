@@ -321,7 +321,7 @@ function addEditorialImageCanvas(slide: Slide, theme: PresentationTheme, element
       color: theme.colors.text,
       bold: true,
     }),
-    textElement(`${slide.id}-editorial-thesis`, thesis, textX, 232, textWidth, 200, 5, {
+    textElement(`${slide.id}-editorial-thesis`, thesis, textX, 220, textWidth, 220, 5, {
       role: "body",
       fontSize: fittedFontSize(thesis, 32, 24, 200),
       fontFamily: theme.fonts.body,
@@ -332,7 +332,7 @@ function addEditorialImageCanvas(slide: Slide, theme: PresentationTheme, element
   );
 
   support.forEach((item, index) => {
-    const y = 450 + index * 96;
+    const y = 462 + index * 92;
     elements.push(
       shapeElement(`${slide.id}-editorial-support-${index}-rule`, "rect", textX, y, 44, 3, 3, index ? theme.colors.accentAlt : theme.colors.accent, index ? theme.colors.accentAlt : theme.colors.accent, 0, 1),
       textElement(`${slide.id}-editorial-support-${index}`, item, textX, y + 16, textWidth, 76, 5, {
@@ -482,6 +482,10 @@ function addEditorialDiagramCanvas(slide: Slide, theme: PresentationTheme, eleme
   elements.push(
     textElement(`${slide.id}-editorial-thesis`, thesis, EDITORIAL_MARGIN_X, 194, 322, 326, 5, {
       role: "body",
+      // This is explanatory copy beside a diagram, not the slide's hero
+      // claim. Keep the semantic token explicit so the `-thesis` id does not
+      // force main-claim sizing and crowd the visual field.
+      typographyRole: "body",
       fontSize: fittedFontSize(thesis, 34, 26, 326),
       fontFamily: theme.fonts.heading,
       color: theme.colors.text,
@@ -1602,7 +1606,10 @@ function backgroundElements(slide: Slide, theme: PresentationTheme): CanvasEleme
 function addDefaultContentCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
   const image = slide.visual?.image;
   const hasImage = Boolean(image);
-  const body = [slide.visual?.title, slideBodyText(slide)].filter(Boolean).join("\n\n");
+  // Default content is a claim-led fallback.  Do not concatenate bullets and
+  // mirrored blocks here: that creates a paragraph wall before typography can
+  // help.  Richer detail stays in the dedicated layouts and speaker notes.
+  const body = [slide.visual?.title, slide.thesis || slideBodyText(slide)].filter(Boolean).join("\n\n");
   elements.push(
     textElement(`${slide.id}-title`, slide.title, hasImage ? 78 : 101, 56, hasImage ? 528 : 1075, hasImage ? 104 : 112, 4, {
       role: "title",
@@ -1627,10 +1634,11 @@ function addDefaultContentCanvas(slide: Slide, theme: PresentationTheme, element
 
 function addStatementCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
   addSlideTitle(slide, theme, elements, { centered: true, fontSize: 42 });
+  const statement = compactSummaryPoint(slide.thesis || slideBodyText(slide), 20) || slide.thesis || slideBodyText(slide);
   elements.push(
-    textElement(`${slide.id}-statement`, slideBodyText(slide), 130, 196, 1018, 274, 4, {
+    textElement(`${slide.id}-statement`, statement, 130, 196, 1018, 274, 4, {
       role: "body",
-      fontSize: fittedFontSize(slideBodyText(slide), 40, 25, 274),
+      fontSize: fittedFontSize(statement, 40, 25, 274),
       fontFamily: theme.fonts.heading,
       color: theme.colors.text,
       bold: true,
@@ -1782,15 +1790,19 @@ function addImageFocusCanvas(slide: Slide, theme: PresentationTheme, elements: C
 function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
   addSlideTitle(slide, theme, elements);
   const items = sequenceItems(slide).slice(0, 5);
-  const mainConclusion = compactSummaryPoint(slide.thesis || items[0] || slideBodyText(slide), 10)
-    || slide.thesis || items[0] || slideBodyText(slide);
+  // The conclusion is the slide's canonical main claim.  Keep it intact:
+  // shortening belongs to the supporting rail, not to the final takeaway.
+  const mainConclusion = slide.thesis || items[0] || slideBodyText(slide);
   // The summary sidebar is a one-line visual index; the full supporting
   // propositions remain in Slide.bullets and the narration.
   const supportingItems = items.filter((item) => item !== mainConclusion).slice(0, 3).map((item) => compactSummaryPoint(item, 1));
   const finalThoughtSource = items.filter((item) => item !== mainConclusion).slice(3, 4)[0];
   const finalThought = finalThoughtSource ? compactSummaryPoint(finalThoughtSource, 14) : "";
   const conclusionFontSize = fittedFontSize(mainConclusion, 44, 25, 230);
-  const conclusionHeight = Math.min(230, Math.max(150, estimatedTextHeight(mainConclusion, conclusionFontSize, 640)));
+  // `summary-conclusion` is a main-claim typography slot (44px minimum), so
+  // reserve the full vertical field before considering any bounded fitting.
+  // Measuring it as generic body copy would under-allocate tall Cyrillic text.
+  const conclusionHeight = 270;
 
   elements.push(
     textElement(`${slide.id}-summary-conclusion`, mainConclusion, 70, 196, 640, conclusionHeight, 4, {
@@ -1801,7 +1813,7 @@ function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: Canv
       color: theme.colors.text,
       bold: true,
     }),
-    shapeElement(`${slide.id}-summary-accent`, "rect", 70, 470, 640, 5, 3, theme.colors.accent, theme.colors.accent, 0, 1),
+    shapeElement(`${slide.id}-summary-accent`, "rect", 70, 490, 640, 5, 3, theme.colors.accent, theme.colors.accent, 0, 1),
   );
 
   if (supportingItems.length) {
@@ -1894,7 +1906,7 @@ function addQuestionAnswerCanvas(slide: Slide, theme: PresentationTheme, element
   elements.push(
     shapeElement(`${slide.id}-answer-card`, "roundRect", 149, 204, 979, 211, 2, theme.colors.surfaceAlt, theme.colors.line, 1, 1),
     textElement(`${slide.id}-answer-label`, "Ответ", 187, 228, 902, 32, 4, labelText(theme)),
-    textElement(`${slide.id}-answer-text`, slide.thesis || slideBodyText(slide), 187, 283, 902, 82, 4, {
+    textElement(`${slide.id}-answer-text`, compactSummaryPoint(slide.thesis || slideBodyText(slide), 12) || slide.thesis || slideBodyText(slide), 187, 283, 902, 82, 4, {
       role: "body",
       fontSize: READABLE_BODY_FONT_SIZE,
       autoFit: false,
@@ -1909,9 +1921,10 @@ function addQuestionAnswerCanvas(slide: Slide, theme: PresentationTheme, element
     );
     elements.push(
       textElement(`${slide.id}-answer-support-${index}-label`, ["Почему", "Пример", "Что это меняет"][index], x, 464, 294, 28, 4, labelText(theme)),
-      textElement(`${slide.id}-answer-support-${index}`, item, x, 501, 294, 76, 4, {
+      textElement(`${slide.id}-answer-support-${index}`, compactSummaryPoint(item, 7) || item, x, 501, 294, 76, 4, {
         role: "body",
-        fontSize: 16,
+        typographyRole: "supporting",
+        fontSize: presentationTypography.supporting.preferredPx,
         fontFamily: theme.fonts.body,
         color: theme.colors.muted,
       }),
@@ -1986,7 +1999,7 @@ function addMetricsCanvas(slide: Slide, theme: PresentationTheme, elements: Canv
 
 function addEvidenceCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
   addSlideTitle(slide, theme, elements);
-  const thesis = sentencePreview(slide.thesis || slideBodyText(slide), 180);
+  const thesis = compactSummaryPoint(slide.thesis || slideBodyText(slide), 14) || sentencePreview(slide.thesis || slideBodyText(slide), 180);
   const evidence = sequenceItems(slide).filter((item) => !isDuplicateCanvasText(item, thesis)).slice(0, 4);
   elements.push(
     textElement(`${slide.id}-evidence-thesis`, thesis, 86, 196, 1108, 104, 4, {
@@ -2088,7 +2101,7 @@ function addSlideAttributionCanvas(
   const editorialFooterLine = elements.find((element) => element.type === "shape" && element.id.endsWith("-editorial-footer-line"));
   const x = editorialFooterLine?.x ?? 72;
   const width = editorialFooterOrder
-    ? Math.max(120, editorialFooterOrder.x - x - 16)
+    ? Math.max(120, editorialFooterOrder.x - x - 24)
     : editorialFooterLine?.w ?? 1136;
   elements.push(textElement(`${slide.id}-source-credit`, attribution, x, 684, width, 20, 12, {
     role: "caption",
@@ -2226,7 +2239,9 @@ function addComparisonCell(
   value: string,
   width = 533,
 ) {
-  const compactValue = compactSummaryPoint(value, width < 300 ? 5 : 14) || value;
+  // Narrow criterion cells are labels, not miniature paragraphs.  Keep them
+  // to one compact thought before relying on the fixed presentation font.
+  const compactValue = compactSummaryPoint(value, width < 300 ? 2 : 14) || value;
   elements.push(
     shapeElement(`${slide.id}-comparison-${id}-card`, "roundRect", x, y, width, 108, 2, theme.colors.surface, theme.colors.line, 1, 1),
     textElement(`${slide.id}-comparison-${id}-text`, compactValue, x + 19, y + 16, width - 38, 76, 4, {
