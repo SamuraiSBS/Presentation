@@ -8,6 +8,7 @@ import { normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
 import {
   type DesignBrief,
   type DeckStory,
+  type FactualTopicProfile,
   type GenerationPipelineArtifacts,
   type Highlight,
   type KeyConcept,
@@ -175,6 +176,29 @@ export function buildResearchVocabulary(project: ProjectInput, sources: Source[]
     term,
     explanation: `Key term for the topic: ${term}.`,
   }));
+}
+
+/** A bounded profile for one generated deck, never a global fact database. */
+export function buildFactualTopicProfile(
+  project: ProjectInput,
+  sources: Source[],
+  acceptedNarration = "",
+  narrativePlan: SlideNarrative[] = [],
+): FactualTopicProfile {
+  const sourceText = sources.map((source) => `${source.label} ${source.excerpt || ""}`).join(" ");
+  const scope = [project.title, project.prompt, acceptedNarration, ...narrativePlan.flatMap((item) => [item.slideTitle, item.keyMessage]), sourceText].join(" ");
+  const terms = [...new Set((scope.match(/[\p{L}\p{N}][\p{L}\p{N}-]{3,}/gu) || [])
+    .map((term) => term.trim())
+    .filter((term) => !/^\d+$/.test(term) && !STOP_WORDS.has(term.toLowerCase())))]
+    .slice(0, 36);
+  const allowedEntities = [...new Set(scope.match(/(?:BMW\s+(?:M|\d{1,3}|[A-Z][\p{L}\p{N}-]+)|[A-ZА-ЯЁ][\p{L}\p{N}-]+(?:\s+[A-ZА-ЯЁ][\p{L}\p{N}-]+){0,2})/gu) || [])]
+    .map(cleanText)
+    .filter(Boolean)
+    .slice(0, 24);
+  const years = scope.match(/\b(?:18|19|20)\d{2}\b/g) || [];
+  const timeRange = years.length ? `${years[0]}${years.length > 1 ? `–${years.at(-1)}` : ""}` : "";
+  const domainAnchors = [...new Set([...terms.slice(0, 12), ...allowedEntities.slice(0, 8)])].slice(0, 20);
+  return { topicTerms: terms, allowedEntities, timeRange, domainAnchors };
 }
 
 export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchBrief, narrativePlan: SlideNarrative[]): DesignBrief {
@@ -519,7 +543,7 @@ export function diversifySceneTextModes(
   return balanced;
 }
 
-export function buildDeckStory(project: ProjectInput, researchBrief: ResearchBrief, narrativePlan: SlideNarrative[]): DeckStory {
+export function buildDeckStory(project: ProjectInput, researchBrief: ResearchBrief, narrativePlan: SlideNarrative[], sources: Source[] = []): DeckStory {
   const topic = projectTopic(project);
   const plans = narrativePlan.length
     ? narrativePlan
@@ -542,6 +566,7 @@ export function buildDeckStory(project: ProjectInput, researchBrief: ResearchBri
     tone: deckStoryTone(project),
     chapters,
     conclusion: finalPlan?.keyMessage || `The conclusion should stay focused on ${topic}.`,
+    factualTopicProfile: buildFactualTopicProfile(project, sources, "", plans),
   });
 }
 
@@ -592,6 +617,7 @@ export function buildSlideTextPlans(
     const section = sections[index];
     const notes = completeNarrationSentences(section?.text || plan.keyMessage || deckStory.mainIdea).slice(0, 7).join(" ");
     const sourceHint = sourceEvidenceForSlide(sources, order);
+    const supportedFactSourceIds = sourceHint && sources.length ? [sources[(order - 1) % sources.length].id] : [];
     const coreClaim = shortenSentence(firstSentence(notes) || plan.keyMessage || deckStory.mainIdea, 180);
     const evidenceOrExample = sourceHint || shortenSentence(secondSentence(notes), 160);
     const listenerTakeaway = shortenSentence(lastSentence(notes) || plan.keyMessage || deckStory.conclusion, 180);
@@ -611,6 +637,8 @@ export function buildSlideTextPlans(
       thesis,
       bullets,
       speakerNotes: notes,
+      supportedFactSourceIds,
+      entityAssertions: [],
     });
   });
 }
@@ -691,6 +719,11 @@ export function normalizeNarrativePlan(raw: unknown, project: ProjectInput): Sli
         order === project.slideCount
           ? ""
           : cleanNarrativeField(rawItem.transitionToNext, "transition") || fallback.transitionToNext,
+      storyJob: cleanNarrativeField(rawItem.storyJob, "purpose") || cleanNarrativeField(rawItem.slidePurpose, "purpose") || fallback.storyJob || fallback.slidePurpose,
+      supportedFactSourceIds: Array.isArray(rawItem.supportedFactSourceIds)
+        ? rawItem.supportedFactSourceIds.filter((sourceId): sourceId is string => typeof sourceId === "string" && Boolean(sourceId.trim()))
+        : [],
+      entityAssertions: Array.isArray(rawItem.entityAssertions) ? rawItem.entityAssertions : [],
     };
     normalized.push(order === project.slideCount ? normalizeConclusionNarrativeItem(item, project) : item);
   }
@@ -808,5 +841,10 @@ export function buildFallbackNarrativeItem(project: ProjectInput, order: number,
       order === project.slideCount
         ? ""
         : `После «${title}» логично раскрыть следующий аспект темы «${topic}», чтобы сохранить последовательность объяснения.`,
+    storyJob: order === project.slideCount
+      ? "Синтезировать предыдущие смысловые шаги в один вывод без нового факта."
+      : `Раскрыть отдельную роль в истории темы: ${title}.`,
+    supportedFactSourceIds: [],
+    entityAssertions: [],
   };
 }

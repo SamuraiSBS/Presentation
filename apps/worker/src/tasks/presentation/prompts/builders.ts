@@ -385,6 +385,9 @@ export function buildGenerationPrompt(
       ? `Use this fixed speech narration as the only source of truth. Copy it exactly into generatedText and do not rewrite its meaning:\n${fixedNarration}`
       : "Use generatedText as the single source of truth for the deck, divided exactly as `Слайд 1: ...` through the requested slide count.",
     "Build title, thesis, bullets, blocks, visual.description, speakerNotes, and speechScript from the matching generatedText section and the matching narrativePlan item.",
+    "Each slide has one distinct story job and audience question. Do not reuse a conclusion or chapter label as a second slide's job.",
+    "For a date, model, number, biography, legal or scientific claim, use only a matching source excerpt and structured sourceRefs. If support is absent, use a cautious general explanation; never guess an entity category, period, or relation.",
+    "Do not merge model families or names: for example BMW 328 is not a BMW M model, and BMW 8 Series is not automatically an M model.",
     "Treat the slideTextPlans as the compression layer: visible text comes from title, thesis, and bullets; speakerNotes remain the richer 2-7 sentence report text.",
     "Do not generate a separate second story outside generatedText or narrativePlan.",
     "Do not put slidePurpose or transitionToNext on the slide as visible text.",
@@ -481,6 +484,7 @@ export function buildGenerationPrompt(
     "- diagram.kind must be flowchart, sequence, timeline, or mindmap; diagram.source must be valid Mermaid without HTML, script, URLs, event handlers, or unsafe markup; labels should preferably be Russian;",
     "- diagram.fallback must restate the same structure as plain text so web and exports remain readable if Mermaid rendering fails;",
     "- visual.description must describe a concrete, searchable image for the real subject of the matching narration section in Russian or English;",
+    "- visual.description and visualPrompt must stay inside the project domain and matching story job; never introduce an unrelated policy, geopolitics, biology, or finance scene into another topic.",
     "- every slide must have a different visual.description concept so later image search can choose different pictures;",
     "- do not put URLs or image provider names into visual.description; describe the desired scene, object, person, place, chart, or illustration only.",
     "Hard limits:",

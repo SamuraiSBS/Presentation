@@ -32,6 +32,23 @@ export type GenerationProgressStage = z.infer<typeof generationProgressStageSche
 export const generationJobKindSchema = z.enum(["narration", "presentation", "requirements_analysis", "compliance"]);
 export type GenerationJobKind = z.infer<typeof generationJobKindSchema>;
 
+export const entityAssertionSchema = z.object({
+  subject: z.string().trim().min(1).max(160),
+  relation: z.string().trim().min(1).max(160),
+  object: z.string().trim().min(1).max(160),
+  confidence: z.enum(["high", "medium", "low"]).default("medium"),
+  sourceIds: z.array(z.string().trim().min(1)).default([]),
+});
+export type EntityAssertion = z.infer<typeof entityAssertionSchema>;
+
+export const factualTopicProfileSchema = z.object({
+  topicTerms: z.array(z.string().trim().min(1)).default([]),
+  allowedEntities: z.array(z.string().trim().min(1)).default([]),
+  timeRange: z.string().trim().default(""),
+  domainAnchors: z.array(z.string().trim().min(1)).default([]),
+});
+export type FactualTopicProfile = z.infer<typeof factualTopicProfileSchema>;
+
 export const slideNarrativeSchema = z.object({
   slideOrder: z.number().int().positive(),
   slideTitle: visibleSlideTextSchema("narrative slide title", 1000),
@@ -39,6 +56,10 @@ export const slideNarrativeSchema = z.object({
   keyMessage: z.string().trim().min(1),
   audienceQuestion: z.string().trim().min(1),
   transitionToNext: z.string().trim().default(""),
+  // Optional for stored legacy documents; new planning always writes them.
+  storyJob: z.string().trim().min(1).optional(),
+  supportedFactSourceIds: z.array(z.string().trim().min(1)).optional(),
+  entityAssertions: z.array(entityAssertionSchema).optional(),
 });
 export type SlideNarrative = z.infer<typeof slideNarrativeSchema>;
 
@@ -52,6 +73,12 @@ export const deckStorySchema = z.object({
     slideOrders: z.array(z.number().int().positive()),
   })),
   conclusion: z.string(),
+  factualTopicProfile: factualTopicProfileSchema.default({
+    topicTerms: [],
+    allowedEntities: [],
+    timeRange: "",
+    domainAnchors: [],
+  }),
 });
 export type DeckStory = z.infer<typeof deckStorySchema>;
 
@@ -65,6 +92,8 @@ export const slideTextPlanSchema = z.object({
   thesis: z.string().trim().min(1).max(360),
   bullets: z.array(visibleSlideTextSchema("slide plan bullet", 140)).max(3),
   speakerNotes: speakerNotesTextSchema,
+  supportedFactSourceIds: z.array(z.string().trim().min(1)).optional(),
+  entityAssertions: z.array(entityAssertionSchema).optional(),
 });
 export type SlideTextPlan = z.infer<typeof slideTextPlanSchema>;
 

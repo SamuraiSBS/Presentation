@@ -186,7 +186,7 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
         const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
         const researchBrief = buildResearchBrief(project, sources);
         const narrativePlan = await generateNarrativePlanWithProvider(provider, project, sources, researchBrief, { openAIClient: client });
-        const deckStory = buildDeckStory(project, researchBrief, narrativePlan);
+        const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
         const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
         const text = await generateOpenAINarration(client, project, sources, narrativePlan, researchBrief);
         const slideTextPlans = buildSlideTextPlans(project, text, narrativePlan, deckStory, sources);
@@ -201,7 +201,7 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
 
       const researchBrief = buildResearchBrief(project, sources);
       const narrativePlan = await generateNarrativePlanWithProvider(provider, project, sources, researchBrief, { yandexApiKey: apiKey });
-      const deckStory = buildDeckStory(project, researchBrief, narrativePlan);
+      const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
       const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
       const text = await generateYandexNarration(apiKey, project, sources, narrativePlan, researchBrief);
       const slideTextPlans = buildSlideTextPlans(project, text, narrativePlan, deckStory, sources);

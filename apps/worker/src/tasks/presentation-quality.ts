@@ -57,6 +57,9 @@ type QualityTextEntry = {
 export type TopicProfile = {
   tokens: string[];
   anchors: string[];
+  allowedEntities: string[];
+  timeRange: string;
+  domainAnchors: string[];
 };
 
 export type SlideSemanticContract = {
@@ -508,7 +511,19 @@ export function buildTopicProfile(presentation: PresentationDocument, project: Q
   const sourceTokens = topicTokens(sourceText);
   const tokens = uniqueTokens([...projectTokens, ...narrativeTokens, ...sourceTokens]);
   const anchors = uniqueTokens([...projectTokens, ...narrativeTokens]).slice(0, 36);
-  return { tokens, anchors: anchors.length ? anchors : tokens.slice(0, 20) };
+  const allowedEntities = [...new Set([...
+    projectText.match(/(?:BMW\s+(?:M|\d{1,3})|[A-ZА-ЯЁ][\p{L}\p{N}-]+(?:\s+[A-ZА-ЯЁ][\p{L}\p{N}-]+){0,2})/gu) || [],
+    ...sourceText.match(/(?:BMW\s+(?:M|\d{1,3})|[A-ZА-ЯЁ][\p{L}\p{N}-]+(?:\s+[A-ZА-ЯЁ][\p{L}\p{N}-]+){0,2})/gu) || [],
+  ])].map(cleanText).filter(Boolean).slice(0, 24);
+  const years = [projectText, narrativeText, sourceText].join(" ").match(/\b(?:18|19|20)\d{2}\b/g) || [];
+  const finalAnchors = anchors.length ? anchors : tokens.slice(0, 20);
+  return {
+    tokens,
+    anchors: finalAnchors,
+    allowedEntities,
+    timeRange: years.length ? `${years[0]}${years.length > 1 ? `–${years.at(-1)}` : ""}` : "",
+    domainAnchors: [...new Set([...finalAnchors, ...allowedEntities])].slice(0, 24),
+  };
 }
 
 /**
@@ -556,6 +571,40 @@ export function findTopicRelevanceIssues(
       repairInstruction: "Rewrite every visible field from the accepted narration and matching narrative-plan item. Keep speakerNotes and speechScript unchanged.",
     }];
   });
+}
+
+/** Visual queries are content, too: a foreign scene can derail image search even when slide copy is correct. */
+export function findOffTopicVisualIssues(presentation: PresentationDocument, project: QualityProjectInput): QualityIssue[] {
+  const profile = buildTopicProfile(presentation, project);
+  return presentation.slides.flatMap((slide) => {
+    const visualText = [slide.visual.description, presentation.designBrief?.slideDirections.find((item) => item.slideOrder === slide.order)?.visualPrompt]
+      .filter(Boolean)
+      .join(" ");
+    if (!visualText || foreignDomainSignalCount(visualText) < 2) return [];
+    const visualTokens = uniqueTokens(topicTokens(visualText));
+    if (overlapCount(visualTokens, profile.domainAnchors) > 2) return [];
+    return [{
+      slideId: slide.id,
+      severity: "major" as const,
+      category: "off_topic" as const,
+      field: "visual.description",
+      message: "Visual prompt diverges from the project topic and slide story job.",
+      repairInstruction: "Replace the visual prompt with a concrete scene or explanatory diagram for this slide's accepted narration; do not introduce a foreign domain.",
+    }];
+  });
+}
+
+/** Specific model-family substitutions are factual category errors, not harmless wording variants. */
+export function findEntityCategoryMismatchIssues(presentation: PresentationDocument): QualityIssue[] {
+  const mismatch = /\bBMW\s*328\b[^.!?\n]{0,80}\b(?:BMW\s*M|M[-\s]?модел[ьяеи]?|M model)\b|\b(?:BMW\s*M|M[-\s]?модел[ьяеи]?|M model)\b[^.!?\n]{0,80}\bBMW\s*328\b/iu;
+  return presentation.slides.flatMap((slide) => mismatch.test(factualSlideText(slide)) ? [{
+    slideId: slide.id,
+    severity: "blocker" as const,
+    category: "factual_risk" as const,
+    field: "visibleText",
+    message: "BMW 328 is incorrectly classified as a BMW M model.",
+    repairInstruction: "State only that BMW 328 is an early BMW model, or use a supported source-backed formulation. Do not attach an unrelated sourceRef.",
+  }] : []);
 }
 
 /**
@@ -1048,6 +1097,30 @@ export function applySourceGroundingRepairs(
   });
 }
 
+export function applyEntityCategoryMismatchRepairs(presentation: PresentationDocument): PresentationDocument {
+  const repair = (value: string) => cleanText(value)
+    .replace(/BMW\s*328\s*(?:—|-|это|is)\s*(?:модель\s*)?(?:BMW\s*M|M[-\s]?модель)/giu, "BMW 328 — ранняя модель BMW")
+    .replace(/(?:BMW\s*M|M[-\s]?модель)\s*(?:—|-|это|is)\s*(?:модель\s*)?BMW\s*328/giu, "BMW 328 — ранняя модель BMW");
+  return presentationSchema.parse({
+    ...presentation,
+    slides: presentation.slides.map((slide) => ({
+      ...slide,
+      title: repair(slide.title),
+      thesis: repair(slide.thesis),
+      bullets: slide.bullets.map(repair),
+      blocks: slide.blocks.map((block) => block.type === "bullets" ? { ...block, items: block.items.map(repair) } : { ...block, content: repair(block.content) }),
+      definition: slide.definition ? { term: repair(slide.definition.term), text: repair(slide.definition.text) } : null,
+      visual: {
+        ...slide.visual,
+        title: repair(slide.visual.title),
+        description: repair(slide.visual.description),
+        items: slide.visual.items.map((item) => ({ ...item, label: repair(item.label), text: repair(item.text) })),
+        rows: slide.visual.rows.map((row) => ({ ...row, label: repair(row.label), left: repair(row.left), right: repair(row.right) })),
+      },
+    })),
+  });
+}
+
 export function findWeakConclusionIssues(presentation: PresentationDocument, project: QualityProjectInput): QualityIssue[] {
   return presentation.slides.flatMap((slide) => {
     if (slide.order !== project.slideCount && slide.slideKind !== "summary") return [];
@@ -1106,7 +1179,11 @@ function inspectConclusion(
     ...(duplicatedSupport ? ["supporting takeaways repeat each other"] : []),
     ...(insufficientBeatCoverage ? ["does not synthesize two earlier narrative beats"] : []),
   ];
-  return { weak: reasons.length > 0, offTopic: substantiallyDifferentTopic, reasons };
+  // A compact closing slide can legitimately omit the project wording when it
+  // is otherwise a complete, distinct synthesis. Foreign-topic conclusions
+  // remain blocked above; the anchor alone is a weak signal, not a failure.
+  const onlyMissingAnchor = reasons.length === 1 && reasons[0] === "missing project topic anchors";
+  return { weak: (reasons.length > 0 && !onlyMissingAnchor) || substantiallyDifferentTopic, offTopic: substantiallyDifferentTopic, reasons };
 }
 
 function isGenericConclusionEnding(value: string) {
@@ -1248,8 +1325,10 @@ export function critiquePresentationDeterministically(
     ...findDeckWideDuplicateIssues(presentation),
     ...findRepeatedSentenceStartIssues(presentation),
     ...findFactualRiskIssues(presentation, sources),
+    ...findEntityCategoryMismatchIssues(presentation),
     ...(project ? findWeakConclusionIssues(presentation, project) : []),
     ...(project ? findTopicRelevanceIssues(presentation, project) : []),
+    ...(project ? findOffTopicVisualIssues(presentation, project) : []),
     ...findSlideSpeechAlignmentIssues(presentation),
     ...findUniversityToneIssues(presentation, project),
     ...findShortNarrationIssues(presentation),
@@ -1273,7 +1352,7 @@ export async function improvePresentationQuality(
   provider: GenerationMode,
   options: ImprovePresentationQualityOptions = {},
 ): Promise<PresentationDocument> {
-  let best = rebuildGeneratedCanvases(applySourceGroundingRepairs(presentationSchema.parse(presentation), sources));
+  let best = rebuildGeneratedCanvases(applyEntityCategoryMismatchRepairs(applySourceGroundingRepairs(presentationSchema.parse(presentation), sources)));
   let bestCritique = critiquePresentationDeterministically(best, sources, project);
   const initialCritique = bestCritique;
   let modelCritique = bestCritique;
@@ -1326,7 +1405,7 @@ export async function improvePresentationQuality(
     }
   }
 
-  const unresolvedTopicIssues = findTopicRelevanceIssues(best, project);
+  const unresolvedTopicIssues = [...findTopicRelevanceIssues(best, project), ...findOffTopicVisualIssues(best, project)];
   if (unresolvedTopicIssues.length) {
     const beforeTopicRepair = bestCritique.score;
     const fallbackSource = unresolvedTopicIssues.every((issue) => {
@@ -1418,6 +1497,7 @@ export async function improvePresentationQuality(
     // the matching narrative-plan job. Softer semantic matches stay in the
     // targeted model-repair path to avoid flattening legitimate timelines.
     ...findDeckWideDuplicateIssues(best).filter((issue) => issue.severity === "blocker"),
+    ...findEntityCategoryMismatchIssues(best),
   ];
   if (contentIssues.length) {
     const affectedSlideIds = new Set(contentIssues
@@ -1548,12 +1628,18 @@ export function applyTopicRelevanceFallbacks(
   project: QualityProjectInput,
 ): PresentationDocument {
   const affected = new Set(issues
-    .filter((issue) => issue.category === "off_topic" && issue.field === "visibleText")
+    .filter((issue) => issue.category === "off_topic" && (issue.field === "visibleText" || issue.field === "visual.description"))
     .map((issue) => issue.slideId)
     .filter((id): id is string => Boolean(id)));
   if (!affected.size) return presentation;
-
-  return rebuildVisibleContentFromAcceptedNarration(presentation, affected, project);
+  const fieldsBySlide = new Map<string, Set<string>>();
+  issues.forEach((issue) => {
+    if (!issue.slideId || !issue.field) return;
+    const fields = fieldsBySlide.get(issue.slideId) || new Set<string>();
+    fields.add(issue.field === "visibleText" ? "keyMessage" : issue.field);
+    fieldsBySlide.set(issue.slideId, fields);
+  });
+  return rebuildVisibleContentFromAcceptedNarration(presentation, affected, project, fieldsBySlide);
 }
 
 /**
@@ -1738,7 +1824,7 @@ function rebuildVisibleContentFromAcceptedNarration(
     const visual = {
       ...slide.visual,
       title: "",
-      description: `Academic visual supporting ${title}.`,
+      description: `Documentary or explanatory visual for ${title}.`,
       leftLabel: slide.visual.leftLabel ? compactTitle(repairedBullets[0] || title) : "",
       rightLabel: slide.visual.rightLabel ? compactTitle(repairedBullets[1] || title) : "",
       items: slide.visual.items.map((item, index) => ({

@@ -1782,8 +1782,11 @@ function addImageFocusCanvas(slide: Slide, theme: PresentationTheme, elements: C
 function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
   addSlideTitle(slide, theme, elements);
   const items = sequenceItems(slide).slice(0, 5);
-  const mainConclusion = slide.thesis || items[0] || slideBodyText(slide);
-  const supportingItems = items.filter((item) => item !== mainConclusion).slice(0, 3).map((item) => compactSummaryPoint(item, 5));
+  const mainConclusion = compactSummaryPoint(slide.thesis || items[0] || slideBodyText(slide), 10)
+    || slide.thesis || items[0] || slideBodyText(slide);
+  // The summary sidebar is a one-line visual index; the full supporting
+  // propositions remain in Slide.bullets and the narration.
+  const supportingItems = items.filter((item) => item !== mainConclusion).slice(0, 3).map((item) => compactSummaryPoint(item, 1));
   const finalThoughtSource = items.filter((item) => item !== mainConclusion).slice(3, 4)[0];
   const finalThought = finalThoughtSource ? compactSummaryPoint(finalThoughtSource, 14) : "";
   const conclusionFontSize = fittedFontSize(mainConclusion, 44, 25, 230);
@@ -1793,6 +1796,7 @@ function addSummaryCanvas(slide: Slide, theme: PresentationTheme, elements: Canv
     textElement(`${slide.id}-summary-conclusion`, mainConclusion, 70, 196, 640, conclusionHeight, 4, {
       role: "body",
       fontSize: conclusionFontSize,
+      autoFit: false,
       fontFamily: theme.fonts.heading,
       color: theme.colors.text,
       bold: true,

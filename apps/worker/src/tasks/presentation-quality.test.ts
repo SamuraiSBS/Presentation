@@ -24,6 +24,9 @@ import {
   findVisualDescriptionIssues,
   findFactualRiskIssues,
   applySourceGroundingRepairs,
+  applyEntityCategoryMismatchRepairs,
+  findEntityCategoryMismatchIssues,
+  findOffTopicVisualIssues,
   hasMetaSlideLanguage,
   hasRepeatedSentenceStart,
   hasUnsupportedSpecificity,
@@ -426,7 +429,6 @@ describe("presentation quality checks", () => {
       mode: "with_sources",
       slideCount: 2,
     });
-
     expect(critique.score).toBeGreaterThanOrEqual(82);
     expect(critique.dimensions).toBeDefined();
     expect(Object.values(critique.dimensions || {}).every((dimension) => dimension.score >= 78)).toBe(true);
@@ -910,5 +912,30 @@ describe("presentation quality checks", () => {
       ] as any,
     });
     expect(findDeckWideDuplicateIssues(timeline)).toHaveLength(0);
+  });
+
+  it("flags and safely repairs BMW 328 as a BMW M model without inventing a source", () => {
+    const bmwSource = { ...source, id: "bmw-history", label: "BMW history", excerpt: "BMW 328 was an early BMW sports car. BMW M began in 1972." };
+    const presentation = makePresentation({
+      sources: [bmwSource],
+      slides: [makeSlide(1, "BMW 328", "BMW 328 — BMW M model from 1936.", ["BMW M began in 1972."]), makeSlide(2, "BMW M", "BMW M developed later.", ["The division formed a separate performance line."])] as any,
+    });
+    const repaired = applyEntityCategoryMismatchRepairs(presentation);
+    expect(findEntityCategoryMismatchIssues(presentation)).toHaveLength(1);
+    expect(findEntityCategoryMismatchIssues(repaired)).toHaveLength(0);
+    expect(repaired.slides[0].sourceRefs).toEqual(presentation.slides[0].sourceRefs);
+    expect(repaired.slides[0].thesis).toContain("ранняя модель BMW");
+  });
+
+  it("flags a politics visual in an automotive deck and replaces it from the accepted story", () => {
+    const project = { id: "bmw-topic", title: "История BMW", prompt: "Автомобили BMW и их развитие", scenario: "lesson", level: "university", mode: "with_sources", slideCount: 2 } as const;
+    const presentation = makePresentation({
+      title: project.title,
+      slides: [{ ...makeSlide(1, "BMW 328", "BMW 328 показывает ранний этап истории марки.", ["Автомобиль задал важный ориентир для марки."]), visual: { ...makeSlide(1, "x", "x", []).visual, description: "Уроки для политики: переговоры мировых лидеров и дипломатия" } }, makeSlide(2, "BMW M", "BMW M развивает спортивное направление марки.", ["Подразделение стало отдельной частью истории BMW."])] as any,
+    });
+    const issues = findOffTopicVisualIssues(presentation, project);
+    expect(issues).toContainEqual(expect.objectContaining({ slideId: "slide-1", category: "off_topic", field: "visual.description" }));
+    const repaired = applyTopicRelevanceFallbacks(presentation, issues, project);
+    expect(repaired.slides[0].visual.description).not.toContain("политики");
   });
 });
