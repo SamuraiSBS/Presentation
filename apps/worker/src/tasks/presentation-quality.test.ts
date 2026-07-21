@@ -23,6 +23,9 @@ import {
   findRepeatedTitleIssues,
   findSpeechTimingIssues,
   findVisualDescriptionIssues,
+  findVisualFulfillmentIssues,
+  findCanvasCanonicalContentIssues,
+  productionQualityReleaseResult,
   findFactualRiskIssues,
   applySourceGroundingRepairs,
   applyEntityCategoryMismatchRepairs,
@@ -957,5 +960,27 @@ describe("presentation quality checks", () => {
     expect(issues).toContainEqual(expect.objectContaining({ slideId: "slide-1", category: "off_topic", field: "visual.description" }));
     const repaired = applyTopicRelevanceFallbacks(presentation, issues, project);
     expect(repaired.slides[0].visual.description).not.toContain("политики");
+  });
+
+  it("blocks an unfulfilled image and rejects generated canvas text that diverges from canonical fields", () => {
+    const base = makePresentation();
+    const invalid = presentationSchema.parse({
+      ...base,
+      slides: base.slides.map((slide, index) => index === 0 ? {
+        ...slide,
+        visual: { ...slide.visual, type: "image", image: undefined },
+        canvas: {
+          ...slide.canvas!,
+          elements: slide.canvas!.elements.map((element) => element.id === `${slide.id}-title` && element.type === "text"
+            ? { ...element, text: "Wrong title" }
+            : element),
+        },
+      } : slide),
+    });
+    expect(findVisualFulfillmentIssues(invalid)).toContainEqual(expect.objectContaining({ severity: "blocker", field: "visual.image.url" }));
+    expect(findCanvasCanonicalContentIssues(invalid)).toContainEqual(expect.objectContaining({ severity: "blocker", field: "canvas" }));
+    expect(productionQualityReleaseResult(invalid, invalid.sources, {
+      id: "quality", title: invalid.title, prompt: invalid.title, scenario: invalid.scenario, level: invalid.level, mode: "with_sources", slideCount: invalid.slideCount,
+    }).finalDisposition).toBe("rejected");
   });
 });

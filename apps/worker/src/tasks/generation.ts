@@ -1,7 +1,8 @@
 import type { Job } from "bullmq";
 import type { Prisma } from "@prisma/client";
 import { auditSlideCanvas, ensureEditableCanvas, PREMIUM_PRESENTATION_THEMES, type PresentationDocument, type Source } from "@studydeck/shared";
-import { captureGenerationError, type TraceCarrier, withTraceSpan } from "../observability.js";
+import { productionQualityReleaseResult } from "./presentation-quality.js";
+import { captureGenerationError, logger, type TraceCarrier, withTraceSpan } from "../observability.js";
 import { getPrisma } from "../prisma.js";
 import { readObjectBuffer } from "../storage.js";
 import { extractTextFromSource } from "./extract.js";
@@ -210,6 +211,25 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       throw new Error(`Presentation layout check failed after local repair: ${unsafeCanvases.slice(0, 8).join("; ")}`);
     }
     if (defenseBundle) assertDefensePresentation(presentation, defenseBundle);
+    // Image fulfillment and canvas composition happen after the model-facing
+    // quality loop. Re-audit the exact document that will be persisted: a
+    // rejected candidate must never increment a revision or become ready.
+    const release = productionQualityReleaseResult(presentation, presentation.sources, generationProject);
+    logger.info({
+      projectId,
+      jobId: job.id,
+      stage: "polishing",
+      issueCategories: release.issueCategories,
+      attempts: release.attempts,
+      finalAction: release.finalDisposition,
+    }, "presentation production quality gate");
+    if (release.finalDisposition !== "released") {
+      throw new Error(`Presentation production quality gate rejected the document: ${release.issueCategories.join(", ") || "quality threshold"}`);
+    }
+    presentation = {
+      ...presentation,
+      productionQualityGate: { version: 1, capability: "silent-production-quality-gate" },
+    };
     finishStage("polishing");
     await setStage("saving");
     await prisma.presentation.upsert({

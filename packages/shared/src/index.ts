@@ -24,7 +24,7 @@ export { presentationSchema } from "./presentation/document.js";
 export type { PresentationDocument } from "./presentation/document.js";
 export { PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS, resolvePremiumPresentationTheme, resolveThemeFromDesignBrief, resolvePresentationTheme } from "./presentation/themes.js";
 export type { PremiumPresentationThemeId } from "./presentation/themes.js";
-export { auditSlideCanvas } from "./presentation/canvas-audit.js";
+export { auditSlideCanvas, auditGeneratedCanvasText } from "./presentation/canvas-audit.js";
 export { canvasBackgroundCss, slideBackgroundStyle } from "./presentation/canvas-background.js";
 export { sortCanvasElements, compactCanvasTextToFit, minimumReadableFontSize, minimumTextColumnWidth, textSlotCapacity } from "./presentation/canvas-helpers.js";
 export { presentationTypography, typographyForCanvasText, typographyRoleForCanvasText, canvasTextLineHeight } from "./presentation/typography.js";

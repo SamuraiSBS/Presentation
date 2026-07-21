@@ -44,6 +44,7 @@ import {
 } from "@studydeck/shared";
 import {
   improvePresentationQuality,
+  productionQualityReleaseResult,
   type QualityRepairResponse,
 } from "../../presentation-quality.js";
 
@@ -261,7 +262,22 @@ export async function finalizeGeneratedPresentation(
     }, "polishing regressed a validated presentation; restoring the last valid candidate");
     return preserveAcceptedNarration(lastValidCandidate, generatedText, project);
   }
-  return preserveAcceptedNarration(finalPresentation, generatedText, project);
+  const released = preserveAcceptedNarration(finalPresentation, generatedText, project);
+  const release = productionQualityReleaseResult(released, sources, project);
+  logger.info({
+    projectId: project.id,
+    stage: "release_quality_gate",
+    issueCategories: release.issueCategories,
+    attempts: release.attempts,
+    finalAction: release.finalDisposition,
+  }, "presentation production quality gate");
+  if (release.finalDisposition !== "released") {
+    throw new Error(`Presentation production quality gate rejected the document: ${release.issueCategories.join(", ") || "quality threshold"}`);
+  }
+  return presentationSchema.parse({
+    ...released,
+    productionQualityGate: { version: 1, capability: "silent-production-quality-gate" },
+  });
 }
 
 export function preserveAcceptedNarration(presentation: PresentationDocument, narrationText: string, project: ProjectInput): PresentationDocument {

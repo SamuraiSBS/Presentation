@@ -36,6 +36,27 @@ const forbiddenSlideTextFragments = [
 ];
 
 describe("sanitizePresentationForDisplay", () => {
+  it("does not invent visible fallback copy for an incomplete released document", () => {
+    const document = sanitizePresentationForDisplay({
+      id: "production-empty",
+      title: "Canonical title",
+      scenario: "lesson",
+      level: "university",
+      slideCount: 1,
+      generationMode: "openai",
+      productionQualityGate: { version: 1, capability: "silent-production-quality-gate" },
+      generatedText: "",
+      sources: [],
+      outline: ["Canonical title"],
+      narrativePlan: [],
+      speechScript: [],
+      slides: [{ id: "slide-1", order: 1, title: "Canonical title", layout: "hero", blocks: [], speakerNotes: "", timingSeconds: 45, placeholders: [], sourceRefs: [] }],
+    } as any);
+    expect(document.slides[0].blocks).toEqual([]);
+    expect(document.slides[0].thesis).toBe("");
+    expect(JSON.stringify(document.slides[0])).not.toContain("\u043a\u043e\u0440\u043e\u0442\u043a\u043e \u0438 \u043f\u043e \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443");
+  });
+
   it("derives structured fields for legacy slides", () => {
     const document = sanitizePresentationForDisplay({
       id: "presentation-1",

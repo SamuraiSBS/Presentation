@@ -181,14 +181,15 @@ export function restoreStoredImageUrls(document: PresentationDocument, projectId
 }
 
 export function sanitizePresentationForDisplay(document: DisplayPresentationInput): PresentationDocument {
+  const isReleasedProductionDocument = document.productionQualityGate?.capability === "silent-production-quality-gate";
   const outline = Array.isArray(document.outline) ? document.outline.map(cleanText).filter(Boolean) : [];
   const outlineTitleCounts = countTitles(outline);
   const slides = document.slides.map((slide, index) => {
-    const blocks = normalizeBlocksForDisplay(slide.blocks, slide.title);
+    const blocks = normalizeBlocksForDisplay(slide.blocks);
     const title = repairSlideTitle(slide.title, index, outline, outlineTitleCounts, blocks);
     const slideKind = normalizeSlideKind(slide.slideKind, index, document.slides.length);
-    const thesis = normalizeThesis(slide.thesis, blocks, title);
-    const bullets = normalizeBullets(slide.bullets, blocks, title, slideKind);
+    const thesis = normalizeThesis(slide.thesis, blocks, isReleasedProductionDocument ? "" : title);
+    const bullets = normalizeBullets(slide.bullets, blocks, isReleasedProductionDocument ? "" : title, slideKind);
     const definition = normalizeDefinition(slide.definition);
     const keyConcepts = normalizeKeyConcepts(slide.keyConcepts, title, bullets, slideKind);
     const highlights = normalizeHighlights(slide.highlights, thesis, bullets, slideKind);
@@ -475,7 +476,7 @@ function sanitizeGeneratedTextForDisplay(value: unknown) {
     .trim();
 }
 
-function normalizeBlocksForDisplay(blocks: SlideBlock[], fallback: string): SlideBlock[] {
+function normalizeBlocksForDisplay(blocks: SlideBlock[]): SlideBlock[] {
   const normalized = Array.isArray(blocks)
     ? blocks
         .map((block) => {
@@ -489,11 +490,14 @@ function normalizeBlocksForDisplay(blocks: SlideBlock[], fallback: string): Slid
         .filter((block): block is SlideBlock => Boolean(block))
     : [];
 
-  return normalized.length
+  return normalized;
+  /*
     ? normalized
     : [{ type: "callout", content: slideBodyTextForDisplay([], `${fallback}: коротко и по существу.`) }];
 }
 
+  */
+}
 function repairSlideTitle(title: string, index: number, outline: string[], outlineTitleCounts: Map<string, number>, blocks: SlideBlock[]) {
   const cleanTitle = sanitizeDisplayText(title);
   if (!shouldReplaceTitle(cleanTitle)) {

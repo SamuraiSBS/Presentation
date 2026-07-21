@@ -73,6 +73,23 @@ export function auditSlideCanvas(canvas: SlideCanvas) {
   return issues;
 }
 
+/** Checks deterministic generated slots without inspecting user-created art. */
+export function auditGeneratedCanvasText(
+  canvas: SlideCanvas | undefined,
+  slide: { id: string; title: string; thesis: string },
+) {
+  if (!canvas) return ["canvas is missing"];
+  const textById = new Map(canvas.elements
+    .filter((element): element is CanvasTextElement => element.type === "text")
+    .map((element) => [element.id, element.text.trim()]));
+  const issues: string[] = [];
+  const title = textById.get(`${slide.id}-title`);
+  if (title !== undefined && title !== slide.title.trim()) issues.push("canvas title diverges from canonical slide title");
+  const body = textById.get(`${slide.id}-body`);
+  if (body !== undefined && slide.thesis.trim() && !body.includes(slide.thesis.trim())) issues.push("canvas body diverges from canonical slide thesis");
+  return issues;
+}
+
 export function repairUnsafeGeneratedElements(elements: CanvasElement[]) {
   const optionalPlaquesUnsafe = elements.some((element) =>
     /-mini-\d+(?:-shape)?$/.test(element.id) && element.y + element.h > CANVAS_SAFE_BOTTOM,

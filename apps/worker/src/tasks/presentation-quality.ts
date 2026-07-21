@@ -1,5 +1,6 @@
 import {
   auditSlideCanvas,
+  auditGeneratedCanvasText,
   ensureEditableCanvas,
   normalizeSourceRefs,
   sourceRefFromSource,
@@ -48,6 +49,13 @@ export type ImprovePresentationQualityOptions = {
     attempt: number,
   ) => Promise<unknown>;
   maxRepairAttempts?: number;
+};
+
+export type ProductionQualityReleaseResult = {
+  issueCategories: string[];
+  attempts: number;
+  finalDisposition: "released" | "rejected";
+  issues: Array<{ slideId?: string; field: string; severity: QualityIssue["severity"]; category: QualityIssue["category"]; repairable: boolean }>;
 };
 
 type QualityTextEntry = {
@@ -1307,6 +1315,54 @@ export function findExportReadinessIssues(presentation: PresentationDocument): Q
   });
 }
 
+export function findVisualFulfillmentIssues(presentation: PresentationDocument): QualityIssue[] {
+  return presentation.slides.flatMap((slide) => slide.visual.type === "image" && !slide.visual.image?.url
+    ? [{
+        slideId: slide.id,
+        severity: "blocker" as const,
+        category: "bad_visual" as const,
+        field: "visual.image.url",
+        message: "Image visual has no fulfilled image URL.",
+        repairInstruction: "Fulfill the requested image or replace this generated visual with a deterministic diagram; never leave an empty image slot.",
+      }]
+    : []);
+}
+
+export function findCanvasCanonicalContentIssues(presentation: PresentationDocument): QualityIssue[] {
+  return presentation.slides.flatMap((slide) => slide.canvas?.elements.some((element) => element.id === `${slide.id}-custom-canvas-marker`)
+    ? []
+    : auditGeneratedCanvasText(slide.canvas, slide).map((message) => ({
+        slideId: slide.id,
+        severity: "blocker" as const,
+        category: "schema_risk" as const,
+        field: "canvas",
+        message,
+        repairInstruction: "Rebuild the generated canvas from canonical slide fields without changing a custom canvas.",
+      })));
+}
+
+export function productionQualityReleaseResult(
+  presentation: PresentationDocument,
+  sources: Source[],
+  project: QualityProjectInput,
+  attempts = 0,
+): ProductionQualityReleaseResult {
+  const critique = critiquePresentationDeterministically(presentation, sources, project);
+  const issues = critique.issues;
+  return {
+    issueCategories: [...new Set(issues.map((issue) => issue.category))],
+    attempts,
+    finalDisposition: critique.passed ? "released" : "rejected",
+    issues: issues.map((issue) => ({
+      slideId: issue.slideId,
+      field: issue.field || "document",
+      severity: issue.severity,
+      category: issue.category,
+      repairable: issue.severity !== "blocker" || issue.category === "bad_visual" || issue.category === "schema_risk",
+    })),
+  };
+}
+
 export function scorePresentationQuality(
   presentation: PresentationDocument,
   issues: QualityIssue[],
@@ -1357,6 +1413,8 @@ export function critiquePresentationDeterministically(
     ...findShortNarrationIssues(presentation),
     ...findSpeechTimingIssues(presentation, project),
     ...findExportReadinessIssues(presentation),
+    ...findVisualFulfillmentIssues(presentation),
+    ...findCanvasCanonicalContentIssues(presentation),
   ]);
   return scorePresentationQuality(presentation, issues, sources, project);
 }
