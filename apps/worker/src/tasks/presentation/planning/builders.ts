@@ -280,11 +280,11 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
     layoutPrinciples: [
       "Use a title opener, varied content layouts, and a clear summary slide.",
       "Keep visible text short and reserve full explanation for speaker notes.",
-      "Use a real photo or explanatory diagram on almost every content slide.",
+      "For new decks, use only traceable real documentary photos, evidence-driven diagrams, or text-led layouts; never request an AI illustration.",
       "Keep every photo in its own 35-60 percent grid column and never put text over an image.",
       `Support ${Math.max(1, narrativePlan.length)} planned story beats with distinct visual rhythm.`,
     ],
-    imageStrategy: "Use concrete visual descriptions only when they are grounded in the topic or source excerpts.",
+    imageStrategy: "New-generation visual policy: real_photo, diagram, or none only. Use a real photo only for a concrete source-grounded person, place, object, event, model, or period; turn abstract claims into a diagram, comparison, timeline, or statement.",
     slideDirections: directions,
   });
 }

@@ -1151,7 +1151,7 @@ export function inferContentLayout(
   slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks"> & Partial<Pick<Slide, "sourceRefs">>,
   order: number,
 ): Slide["layout"] {
-  if (slide.visual.image?.url || slide.visual.type === "image" || slide.visual.type === "illustration") return "image-focus";
+  if (slide.visual.image?.url) return "image-focus";
   if (slide.blocks.some((block) => block.type === "quote")) return "quote";
   if (slide.visual.type === "timeline" && layoutHasEnoughContent("timeline", slide)) return "timeline";
   if (slide.visual.type === "process_diagram" && layoutHasEnoughContent("process", slide)) return "process";
@@ -1237,7 +1237,7 @@ export function layoutHasEnoughContent(layout: SlideLayout, slide: Pick<Slide, "
   if (layout === "evidence") return Boolean(slide.thesis && slide.bullets.length >= 2);
   if (layout === "problem-solution") return slide.visual.items.length >= 3 || slide.bullets.length >= 3;
   if (layout === "explain-example") return Boolean(slide.definition || slide.thesis) && slide.bullets.length >= 1;
-  if (layout === "image-focus") return Boolean(slide.visual.image?.url || slide.thesis);
+  if (layout === "image-focus") return Boolean(slide.visual.image?.url);
   return true;
 }
 

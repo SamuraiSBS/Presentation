@@ -3,6 +3,7 @@ import sharp from "sharp";
 import type { PresentationDocument } from "@studydeck/shared";
 import {
   buildSlideImageQuery,
+  buildRefinedImageQueries,
   chooseImageCandidate,
   enrichPresentationImages,
   processPresentationImage,
@@ -17,6 +18,69 @@ afterEach(() => {
 });
 
 describe("image search helpers", () => {
+  it("builds a BMW M3 documentary query with its model anchor and period context", () => {
+    const presentation = fixturePresentation();
+    const direction = {
+      slideOrder: 1,
+      visualRole: "context" as const,
+      layoutIntent: "split_image_text" as const,
+      imageStrategy: "real_photo" as const,
+      visualPrompt: "BMW M3 E30 1986 track debut, side three-quarter documentary composition",
+    };
+    const query = buildSlideImageQuery(
+      { id: "bmw", title: "BMW M3 history", prompt: "Explain the E30 generation" },
+      { ...presentation.slides[0], title: "BMW M3 E30" },
+      direction,
+    );
+
+    expect(query).toContain("BMW M3 E30 1986");
+    expect(query).toContain("historical photograph");
+  });
+
+  it("retries refined documentary queries, preserves attribution, and never reuses the selected candidate", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    const deck = {
+      ...presentation,
+      slides: [
+        { ...presentation.slides[0], title: "BMW M3 E30", slideKind: "content" as const },
+        { ...presentation.slides[0], id: "slide-2", order: 2, title: "BMW M3 E36", slideKind: "content" as const },
+      ],
+      designBrief: {
+        ...presentation.designBrief!,
+        slideDirections: [
+          { slideOrder: 1, visualRole: "context" as const, layoutIntent: "split_image_text" as const, imageStrategy: "real_photo" as const, visualPrompt: "BMW M3 E30 1986 documentary track photograph" },
+          { slideOrder: 2, visualRole: "context" as const, layoutIntent: "split_image_text" as const, imageStrategy: "real_photo" as const, visualPrompt: "BMW M3 E36 1992 documentary track photograph" },
+        ],
+      },
+    };
+    const queries: string[] = [];
+    const enriched = await enrichPresentationImages(
+      { id: "bmw", title: "BMW M3 history", prompt: "Explain M3 generations" },
+      deck,
+      {
+        searchImages: async (query) => {
+          queries.push(query);
+          return [{ url: "https://cdn.example.com/bmw-m3-e30.jpg", description: "BMW M3 E30 1986 documentary track photograph", sourceTitle: "BMW Group archive", sourceUrl: "https://www.bmwgroup.com/archive" }];
+        },
+        downloadImage: async () => ({ buffer: Buffer.from("image"), contentType: "image/jpeg", extension: "jpg" }),
+        putObject: async () => undefined,
+      },
+    );
+
+    expect(queries.length).toBeGreaterThanOrEqual(2);
+    expect(enriched.slides[0].visual.image).toMatchObject({ sourceTitle: "BMW Group archive", sourceUrl: "https://www.bmwgroup.com/archive" });
+    expect(enriched.slides[1].visual.image).toBeUndefined();
+    expect(enriched.designBrief?.slideDirections[1]).toMatchObject({ imageStrategy: "diagram", layoutIntent: "diagram" });
+  });
+
+  it("keeps an abstract claim text-led and does not create a generic car-photo query", () => {
+    const presentation = fixturePresentation();
+    const slide = { ...presentation.slides[0], title: "Why a model becomes iconic" };
+    const direction = { slideOrder: 1, visualRole: "visual_statement" as const, layoutIntent: "statement" as const, imageStrategy: "real_photo" as const, visualPrompt: "Abstract claim about brand meaning and cultural value" };
+    expect(shouldSearchForSlideImage(slide, direction)).toBe(false);
+    expect(buildRefinedImageQueries({ id: "bmw", title: "BMW M3 history", prompt: "Explain the model" }, slide, direction).length).toBeGreaterThanOrEqual(2);
+  });
   it("prefers the design brief visual prompt in a short concrete query", () => {
     const presentation = fixturePresentation();
     const project = { id: "project-1", title: "AI in education", prompt: "Explain practical AI in school" };

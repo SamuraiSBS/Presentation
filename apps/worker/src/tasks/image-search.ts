@@ -105,56 +105,59 @@ export async function enrichPresentationImages(
     }
 
     try {
-      const query = buildSlideImageQuery(project, slide, direction);
-      const candidates = await searchImages(query);
       let image: SlideVisualImage | undefined;
-      let lastDownloadError: unknown;
-
-      while (!image) {
-        const candidate = chooseImageCandidate(candidates, usedUrls, usedDomains, {
-          query,
-          slideTitle: slide.title,
-          projectTitle: project.title,
-        });
-        if (!candidate) break;
-
+      for (const query of buildRefinedImageQueries(project, slide, direction)) {
+        let candidates: ImageCandidate[];
         try {
-          const downloaded = await downloadImage(candidate.url);
-          const hash = crypto.createHash("sha1").update(candidate.url).digest("hex").slice(0, 12);
-          const objectKey = `projects/${project.id}/images/slide-${slide.order}-${hash}.${downloaded.extension}`;
-          await putObject(objectKey, downloaded.buffer, downloaded.contentType);
-          const usage = currentUsageContext();
-          await recordCostEvent({
-            idempotencyKey: crypto.createHash("sha256").update(`${usage?.generationJobId || usage?.queueJobId || project.id}:storage:${objectKey}`).digest("hex"),
-            category: "storage",
-            provider: process.env.S3_ENDPOINT?.includes("localhost") || process.env.S3_ENDPOINT?.includes("minio") ? "minio" : "object_storage",
-            quantity: String(downloaded.byteSize ?? downloaded.buffer.length),
-            unit: "stored_byte_month",
-            unitPrice: process.env.STORAGE_PRICE_USD_PER_BYTE_MONTH,
-            currency: "USD",
-            measurement: "calculated",
-          });
-
-          image = {
-            url: candidate.url,
-            objectKey,
-            alt: buildImageAlt(slide.title, candidate.description),
-            query,
-            sourceUrl: candidate.sourceUrl || candidate.url,
-            sourceTitle: candidate.sourceTitle,
-            provider: "tavily",
-            contentType: downloaded.contentType,
-            width: downloaded.width,
-            height: downloaded.height,
-            byteSize: downloaded.byteSize ?? downloaded.buffer.length,
-            warnings: downloaded.warnings || [],
-          };
-        } catch (error) {
-          lastDownloadError = error;
+          candidates = await searchImages(query);
+        } catch {
+          continue;
         }
+
+        while (!image) {
+          const candidate = chooseImageCandidate(candidates, usedUrls, usedDomains, {
+            query,
+            slideTitle: slide.title,
+            projectTitle: project.title,
+          });
+          if (!candidate) break;
+
+          try {
+            const downloaded = await downloadImage(candidate.url);
+            const hash = crypto.createHash("sha1").update(candidate.url).digest("hex").slice(0, 12);
+            const objectKey = `projects/${project.id}/images/slide-${slide.order}-${hash}.${downloaded.extension}`;
+            await putObject(objectKey, downloaded.buffer, downloaded.contentType);
+            const usage = currentUsageContext();
+            await recordCostEvent({
+              idempotencyKey: crypto.createHash("sha256").update(`${usage?.generationJobId || usage?.queueJobId || project.id}:storage:${objectKey}`).digest("hex"),
+              category: "storage",
+              provider: process.env.S3_ENDPOINT?.includes("localhost") || process.env.S3_ENDPOINT?.includes("minio") ? "minio" : "object_storage",
+              quantity: String(downloaded.byteSize ?? downloaded.buffer.length),
+              unit: "stored_byte_month",
+              unitPrice: process.env.STORAGE_PRICE_USD_PER_BYTE_MONTH,
+              currency: "USD",
+              measurement: "calculated",
+            });
+
+            image = {
+              url: candidate.url,
+              objectKey,
+              alt: buildImageAlt(slide.title, candidate.description),
+              query,
+              sourceUrl: candidate.sourceUrl || candidate.url,
+              sourceTitle: candidate.sourceTitle,
+              provider: "tavily",
+              contentType: downloaded.contentType,
+              width: downloaded.width,
+              height: downloaded.height,
+              byteSize: downloaded.byteSize ?? downloaded.buffer.length,
+              warnings: downloaded.warnings || [],
+            };
+          } catch {}
+        }
+        if (image) break;
       }
 
-      if (!image && lastDownloadError) throw lastDownloadError;
       if (!image) {
         const fallback = safeVisualFallback(direction, slide);
         if (fallback) fallbackDirections.set(fallback.slideOrder, fallback);
@@ -167,7 +170,7 @@ export async function enrichPresentationImages(
               image,
             },
           }
-        : slide);
+        : fallbackSlideForMissingPhoto(slide, direction));
     } catch (error) {
       captureGenerationError(error, {
         projectId: project.id,
@@ -175,7 +178,9 @@ export async function enrichPresentationImages(
         provider: "tavily",
       });
       warn(`slide image lookup failed for slide ${slide.order}`, error);
-      slides.push(slide);
+      const fallback = safeVisualFallback(direction, slide);
+      if (fallback) fallbackDirections.set(fallback.slideOrder, fallback);
+      slides.push(fallbackSlideForMissingPhoto(slide, direction));
     }
   }
 
@@ -209,6 +214,25 @@ export function buildSlideImageQuery(
     shorten(project.title, 72),
     medium,
   ].join(" "));
+}
+
+/**
+ * A failed documentary lookup gets a bounded recovery budget. Each attempt
+ * keeps the slide-specific anchor, while narrowing the format/context rather
+ * than falling back to a generic stock image.
+ */
+export function buildRefinedImageQueries(
+  project: ProjectInput,
+  slide: PresentationDocument["slides"][number],
+  direction?: DesignBriefSlideDirection,
+) {
+  const base = buildSlideImageQuery(project, slide, direction);
+  const isHistorical = /\b(?:history|historical|generation|vintage|classic|19\d{2}|20\d{2})\b|(?:истори|поколени|архив|\b\d{4}\b)/iu.test(base);
+  return [...new Set([
+    base,
+    sanitizeImageQuery(`${base} ${isHistorical ? "archive period" : "editorial documentary"}`),
+    sanitizeImageQuery(`${shorten(slide.title, 80)} ${shorten(project.title, 72)} ${isHistorical ? "historical archive photograph" : "real documentary photograph"}`),
+  ].filter(Boolean))].slice(0, 3);
 }
 
 export function shouldSearchForSlideImage(
@@ -630,6 +654,14 @@ function safeVisualFallback(
       ? `Explanatory diagram for ${cleanText(slide.title)}`
       : `Text-led conclusion for ${cleanText(slide.title)}`,
   };
+}
+
+function fallbackSlideForMissingPhoto(
+  slide: PresentationDocument["slides"][number],
+  direction?: DesignBriefSlideDirection,
+) {
+  if (direction?.imageStrategy !== "real_photo" || slide.visual.image || slide.layout !== "image-focus") return slide;
+  return { ...slide, layout: "statement" as const };
 }
 
 function extensionFromContentType(contentType: string) {

@@ -983,4 +983,17 @@ describe("presentation quality checks", () => {
       id: "quality", title: invalid.title, prompt: invalid.title, scenario: invalid.scenario, level: invalid.level, mode: "with_sources", slideCount: invalid.slideCount,
     }).finalDisposition).toBe("rejected");
   });
+
+  it("blocks image-focus layouts until a real photo URL has been fulfilled", () => {
+    const base = makePresentation();
+    const invalid = presentationSchema.parse({
+      ...base,
+      slides: base.slides.map((slide, index) => index === 0 ? { ...slide, layout: "image-focus" as const } : slide),
+    });
+    expect(findVisualFulfillmentIssues(invalid)).toContainEqual(expect.objectContaining({
+      slideId: "slide-1",
+      severity: "blocker",
+      field: "visual.image.url",
+    }));
+  });
 });
