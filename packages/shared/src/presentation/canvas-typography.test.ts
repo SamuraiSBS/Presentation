@@ -27,13 +27,12 @@ const body = {
 };
 
 describe("generated canvas typography", () => {
-  it("keeps projector-readable body text and compacts long Russian copy instead of shrinking it", () => {
+  it("keeps the complete body text for upstream reflow instead of creating an ellipsis", () => {
     const longText = "Длинносоставноеэлектромеханическоеиспытание показывает, почему три подробных русских пункта нужно сократить до ясного вывода для аудитории. Второй пункт добавляет контекст, который лучше оставить в речи докладчика. Третий пункт повторяет объяснение и не должен уменьшать шрифт до нечитаемого размера.";
     const compact = compactCanvasTextToFit(longText, 27, 280, 62);
 
     expect(minimumReadableFontSize(body)).toBe(27);
-    expect(compact.length).toBeLessThan(longText.length);
-    expect(compact).toMatch(/…|\.$/);
+    expect(compact).toBe(longText);
   });
 
   it("flags a narrow comparison column and an unsafe decorative rule over text", () => {

@@ -234,6 +234,9 @@ function statusLabel(status: string, canEdit: boolean) {
 }
 
 function userError(error: unknown, fallback: string) {
+  if (error instanceof Error && /Presentation layout check failed/i.test(error.message)) {
+    return "Не удалось автоматически подстроить вёрстку. Текст выступления и источники сохранены; повторная сборка слайдов не требует заново готовить речь.";
+  }
   if (error instanceof Error && /AI narration quality check failed/i.test(error.message)) {
     return "AI подготовил неполный текст выступления. Мы не смогли автоматически исправить его; повторите генерацию.";
   }

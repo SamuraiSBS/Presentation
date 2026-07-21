@@ -321,9 +321,9 @@ function addEditorialImageCanvas(slide: Slide, theme: PresentationTheme, element
       color: theme.colors.text,
       bold: true,
     }),
-    textElement(`${slide.id}-editorial-thesis`, thesis, textX, 244, textWidth, 170, 5, {
+    textElement(`${slide.id}-editorial-thesis`, thesis, textX, 232, textWidth, 200, 5, {
       role: "body",
-      fontSize: fittedFontSize(thesis, 32, 26, 170),
+      fontSize: fittedFontSize(thesis, 32, 24, 200),
       fontFamily: theme.fonts.body,
       color: theme.colors.text,
       bold: true,
@@ -332,12 +332,12 @@ function addEditorialImageCanvas(slide: Slide, theme: PresentationTheme, element
   );
 
   support.forEach((item, index) => {
-    const y = 456 + index * 94;
+    const y = 450 + index * 96;
     elements.push(
       shapeElement(`${slide.id}-editorial-support-${index}-rule`, "rect", textX, y, 44, 3, 3, index ? theme.colors.accentAlt : theme.colors.accent, index ? theme.colors.accentAlt : theme.colors.accent, 0, 1),
-      textElement(`${slide.id}-editorial-support-${index}`, item, textX, y + 16, textWidth, 64, 5, {
+      textElement(`${slide.id}-editorial-support-${index}`, item, textX, y + 16, textWidth, 76, 5, {
         role: "body",
-        fontSize: 23,
+        fontSize: fittedFontSize(item, 23, MIN_GENERATED_BODY_FONT_SIZE, 76),
         autoFit: false,
         fontFamily: theme.fonts.body,
         color: theme.colors.muted,
@@ -2081,8 +2081,12 @@ function addSlideAttributionCanvas(
   const attribution = formatSlideAttribution(slide.sourceRefs, slide.visual.image);
   if (!attribution) return;
   const editorialFooterOrder = elements.find((element) => element.type === "text" && element.id.endsWith("-editorial-footer-order"));
-  const width = editorialFooterOrder ? Math.max(120, editorialFooterOrder.x - 96) : 1136;
-  elements.push(textElement(`${slide.id}-source-credit`, attribution, 72, 684, width, 20, 12, {
+  const editorialFooterLine = elements.find((element) => element.type === "shape" && element.id.endsWith("-editorial-footer-line"));
+  const x = editorialFooterLine?.x ?? 72;
+  const width = editorialFooterOrder
+    ? Math.max(120, editorialFooterOrder.x - x - 16)
+    : editorialFooterLine?.w ?? 1136;
+  elements.push(textElement(`${slide.id}-source-credit`, attribution, x, 684, width, 20, 12, {
     role: "caption",
     typographyRole: "sourceCredit",
     fontSize: presentationTypography.sourceCredit.preferredPx,
@@ -2682,7 +2686,7 @@ function slideBodyText(slide: Slide) {
 
 function constrainSlideToLayoutCapacity(slide: Slide): Slide {
   const capacity = presentationLayoutCapacity(slide.layout);
-  const textLimit = Math.max(72, Math.round(capacity.minColumnWidth * 0.56));
+  const textLimit = Math.max(72, Math.min(180, Math.round(capacity.minColumnWidth * 0.42)));
   const compact = (value: string, limit = textLimit) => sentencePreview(value, limit);
   const bullets = Array.isArray(slide.bullets) ? slide.bullets : [];
   const blocks = Array.isArray(slide.blocks) ? slide.blocks : [];
@@ -2699,7 +2703,7 @@ function constrainSlideToLayoutCapacity(slide: Slide): Slide {
   const visualRows = Array.isArray(visual.rows) ? visual.rows : [];
   return {
     ...slide,
-    title: compact(slide.title || "", Math.max(52, Math.round(capacity.minColumnWidth * 0.32))),
+    title: compact(slide.title || "", Math.max(52, Math.min(96, Math.round(capacity.minColumnWidth * 0.32)))),
     thesis: compact(slide.thesis || "", textLimit),
     bullets: bullets.slice(0, capacity.maxItems).map((item) => compact(item, textLimit)),
     blocks: blocks.map((block) => block.type === "bullets"
@@ -2728,8 +2732,19 @@ function sentencePreview(value: string, maxLength: number) {
     .map((sentence) => sentence.trim())
     .filter(Boolean)
     .slice(0, 3);
-  const preview = sentences.length ? sentences.join(" ") : text;
-  return preview.length > maxLength ? `${preview.slice(0, maxLength - 3).trim()}...` : preview;
+  const preview = sentences.reduce<string[]>((result, sentence) => {
+    const candidate = [...result, sentence].join(" ");
+    return candidate.length <= maxLength ? [...result, sentence] : result;
+  }, []).join(" ");
+  if (preview) return preview;
+  if (text.length <= maxLength) return text;
+
+  // Titles and labels may not have sentence punctuation. Keep a clean phrase
+  // instead of silently cutting a sentence and appending an ellipsis.
+  return text.split(/\s+/).reduce<string[]>((words, word) => {
+    const candidate = [...words, word].join(" ");
+    return candidate.length <= maxLength ? [...words, word] : words;
+  }, []).join(" ");
 }
 
 export function assertNever(value: never): never {

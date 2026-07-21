@@ -2193,6 +2193,7 @@ function visibleTextIntegrityReason(value: string, label: boolean): string {
   const text = cleanText(value);
   // Visual labels and optional presentation fields may be intentionally empty.
   if (!text) return "";
+  if (/(?:…|\.\.\.)\s*$/.test(text)) return "ends with truncated text";
   if (hasUnclosedPairedMarks(text)) return "unclosed quotation mark or bracket";
   if (label) return "";
   const words = text.split(/\s+/).filter(Boolean);

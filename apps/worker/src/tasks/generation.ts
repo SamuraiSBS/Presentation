@@ -1,6 +1,6 @@
 import type { Job } from "bullmq";
 import type { Prisma } from "@prisma/client";
-import { auditSlideCanvas, ensureEditableCanvas, type Source } from "@studydeck/shared";
+import { auditSlideCanvas, ensureEditableCanvas, PREMIUM_PRESENTATION_THEMES, type PresentationDocument, type Source } from "@studydeck/shared";
 import { captureGenerationError, type TraceCarrier, withTraceSpan } from "../observability.js";
 import { getPrisma } from "../prisma.js";
 import { readObjectBuffer } from "../storage.js";
@@ -193,16 +193,21 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     // The model may return a schema-valid but geometrically unsafe canvas. A
     // generated presentation is not user-edited yet, so rebuild its canvas
     // from the validated slide content before running the layout audit.
-    const presentation = ensureEditableCanvas({
+    let presentation = ensureEditableCanvas({
       ...presentationWithImages,
       slides: presentationWithImages.slides.map((slide) => ({ ...slide, canvas: undefined })),
     });
-    const unsafeCanvases = presentation.slides.flatMap((slide) =>
-      (slide.canvas ? auditSlideCanvas(slide.canvas) : ["canvas is missing"])
-        .map((issue) => `slide ${slide.order}: ${issue}`),
-    );
+    let unsafeCanvases = canvasAuditIssues(presentation);
     if (unsafeCanvases.length) {
-      throw new Error(`Presentation layout check failed: ${unsafeCanvases.slice(0, 8).join("; ")}`);
+      // A layout audit is a local rendering issue, not an AI-provider failure.
+      // Recompose the already generated, paid-for content into a conservative
+      // one-idea-per-slide layout before treating the job as failed.
+      await setStage("repairing_layout");
+      presentation = repairPresentationLayout(presentation);
+      unsafeCanvases = canvasAuditIssues(presentation);
+    }
+    if (unsafeCanvases.length) {
+      throw new Error(`Presentation layout check failed after local repair: ${unsafeCanvases.slice(0, 8).join("; ")}`);
     }
     if (defenseBundle) assertDefensePresentation(presentation, defenseBundle);
     finishStage("polishing");
@@ -251,6 +256,49 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     });
     throw error;
   }
+}
+
+function canvasAuditIssues(presentation: PresentationDocument) {
+  return presentation.slides.flatMap((slide) =>
+      (slide.canvas ? auditSlideCanvas(slide.canvas) : ["canvas is missing"])
+        .map((issue) => `slide ${slide.order}: ${issue}`),
+    );
+}
+
+export function repairPresentationLayout(presentation: PresentationDocument): PresentationDocument {
+  const shortestCompleteSentence = (slide: PresentationDocument["slides"][number]) => {
+    const candidates = [
+      slide.thesis,
+      ...slide.bullets,
+      ...slide.blocks.flatMap((block) => block.type === "bullets" ? block.items : [block.content]),
+      slide.speakerNotes,
+    ]
+      .flatMap((value) => String(value || "").match(/[^.!?]+[.!?]+/g) || [])
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .sort((left, right) => left.length - right.length);
+    return candidates.find((value) => value.length <= 220) || candidates[0] || slide.title;
+  };
+
+  return ensureEditableCanvas({
+    ...presentation,
+    // The recovery path must not carry a cramped theme or an AI-selected
+    // direction into its second layout pass.  Those directions can select an
+    // editorial canvas with fixed text slots again, which turns a recoverable
+    // overflow into a failed paid generation.  Preserve the slide content and
+    // narration, but use the roomiest deterministic canvas family.
+    presentationTheme: PREMIUM_PRESENTATION_THEMES.academicClean,
+    designBrief: undefined,
+    slides: presentation.slides.map((slide) => ({
+      ...slide,
+      layout: "statement",
+      thesis: shortestCompleteSentence(slide),
+      bullets: [],
+      blocks: [],
+      visual: { ...slide.visual, image: undefined },
+      canvas: undefined,
+    })),
+  });
 }
 
 function regularGenerationJobWhere(

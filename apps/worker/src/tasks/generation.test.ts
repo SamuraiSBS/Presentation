@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { prepareGenerationSources } from "./generation.js";
+import { auditSlideCanvas, presentationSchema, PREMIUM_PRESENTATION_THEMES } from "@studydeck/shared";
+import { prepareGenerationSources, repairPresentationLayout } from "./generation.js";
 import { searchWebSources } from "./web-search.js";
 
 vi.mock("../prisma.js", () => ({
@@ -126,5 +127,76 @@ describe("prepareGenerationSources", () => {
 
     expect(searchWebSources).not.toHaveBeenCalled();
     expect(sources[0]).toMatchObject({ id: "defense-project-accepted-speech", type: "PROMPT" });
+  });
+
+  it("repairs an unsafe generated layout locally without another AI request", () => {
+    const presentation = presentationSchema.parse({
+      id: "layout-repair",
+      title: "Layout repair",
+      scenario: "lesson",
+      level: "school",
+      slideCount: 1,
+      generationMode: "openai",
+      generatedText: "Accepted narration remains available for the presenter.",
+      presentationTheme: PREMIUM_PRESENTATION_THEMES.editorialMagazine,
+      designBrief: {
+        themeId: "editorialMagazine",
+        mood: "serious",
+        audienceFit: "University students",
+        visualMetaphor: "An editorial narrative",
+        colorIntent: "Warm editorial palette",
+        typographyIntent: "Readable text",
+        rhythm: { titleStyle: "editorial", density: "medium", imageFrequency: "balanced", sectionBreaks: true },
+        slideDirections: [{ slideOrder: 1, visualRole: "explain", layoutIntent: "diagram", imageStrategy: "diagram", visualPrompt: "A simple explanatory diagram" }],
+        visualDirection: "Editorial layout",
+        layoutPrinciples: [],
+        imageStrategy: "diagram",
+      },
+      sources: [],
+      outline: ["Long layout claim"],
+      narrativePlan: [{
+        slideOrder: 1,
+        slideTitle: "Long layout claim",
+        slidePurpose: "Explain the central idea.",
+        keyMessage: "The presentation keeps moving after a local layout repair.",
+        audienceQuestion: "What happens after an unsafe canvas is detected?",
+        transitionToNext: "",
+      }],
+      speechScript: [{ slideOrder: 1, slideTitle: "Long layout claim", text: "Accepted narration remains available for the presenter." }],
+      slides: [{
+        id: "slide-1",
+        order: 1,
+        title: "A deliberately long slide title that must not force the generator to fail",
+        slideKind: "content",
+        layout: "image-focus",
+        thesis: "The local layout repair keeps presentation generation moving without asking the AI provider to create the slide again.",
+        bullets: ["The original narration remains intact for the presenter and editor."],
+        definition: null,
+        keyConcepts: [],
+        visual: {
+          type: "illustration",
+          title: "",
+          description: "A long visual description used only to exercise the conservative layout fallback.",
+          leftLabel: "",
+          rightLabel: "",
+          items: [],
+          rows: [],
+          image: { url: "https://example.com/image.jpg", alt: "Example image", query: "example", width: 1200, height: 800, byteSize: 1000, provider: "archive", warnings: [], objectKey: "image.jpg", sourceUrl: "https://example.com/image.jpg", contentType: "image/jpeg", sourceTitle: "Example" },
+        },
+        highlights: [],
+        blocks: [],
+        speakerNotes: "The local layout repair keeps presentation generation moving. The accepted narration remains available for the presenter and editor.",
+        timingSeconds: 45,
+        sourceRefs: [],
+      }],
+    });
+
+    const repaired = repairPresentationLayout(presentation);
+
+    expect(repaired.slides[0].layout).toBe("statement");
+    expect(repaired.slides[0].visual.image).toBeUndefined();
+    expect(repaired.presentationTheme?.themeId).toBe("academicClean");
+    expect(repaired.designBrief).toBeUndefined();
+    expect(repaired.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!))).toEqual([]);
   });
 });

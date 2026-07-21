@@ -836,6 +836,7 @@ export function looksLikeSentenceFragment(value: string) {
   const text = cleanText(value);
   const words = text.split(/\s+/).filter(Boolean);
   if (words.length < 2) return true;
+  if (/(?:…|\.\.\.)\s*$/.test(text)) return true;
   if (/[,;:\-–—]$/.test(text)) return true;
   if (hasDanglingPredicateModifier(text)) return true;
   return /^(\u043a\u043e\u0442\u043e\u0440\u044b\u0439|\u043a\u043e\u0442\u043e\u0440\u0430\u044f|\u043a\u043e\u0442\u043e\u0440\u043e\u0435|\u043a\u043e\u0442\u043e\u0440\u044b\u0435|\u043f\u043e\u0442\u043e\u043c\u0443 \u0447\u0442\u043e)\b/iu.test(text);

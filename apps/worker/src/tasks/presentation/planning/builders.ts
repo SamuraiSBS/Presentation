@@ -142,16 +142,19 @@ import type { YandexCompletionResponse } from "../constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
 import { normalizeNarrationText, parseNarrationSections } from "../narration/processing.js";
 import { fallbackTitle, sentenceCount, firstSentence, lastSentence, wordCount, normalizeTitleKey, isGenericSlideTitle } from "../normalization/presentation.js";
-import { hasGenericOrMetaScreenText, looksLikeSentenceFragment, completeNarrationSentences } from "../quality/orchestration.js";
+import { hasGenericOrMetaScreenText, looksLikeSentenceFragment, completeNarrationSentences, isCompleteScreenSentence } from "../quality/orchestration.js";
 import { parseJsonText, cleanMultilineText, cleanText, projectTopic, shortenSentence, shortenWords } from "../utilities.js";
 
 export function buildResearchBrief(project: ProjectInput, sources: Source[]): ResearchBrief {
   const facts = sources
-    .map((source) => ({
-      text: shortenSentence(cleanText(source.excerpt || source.label || project.prompt), 260),
-      sourceId: source.id,
-      confidence: source.type === "WEB" || source.type === "PROMPT" ? "medium" as const : "high" as const,
-    }))
+    .map((source) => {
+      const text = completeSourceSentence(source.excerpt || source.label || project.prompt, 260);
+      return {
+        text,
+        sourceId: source.id,
+        confidence: source.type === "WEB" || source.type === "PROMPT" ? "medium" as const : "high" as const,
+      };
+    })
     .filter((fact) => fact.text);
   const topic = projectTopic(project);
   return researchBriefSchema.parse({
@@ -619,6 +622,7 @@ export function compressVisibleSlideText(values: string[]) {
     .filter((value) =>
       wordCount(value) >= 2 &&
       wordCount(value) <= 14 &&
+      isCompleteScreenSentence(value) &&
       !hasGenericOrMetaScreenText(value) &&
       !looksLikeSentenceFragment(value),
     );
@@ -627,7 +631,12 @@ export function compressVisibleSlideText(values: string[]) {
 export function sourceEvidenceForSlide(sources: Source[], order: number) {
   if (!sources.length) return "";
   const source = sources[(order - 1) % sources.length];
-  return shortenSentence(cleanText(source.excerpt || source.label), 160);
+  return completeSourceSentence(source.excerpt || source.label, 160);
+}
+
+function completeSourceSentence(value: unknown, maxLength: number) {
+  const text = cleanText(value);
+  return isCompleteScreenSentence(text) && /[.!?]$/.test(text) ? shortenSentence(text, maxLength) : "";
 }
 
 export function shortenVisibleTitle(value: string) {

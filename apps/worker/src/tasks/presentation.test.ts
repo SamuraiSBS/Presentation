@@ -16,10 +16,13 @@ import {
 import { generatePresentation as generatePresentationFromOrchestrator } from "./presentation/orchestrator.js";
 import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./presentation/prompts/builders.js";
 import { normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
+import { sourceEvidenceForSlide } from "./presentation/planning/builders.js";
 import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
 import { applyNarrationFallbacks } from "./presentation/quality/orchestration.js";
+import { looksLikeSentenceFragment } from "./presentation/quality/orchestration.js";
 import { normalizeLayout as normalizeLayoutFromLayer } from "./presentation/normalization/presentation.js";
 import { normalizeNarrationText } from "./presentation/narration/processing.js";
+import { shortenSentence } from "./presentation/utilities.js";
 
 const originalEnv = { ...process.env };
 const forbiddenNarrationFragments = [
@@ -87,6 +90,18 @@ afterEach(() => {
 });
 
 describe("presentation compatibility facade", () => {
+  it("never shortens visible copy into an ellipsis or treats an incomplete source excerpt as evidence", () => {
+    const longSentence = "This complete sentence remains intact even when its configured display limit is shorter than the source sentence.";
+
+    const compact = shortenSentence(longSentence, 30);
+    expect(compact.length).toBeLessThanOrEqual(30);
+    expect(compact).toMatch(/\.$/);
+    expect(compact).not.toMatch(/…|\.\.\.$/);
+    expect(looksLikeSentenceFragment("A claim that stops... ")).toBe(true);
+    expect(sourceEvidenceForSlide([{ id: "source-1", label: "Source", type: "WEB", size: 0, excerpt: "A source excerpt that stops mid" }], 1)).toBe("");
+    expect(sourceEvidenceForSlide([{ id: "source-2", label: "Source", type: "WEB", size: 0, excerpt: "A complete source statement is safe to show." }], 1)).toBe("A complete source statement is safe to show.");
+  });
+
   it("accepts a substantive two-sentence narration section", () => {
     const narration = normalizeNarrationText(
       [

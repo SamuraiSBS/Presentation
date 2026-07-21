@@ -19,7 +19,7 @@ function shortDomain(value: string | undefined) {
 function shortLabel(value: string, limit = 54) {
   const text = clean(value);
   if (!text) return "";
-  return text.length > limit ? `${text.slice(0, limit - 1).trim()}…` : text;
+  return text.length > limit || /(?:…|\.\.\.)\s*$/.test(text) ? "" : text;
 }
 
 /**
@@ -61,13 +61,13 @@ export function sourceRefFromSource(source: Source): SourceRef {
 }
 
 export function formatSourceReference(ref: SourceRef, source?: Source) {
-  const label = shortLabel(ref.label || source?.label || shortDomain(source?.url) || "Источник");
-  return label || "Источник";
+  const label = shortLabel(ref.label || source?.label || "");
+  return label || shortDomain(source?.url) || "Источник";
 }
 
 export function formatImageAttribution(image?: SlideVisualImage) {
   if (!image) return "";
-  const title = shortLabel(image.sourceTitle || shortDomain(image.sourceUrl));
+  const title = shortLabel(image.sourceTitle) || shortDomain(image.sourceUrl);
   if (image.provider === "user") return title ? `Источник: ${title}` : "Источник: материалы пользователя";
   return title ? `Фото: ${title}` : "";
 }

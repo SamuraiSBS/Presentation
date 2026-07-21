@@ -214,6 +214,9 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
 }
 
 function userError(error: unknown, fallback: string) {
+  if (error instanceof Error && /Presentation layout check failed/i.test(error.message)) {
+    return "Не удалось автоматически подстроить вёрстку. Текст выступления и источники сохранены; повторная сборка слайдов не требует заново готовить речь.";
+  }
   if (error instanceof Error && /[А-Яа-яЁё]/.test(error.message) && !/<[^>]+>|\b(?:error|failed|invalid|internal)\b/i.test(error.message)) {
     return error.message;
   }

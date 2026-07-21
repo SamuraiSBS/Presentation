@@ -28,6 +28,9 @@ export function auditSlideCanvas(canvas: SlideCanvas) {
     if (element.type !== "text") return;
 
     const minFontSize = minimumReadableFontSize(element);
+    if (/(?:…|\.\.\.)\s*$/.test(element.text)) {
+      issues.push(`${element.id} ends with truncated text`);
+    }
     if (element.fontSize < minFontSize) issues.push(`${element.id} uses ${element.fontSize}px text below the ${minFontSize}px readable minimum`);
     if (element.autoFit && element.fontSize <= minFontSize) issues.push(`${element.id} enables autoFit at the readable minimum`);
     if (estimatedTextHeight(element.text, element.fontSize, element.w) > element.h * 1.14) {

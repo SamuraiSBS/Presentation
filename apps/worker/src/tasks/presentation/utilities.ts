@@ -318,12 +318,33 @@ export function removeBannedSentences(value: string) {
 
 export function shortenSentence(value: string, maxLength: number) {
   const text = cleanText(value);
-  return text.length > maxLength ? `${text.slice(0, maxLength - 3).trim()}...` : text;
+  if (text.length <= maxLength) return text;
+
+  // Visible slide copy must never end halfway through a thought. Keep only a
+  // complete sentence prefix when one fits; otherwise let the layout/quality
+  // checks handle the complete sentence instead of silently cutting it.
+  const completeSentences = text.match(/[^.!?]+[.!?]+(?=\s|$)/g) || [];
+  let result = "";
+  for (const sentence of completeSentences) {
+    const candidate = `${result} ${sentence.trim()}`.trim();
+    if (candidate.length > maxLength) break;
+    result = candidate;
+  }
+  if (result) return result;
+
+  const words = text.split(/\s+/).filter(Boolean);
+  const selected: string[] = [];
+  for (const word of words) {
+    const candidate = [...selected, word].join(" ");
+    if (candidate.length > maxLength - 1) break;
+    selected.push(word);
+  }
+  return selected.length ? `${selected.join(" ")}.` : "";
 }
 
 export function shortenWords(value: string, maxWords: number) {
   const words = cleanText(value).split(/\s+/).filter(Boolean);
-  return words.length > maxWords ? `${words.slice(0, maxWords).join(" ")}...` : words.join(" ");
+  return words.slice(0, maxWords).join(" ");
 }
 
 export function clampNumber(value: number, min: number, max: number) {

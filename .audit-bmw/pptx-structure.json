@@ -1,0 +1,672 @@
+﻿[
+    {
+        "slide":  1,
+        "shapes":  [
+                       {
+                           "name":  "Image 0",
+                           "type":  13,
+                           "left":  0,
+                           "top":  0,
+                           "width":  960,
+                           "height":  540,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 0",
+                           "type":  1,
+                           "left":  114,
+                           "top":  76.5,
+                           "width":  732,
+                           "height":  135,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 1",
+                           "type":  1,
+                           "left":  144,
+                           "top":  220.5,
+                           "width":  672,
+                           "height":  102,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Text 2",
+                           "type":  1,
+                           "left":  133.5,
+                           "top":  88.5,
+                           "width":  693,
+                           "height":  111,
+                           "text":  "Введение в историю BMW M",
+                           "fontSize":  43.5
+                       },
+                       {
+                           "name":  "Text 3",
+                           "type":  1,
+                           "left":  157.5,
+                           "top":  229.5,
+                           "width":  645,
+                           "height":  84,
+                           "text":  "Они завоевали сердца многих автолюбителей по всему миру.",
+                           "fontSize":  22.5
+                       }
+                   ]
+    },
+    {
+        "slide":  2,
+        "shapes":  [
+                       {
+                           "name":  "Image 0",
+                           "type":  13,
+                           "left":  0,
+                           "top":  0,
+                           "width":  960,
+                           "height":  540,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 0",
+                           "type":  1,
+                           "left":  56.2,
+                           "top":  30,
+                           "width":  845.2,
+                           "height":  102,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 1",
+                           "type":  1,
+                           "left":  84,
+                           "top":  138,
+                           "width":  790.5,
+                           "height":  223.5,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Text 2",
+                           "type":  1,
+                           "left":  75.8,
+                           "top":  42,
+                           "width":  806.2,
+                           "height":  78,
+                           "text":  "Исторический контекст",
+                           "fontSize":  30
+                       },
+                       {
+                           "name":  "Text 3",
+                           "type":  1,
+                           "left":  97.5,
+                           "top":  147,
+                           "width":  763.5,
+                           "height":  205.5,
+                           "text":  "Каждая из этих моделей имеет свои уникальные особенности и характеристики.",
+                           "fontSize":  33
+                       }
+                   ]
+    },
+    {
+        "slide":  3,
+        "shapes":  [
+                       {
+                           "name":  "Image 0",
+                           "type":  13,
+                           "left":  0,
+                           "top":  0,
+                           "width":  960,
+                           "height":  540,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 0",
+                           "type":  1,
+                           "left":  56.2,
+                           "top":  30,
+                           "width":  845.2,
+                           "height":  102,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 1",
+                           "type":  1,
+                           "left":  84,
+                           "top":  138,
+                           "width":  790.5,
+                           "height":  223.5,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Text 2",
+                           "type":  1,
+                           "left":  75.8,
+                           "top":  42,
+                           "width":  806.2,
+                           "height":  78,
+                           "text":  "BMW 328",
+                           "fontSize":  30
+                       },
+                       {
+                           "name":  "Text 3",
+                           "type":  1,
+                           "left":  97.5,
+                           "top":  147,
+                           "width":  763.5,
+                           "height":  205.5,
+                           "text":  "Его успех на гоночных трассах сделал его легендой.",
+                           "fontSize":  33
+                       }
+                   ]
+    },
+    {
+        "slide":  4,
+        "shapes":  [
+                       {
+                           "name":  "Image 0",
+                           "type":  13,
+                           "left":  0,
+                           "top":  0,
+                           "width":  960,
+                           "height":  540,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 0",
+                           "type":  1,
+                           "left":  56.2,
+                           "top":  30,
+                           "width":  845.2,
+                           "height":  102,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 1",
+                           "type":  1,
+                           "left":  84,
+                           "top":  138,
+                           "width":  790.5,
+                           "height":  223.5,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Text 2",
+                           "type":  1,
+                           "left":  75.8,
+                           "top":  42,
+                           "width":  806.2,
+                           "height":  78,
+                           "text":  "BMW M3",
+                           "fontSize":  30
+                       },
+                       {
+                           "name":  "Text 3",
+                           "type":  1,
+                           "left":  97.5,
+                           "top":  147,
+                           "width":  763.5,
+                           "height":  205.5,
+                           "text":  "BMW M3 продолжает быть иконой в мире спортивных автомобилей.",
+                           "fontSize":  33
+                       }
+                   ]
+    },
+    {
+        "slide":  5,
+        "shapes":  [
+                       {
+                           "name":  "Image 0",
+                           "type":  13,
+                           "left":  0,
+                           "top":  0,
+                           "width":  960,
+                           "height":  540,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 0",
+                           "type":  1,
+                           "left":  56.2,
+                           "top":  30,
+                           "width":  845.2,
+                           "height":  102,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 1",
+                           "type":  1,
+                           "left":  84,
+                           "top":  138,
+                           "width":  790.5,
+                           "height":  223.5,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Text 2",
+                           "type":  1,
+                           "left":  75.8,
+                           "top":  42,
+                           "width":  806.2,
+                           "height":  78,
+                           "text":  "BMW 8 серии",
+                           "fontSize":  30
+                       },
+                       {
+                           "name":  "Text 3",
+                           "type":  1,
+                           "left":  97.5,
+                           "top":  147,
+                           "width":  763.5,
+                           "height":  205.5,
+                           "text":  "Этот автомобиль был известен своим элегантным дизайном и передовыми технологиями.",
+                           "fontSize":  33
+                       }
+                   ]
+    },
+    {
+        "slide":  6,
+        "shapes":  [
+                       {
+                           "name":  "Image 0",
+                           "type":  13,
+                           "left":  0,
+                           "top":  0,
+                           "width":  960,
+                           "height":  540,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 0",
+                           "type":  1,
+                           "left":  56.2,
+                           "top":  30,
+                           "width":  845.2,
+                           "height":  102,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 1",
+                           "type":  1,
+                           "left":  84,
+                           "top":  138,
+                           "width":  790.5,
+                           "height":  223.5,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Text 2",
+                           "type":  1,
+                           "left":  75.8,
+                           "top":  42,
+                           "width":  806.2,
+                           "height":  78,
+                           "text":  "Влияние BMW M",
+                           "fontSize":  30
+                       },
+                       {
+                           "name":  "Text 3",
+                           "type":  1,
+                           "left":  97.5,
+                           "top":  147,
+                           "width":  763.5,
+                           "height":  205.5,
+                           "text":  "BMW M продолжает оставаться эталоном качества и производительности.",
+                           "fontSize":  33
+                       }
+                   ]
+    },
+    {
+        "slide":  7,
+        "shapes":  [
+                       {
+                           "name":  "Image 0",
+                           "type":  13,
+                           "left":  0,
+                           "top":  0,
+                           "width":  960,
+                           "height":  540,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 0",
+                           "type":  1,
+                           "left":  56.2,
+                           "top":  30,
+                           "width":  845.2,
+                           "height":  102,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 1",
+                           "type":  1,
+                           "left":  84,
+                           "top":  138,
+                           "width":  790.5,
+                           "height":  223.5,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Text 2",
+                           "type":  1,
+                           "left":  75.8,
+                           "top":  42,
+                           "width":  806.2,
+                           "height":  78,
+                           "text":  "Выводы",
+                           "fontSize":  30
+                       },
+                       {
+                           "name":  "Text 3",
+                           "type":  1,
+                           "left":  97.5,
+                           "top":  147,
+                           "width":  763.5,
+                           "height":  205.5,
+                           "text":  "Модели BMW M стали культовыми благодаря своей мощности, дизайну и инновационным технологиям.",
+                           "fontSize":  33
+                       }
+                   ]
+    },
+    {
+        "slide":  8,
+        "shapes":  [
+                       {
+                           "name":  "Image 0",
+                           "type":  13,
+                           "left":  0,
+                           "top":  0,
+                           "width":  960,
+                           "height":  540,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 0",
+                           "type":  1,
+                           "left":  56.2,
+                           "top":  30,
+                           "width":  845.2,
+                           "height":  102,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 1",
+                           "type":  1,
+                           "left":  84,
+                           "top":  138,
+                           "width":  790.5,
+                           "height":  223.5,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Text 2",
+                           "type":  1,
+                           "left":  75.8,
+                           "top":  42,
+                           "width":  806.2,
+                           "height":  78,
+                           "text":  "Уроки для политики",
+                           "fontSize":  30
+                       },
+                       {
+                           "name":  "Text 3",
+                           "type":  1,
+                           "left":  97.5,
+                           "top":  147,
+                           "width":  763.5,
+                           "height":  205.5,
+                           "text":  "Их успех и популярность продолжают вдохновлять новых автолюбителей.",
+                           "fontSize":  33
+                       }
+                   ]
+    },
+    {
+        "slide":  9,
+        "shapes":  [
+                       {
+                           "name":  "Image 0",
+                           "type":  13,
+                           "left":  0,
+                           "top":  0,
+                           "width":  960,
+                           "height":  540,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 0",
+                           "type":  1,
+                           "left":  56.2,
+                           "top":  30,
+                           "width":  845.2,
+                           "height":  102,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 1",
+                           "type":  1,
+                           "left":  84,
+                           "top":  138,
+                           "width":  790.5,
+                           "height":  223.5,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Text 2",
+                           "type":  1,
+                           "left":  75.8,
+                           "top":  42,
+                           "width":  806.2,
+                           "height":  78,
+                           "text":  "Влияние культовых моделей на любовь владельцев к BMW",
+                           "fontSize":  30
+                       },
+                       {
+                           "name":  "Text 3",
+                           "type":  1,
+                           "left":  97.5,
+                           "top":  147,
+                           "width":  763.5,
+                           "height":  263.3,
+                           "text":  "Модели BMW M стали культовыми благодаря своей мощности, дизайну и инновационным технологиям. Культовые модели BMW M стали символом страсти к скорости и инновациям, что способствовало росту любви владельцев к марке. Как культовые модели BMW M повлияли на любовь владельцев к марке.",
+                           "fontSize":  33
+                       }
+                   ]
+    },
+    {
+        "slide":  10,
+        "shapes":  [
+                       {
+                           "name":  "Image 0",
+                           "type":  13,
+                           "left":  0,
+                           "top":  0,
+                           "width":  960,
+                           "height":  540,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 0",
+                           "type":  1,
+                           "left":  32.2,
+                           "top":  30,
+                           "width":  895.5,
+                           "height":  102,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 1",
+                           "type":  1,
+                           "left":  39,
+                           "top":  138,
+                           "width":  507,
+                           "height":  130.5,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 2",
+                           "type":  1,
+                           "left":  52.5,
+                           "top":  352.5,
+                           "width":  480,
+                           "height":  3.8,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 3",
+                           "type":  1,
+                           "left":  579,
+                           "top":  141,
+                           "width":  325.5,
+                           "height":  43.5,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 4",
+                           "type":  1,
+                           "left":  594,
+                           "top":  204,
+                           "width":  9,
+                           "height":  9,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 5",
+                           "type":  1,
+                           "left":  606,
+                           "top":  189,
+                           "width":  298.5,
+                           "height":  59.2,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 6",
+                           "type":  1,
+                           "left":  594,
+                           "top":  281.2,
+                           "width":  9,
+                           "height":  9,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 7",
+                           "type":  1,
+                           "left":  606,
+                           "top":  266.2,
+                           "width":  298.5,
+                           "height":  59.2,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 8",
+                           "type":  1,
+                           "left":  594,
+                           "top":  358.5,
+                           "width":  9,
+                           "height":  9,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Shape 9",
+                           "type":  1,
+                           "left":  606,
+                           "top":  343.5,
+                           "width":  298.5,
+                           "height":  59.2,
+                           "text":  "",
+                           "fontSize":  null
+                       },
+                       {
+                           "name":  "Text 10",
+                           "type":  1,
+                           "left":  51.8,
+                           "top":  42,
+                           "width":  856.5,
+                           "height":  78,
+                           "text":  "Заключение",
+                           "fontSize":  30
+                       },
+                       {
+                           "name":  "Text 11",
+                           "type":  1,
+                           "left":  52.5,
+                           "top":  147,
+                           "width":  480,
+                           "height":  225.7,
+                           "text":  "Модели BMW M оказали значительное влияние на развитие автомобильной индустрии и стали культовыми среди автолюбителей.",
+                           "fontSize":  33
+                       },
+                       {
+                           "name":  "Text 12",
+                           "type":  1,
+                           "left":  592.5,
+                           "top":  150,
+                           "width":  298.5,
+                           "height":  25.6,
+                           "text":  "Ключевые мысли",
+                           "fontSize":  22.5
+                       },
+                       {
+                           "name":  "Text 13",
+                           "type":  1,
+                           "left":  619.5,
+                           "top":  198,
+                           "width":  271.5,
+                           "height":  46.2,
+                           "text":  "это серия спортивных автомобилей BMW.",
+                           "fontSize":  20.25
+                       },
+                       {
+                           "name":  "Text 14",
+                           "type":  1,
+                           "left":  619.5,
+                           "top":  275.2,
+                           "width":  271.5,
+                           "height":  46.2,
+                           "text":  "Введение в тему презентации.",
+                           "fontSize":  20.25
+                       },
+                       {
+                           "name":  "Text 15",
+                           "type":  1,
+                           "left":  619.5,
+                           "top":  352.5,
+                           "width":  271.5,
+                           "height":  46.2,
+                           "text":  "революционный спортивный автомобиль.",
+                           "fontSize":  20.25
+                       }
+                   ]
+    }
+]

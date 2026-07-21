@@ -44,30 +44,17 @@ export function minimumTextColumnWidth(element: Pick<CanvasTextElement, "id" | "
   return 220;
 }
 
-/** Keeps a complete sentence where possible, then falls back to a word-safe ellipsis. */
+/**
+ * Canvas text is already quality-checked before this point. Never mutate it
+ * into an ellipsis here: truncation would create a slide that looks valid to
+ * layout code while losing the speaker's meaning.
+ */
 export function compactCanvasTextToFit(value: string, fontSize: number, width: number, height: number, lineHeight = 1.14) {
-  const clean = cleanCanvasText(value);
-  const maxLines = Math.max(1, Math.floor(height / (fontSize * lineHeight)));
-  const maxCharacters = Math.max(1, maxLines * estimatedCharactersPerLine(fontSize, width));
-  if (clean.length <= maxCharacters && estimatedTextHeight(clean, fontSize, width) <= height) return clean;
-
-  const sentences = clean.split(/(?<=[.!?])\s+/).filter(Boolean);
-  let selected = "";
-  for (const sentence of sentences) {
-    const candidate = selected ? `${selected} ${sentence}` : sentence;
-    if (candidate.length > maxCharacters || estimatedTextHeight(candidate, fontSize, width) > height) break;
-    selected = candidate;
-  }
-  if (selected) return selected;
-
-  const words = clean.split(/\s+/).filter(Boolean);
-  const selectedWords: string[] = [];
-  for (const word of words) {
-    const candidate = [...selectedWords, word].join(" ");
-    if (candidate.length + 1 > maxCharacters || estimatedTextHeight(`${candidate}…`, fontSize, width) > height) break;
-    selectedWords.push(word);
-  }
-  return `${selectedWords.join(" ").trim() || clean.slice(0, Math.max(1, maxCharacters - 1)).trim()}…`;
+  void fontSize;
+  void width;
+  void height;
+  void lineHeight;
+  return cleanCanvasText(value);
 }
 
 export function elementsVisuallyOverlap(left: CanvasElement, right: CanvasElement) {
