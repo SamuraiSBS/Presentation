@@ -1136,6 +1136,7 @@ describe("generatePresentation fallback behavior", () => {
     const directions = presentation.designBrief?.slideDirections || [];
     expect(directions).toHaveLength(7);
     expect(directions[0]?.visualRole).toBe("hero");
+    expect(directions.every((direction) => direction.visualPurpose && direction.visualRationale)).toBe(true);
     expect(directions.at(-1)?.visualRole).toBe("summary");
     expect(directions.at(-1)?.imageStrategy).toBe("none");
     const contentDirections = directions.filter((direction) => direction.visualRole !== "hero" && direction.visualRole !== "summary");

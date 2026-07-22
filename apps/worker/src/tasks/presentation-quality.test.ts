@@ -588,6 +588,41 @@ describe("presentation quality checks", () => {
     expect(findVisualPlanIssues(repaired, project)).toHaveLength(0);
   });
 
+  it("accepts a ten-slide visual fixture with six sourced photos and three semantic diagrams", () => {
+    const slides = Array.from({ length: 10 }, (_, index) => {
+      const order = index + 1;
+      const photo = order <= 6;
+      const diagram = order >= 7 && order <= 9;
+      return {
+        ...makeSlide(order, `Porsche 911 study point ${order}`, `Porsche 911 point ${order} explains a distinct engineering detail.`, ["First grounded point", "Second grounded point", "Third grounded point"]),
+        slideKind: "content" as const,
+        layout: photo ? "image-focus" as const : diagram ? "process" as const : "statement" as const,
+        visual: {
+          type: photo ? "image" as const : diagram ? "process_diagram" as const : "none" as const,
+          title: "", description: "Porsche 911 study visual", leftLabel: "", rightLabel: "", rows: [],
+          items: diagram ? [{ label: "1", text: "Source" }, { label: "2", text: "Mechanism" }, { label: "3", text: "Outcome" }] : [],
+          ...(photo ? { image: { url: `https://example.com/porsche-${order}.jpg`, objectKey: `projects/porsche/${order}.jpg`, provider: "tavily" as const, alt: `Porsche 911 ${order}`, query: "Porsche 911", sourceTitle: "Porsche archive", contentType: "image/jpeg", warnings: [] } } : {}),
+        },
+      };
+    });
+    const directions = slides.map((slide) => ({
+      slideOrder: slide.order,
+      visualRole: "explain" as const,
+      layoutIntent: slide.order <= 6 ? "split_image_text" as const : slide.order <= 9 ? "diagram" as const : "statement" as const,
+      imageStrategy: slide.order <= 6 ? "real_photo" as const : slide.order <= 9 ? "diagram" as const : "none" as const,
+      visualPurpose: slide.order <= 6 ? "photo" as const : slide.order <= 9 ? "diagram" as const : "text_only" as const,
+      visualRationale: "Fixture-specific visual purpose.",
+      sceneTextMode: "visual_labels" as const,
+      visualPrompt: `Porsche 911 evidence ${slide.order}`,
+    }));
+    const presentation = makePresentation({ title: "Porsche 911 history", slides: slides as any, designBrief: { ...makePresentation().designBrief!, slideDirections: directions } });
+    const project = { id: "porsche", title: "Porsche 911 history", prompt: "Explain the model", scenario: "university_report", level: "university_student", mode: "with_sources", slideCount: 10 };
+
+    expect(directions.filter((direction) => direction.visualPurpose === "photo")).toHaveLength(6);
+    expect(directions.filter((direction) => direction.visualPurpose === "diagram")).toHaveLength(3);
+    expect(findVisualPlanIssues(presentation, project)).toHaveLength(0);
+  });
+
   it("flags duplicate Tavily object keys but leaves uploaded evidence untouched", () => {
     const slides = [1, 2, 3].map((order) => ({
       ...makeSlide(order, `Porsche 911 ${order}`, `Porsche 911 point ${order} stays specific.`, [`Distinct point ${order}`]),
@@ -1015,6 +1050,28 @@ describe("presentation quality checks", () => {
       slideId: "slide-1",
       severity: "blocker",
       field: "visual.image.url",
+    }));
+  });
+
+  it("keeps provider mode inside the same release gate as document quality", () => {
+    const project = {
+      id: "saturn-release",
+      title: "Saturn study deck",
+      prompt: "Explain Saturn for a university astronomy class.",
+      scenario: "lesson",
+      level: "beginner",
+      mode: "with_sources",
+      slideCount: 2,
+    } as const;
+    const yandexResult = productionQualityReleaseResult(makePresentation(), [source], project);
+    const fallbackResult = productionQualityReleaseResult(makePresentation({ generationMode: "demo-fallback" }), [source], project);
+
+    expect(yandexResult.issues).not.toContainEqual(expect.objectContaining({ field: "generationMode" }));
+    expect(fallbackResult.finalDisposition).toBe("rejected");
+    expect(fallbackResult.issues).toContainEqual(expect.objectContaining({
+      severity: "blocker",
+      category: "schema_risk",
+      field: "generationMode",
     }));
   });
 });

@@ -379,6 +379,32 @@ describe("image search helpers", () => {
     expect(enriched.slides[0].visual.image?.sourceUrl).toBe("https://cdn.example.com/classroom.webp");
   });
 
+  it("uses a data-backed process diagram when every relevant photo candidate fails to download", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    const slide = {
+      ...presentation.slides[0],
+      layout: "image-focus" as const,
+      bullets: ["Collect the source material", "Compare the key evidence", "Explain the conclusion"],
+    };
+
+    const enriched = await enrichPresentationImages(
+      { id: "project-1", title: "AI in education", prompt: "Explain practical AI in school" },
+      { ...presentation, slides: [slide] },
+      {
+        searchImages: async () => [{ url: "https://cdn.example.com/unavailable.jpg", description: "AI classroom", sourceTitle: "Archive" }],
+        downloadImage: async () => { throw new Error("download failed"); },
+        putObject: async () => undefined,
+      },
+    );
+
+    expect(enriched.slides[0].visual.image).toBeUndefined();
+    expect(enriched.slides[0]).toMatchObject({
+      layout: "process",
+      visual: { type: "process_diagram", items: [{ text: "Collect the source material" }, { text: "Compare the key evidence" }, { text: "Explain the conclusion" }] },
+    });
+  });
+
   it("resizes and normalizes oversized presentation images before upload", async () => {
     const source = await sharp({
       create: {

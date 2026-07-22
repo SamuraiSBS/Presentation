@@ -139,11 +139,19 @@ const legacyThemeToPremiumThemeId: Record<PresentationThemePreset, string> = {
 export const sceneTextModeSchema = z.enum(["hero_phrase", "talk_sentences", "visual_labels", "takeaway"]);
 export type SceneTextMode = z.infer<typeof sceneTextModeSchema>;
 
+export const visualPurposeSchema = z.enum(["photo", "diagram", "timeline", "comparison", "metric", "text_only"]);
+export type VisualPurpose = z.infer<typeof visualPurposeSchema>;
+
 export const designBriefSlideDirectionSchema = z.object({
   slideOrder: z.number().int().positive(),
   visualRole: z.enum(["hero", "problem", "context", "explain", "compare", "sequence", "evidence", "quote", "visual_statement", "reflect", "summary"]),
   layoutIntent: z.enum(["full_bleed_image", "split_image_text", "statement", "cards", "timeline", "diagram", "comparison", "evidence_board", "quote_spread", "metric", "summary"]),
   imageStrategy: z.enum(["real_photo", "generated_illustration", "diagram", "none"]),
+  // This is the slide-level contract used to audit a generated deck.  The
+  // existing visualRole remains the narrative job; visualPurpose says what
+  // the audience should actually see and why.
+  visualPurpose: visualPurposeSchema.optional(),
+  visualRationale: z.string().trim().max(240).optional(),
   sceneTextMode: sceneTextModeSchema.optional(),
   visualPrompt: z.string().default(""),
 });

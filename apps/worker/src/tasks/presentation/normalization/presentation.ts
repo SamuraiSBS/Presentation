@@ -291,6 +291,7 @@ export function ensureDesignBriefDirections(brief: DesignBrief, project: Project
         ...direction,
         layoutIntent: "summary" as const,
         imageStrategy: "none" as const,
+        visualPurpose: "text_only" as const,
         sceneTextMode: "takeaway" as const,
         visualPrompt: completeVisualPrompt(project, plan, "none", "summary", direction.visualPrompt),
       };
@@ -300,6 +301,7 @@ export function ensureDesignBriefDirections(brief: DesignBrief, project: Project
         ...direction,
         layoutIntent: direction.visualRole === "hero" ? "statement" as const : "cards" as const,
         imageStrategy: "none" as const,
+        visualPurpose: "text_only" as const,
         sceneTextMode: direction.visualRole === "hero" ? "hero_phrase" as const : "talk_sentences" as const,
         visualPrompt: completeVisualPrompt(project, plan, "none", direction.visualRole === "hero" ? "statement" : "cards", direction.visualPrompt),
       };
@@ -307,12 +309,14 @@ export function ensureDesignBriefDirections(brief: DesignBrief, project: Project
     if (direction.imageStrategy !== "real_photo") {
       return {
         ...direction,
+        visualPurpose: direction.visualPurpose || (direction.layoutIntent === "timeline" ? "timeline" : direction.layoutIntent === "comparison" ? "comparison" : direction.layoutIntent === "metric" ? "metric" : direction.imageStrategy === "diagram" ? "diagram" : "text_only"),
         sceneTextMode: buildSceneTextMode(direction.slideOrder, project.slideCount, direction.visualRole, direction.layoutIntent, direction.imageStrategy),
         visualPrompt: completeVisualPrompt(project, plan, direction.imageStrategy, direction.layoutIntent, direction.visualPrompt),
       };
     }
     return {
       ...direction,
+      visualPurpose: "photo" as const,
       sceneTextMode: "visual_labels" as const,
       visualPrompt: completeVisualPrompt(project, plan, "real_photo", direction.layoutIntent, direction.visualPrompt),
     };

@@ -660,7 +660,27 @@ function fallbackSlideForMissingPhoto(
   slide: PresentationDocument["slides"][number],
   direction?: DesignBriefSlideDirection,
 ) {
-  if (direction?.imageStrategy !== "real_photo" || slide.visual.image || slide.layout !== "image-focus") return slide;
+  if (direction?.imageStrategy !== "real_photo" || slide.visual.image) return slide;
+  const items = slide.bullets
+    .map((text, index) => ({ label: `${index + 1}`, text: cleanText(text) }))
+    .filter((item) => item.text)
+    .slice(0, 5);
+  // A failed photo lookup must not leave a decorative empty layout behind.
+  // Only promote the slide to a diagram when the generated slide already
+  // contains enough ordered material to explain a process.
+  if (items.length >= 3) {
+    return {
+      ...slide,
+      layout: "process" as const,
+      visual: {
+        ...slide.visual,
+        type: "process_diagram" as const,
+        title: cleanText(slide.title),
+        description: cleanText(slide.thesis),
+        items,
+      },
+    };
+  }
   return { ...slide, layout: "statement" as const };
 }
 

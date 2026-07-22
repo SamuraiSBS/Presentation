@@ -46,6 +46,7 @@ import {
   findContentSlideContractIssues,
   improvePresentationQuality,
   productionQualityReleaseResult,
+  rebuildGeneratedCanvases,
   type QualityRepairResponse,
 } from "../../presentation-quality.js";
 
@@ -263,7 +264,7 @@ export async function finalizeGeneratedPresentation(
     }, "polishing regressed a validated presentation; restoring the last valid candidate");
     return preserveAcceptedNarration(lastValidCandidate, generatedText, project);
   }
-  const released = preserveAcceptedNarration(finalPresentation, generatedText, project);
+  const released = rebuildGeneratedCanvases(preserveAcceptedNarration(finalPresentation, generatedText, project));
   const release = productionQualityReleaseResult(released, sources, project);
   logger.info({
     projectId: project.id,

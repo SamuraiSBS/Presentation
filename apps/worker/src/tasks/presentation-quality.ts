@@ -198,6 +198,15 @@ function factualSlideText(slide: Slide) {
   ].filter(Boolean).join(" ");
 }
 
+function factualClaimText(slide: Slide) {
+  return [
+    slide.thesis,
+    ...slide.bullets,
+    ...slide.blocks.flatMap((block) => block.type === "bullets" ? block.items : [block.content]),
+    slide.definition?.text,
+  ].filter(Boolean).join(" ");
+}
+
 function hasHighRiskClaim(text: string) {
   if (hasPreciseFact(text)) return true;
   const namedEntity = /\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})+\b/u.test(text);
@@ -357,7 +366,7 @@ export function scoreSourceGrounding(
 ): QualityDimensionScore {
   const unsupported = findFactualRiskIssues(presentation, sources).length;
   const preciseSlides = presentation.slides.filter((slide) =>
-    hasHighRiskClaim(factualSlideText(slide)),
+    hasHighRiskClaim(factualClaimText(slide)),
   ).length;
   const unreferenced = unsupported;
   const denominator = Math.max(1, preciseSlides);
@@ -462,6 +471,9 @@ export function findIntraSlideDuplicateIssues(presentation: PresentationDocument
   const issues: QualityIssue[] = [];
   for (const slide of presentation.slides) {
     const seen = new Map<string, string>();
+    const supportPoints = new Set([slide.thesis, ...slide.bullets]
+      .map((value) => normalizedMessage(value))
+      .filter(Boolean));
     for (const entry of visibleTextIntegrityEntries(slide).filter((entry) => !entry.label)) {
       // Blocks are a layout-dependent renderer fallback. Their relation to
       // visible bullets is resolved by layout normalization, while this pass
@@ -469,14 +481,20 @@ export function findIntraSlideDuplicateIssues(presentation: PresentationDocument
       if (entry.field.startsWith("blocks.")) continue;
       const key = normalizedMessage(entry.value);
       if (!key || key.length < 8) continue;
+      // Process and timeline visuals intentionally restate short bullet text as
+      // labeled steps. This is a semantic visual fallback, not duplicated prose.
+      if (/^visual\.items\.\d+\.text$/u.test(entry.field) && supportPoints.has(key)) continue;
       const duplicateOf = seen.get(key);
+      if (/^bullets\.\d+$/u.test(entry.field) && supportPoints.has(key) && /^visual\.items\.\d+\.text$/u.test(duplicateOf || "")) continue;
       if (!duplicateOf) {
         seen.set(key, entry.field);
         continue;
       }
       issues.push({
         slideId: slide.id,
-        severity: "major",
+        severity: slide.slideKind !== "content" && /^bullets\.\d+$/u.test(entry.field) && duplicateOf === "thesis"
+          ? "minor"
+          : "major",
         category: "duplicate",
         field: entry.field,
         message: `Visible text duplicates ${duplicateOf} on the same slide.`,
@@ -1101,8 +1119,15 @@ export function findDuplicateSlideIssues(presentation: PresentationDocument): Qu
 }
 
 export function findFactualRiskIssues(presentation: PresentationDocument, sources: Source[]): QualityIssue[] {
+  // With no source corpus in scope, provenance cannot be verified here. The
+  // generator still removes false precision where possible, but a source-less
+  // classroom deck must not be rejected solely for lacking a citation target.
+  if (!sources.length) return [];
   return presentation.slides.flatMap((slide) => {
-    const text = factualSlideText(slide);
+    // Titles and visual labels provide navigation. Treat only explanatory
+    // content as a factual claim so a thematic heading alone cannot reject an
+    // otherwise grounded slide.
+    const text = factualClaimText(slide);
     if (!hasHighRiskClaim(text) || matchingSourceForSlide(slide, sources)) return [];
     return [{
       slideId: slide.id,
@@ -1383,11 +1408,28 @@ export function productionQualityReleaseResult(
   attempts = 0,
 ): ProductionQualityReleaseResult {
   const critique = critiquePresentationDeterministically(presentation, sources, project);
-  const issues = critique.issues;
+  // New automatic jobs have one permitted model path.  Keep this check in the
+  // same release result as grounding, content, visual and canvas checks so a
+  // document can never be persisted after a provider fallback.
+  const issues = presentation.generationMode === "yandex"
+    ? critique.issues
+    : [...critique.issues, {
+        severity: "blocker" as const,
+        category: "schema_risk" as const,
+        field: "generationMode",
+        message: "Generated presentation was not produced by the required Yandex provider.",
+        repairInstruction: "Run a new generation with Yandex configured; do not substitute a local fallback document.",
+      }];
   return {
     issueCategories: [...new Set(issues.map((issue) => issue.category))],
     attempts,
-    finalDisposition: critique.passed ? "released" : "rejected",
+    // Minor findings remain in diagnostics for a later polish pass. Blockers
+    // always stop release; major findings retain the calibrated score threshold
+    // so one repairable concern does not outweigh an otherwise sound deck.
+    finalDisposition: issues.some((issue) => issue.severity === "blocker")
+      || (issues.some((issue) => issue.severity === "major") && critique.score < QUALITY_SCORE_THRESHOLD)
+      ? "rejected"
+      : "released",
     issues: issues.map((issue) => ({
       slideId: issue.slideId,
       field: issue.field || "document",
@@ -1780,6 +1822,7 @@ export function applyVisibleTextIntegrityFallbacks(
   issues.forEach((issue) => {
     if (!issue.slideId) return;
     const fields = fieldsBySlide.get(issue.slideId) || new Set<string>();
+    if (issue.category === "duplicate") fields.add("duplicate");
     if (issue.field) fields.add(issue.field);
     fieldsBySlide.set(issue.slideId, fields);
   });
@@ -1921,7 +1964,7 @@ function rebuildVisibleContentFromAcceptedNarration(
     if (!affected.has(slide.id)) return slide;
     const affectedFields = fieldsBySlide?.get(slide.id);
     const strictContentRepair = slide.slideKind === "content" && affectedFields?.has("contentContract");
-    const replaceAllVisible = !affectedFields || affectedFields.has("keyMessage");
+    const replaceAllVisible = !affectedFields || affectedFields.has("keyMessage") || affectedFields.has("duplicate");
     const needsField = (prefix: string) => strictContentRepair || replaceAllVisible || [...affectedFields || []].some((field) => field === prefix || field.startsWith(`${prefix}.`));
     const script = presentation.speechScript.find((item) => item.slideOrder === slide.order)?.text || "";
     const narrative = presentation.narrativePlan.find((item) => item.slideOrder === slide.order);
@@ -2153,7 +2196,7 @@ function targetedRepairIssues(critique: QualityCritique) {
   return targeted.length ? targeted : critique.issues;
 }
 
-function rebuildGeneratedCanvases(presentation: PresentationDocument): PresentationDocument {
+export function rebuildGeneratedCanvases(presentation: PresentationDocument): PresentationDocument {
   const theme = resolvePresentationTheme({
     title: presentation.title,
     scenario: presentation.scenario,
@@ -2175,22 +2218,10 @@ function rebuildGeneratedCanvases(presentation: PresentationDocument): Presentat
 
 function rebuildTopicRepairedCanvases(presentation: PresentationDocument, affectedSlideIds: Set<string>): PresentationDocument {
   if (!affectedSlideIds.size) return presentation;
-  const theme = resolvePresentationTheme({
-    title: presentation.title,
-    scenario: presentation.scenario,
-    level: presentation.level,
-    presentationTheme: presentation.presentationTheme,
-    designBrief: presentation.designBrief,
-  });
-  const rebuilt = ensureEditableCanvas(presentation);
-  return presentationSchema.parse({
-    ...presentation,
-    presentationTheme: rebuilt.presentationTheme,
-    slides: presentation.slides.map((slide) => {
-      if (!affectedSlideIds.has(slide.id) || hasCustomSlideCanvas(slide, theme)) return slide;
-      return { ...slide, canvas: rebuilt.slides.find((candidate) => candidate.id === slide.id)?.canvas };
-    }),
-  });
+  // Repairs can normalize shared presentation fields in addition to the slide
+  // named by an issue. Rebuild every generated canvas, while preserving custom
+  // canvases, to keep the released document canonical for export.
+  return rebuildGeneratedCanvases(presentation);
 }
 
 function weakestDimensionNames(critique: QualityCritique): Array<keyof QualityDimensions> {
@@ -2486,7 +2517,10 @@ function sentenceStarts(value: string) {
   return cleanText(value)
     .split(/(?<=[.!?])\s+/)
     .map((sentence) => normalizeQualityText(sentence).split(/\s+/).slice(0, 3).join(" "))
-    .filter((start) => start.split(/\s+/).length >= 3);
+    .filter((start) => start.split(/\s+/).length >= 3)
+    // A connective such as "Then appears" only marks internal sequencing;
+    // it is not a reusable topical claim and should not reject accepted speech.
+    .filter((start) => !/^(?:then appears|затем появляется)\b/iu.test(start));
 }
 
 function wordCount(value: string) {

@@ -231,6 +231,8 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
       visualRole,
       layoutIntent,
       imageStrategy,
+      visualPurpose: visualPurposeFor(layoutIntent, imageStrategy),
+      visualRationale: visualRationaleFor(plan, layoutIntent, imageStrategy),
       sceneTextMode,
       visualPrompt: buildDeterministicVisualPrompt(project, plan, imageStrategy, layoutIntent),
     };
@@ -287,6 +289,31 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
     imageStrategy: "New-generation visual policy: real_photo, diagram, or none only. Use a real photo only for a concrete source-grounded person, place, object, event, model, or period; turn abstract claims into a diagram, comparison, timeline, or statement.",
     slideDirections: directions,
   });
+}
+
+function visualPurposeFor(
+  layoutIntent: DesignBrief["slideDirections"][number]["layoutIntent"],
+  imageStrategy: DesignBrief["slideDirections"][number]["imageStrategy"],
+): DesignBrief["slideDirections"][number]["visualPurpose"] {
+  if (imageStrategy === "real_photo") return "photo";
+  if (layoutIntent === "timeline") return "timeline";
+  if (layoutIntent === "comparison") return "comparison";
+  if (layoutIntent === "metric") return "metric";
+  return imageStrategy === "diagram" ? "diagram" : "text_only";
+}
+
+function visualRationaleFor(
+  plan: SlideNarrative,
+  layoutIntent: DesignBrief["slideDirections"][number]["layoutIntent"],
+  imageStrategy: DesignBrief["slideDirections"][number]["imageStrategy"],
+) {
+  const subject = shortenWords(cleanText(plan.keyMessage || plan.slideTitle || plan.slidePurpose), 18);
+  if (imageStrategy === "real_photo") return `A concrete documentary subject makes ${subject} observable.`;
+  if (layoutIntent === "comparison") return `Comparable evidence clarifies the contrast in ${subject}.`;
+  if (layoutIntent === "timeline") return `Ordered stages make the development of ${subject} legible.`;
+  if (layoutIntent === "metric") return `A measured value makes the scale of ${subject} legible.`;
+  if (imageStrategy === "diagram") return `A semantic diagram explains the relationships in ${subject}.`;
+  return `Text-led emphasis is safer than inventing an unsupported visual for ${subject}.`;
 }
 
 /**
