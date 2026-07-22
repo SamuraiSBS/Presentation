@@ -157,7 +157,7 @@ export const NARRATION_SYSTEM_PROMPT = [
   "The output must be divided into slide sections exactly as `Слайд 1: Заголовок`.",
   "Write one coherent speech first, then divide that same speech into slide sections without breaking its logical flow.",
   "Each slide section may contain 3 to 7 complete Russian sentences; use only as many sentences as the meaning requires.",
-  "Aim for about 35-55 seconds of natural speech per slide, so the total duration grows with the number of slides.",
+  "When the user prompt gives a total word or duration budget, it is a hard contract: meet the stated per-section and total word targets even when that means more than 55 seconds on a content slide. Do not shorten the answer merely to keep every slide equally brief.",
   "Write exactly one narration section for each requested slide, in strict order, with no extra sections.",
   "Write like a university student report: academic, easy-professional, concrete, human, calm, and close to the topic.",
   "The first section must naturally introduce the subject and the question of the report without saying that you are introducing it.",

@@ -199,7 +199,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
         </>
       ) : null}
 
-      {project.status === "failed" ? <section className="panel script-error-panel" role="alert"><h2>Шаг не завершён</h2><p className="muted">{project.error ? userError(new Error(project.error), "AI-провайдер не завершил запрос. Проверьте баланс и повторите действие.") : "AI-провайдер не завершил запрос. Проверьте баланс и повторите действие."}</p>{canEdit ? (project.workflow === "requirements_driven" ? <Button asChild><Link href={`/projects/${project.id}/defense/plan`}><ShieldCheck size={18} />Открыть подтверждённый план защиты</Link></Button> : hasSavedSpeechDraft ? <AiConfirmation title="Повторить AI-сборку слайдов?" description="Повтор создаст новый платный запрос к AI-провайдеру." confirmLabel="Повторить платный запрос" pending={acceptSpeech.isPending} onConfirm={acceptAndGenerate} /> : <AiConfirmation title="Повторить AI-подготовку текста?" description="Повтор создаст новый платный запрос к AI-провайдеру." confirmLabel="Повторить платный запрос" pending={startNarration.isPending} onConfirm={startText} />) : null}</section> : null}
+      {project.status === "failed" ? <section className="panel script-error-panel" role="alert"><h2>Автовосстановление не завершилось</h2><p className="muted">{project.error ? userError(new Error(project.error), "Материалы сохранены. Запустите подготовку ещё раз, когда будете готовы.") : "Материалы сохранены. Запустите подготовку ещё раз, когда будете готовы."}</p>{canEdit ? (project.workflow === "requirements_driven" ? <Button asChild><Link href={`/projects/${project.id}/defense/plan`}><ShieldCheck size={18} />Открыть подтверждённый план защиты</Link></Button> : hasSavedSpeechDraft ? <AiConfirmation title="Запустить сборку слайдов ещё раз?" description="Будет создан новый платный запрос к AI-провайдеру." confirmLabel="Запустить снова" pending={acceptSpeech.isPending} onConfirm={acceptAndGenerate} /> : <AiConfirmation title="Запустить подготовку текста ещё раз?" description="Будет создан новый платный запрос к AI-провайдеру. Система снова автоматически исправит неподходящие варианты." confirmLabel="Запустить снова" pending={startNarration.isPending} onConfirm={startText} />) : null}</section> : null}
       {actionError ? <p className="form-error" role="alert">{actionError}</p> : null}
     </section>
   );
@@ -238,7 +238,10 @@ function userError(error: unknown, fallback: string) {
     return "Не удалось автоматически подстроить вёрстку. Текст выступления и источники сохранены; повторная сборка слайдов не требует заново готовить речь.";
   }
   if (error instanceof Error && /AI narration quality check failed/i.test(error.message)) {
-    return "AI подготовил неполный текст выступления. Мы не смогли автоматически исправить его; повторите генерацию.";
+    return "AI подготовил текст, который не прошёл проверку. Система уже выполнила автоматические попытки исправления; материалы сохранены.";
+  }
+  if (error instanceof Error && /Не удалось завершить подготовку презентации/i.test(error.message)) {
+    return "Автоматическая подготовка не прошла проверку качества после всех попыток. Материалы сохранены — запустите подготовку ещё раз.";
   }
   if (error instanceof Error && /[А-Яа-яЁё]/.test(error.message) && !/<[^>]+>|\b(?:error|failed|invalid|internal)\b/i.test(error.message)) return error.message;
   return fallback;

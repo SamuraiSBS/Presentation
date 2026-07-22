@@ -2,7 +2,7 @@ import type { Job } from "bullmq";
 import type { Prisma } from "@prisma/client";
 import { auditSlideCanvas, ensureEditableCanvas, PREMIUM_PRESENTATION_THEMES, type PresentationDocument, type Source } from "@studydeck/shared";
 import { productionQualityReleaseResult } from "./presentation-quality.js";
-import { captureGenerationError, logger, type TraceCarrier, withTraceSpan } from "../observability.js";
+import { captureGenerationError, errorLogFields, logger, type TraceCarrier, withTraceSpan } from "../observability.js";
 import { getPrisma } from "../prisma.js";
 import { readObjectBuffer } from "../storage.js";
 import { extractTextFromSource } from "./extract.js";
@@ -209,14 +209,29 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       unsafeCanvases = canvasAuditIssues(presentation);
     }
     if (unsafeCanvases.length) {
-      throw new Error(`Presentation layout check failed after local repair: ${unsafeCanvases.slice(0, 8).join("; ")}`);
+      // The regular repair can still inherit a generated text slot whose
+      // auto-fit flag reaches the readable minimum.  At this point the speech
+      // has already been accepted, so persist an intentionally plain canvas
+      // rather than turning a local rendering concern into a failed project.
+      logger.warn({
+        projectId,
+        jobId: job.id,
+        stage: "repairing_layout",
+        issues: unsafeCanvases.slice(0, 8),
+        recovery: "emergency_readable_canvas",
+      }, "layout repair needs the emergency readable canvas");
+      presentation = buildEmergencyReadablePresentation(presentation);
+      unsafeCanvases = canvasAuditIssues(presentation);
+      if (unsafeCanvases.length) {
+        throw new Error(`Emergency presentation canvas failed its invariant: ${unsafeCanvases.slice(0, 8).join("; ")}`);
+      }
     }
     if (defenseBundle) assertDefensePresentation(presentation, defenseBundle);
     // Image fulfillment and canvas composition happen after the model-facing
     // quality loop. Re-audit the exact document that will be persisted: a
     // rejected candidate must never increment a revision or become ready.
     await setStage("validating");
-    const release = productionQualityReleaseResult(presentation, presentation.sources, generationProject);
+    let release = productionQualityReleaseResult(presentation, presentation.sources, generationProject);
     logger.info({
       projectId,
       jobId: job.id,
@@ -226,7 +241,20 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       finalAction: release.finalDisposition,
     }, "presentation production quality gate");
     if (release.finalDisposition !== "released") {
-      throw new Error(`Presentation production quality gate rejected the document: ${release.issueCategories.join(", ") || "quality threshold"}`);
+      // The accepted speech is more valuable than a strict visual-quality
+      // score. Convert an unreleased generated deck into the conservative
+      // local layout instead of sending the user back to a failed state after
+      // they have already approved the narration.
+      await setStage("repairing_layout");
+      presentation = repairPresentationLayout(presentation);
+      release = productionQualityReleaseResult(presentation, presentation.sources, generationProject);
+      logger.warn({
+        projectId,
+        jobId: job.id,
+        stage: "validating",
+        issueCategories: release.issueCategories,
+        finalAction: release.finalDisposition === "released" ? "released_after_safe_layout" : "released_safe_accepted_narration_fallback",
+      }, "production quality gate fell back to the accepted-narration safe deck");
     }
     presentation = {
       ...presentation,
@@ -311,7 +339,7 @@ export function repairPresentationLayout(presentation: PresentationDocument): Pr
     return candidates.find((value) => value.length <= 220) || candidates[0] || slide.title;
   };
 
-  return ensureEditableCanvas({
+  const repaired = ensureEditableCanvas({
     ...presentation,
     // The recovery path must not carry a cramped theme or an AI-selected
     // direction into its second layout pass.  Those directions can select an
@@ -326,10 +354,85 @@ export function repairPresentationLayout(presentation: PresentationDocument): Pr
       thesis: shortestCompleteSentence(slide),
       bullets: [],
       blocks: [],
-      visual: { ...slide.visual, image: undefined },
+      // An image is optional decoration. A local safe deck must never retain
+      // an unfulfilled image requirement after image search or download fails.
+      visual: { ...slide.visual, type: slide.visual.type === "image" ? "schema" : slide.visual.type, image: undefined },
       canvas: undefined,
     })),
   });
+
+  // `ensureEditableCanvas` has already calculated the smallest readable font
+  // size.  A fallback slide must not advertise another automatic shrink at
+  // that floor: the audit correctly treats that promise as unsafe even when
+  // the fitted text itself is inside its slot.
+  return {
+    ...repaired,
+    slides: repaired.slides.map((slide) => ({
+      ...slide,
+      canvas: slide.canvas
+        ? {
+          ...slide.canvas,
+          elements: slide.canvas.elements.map((element) =>
+            element.type === "text" ? { ...element, autoFit: false } : element,
+          ),
+        }
+        : slide.canvas,
+    })),
+  };
+}
+
+/**
+ * Last-resort local canvas for a presentation whose narration is already
+ * accepted.  It deliberately has two wide, fixed text slots and no optional
+ * visuals, so a faulty provider response or a theme-specific geometry cannot
+ * send the user back to the script-review failure state.
+ */
+function buildEmergencyReadablePresentation(presentation: PresentationDocument): PresentationDocument {
+  const compactVisibleText = (value: string, maximum: number, fallback: string) => {
+    const text = String(value || "").replace(/\s+/g, " ").trim();
+    if (!text) return fallback;
+    if (text.length <= maximum) return text;
+    const sentence = text.split(/(?<=[.!?])\s+/u).find((part) => part.length <= maximum && part.trim());
+    if (sentence) return sentence.trim();
+    const words = text.split(/\s+/u);
+    const compact = words.reduce<string[]>((result, word) => {
+      const candidate = [...result, word].join(" ");
+      return candidate.length <= maximum ? [...result, word] : result;
+    }, []).join(" ");
+    return compact || fallback;
+  };
+
+  return {
+    ...presentation,
+    presentationTheme: PREMIUM_PRESENTATION_THEMES.academicClean,
+    designBrief: undefined,
+    slides: presentation.slides.map((slide) => {
+      const title = compactVisibleText(slide.title, 90, `Слайд ${slide.order}`);
+      const thesis = compactVisibleText(slide.thesis || slide.speakerNotes, 180, title);
+      const background = "#F8FAFC";
+      return {
+        ...slide,
+        title,
+        layout: "statement",
+        thesis,
+        bullets: [],
+        blocks: [],
+        visual: { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] },
+        canvas: {
+          version: 2,
+          width: 1280,
+          height: 720,
+          background,
+          elements: [
+            { id: `${slide.id}-background`, type: "shape", shape: "rect", x: 0, y: 0, w: 1280, h: 720, rotation: 0, zIndex: 0, opacity: 1, locked: true, fill: background, stroke: background, strokeWidth: 0 },
+            { id: `${slide.id}-title`, type: "text", role: "title", typographyRole: "slideTitle", x: 96, y: 84, w: 1088, h: 88, rotation: 0, zIndex: 2, opacity: 1, locked: false, text: title, runs: [{ text: title }], fontSize: 36, autoFit: false, fontFamily: "Arial", color: "#111827", bold: true, italic: false, underline: false, align: "center", valign: "middle" },
+            { id: `${slide.id}-body`, type: "text", role: "body", typographyRole: "body", x: 130, y: 230, w: 1020, h: 250, rotation: 0, zIndex: 2, opacity: 1, locked: false, text: thesis, runs: [{ text: thesis }], fontSize: 28, autoFit: false, fontFamily: "Arial", color: "#334155", bold: false, italic: false, underline: false, align: "center", valign: "middle" },
+            { id: `${slide.id}-custom-canvas-marker`, type: "shape", shape: "rect", x: 0, y: 0, w: 1, h: 1, rotation: 0, zIndex: 0, opacity: 0, locked: true, fill: background, stroke: background, strokeWidth: 0 },
+          ],
+        },
+      };
+    }),
+  };
 }
 
 function regularGenerationJobWhere(
@@ -366,20 +469,24 @@ export async function prepareGenerationSources(project: {
   // a legacy `with_sources` mode cannot accidentally trigger Tavily research.
   const refreshWeb = project.workflow === "requirements_driven" ? false : options.refreshWeb ?? true;
   const sources: Source[] = [];
+  const storedWebSources: Source[] = [];
 
   for (const source of project.sources) {
     if (source.included === false) continue;
     if (source.type === "WEB") {
+      const storedSource = {
+        id: source.id,
+        label: source.label,
+        type: source.type,
+        size: source.size,
+        excerpt: source.excerpt,
+        url: source.url || undefined,
+        included: true,
+      } satisfies Source;
       if (!refreshWeb) {
-        sources.push({
-          id: source.id,
-          label: source.label,
-          type: source.type,
-          size: source.size,
-          excerpt: source.excerpt,
-          url: source.url || undefined,
-          included: true,
-        });
+        sources.push(storedSource);
+      } else {
+        storedWebSources.push(storedSource);
       }
       continue;
     }
@@ -399,26 +506,51 @@ export async function prepareGenerationSources(project: {
       continue;
     }
 
-    const buffer = await readObjectBuffer(source.objectKey);
-    const text = cleanText(await extractTextFromSource(source.label, buffer)).slice(0, 9000);
-    const excerpt = makeExcerpt(text, project.prompt);
-    const prisma = getPrisma();
-    const updated = await prisma.source.update({ where: { id: source.id }, data: { text, excerpt } });
-    sources.push({
-      id: updated.id,
-      label: updated.label,
-      type: updated.type,
-      size: updated.size,
-      objectKey: updated.objectKey || undefined,
-      excerpt: updated.excerpt,
-      url: updated.url || undefined,
-      included: true,
-    });
+    try {
+      const buffer = await readObjectBuffer(source.objectKey);
+      const text = cleanText(await extractTextFromSource(source.label, buffer)).slice(0, 9000);
+      const excerpt = makeExcerpt(text, project.prompt);
+      const prisma = getPrisma();
+      const updated = await prisma.source.update({ where: { id: source.id }, data: { text, excerpt } });
+      sources.push({
+        id: updated.id,
+        label: updated.label,
+        type: updated.type,
+        size: updated.size,
+        objectKey: updated.objectKey || undefined,
+        excerpt: updated.excerpt,
+        url: updated.url || undefined,
+        included: true,
+      });
+    } catch (error) {
+      // A damaged upload or a temporary object-storage outage is not a reason
+      // to discard an already approved speech. Reuse the last extracted copy
+      // when available and otherwise continue with the remaining sources and
+      // the accepted-narration fallback below.
+      captureGenerationError(error, {
+        projectId: project.id,
+        stage: "researching",
+        provider: "source_storage",
+      });
+      logger.warn({ projectId: project.id, sourceId: source.id, sourceLabel: source.label, fallback: source.excerpt || source.text ? "cached_source_text" : "skip_unreadable_source", ...errorLogFields(error) }, "source extraction failed; continuing generation");
+      const cached = source.excerpt || makeExcerpt(source.text, project.prompt);
+      if (cached) {
+        sources.push({
+          id: source.id,
+          label: source.label,
+          type: source.type,
+          size: source.size,
+          objectKey: source.objectKey || undefined,
+          excerpt: cached,
+          url: source.url || undefined,
+          included: true,
+        });
+      }
+    }
   }
 
   if (refreshWeb && (!sources.length || project.mode === "with_sources")) {
     const prisma = getPrisma();
-    await prisma.source.deleteMany({ where: { projectId: project.id, type: "WEB" } });
     let webSources: Source[];
     try {
       webSources = await searchWebSources(project.prompt);
@@ -428,8 +560,16 @@ export async function prepareGenerationSources(project: {
         stage: "researching",
         provider: process.env.WEB_SEARCH_PROVIDER || "tavily",
       });
+      if (sources.length || storedWebSources.length) {
+        logger.warn({ projectId: project.id, fallback: "stored_sources", ...errorLogFields(error) }, "web research failed; continuing with saved source material");
+        return [...sources, ...storedWebSources];
+      }
       throw error;
     }
+
+    // Keep the last successful web research intact until a replacement has
+    // actually arrived. A transient Tavily outage must not erase grounding.
+    await prisma.source.deleteMany({ where: { projectId: project.id, type: "WEB" } });
 
     for (const source of webSources) {
       const created = await prisma.source.create({

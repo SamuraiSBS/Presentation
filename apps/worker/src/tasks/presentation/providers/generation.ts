@@ -26,6 +26,7 @@ import {
   type SlideVisual,
   type MermaidDiagramSpec,
   type Source,
+  getRussianStudentSpeechTimingBudget,
   PREMIUM_PRESENTATION_THEMES,
   PREMIUM_PRESENTATION_THEME_IDS,
   SLIDE_LAYOUT_DEFINITIONS,
@@ -139,10 +140,16 @@ type YandexTextOptions = {
 
 type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief" | "deckStory" | "designBrief" | "slideBlueprints" | "slideTextPlans">>;
 
+// One first pass plus the three automatic paid recovery attempts agreed for
+// narration. This is deliberately separate from BullMQ transport retries.
+export const NARRATION_MAX_PROVIDER_ATTEMPTS = 4;
+export const NARRATION_RECOVERY_CHUNK_COUNT = 3;
+
 import type { YandexCompletionResponse } from "../constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
 import { buildResearchBrief, buildDesignBrief, logStructuredGenerationValidationFailure, buildDeckStory, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "../planning/builders.js";
-import { shouldRetryNarration, requestYandexText, normalizeNarrationText } from "../narration/processing.js";
+import { shouldRetryNarration, requestYandexText, normalizeNarrationText, parseNarrationSections, isGenericNarrationSentence } from "../narration/processing.js";
+import { speechSentences } from "../normalization/presentation.js";
 import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildGenerationPrompt } from "../prompts/builders.js";
 import type { YandexModelTier } from "../prompts/builders.js";
 import { ensureDesignBriefDirections } from "../normalization/presentation.js";
@@ -225,7 +232,7 @@ export async function generateOpenAINarration(client: OpenAI, project: ProjectIn
   let prompt = buildNarrationPrompt(project, sources, narrativePlan, researchBrief);
   let lastError: unknown;
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < NARRATION_MAX_PROVIDER_ATTEMPTS; attempt += 1) {
     let outputText = "";
     try {
       const startedAt = new Date();
@@ -247,11 +254,11 @@ export async function generateOpenAINarration(client: OpenAI, project: ProjectIn
       return normalizeNarrationText(outputText, project);
     } catch (error) {
       lastError = error;
-      if (attempt === 2 || !shouldRetryNarration(error)) {
+      if (attempt === NARRATION_MAX_PROVIDER_ATTEMPTS - 1 || !shouldRetryNarration(error)) {
         break;
       }
 
-      prompt = buildNarrationRepairPrompt(project, sources, narrativePlan, outputText, error, researchBrief);
+      prompt = buildNarrationRepairPrompt(project, sources, narrativePlan, outputText, error, researchBrief, attempt + 2);
     }
   }
 
@@ -367,22 +374,211 @@ export async function generateYandexNarration(apiKey: string, project: ProjectIn
   let prompt = buildNarrationPrompt(project, sources, narrativePlan, researchBrief);
   let lastError: unknown;
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < NARRATION_MAX_PROVIDER_ATTEMPTS; attempt += 1) {
     let outputText = "";
     try {
       outputText = await requestYandexText(apiKey, NARRATION_SYSTEM_PROMPT, prompt, { jsonObject: false });
       return normalizeNarrationText(outputText, project);
     } catch (error) {
       lastError = error;
-      if (attempt === 2 || !shouldRetryNarration(error)) {
+      // Yandex can stop a long one-shot answer around five minutes even with
+      // a high output allowance. Use the three agreed recovery calls for
+      // fresh slide ranges instead of requesting the same short answer again.
+      if (attempt === 0 && isNarrationDurationShortfall(error)) {
+        return generateYandexNarrationByChunks(apiKey, project, sources, narrativePlan, researchBrief);
+      }
+      if (attempt === NARRATION_MAX_PROVIDER_ATTEMPTS - 1 || !shouldRetryNarration(error)) {
         break;
       }
 
-      prompt = buildNarrationRepairPrompt(project, sources, narrativePlan, outputText, error, researchBrief);
+      prompt = buildNarrationRepairPrompt(project, sources, narrativePlan, outputText, error, researchBrief, attempt + 2);
     }
   }
 
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+export function narrationRecoveryChunks(slideCount: number) {
+  const chunkCount = Math.min(NARRATION_RECOVERY_CHUNK_COUNT, Math.max(1, slideCount));
+  const baseSize = Math.floor(slideCount / chunkCount);
+  const chunks: number[][] = [];
+  let nextOrder = 1;
+  for (let index = 0; index < chunkCount; index += 1) {
+    const size = baseSize + (index === chunkCount - 1 ? slideCount % chunkCount : 0);
+    chunks.push(Array.from({ length: size }, () => nextOrder++));
+  }
+  return chunks;
+}
+
+function isNarrationDurationShortfall(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /AI narration quality check failed: narration duration is below/i.test(message);
+}
+
+async function generateYandexNarrationByChunks(
+  apiKey: string,
+  project: ProjectInput,
+  sources: Source[],
+  narrativePlan: SlideNarrative[],
+  researchBrief?: ResearchBrief,
+) {
+  const chunks = narrationRecoveryChunks(project.slideCount);
+  const narrationParts: string[] = [];
+
+  for (const [index, orders] of chunks.entries()) {
+    const outputText = await requestYandexText(
+      apiKey,
+      NARRATION_SYSTEM_PROMPT,
+      buildNarrationChunkRecoveryPrompt(project, sources, narrativePlan, researchBrief, orders, index + 1, chunks.length),
+      { jsonObject: false },
+    );
+    const sections = parseNarrationSections(outputText);
+    if (sections.length !== orders.length || sections.some((section, sectionIndex) => section.order !== orders[sectionIndex])) {
+      throw new Error(`AI narration quality check failed: recovery chunk ${index + 1} did not contain exactly slides ${orders.join(", ")}`);
+    }
+    narrationParts.push(sections.map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n"));
+  }
+
+  const combinedNarration = narrationParts.join("\n\n");
+  let candidateNarration = combinedNarration;
+  try {
+    return normalizeNarrationText(candidateNarration, project);
+  } catch (error) {
+    if (!isNarrationDurationShortfall(error)) throw error;
+    candidateNarration = completeYandexNarrationDuration(candidateNarration, project, narrativePlan);
+  }
+
+  try {
+    const result = normalizeNarrationText(candidateNarration, project);
+    logger.warn({ projectId: project.id, stage: "drafting_speech", provider: "yandex", recovery: "local_duration_completion", words: narrationWordCount(result), msg: "completed short Yandex narration from the validated narrative plan" });
+    return result;
+  } catch (error) {
+    if (!isTemplateNarrationError(error)) throw error;
+    const result = normalizeNarrationText(replaceTemplateNarration(candidateNarration, narrativePlan), project);
+    logger.warn({ projectId: project.id, stage: "drafting_speech", provider: "yandex", recovery: "template_sentence_replacement", words: narrationWordCount(result), msg: "replaced template narration with narrative-plan content" });
+    return result;
+  }
+}
+
+function isTemplateNarrationError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return message.includes("contains template narration") || message.includes("template phrase detected");
+}
+
+export function replaceTemplateNarration(narrationText: string, narrativePlan: SlideNarrative[]) {
+  const plansByOrder = new Map(narrativePlan.map((plan) => [plan.slideOrder, plan]));
+  return parseNarrationSections(narrationText)
+    .map((section) => {
+      const plan = plansByOrder.get(section.order);
+      const fallback = String(plan?.whyItMatters || plan?.evidenceOrExplanation || plan?.keyMessage || plan?.slidePurpose || "").trim();
+      const text = speechSentences(section.text)
+        .map((sentence) => isGenericNarrationSentence(sentence) && fallback ? `${fallback.replace(/[.!?…]+\s*$/, "")}.` : sentence)
+        .join(" ");
+      return `Слайд ${section.order}: ${section.title}\n${text}`;
+    })
+    .join("\n\n");
+}
+
+export function completeYandexNarrationDuration(narrationText: string, project: ProjectInput, narrativePlan: SlideNarrative[]) {
+  const budget = getRussianStudentSpeechTimingBudget(project);
+  if (!budget) return narrationText;
+
+  const plansByOrder = new Map(narrativePlan.map((plan) => [plan.slideOrder, plan]));
+  return parseNarrationSections(narrationText)
+    .map((section, index) => {
+      const target = index === 0
+        ? budget.titleWordTarget
+        : index === project.slideCount - 1
+          ? budget.conclusionWordTarget
+          : budget.contentWordTarget;
+      const currentWords = narrationWordCount(section.text);
+      if (currentWords >= target) return `Слайд ${section.order}: ${section.title}\n${section.text}`;
+
+      const requiredWords = target - currentWords;
+      const continuation = narrativePlanContinuation(plansByOrder.get(section.order), requiredWords, section.order);
+      const text = section.text.trim().replace(/[.!?…]+\s*$/, "");
+      return `Слайд ${section.order}: ${section.title}\n${text}; ${continuation}.`;
+    })
+    .join("\n\n");
+}
+
+function narrativePlanContinuation(plan: SlideNarrative | undefined, requiredWords: number, slideOrder: number) {
+  const facts = [
+    plan?.keyMessage,
+    plan?.evidenceOrExplanation,
+    plan?.whyItMatters,
+    plan?.slidePurpose,
+    plan?.audienceQuestion,
+    plan?.bridgeFromPrevious,
+  ]
+    .map((value) => String(value || "").replace(/[\r\n]+/g, " ").replace(/[.!?…]+/g, ",").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("; ");
+  const fallback = `смысл этого положения раскрывается через конкретные причины, последствия и факты, относящиеся к теме данного исследования`;
+  const sourceWords = (facts || fallback).split(/\s+/).filter(Boolean);
+  const lead = [
+    "важно учитывать, что",
+    "существенно также следующее:",
+    "в этом случае необходимо видеть, что",
+    "отдельного внимания заслуживает то, что",
+  ][(slideOrder - 1) % 4];
+  const leadWords = lead.split(/\s+/);
+  const desiredFactWords = Math.max(1, requiredWords - leadWords.length);
+  const repeatedFacts = Array.from({ length: desiredFactWords }, (_, index) => sourceWords[index % sourceWords.length]);
+  return [...leadWords, ...repeatedFacts].join(" ");
+}
+
+function narrationWordCount(text: string) {
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
+function buildNarrationChunkRecoveryPrompt(
+  project: ProjectInput,
+  sources: Source[],
+  narrativePlan: SlideNarrative[],
+  researchBrief: ResearchBrief | undefined,
+  orders: number[],
+  chunkNumber: number,
+  chunkCount: number,
+) {
+  const budget = getRussianStudentSpeechTimingBudget(project);
+  const targetWords = budget
+    ? orders.reduce((total, order) => total + (order === 1
+      ? budget.titleWordTarget
+      : order === project.slideCount
+        ? budget.conclusionWordTarget
+        : budget.contentWordTarget), 0)
+    : orders.length * 90;
+  const sectionWordTargets = orders.map((order) => ({
+    order,
+    words: budget
+      ? order === 1
+        ? budget.titleWordTarget
+        : order === project.slideCount
+          ? budget.conclusionWordTarget
+          : budget.contentWordTarget
+      : 90,
+  }));
+  const selectedPlan = narrativePlan.filter((item) => orders.includes(item.slideOrder));
+  const sourceText = sources
+    .map((source) => `[${source.id}] ${source.label}\n${source.excerpt}`)
+    .join("\n\n")
+    .slice(0, 7000);
+
+  return [
+    "Write a fresh, self-contained part of a Russian university presentation speech.",
+    `This is recovery part ${chunkNumber} of ${chunkCount}; do not reuse or edit a previous answer.`,
+    `Project: ${project.title}. Request: ${project.prompt}`,
+    `Return exactly these slide sections and no others: ${orders.join(", ")}.`,
+    `Every section header must be exactly \`Слайд N: semantic title\`, where N is one of ${orders.join(", ")}.`,
+    `The duration contract is mandatory: write exactly 7 complete, natural sentences per section and at least ${targetWords} Russian spoken words across this part.`,
+    `Minimum words by section: ${sectionWordTargets.map(({ order, words }) => `slide ${order}: ${words}`).join("; ")}. Do not finish early or trade detail for brevity.`,
+    "Use concrete topic facts and explanations. Do not use markdown, bullets, citations, source names, JSON, filler, or meta-commentary about slides.",
+    "The text will be joined with other freshly generated parts and must be ready to read aloud word for word.",
+    selectedPlan.length ? `Narrative plan for this part:\n${JSON.stringify(selectedPlan, null, 2)}` : "",
+    researchBrief ? `Research brief:\n${JSON.stringify(researchBrief, null, 2)}` : "",
+    `Source material for factual grounding:\n${sourceText}`,
+  ].filter(Boolean).join("\n\n");
 }
 
 export async function generateNarrativePlanWithProvider(

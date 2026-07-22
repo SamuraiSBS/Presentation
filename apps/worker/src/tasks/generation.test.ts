@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { auditSlideCanvas, presentationSchema, PREMIUM_PRESENTATION_THEMES } from "@studydeck/shared";
 import { prepareGenerationSources, repairPresentationLayout } from "./generation.js";
 import { searchWebSources } from "./web-search.js";
+import { readObjectBuffer } from "../storage.js";
+import { extractTextFromSource } from "./extract.js";
 
 vi.mock("../prisma.js", () => ({
   getPrisma: () => ({
@@ -9,6 +11,9 @@ vi.mock("../prisma.js", () => ({
       create: vi.fn(),
       deleteMany: vi.fn(),
       update: vi.fn(),
+    },
+    operationalEvent: {
+      create: vi.fn().mockResolvedValue({}),
     },
   }),
 }));
@@ -32,6 +37,8 @@ vi.mock("./web-search.js", () => ({
 describe("prepareGenerationSources", () => {
   beforeEach(() => {
     vi.mocked(searchWebSources).mockReset();
+    vi.mocked(readObjectBuffer).mockReset();
+    vi.mocked(extractTextFromSource).mockReset();
   });
 
   it("uses existing extracted sources without network search", async () => {
@@ -63,6 +70,56 @@ describe("prepareGenerationSources", () => {
     ]);
   });
 
+  it("keeps uploaded material when refreshing web research fails", async () => {
+    vi.mocked(searchWebSources).mockRejectedValue(new Error("Tavily search failed: 503 unavailable"));
+
+    const sources = await prepareGenerationSources({
+      id: "project-web-fallback",
+      prompt: "AI in education",
+      mode: "with_sources",
+      speechDraft: null,
+      sources: [{
+        id: "source-1",
+        label: "Lecture notes",
+        type: "TXT",
+        size: 200,
+        objectKey: null,
+        url: null,
+        excerpt: "AI helps universities personalize feedback and automate routine checks.",
+        text: "",
+      }],
+    });
+
+    expect(sources).toEqual([
+      expect.objectContaining({ id: "source-1", label: "Lecture notes" }),
+    ]);
+  });
+
+  it("keeps the previous web research when a refresh fails", async () => {
+    vi.mocked(searchWebSources).mockRejectedValue(new Error("Tavily search failed: 503 unavailable"));
+
+    const sources = await prepareGenerationSources({
+      id: "project-stored-web-fallback",
+      prompt: "AI in education",
+      mode: "with_sources",
+      speechDraft: null,
+      sources: [{
+        id: "web-source-1",
+        label: "Previously saved research",
+        type: "WEB",
+        size: 0,
+        objectKey: null,
+        url: "https://example.com/research",
+        excerpt: "Previously verified research remains available during a temporary outage.",
+        text: "Previously verified research remains available during a temporary outage.",
+      }],
+    });
+
+    expect(sources).toEqual([
+      expect.objectContaining({ id: "web-source-1", label: "Previously saved research" }),
+    ]);
+  });
+
   it("uses accepted speech text when no uploaded or web sources are available", async () => {
     vi.mocked(searchWebSources).mockResolvedValue([]);
 
@@ -85,6 +142,35 @@ describe("prepareGenerationSources", () => {
       }),
     ]);
     expect(sources[0].excerpt).toContain("Карибский кризис был противостоянием СССР и США");
+  });
+
+  it("keeps a cached source excerpt when its uploaded object can no longer be read", async () => {
+    vi.mocked(readObjectBuffer).mockRejectedValue(new Error("MinIO read timed out"));
+
+    const sources = await prepareGenerationSources({
+      id: "project-cached-upload",
+      prompt: "AI in education",
+      mode: "standard",
+      speechDraft: "Accepted speech remains available.",
+      sources: [{
+        id: "source-cached-upload",
+        label: "Lecture notes",
+        type: "PDF",
+        size: 200,
+        objectKey: "projects/project-cached-upload/source.pdf",
+        url: null,
+        excerpt: "Previously extracted notes about AI feedback for university students.",
+        text: "",
+      }],
+    });
+
+    expect(sources).toEqual([
+      expect.objectContaining({
+        id: "source-cached-upload",
+        excerpt: "Previously extracted notes about AI feedback for university students.",
+      }),
+    ]);
+    expect(searchWebSources).not.toHaveBeenCalled();
   });
 
   it("fails clearly when no source or accepted speech fallback exists", async () => {
@@ -195,6 +281,7 @@ describe("prepareGenerationSources", () => {
 
     expect(repaired.slides[0].layout).toBe("statement");
     expect(repaired.slides[0].visual.image).toBeUndefined();
+    expect(repaired.slides[0].visual.type).not.toBe("image");
     expect(repaired.presentationTheme?.themeId).toBe("academicClean");
     expect(repaired.designBrief).toBeUndefined();
     expect(repaired.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!))).toEqual([]);

@@ -5,7 +5,7 @@ export type SafeGenerationRecovery = { category: GenerationFailureCategory; mess
 
 const recovery: Record<GenerationFailureCategory, SafeGenerationRecovery> = {
   transient: { category: "transient", message: "Подготовка временно приостановлена. Мы повторяем попытку автоматически.", retryable: true },
-  quality: { category: "quality", message: "Не удалось завершить подготовку презентации. Попробуйте ещё раз — ваши материалы и текст сохранены.", retryable: false },
+  quality: { category: "quality", message: "Автоматическая подготовка не прошла проверку качества после всех попыток. Материалы сохранены — запустите подготовку ещё раз.", retryable: false },
   layout: { category: "layout", message: "Не удалось завершить подготовку презентации. Попробуйте ещё раз — ваши материалы и текст сохранены.", retryable: false },
   image: { category: "image", message: "Подготовка продолжается с безопасным вариантом визуалов.", retryable: false },
   export_stale: { category: "export_stale", message: "Презентация изменилась. Подготовьте экспорт текущей версии.", retryable: true },

@@ -339,11 +339,13 @@ export function buildNarrationRepairPrompt(
   previousText: string,
   error: unknown,
   researchBrief?: ResearchBrief,
+  attemptNumber = 2,
 ) {
   const message = error instanceof Error ? error.message : String(error);
   return [
     buildNarrationPrompt(project, sources, narrativePlan, researchBrief),
     "The previous narration answer failed validation.",
+    `This is automatic full regeneration attempt ${attemptNumber} of 4.`,
     `Validation error: ${message}`,
     "Rewrite the full narration from scratch as one coherent university student report and fix every listed issue.",
     "Do not patch short sections with generic endings or transition phrases. Replace weak paragraphs with real topic content.",

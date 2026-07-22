@@ -26,6 +26,8 @@ import {
   type SlideVisual,
   type MermaidDiagramSpec,
   type Source,
+  ensureEditableCanvas,
+  presentationSchema,
   PREMIUM_PRESENTATION_THEMES,
   PREMIUM_PRESENTATION_THEME_IDS,
   SLIDE_LAYOUT_DEFINITIONS,
@@ -33,7 +35,6 @@ import {
   designBriefSchema,
   generationPipelineArtifactsSchema,
   hasMeasurableValue,
-  presentationSchema,
   qualityCritiqueSchema,
   researchBriefSchema,
   resolvePresentationTheme,
@@ -143,7 +144,7 @@ import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, Q
 import { selectAiProviders } from "./providers/provider-selection.js";
 import { generateWithOpenAI, generateOpenAIPresentationFromNarration, generateOpenAINarration, generateWithYandex, generateYandexPresentationFromNarration, generateYandexNarration, generateNarrativePlanWithProvider } from "./providers/generation.js";
 import { buildResearchBrief, buildDesignBrief, buildDeckStory, buildSlideTextPlans, normalizeNarrativePlan } from "./planning/builders.js";
-import { normalizeNarrationText } from "./narration/processing.js";
+import { normalizeNarrationText, parseNarrationSections } from "./narration/processing.js";
 import { normalizePresentation } from "./normalization/presentation.js";
 import { isDemoGenerationAllowed } from "./quality/orchestration.js";
 import { buildFallbackGeneratedText, demoPresentation } from "./utilities.js";
@@ -252,20 +253,60 @@ export async function generatePresentationFromNarration(
     }
   }
 
-  if (isDemoGenerationAllowed()) {
-    return normalizePresentation(
-      {},
-      project,
-      sources,
-      providers.length ? "demo-fallback" : "demo",
-      fixedNarration,
-      normalizeNarrativePlan([], project),
-    );
+  // Once the speech has been accepted, it is a complete, user-approved
+  // recovery checkpoint. Provider output improves the deck, but it must not
+  // be a prerequisite for delivering a readable presentation. This path is
+  // deliberately independent from ALLOW_DEMO_GENERATION: it preserves the
+  // accepted speech rather than inventing a demo script.
+  logger.warn({
+    projectId: project.id,
+    stage: "building_slides",
+    providers,
+    errors,
+    recovery: "accepted_narration_safe_deck",
+  }, "AI slide generation unavailable; building a local presentation from accepted narration");
+  return buildSafePresentationFromNarration(project, sources, fixedNarration);
+}
+
+/**
+ * Assemble a non-paid, no-network presentation from already accepted speech.
+ * The normalizer derives only the slide projection and canvas; `generatedText`
+ * and the corresponding speaker notes remain the accepted narration.
+ */
+export function buildSafePresentationFromNarration(
+  project: ProjectInput,
+  sources: Source[],
+  acceptedNarration: string,
+): PresentationDocument {
+  const normalized = normalizePresentation(
+    {},
+    project,
+    sources,
+    "demo-fallback",
+    acceptedNarration,
+    normalizeNarrativePlan([], project),
+    false,
+  );
+  const sections = parseNarrationSections(acceptedNarration);
+  if (sections.length !== project.slideCount || sections.some((section, index) => section.order !== index + 1 || !section.text)) {
+    return ensureEditableCanvas(normalized);
   }
 
-  if (!providers.length) {
-    throw new Error("No configured AI provider. Set OPENAI_API_KEY or YANDEX_API_KEY with YANDEX_FOLDER_ID/YANDEX_MODEL_URI.");
-  }
-
-  throw new Error(`AI presentation generation failed. ${errors.join(" | ")}`);
+  // `normalizePresentation` is intentionally allowed to replace malformed
+  // provider text. This recovery path receives user-approved text instead,
+  // so restore that canonical projection verbatim after it has built the
+  // safe visible canvas.
+  return ensureEditableCanvas(presentationSchema.parse({
+    ...normalized,
+    generatedText: acceptedNarration,
+    slides: normalized.slides.map((slide, index) => ({
+      ...slide,
+      speakerNotes: sections[index].text,
+    })),
+    speechScript: normalized.slides.map((slide, index) => ({
+      slideOrder: slide.order,
+      slideTitle: slide.title,
+      text: sections[index].text,
+    })),
+  }));
 }

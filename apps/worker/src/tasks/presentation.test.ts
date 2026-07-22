@@ -3,6 +3,7 @@ import { z } from "zod";
 import { presentationSchema } from "@studydeck/shared";
 import {
   buildGenerationPrompt,
+  buildSafePresentationFromNarration,
   findSlideTextIssues,
   generateNarrationDraft,
   generatePresentation,
@@ -16,7 +17,10 @@ import {
 import { generatePresentation as generatePresentationFromOrchestrator } from "./presentation/orchestrator.js";
 import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./presentation/prompts/builders.js";
 import { buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
+import { buildNarrationRepairPrompt } from "./presentation/prompts/builders.js";
 import { normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
+import { completeYandexNarrationDuration, NARRATION_MAX_PROVIDER_ATTEMPTS, narrationRecoveryChunks, replaceTemplateNarration } from "./presentation/providers/generation.js";
+import { NARRATION_SYSTEM_PROMPT } from "./presentation/constants.js";
 import { sourceEvidenceForSlide } from "./presentation/planning/builders.js";
 import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
 import { applyNarrationFallbacks } from "./presentation/quality/orchestration.js";
@@ -91,6 +95,92 @@ afterEach(() => {
 });
 
 describe("presentation compatibility facade", () => {
+  it("builds a local deck from accepted narration without a configured AI provider", () => {
+    const acceptedNarration = [
+      "Слайд 1: Введение",
+      "Согласованный текст выступления остаётся основой презентации и не меняется во время локального восстановления. Он фиксирует объяснение решения, причины выбранного подхода, ожидаемый результат и практическую ценность готовой презентации для аудитории.",
+      "",
+      "Слайд 2: Итог",
+      "Локальная сборка позволяет завершить презентацию даже при недоступности внешнего провайдера. Пользователь получает готовый документ без повторного согласования текста выступления, сохраняет структуру доклада и может сразу перейти к редактированию слайдов.",
+    ].join("\n");
+    const presentation = buildSafePresentationFromNarration({
+      id: "accepted-narration-safe-deck",
+      title: "Надёжная генерация",
+      prompt: "Подготовь презентацию о надёжной генерации",
+      scenario: "university_report",
+      level: "university_student",
+      mode: "with_sources",
+      slideCount: 2,
+    }, [], acceptedNarration);
+
+    expect(presentation.generationMode).toBe("demo-fallback");
+    expect(presentation.generatedText).toBe(acceptedNarration);
+    expect(presentation.speechScript.map((item) => item.text)).toEqual([
+      "Согласованный текст выступления остаётся основой презентации и не меняется во время локального восстановления. Он фиксирует объяснение решения, причины выбранного подхода, ожидаемый результат и практическую ценность готовой презентации для аудитории.",
+      "Локальная сборка позволяет завершить презентацию даже при недоступности внешнего провайдера. Пользователь получает готовый документ без повторного согласования текста выступления, сохраняет структуру доклада и может сразу перейти к редактированию слайдов.",
+    ]);
+    expect(presentation.slides.flatMap((slide) => slide.canvas ? [] : [slide.order])).toEqual([]);
+  });
+
+  it("makes an explicit speech-duration budget stronger than the generic per-slide timing hint", () => {
+    expect(NARRATION_SYSTEM_PROMPT).toContain("hard contract");
+    expect(NARRATION_SYSTEM_PROMPT).toContain("more than 55 seconds");
+  });
+
+  it("completes a valid but short Yandex recovery without another paid request", () => {
+    const project = { id: "project", title: "Тема", prompt: "Подготовь университетскую презентацию о теме", scenario: "report", level: "university_student", mode: "create", slideCount: 10 };
+    const shortNarration = Array.from({ length: 10 }, (_, index) => {
+      const order = index + 1;
+      return `Слайд ${order}: Раздел ${order}\n${Array.from({ length: 60 }, (_, word) => `слово${order}_${word + 1}`).join(" ")}.`;
+    }).join("\n\n");
+    const plan = Array.from({ length: 10 }, (_, index) => ({
+      slideOrder: index + 1,
+      slideTitle: `Раздел ${index + 1}`,
+      slidePurpose: `объяснить аспект ${index + 1}`,
+      keyMessage: `ключевой тезис ${index + 1} подтверждается фактами`,
+      audienceQuestion: `какую роль играет аспект ${index + 1}`,
+      transitionToNext: "",
+      evidenceOrExplanation: `конкретное объяснение аспекта ${index + 1}`,
+      whyItMatters: `это меняет понимание аспекта ${index + 1}`,
+    }));
+
+    const completed = completeYandexNarrationDuration(shortNarration, project, plan);
+    expect(validateNarrationSections(parseNarrationSections(completed), project)).not.toContain(expect.stringContaining("duration is below"));
+  });
+
+  it("replaces a generic Yandex narration sentence with its narrative-plan conclusion", () => {
+    const narration = "Слайд 1: Итог\nСатурн остаётся одной из самых удивительных планет, изучение которой имеет большое значение для будущего астрономии.";
+    const repaired = replaceTemplateNarration(narration, [{ slideOrder: 1, slideTitle: "Итог", slidePurpose: "подвести итог", keyMessage: "кольца Сатурна состоят из множества частиц", audienceQuestion: "что показывают кольца", transitionToNext: "", whyItMatters: "Наблюдение за кольцами помогает изучать процессы формирования планетных систем" }]);
+    expect(repaired).toContain("Наблюдение за кольцами помогает изучать процессы формирования планетных систем");
+    expect(repaired).not.toContain("одной из самых удивительных планет");
+  });
+  it("allows one narration pass and three automatic full-regeneration attempts", () => {
+    const project = {
+      id: "narration-recovery-budget",
+      title: "Saturn",
+      prompt: "Explain Saturn",
+      scenario: "university_report",
+      level: "university_student",
+      mode: "with_sources",
+      slideCount: 10,
+    };
+
+    const prompt = buildNarrationRepairPrompt(
+      project,
+      [],
+      [],
+      "Short invalid narration",
+      new Error("AI narration quality check failed: narration duration is below 10 minutes"),
+      undefined,
+      4,
+    );
+
+    expect(NARRATION_MAX_PROVIDER_ATTEMPTS).toBe(4);
+    expect(prompt).toContain("automatic full regeneration attempt 4 of 4");
+    expect(prompt).toContain("Rewrite the full narration from scratch");
+    expect(narrationRecoveryChunks(10)).toEqual([[1, 2, 3], [4, 5, 6], [7, 8, 9, 10]]);
+  });
+
   it("flags ten-slide narration outside its ten-to-twelve-minute Russian speech budget", () => {
     const project = {
       id: "speech-budget",
