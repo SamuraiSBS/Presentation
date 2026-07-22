@@ -621,6 +621,24 @@ export function normalizeVisualType(value: unknown): SlideVisual["type"] {
     "none",
   ];
   if (allowed.includes(value as SlideVisual["type"])) return value as SlideVisual["type"];
+  // Yandex occasionally returns the semantic role rather than one of the
+  // shared-contract names. Keep only aliases whose meaning is unambiguous;
+  // everything else is deliberately reduced to an empty visual.
+  const alias = typeof value === "string" ? value.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
+  const aliases: Record<string, SlideVisual["type"]> = {
+    diagram: "process_diagram",
+    process: "process_diagram",
+    flowchart: "process_diagram",
+    comparison: "comparison_diagram",
+    compare: "comparison_diagram",
+    cause_effect: "cause_effect_diagram",
+    cause_and_effect: "cause_effect_diagram",
+    mindmap: "mind_map",
+    table: "before_after_table",
+    photo: "image",
+    picture: "image",
+  };
+  if (alias && aliases[alias]) return aliases[alias];
   return "none";
 }
 

@@ -145,7 +145,7 @@ import type { YandexCompletionResponse } from "../constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
 import { recordOpenAIResponse } from "../providers/generation.js";
 import { shortenVisibleTitle, buildQualityCritique } from "../planning/builders.js";
-import { requestYandexText, parseNarrationSections, validateNarrationSections, repairNarrationQualitySections, repairNarrationSentenceCounts, isUsableNarrationSentence, formatNarrationSection } from "../narration/processing.js";
+import { requestYandexText, parseNarrationSections, validateNarrationSections, isUsableNarrationSentence, formatNarrationSection } from "../narration/processing.js";
 import { normalizePresentation, normalizeSlide, fallbackTitle, sentenceCount, speechSentences, sentenceFragment, buildFallbackBulletItems, ensureRange, uniqueShortItems, splitIntoSentences, normalizeTitleKey, isDuplicateDisplayText, fallbackSlideText } from "../normalization/presentation.js";
 import { parseJsonText, cleanGeneratedText, cleanMultilineText, cleanText, sanitizeSpeechText, shortenWords } from "../utilities.js";
 import { jsonSchema, slideTextRepairSchema, qualityCritiqueJsonSchema, qualityRepairJsonSchema } from "../schemas.js";
@@ -320,54 +320,17 @@ export function preserveAcceptedGeneratedText(presentation: PresentationDocument
 export function repairPresentationNarrationLocally(
   presentation: PresentationDocument,
   project: ProjectInput,
-  generationMode: AiGenerationMode | FallbackGenerationMode,
+  _generationMode: AiGenerationMode | FallbackGenerationMode,
 ) {
   const sections = parseNarrationSections(presentation.generatedText);
-  if (!canLocallyRepairNarrationSections(sections, project)) {
+  // A narration that reached this layer has already been accepted upstream.
+  // Do not manufacture replacement sentences here: it would silently change
+  // the canonical generatedText and can desynchronise section-to-slide mapping.
+  if (!canLocallyRepairNarrationSections(sections, project) || validateNarrationSections(sections, project).length) {
     return null;
   }
-
-  let repairedSections = repairNarrationSentenceCounts(sections, project);
-  const repairedText = repairedSections.map((section) => formatNarrationSection(section)).join("\n\n");
-  if (qualityIssuesForText(repairedText, project, false).length) {
-    repairedSections = repairNarrationQualitySections(repairedSections, project);
-  }
-  if (validateNarrationSections(repairedSections, project).length) {
-    return null;
-  }
-
-  const generatedText = repairedSections.map((section) => formatNarrationSection(section)).join("\n\n");
-  const raw: PresentationDocument = {
-    ...presentation,
-    generatedText,
-    slides: presentation.slides.map((slide, index) => ({
-      ...slide,
-      speakerNotes: repairedSections[index]?.text || slide.speakerNotes,
-    })),
-    speechScript: presentation.speechScript.map((item, index) => ({
-      ...item,
-      slideTitle: repairedSections[index]?.title || item.slideTitle,
-      text: repairedSections[index]?.text || item.text,
-    })),
-  };
-
-  const repaired = normalizePresentation(
-    raw,
-    project,
-    presentation.sources,
-    generationMode,
-    generatedText,
-    presentation.narrativePlan,
-    false,
-    presentation.designBrief,
-  );
-
-  try {
-    assertPresentationQuality(repaired, project, generationMode);
-    return repaired;
-  } catch {
-    return null;
-  }
+  const canonical = sections.map((section) => formatNarrationSection(section)).join("\n\n");
+  return preserveAcceptedNarration(presentation, canonical, project);
 }
 
 export function canLocallyRepairNarrationSections(sections: NarrationSection[], project: ProjectInput) {

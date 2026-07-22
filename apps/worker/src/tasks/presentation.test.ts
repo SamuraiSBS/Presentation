@@ -25,7 +25,7 @@ import { sourceEvidenceForSlide } from "./presentation/planning/builders.js";
 import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
 import { applyNarrationFallbacks } from "./presentation/quality/orchestration.js";
 import { looksLikeSentenceFragment } from "./presentation/quality/orchestration.js";
-import { normalizeLayout as normalizeLayoutFromLayer } from "./presentation/normalization/presentation.js";
+import { normalizeLayout as normalizeLayoutFromLayer, normalizeVisual } from "./presentation/normalization/presentation.js";
 import { normalizeNarrationText, parseNarrationSections, validateNarrationSections } from "./presentation/narration/processing.js";
 import { shortenSentence } from "./presentation/utilities.js";
 
@@ -95,6 +95,16 @@ afterEach(() => {
 });
 
 describe("presentation compatibility facade", () => {
+  it("normalizes harmless provider visual aliases and drops unknown visual types", () => {
+    const project = { id: "saturn", title: "Сатурн", prompt: "Планета Сатурн", scenario: "lesson", level: "university_student", mode: "with_sources", slideCount: 10 };
+    const diagram = normalizeVisual({ type: "diagram", items: [{ label: "Кольца", text: "Кольца состоят из множества частиц." }, { label: "Орбита", text: "Частицы движутся вокруг планеты." }] }, "Кольца Сатурна", "Кольца образуют сложную систему.", ["Частицы движутся по орбитам."], "content", project, 2);
+    const unknown = normalizeVisual({ type: "provider_magic", items: [{ label: "Нельзя", text: "сохранять" }] }, "Сатурн", "Сатурн — газовый гигант.", [], "content", project, 2);
+
+    expect(diagram.type).toBe("process_diagram");
+    expect(unknown).toMatchObject({ type: "none", items: [], rows: [] });
+    expect(unknown).not.toHaveProperty("image");
+  });
+
   it("builds a local deck from accepted narration without a configured AI provider", () => {
     const acceptedNarration = [
       "Слайд 1: Введение",

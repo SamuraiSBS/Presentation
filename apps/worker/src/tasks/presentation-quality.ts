@@ -20,6 +20,7 @@ import {
 import { errorLogFields, logger } from "../observability.js";
 import { STOP_WORDS } from "./presentation/constants.js";
 import { hasGenericOrMetaScreenText } from "./presentation/quality/orchestration.js";
+import { normalizeVisual } from "./presentation/normalization/presentation.js";
 
 export type QualityProjectInput = {
   id: string;
@@ -1030,7 +1031,8 @@ export function findVisualPlanIssues(presentation: PresentationDocument, project
 
 /** Safe local repair: it changes generated direction and Tavily assets only. */
 export function applyVisualPlanFallbacks(presentation: PresentationDocument, issues: QualityIssue[]): PresentationDocument {
-  if (!presentation.designBrief || !issues.some((issue) => issue.category === "bad_visual")) return presentation;
+  if (!issues.some((issue) => issue.category === "bad_visual")) return presentation;
+  const designBrief = presentation.designBrief;
   const affectedIds = new Set(issues
     .filter((issue) => !issue.message.includes("Three consecutive"))
     .map((issue) => issue.slideId)
@@ -1040,28 +1042,31 @@ export function applyVisualPlanFallbacks(presentation: PresentationDocument, iss
   const unfulfilledImageIds = new Set(issues.filter((issue) => issue.field === "visual.image.url").map((issue) => issue.slideId).filter((id): id is string => Boolean(id)));
   const slides = presentation.slides.map((slide) => {
     if (unfulfilledImageIds.has(slide.id)) {
-      return { ...slide, layout: "statement" as const, visual: { ...slide.visual, type: "none" as const, image: undefined } };
+      return withGroundedDiagramFallback(slide);
     }
-    if (duplicateAssetIds.has(slide.id) && slide.visual.image?.provider === "tavily") return { ...slide, visual: { ...slide.visual, image: undefined } };
+    if (duplicateAssetIds.has(slide.id) && slide.visual.image?.provider === "tavily") return withGroundedDiagramFallback(slide);
     return slide;
   });
   const slideByOrder = new Map(slides.map((slide) => [slide.order, slide]));
   const coverageFallbackOrders = new Set<number>();
-  if (needsCoverageRepair) {
-    const contentDirections = presentation.designBrief.slideDirections.filter((direction) => slideByOrder.get(direction.slideOrder)?.slideKind === "content");
+  if (needsCoverageRepair && designBrief) {
+    const contentDirections = designBrief.slideDirections.filter((direction) => slideByOrder.get(direction.slideOrder)?.slideKind === "content");
     const actualVisuals = contentDirections.filter((direction) => {
       const slide = slideByOrder.get(direction.slideOrder);
-      return Boolean(slide?.visual.image) || direction.imageStrategy === "diagram";
+      return Boolean(slide?.visual.image) || isSemanticDiagram(slide);
     }).length;
     let remaining = Math.max(0, Math.ceil(contentDirections.length * 0.6) - actualVisuals);
     for (const direction of contentDirections) {
-      if (!remaining || direction.imageStrategy !== "none") continue;
+      const slide = slideByOrder.get(direction.slideOrder);
+      if (!remaining || !slide || Boolean(slide.visual.image) || isSemanticDiagram(slide)) continue;
       coverageFallbackOrders.add(direction.slideOrder);
       remaining -= 1;
     }
   }
-  const directions = presentation.designBrief.slideDirections.map((direction) => {
-    const slide = slideByOrder.get(direction.slideOrder);
+  const fallbackSlides = slides.map((slide) => coverageFallbackOrders.has(slide.order) ? withGroundedDiagramFallback(slide) : slide);
+  const fallbackSlideByOrder = new Map(fallbackSlides.map((slide) => [slide.order, slide]));
+  const directions = designBrief?.slideDirections.map((direction) => {
+    const slide = fallbackSlideByOrder.get(direction.slideOrder);
     if (!slide || slide.slideKind === "summary") return slide?.slideKind === "summary"
       ? { ...direction, layoutIntent: "summary" as const, imageStrategy: "none" as const, sceneTextMode: "takeaway" as const }
       : direction;
@@ -1075,7 +1080,54 @@ export function applyVisualPlanFallbacks(presentation: PresentationDocument, iss
       visualPrompt: `Explanatory diagram for ${cleanText(slide.title)}`,
     };
   });
-  return presentationSchema.parse({ ...presentation, slides, designBrief: { ...presentation.designBrief, slideDirections: directions } });
+  // Fallbacks are provider-independent data repairs, so parse the exact
+  // replacement document before it can re-enter inspection or canvas rebuild.
+  return presentationSchema.parse({
+    ...presentation,
+    slides: fallbackSlides,
+    ...(designBrief && directions ? { designBrief: { ...designBrief, slideDirections: directions } } : {}),
+  });
+}
+
+function isSemanticDiagram(slide: Slide | undefined) {
+  return Boolean(slide && ["process_diagram", "comparison_diagram", "cause_effect_diagram", "timeline", "mind_map", "schema"].includes(slide.visual.type));
+}
+
+function withGroundedDiagramFallback(slide: Slide): Slide {
+  const points = [slide.thesis, ...slide.bullets].map(cleanText).filter(Boolean).slice(0, 3);
+  const nodes = points.length >= 2 ? points : [cleanText(slide.thesis), cleanText(slide.title)].filter(Boolean);
+  const diagramSource = [
+    "flowchart LR",
+    ...nodes.map((point, index) => `    N${index}[${mermaidFallbackText(point)}]`),
+    ...nodes.slice(0, -1).map((_, index) => `    N${index} --> N${index + 1}`),
+  ].join("\n");
+  return {
+    ...slide,
+    layout: "process" as const,
+    // Keep labels out of the ordinary visible-text fields: copying bullets
+    // into visual items was the local source of duplicate support text.
+    visual: {
+      type: "process_diagram" as const,
+      title: "",
+      description: `Схема поясняет ход рассуждения по теме: ${cleanText(slide.title)}.`,
+      leftLabel: "",
+      rightLabel: "",
+      items: [],
+      rows: [],
+      diagram: {
+        kind: "flowchart" as const,
+        title: cleanText(slide.title),
+        caption: cleanText(slide.thesis),
+        fallback: nodes.join("\n"),
+        safety: "safe" as const,
+        source: diagramSource,
+      },
+    },
+  };
+}
+
+function mermaidFallbackText(value: string) {
+  return cleanText(value).replace(/[<>{}[\]|"`]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "Идея";
 }
 
 function isConcreteVisualTopic(presentation: PresentationDocument, project?: QualityProjectInput) {
@@ -1550,7 +1602,7 @@ export async function improvePresentationQuality(
     attempts += 1;
     try {
       const repaired = rebuildGeneratedCanvases(
-        applyQualityRepairs(best, await options.repair(best, targetedRepairIssues(bestCritique), attempts)),
+        applyQualityRepairs(best, await options.repair(best, targetedRepairIssues(bestCritique), attempts), project),
       );
       const parsed = presentationSchema.parse(repaired);
       const repairedCritique = critiquePresentationDeterministically(parsed, sources, project);
@@ -1651,6 +1703,7 @@ export async function improvePresentationQuality(
   }
 
   const contentIssues = [
+    ...findGenericTextIssues(best),
     ...findVisibleTextIntegrityIssues(best),
     ...findContentSlideContractIssues(best),
     ...findIntraSlideDuplicateIssues(best),
@@ -1735,7 +1788,11 @@ export async function improvePresentationQuality(
   return best;
 }
 
-export function applyQualityRepairs(presentation: PresentationDocument, rawRepairs: unknown): PresentationDocument {
+export function applyQualityRepairs(
+  presentation: PresentationDocument,
+  rawRepairs: unknown,
+  project?: QualityProjectInput,
+): PresentationDocument {
   const response = rawRepairs && typeof rawRepairs === "object" ? (rawRepairs as QualityRepairResponse) : {};
   const slides = Array.isArray(response.slides) && response.slides.length
     ? presentation.slides.map((slide) => {
@@ -1750,7 +1807,25 @@ export function applyQualityRepairs(presentation: PresentationDocument, rawRepai
           thesis: cleanText(repair.thesis) || slide.thesis,
           bullets: Array.isArray(repair.bullets) ? repair.bullets.map(cleanText).filter(Boolean).slice(0, 5) : slide.bullets,
           blocks: Array.isArray(repair.blocks) ? repair.blocks : slide.blocks,
-          visual: repair.visual ? { ...slide.visual, ...repair.visual } : slide.visual,
+          visual: repair.visual
+            ? normalizeVisual(
+                { ...slide.visual, ...repair.visual },
+                cleanText(repair.title) || slide.title,
+                cleanText(repair.thesis) || slide.thesis,
+                Array.isArray(repair.bullets) ? repair.bullets.map(cleanText).filter(Boolean).slice(0, 5) : slide.bullets,
+                slide.slideKind,
+                project || {
+                  id: presentation.id,
+                  title: presentation.title,
+                  prompt: presentation.title,
+                  scenario: presentation.scenario,
+                  level: presentation.level,
+                  mode: "with_sources",
+                  slideCount: presentation.slideCount,
+                },
+                slide.order,
+              )
+            : slide.visual,
           // The accepted narration is the canonical, evidence-reviewed speech.
           // Polishing may improve visible slide content, but must never replace it.
           speakerNotes: slide.speakerNotes,
@@ -1815,7 +1890,7 @@ export function applyVisibleTextIntegrityFallbacks(
   project: QualityProjectInput,
 ): PresentationDocument {
   const affected = new Set(issues
-    .filter((issue) => issue.category === "duplicate" || issue.message.startsWith("Visible text is incomplete:") || issue.field === "contentContract")
+    .filter((issue) => issue.category === "duplicate" || issue.category === "generic_text" || issue.message.startsWith("Visible text is incomplete:") || issue.field === "contentContract")
     .map((issue) => issue.slideId)
     .filter((id): id is string => Boolean(id)));
   const fieldsBySlide = new Map<string, Set<string>>();
@@ -1969,12 +2044,17 @@ function rebuildVisibleContentFromAcceptedNarration(
     const script = presentation.speechScript.find((item) => item.slideOrder === slide.order)?.text || "";
     const narrative = presentation.narrativePlan.find((item) => item.slideOrder === slide.order);
     const accepted = parseAcceptedNarrationSections(presentation.generatedText).find((section) => section.order === slide.order)?.text || "";
-    const sentences = acceptedNarrationSentences(strictContentRepair ? [accepted] : [slide.speakerNotes, script]);
+    // For a duplicate repair, the accepted section is the sole factual source.
+    // Reusing notes/script first could project the same support sentence back
+    // into both bullets and visual labels after it had just been removed.
+    const sentences = acceptedNarrationSentences(strictContentRepair || affectedFields?.has("duplicate")
+      ? [accepted]
+      : [slide.speakerNotes, script, accepted]);
     if (strictContentRepair && sentences.length < 3) return slide;
     const fallbackSentences = acceptedNarrationSentences([narrative?.keyMessage || "", narrative?.slidePurpose || ""]);
     const candidates = sentences.length ? sentences : fallbackSentences;
     const title = compactTitle(narrative?.slideTitle || candidates[0] || project.title || slide.title);
-    const thesis = compactSentence(candidates[0] || narrative?.keyMessage || `${project.title} раскрывается через ключевой пример.` , 26);
+    const thesis = compactSentence(candidates[0] || narrative?.keyMessage || slide.thesis, 26);
     const bullets = uniqueCompactSentences(candidates.slice(1), thesis);
     const safeBullets = bullets.length >= 2
       ? bullets.slice(0, 3)
@@ -1983,7 +2063,7 @@ function rebuildVisibleContentFromAcceptedNarration(
       ? uniqueCompactSentences(candidates.slice(1), thesis).slice(0, 3)
       : safeBullets.length >= 2
       ? safeBullets
-      : [compactSentence(narrative?.keyMessage || thesis, 18), compactSentence(narrative?.slidePurpose || `${project.title}: ключевой вывод.`, 18)].filter(Boolean);
+      : [compactSentence(narrative?.keyMessage || "", 18), compactSentence(narrative?.slidePurpose || "", 18)].filter(Boolean);
     const repairedBullets = candidateBullets.filter((bullet) => normalizedMessage(bullet) !== normalizedMessage(thesis));
     const blockContent = compactSentence(
       narrative?.audienceQuestion || narrative?.slidePurpose || candidates.at(-1) || `${title} \u0440\u0430\u0441\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u043a\u043b\u044e\u0447\u0435\u0432\u043e\u0439 \u0432\u044b\u0432\u043e\u0434.`,
@@ -1995,17 +2075,10 @@ function rebuildVisibleContentFromAcceptedNarration(
       description: `Documentary or explanatory visual for ${title}.`,
       leftLabel: slide.visual.leftLabel ? compactTitle(repairedBullets[0] || title) : "",
       rightLabel: slide.visual.rightLabel ? compactTitle(repairedBullets[1] || title) : "",
-      items: slide.visual.items.map((item, index) => ({
-        ...item,
-        label: compactTitle(repairedBullets[index] || title),
-        text: repairedBullets[index] || thesis,
-      })),
-      rows: slide.visual.rows.map((row, index) => ({
-        ...row,
-        label: compactTitle(repairedBullets[index] || title),
-        left: repairedBullets[index] || thesis,
-        right: repairedBullets[index + 1] || repairedBullets[0] || thesis,
-      })),
+      // Do not mirror repaired bullets into visual labels: those labels are
+      // inspected as visible text and were producing the same duplicate again.
+      items: affectedFields?.has("duplicate") ? [] : slide.visual.items,
+      rows: affectedFields?.has("duplicate") ? [] : slide.visual.rows,
     };
     return {
       ...slide,

@@ -1053,6 +1053,36 @@ describe("presentation quality checks", () => {
     }));
   });
 
+  it("replaces an unfulfilled generated image with a schema-valid grounded diagram without copying visible support text", () => {
+    const base = makePresentation();
+    const invalid = presentationSchema.parse({
+      ...base,
+      slides: base.slides.map((slide, index) => index === 0 ? {
+        ...slide,
+        layout: "image-focus" as const,
+        visual: { ...slide.visual, type: "image" as const, image: undefined },
+      } : slide),
+    });
+    const repaired = applyVisualPlanFallbacks(invalid, findVisualFulfillmentIssues(invalid));
+    const visual = repaired.slides[0].visual;
+
+    expect(presentationSchema.safeParse(repaired).success).toBe(true);
+    expect(repaired.slides[0].layout).toBe("process");
+    expect(visual).toMatchObject({ type: "process_diagram", items: [], rows: [], diagram: { safety: "safe" } });
+    expect(findVisualFulfillmentIssues(repaired)).toHaveLength(0);
+    expect(findVisibleTextIntegrityIssues(repaired).filter((issue) => issue.slideId === repaired.slides[0].id)).toHaveLength(0);
+  });
+
+  it("normalizes a Yandex quality-repair diagram alias before shared-schema inspection", () => {
+    const base = makePresentation();
+    const repaired = applyQualityRepairs(base, {
+      slides: [{ slideId: base.slides[0].id, visual: { type: "diagram", items: [{ label: "Первый шаг", text: "Объяснение" }, { label: "Второй шаг", text: "Вывод" }] } }],
+    });
+
+    expect(presentationSchema.safeParse(repaired).success).toBe(true);
+    expect(repaired.slides[0].visual.type).toBe("process_diagram");
+  });
+
   it("keeps provider mode inside the same release gate as document quality", () => {
     const project = {
       id: "saturn-release",
