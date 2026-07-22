@@ -348,6 +348,7 @@ export async function generateYandexPresentationFromNarration(project: ProjectIn
     slideTextPlans,
     yandexApiKey: apiKey,
   });
+  assertCompleteStructuredPresentation(parsed, project);
   return finalizeGeneratedPresentation(
     parsed,
     project,
@@ -362,6 +363,16 @@ export async function generateYandexPresentationFromNarration(project: ProjectIn
     },
     designBrief,
   );
+}
+
+function assertCompleteStructuredPresentation(parsed: unknown, project: ProjectInput) {
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("structured presentation response is not an object");
+  }
+  const slides = (parsed as { slides?: unknown }).slides;
+  if (!Array.isArray(slides) || slides.length !== project.slideCount) {
+    throw new Error(`structured presentation response must contain ${project.slideCount} slides`);
+  }
 }
 
 export async function generateYandexNarration(apiKey: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief) {

@@ -25,6 +25,7 @@ import {
   findVisualDescriptionIssues,
   findVisualFulfillmentIssues,
   findCanvasCanonicalContentIssues,
+  findContentSlideContractIssues,
   productionQualityReleaseResult,
   findFactualRiskIssues,
   applySourceGroundingRepairs,
@@ -122,6 +123,26 @@ function makeSlide(order: number, title: string, thesis: string, bullets: string
 }
 
 describe("presentation quality checks", () => {
+  it("enforces the content-slide thesis and support-point contract while allowing an explanatory diagram", () => {
+    const valid = makePresentation({ slides: [{ ...makeSlide(1, "Evidence", "The experiment changed the measured result.", ["The control group kept the original condition.", "The observed difference supports the conclusion."]), slideKind: "content", layout: "bullets" }] as any });
+    expect(findContentSlideContractIssues(valid)).toEqual([]);
+    const sparse = presentationSchema.parse({ ...valid, slides: [{ ...valid.slides[0], bullets: [valid.slides[0].thesis] }] });
+    expect(findContentSlideContractIssues(sparse)).toContainEqual(expect.objectContaining({ field: "contentContract" }));
+    const diagram = presentationSchema.parse({ ...sparse, slides: [{ ...sparse.slides[0], layout: "statement", visual: { ...sparse.slides[0].visual, type: "process_diagram", items: [{ label: "Step one", text: "The first stage changes the input." }, { label: "Step two", text: "The second stage records the outcome." }] } }] });
+    expect(findContentSlideContractIssues(diagram)).toEqual([]);
+  });
+
+  it("rebuilds sparse content only from accepted narration and leaves a custom canvas intact", () => {
+    const base = makePresentation({ slides: [{ ...makeSlide(1, "Evidence", "A generic statement.", ["A generic statement."]), slideKind: "content", layout: "bullets", speakerNotes: "The experiment changed the measured result. The control group kept the original condition. The observed difference supports the conclusion." }] as any });
+    const issues = findContentSlideContractIssues(base);
+    const project = { id: "contract", title: "Experiment", prompt: "Explain the experiment", scenario: "lesson", level: "university", mode: "with_sources", slideCount: 1 } as const;
+    const repaired = applyVisibleTextIntegrityFallbacks(base, issues, project);
+    expect(repaired.slides[0].bullets).toEqual(["The control group kept the original condition.", "The observed difference supports the conclusion."]);
+    expect(repaired.slides[0].speakerNotes).toBe(base.slides[0].speakerNotes);
+    expect(repaired.generatedText).toBe(base.generatedText);
+    const custom = presentationSchema.parse({ ...base, slides: [{ ...base.slides[0], canvas: { ...base.slides[0].canvas!, elements: [...base.slides[0].canvas!.elements, { id: "user-mark", type: "shape", shape: "rect", x: 1, y: 1, w: 10, h: 10, rotation: 0, zIndex: 99, opacity: 1, locked: false, fill: "#FFFFFF", stroke: "#FFFFFF", strokeWidth: 0 }] } }] });
+    expect(applyVisibleTextIntegrityFallbacks(custom, issues, project).slides[0].canvas).toEqual(custom.slides[0].canvas);
+  });
   it("uses selected slide-count bounds, including an open-ended fourteen-slide floor", () => {
     const presentation = (words: number) => ({
       speechScript: [{ slideOrder: 1, slideTitle: "Speech", text: Array.from({ length: words }, () => "слово").join(" ") }],

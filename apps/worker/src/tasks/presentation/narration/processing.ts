@@ -552,6 +552,9 @@ export function isGenericNarrationSentence(sentence: string) {
     "this slide",
     "next section",
     "main takeaway of the topic",
+    "one of the most amazing planets",
+    "one of the most fascinating planets",
+    "одной из самых удивительных планет",
   ];
   return hasForbiddenTemplateText(sentence)
     || genericFragments.some((phrase) => normalized.includes(normalizeExactForQuality(phrase)));

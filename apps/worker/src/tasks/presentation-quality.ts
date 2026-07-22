@@ -430,6 +430,33 @@ export function findVisibleTextIntegrityIssues(presentation: PresentationDocumen
   }));
 }
 
+/** Content slides normally project one claim and 2-3 support points from accepted speech. */
+export function findContentSlideContractIssues(presentation: PresentationDocument): QualityIssue[] {
+  return presentation.slides.flatMap((slide) => {
+    if (slide.slideKind !== "content" || contentSlideExceptionReason(slide)) return [];
+    const usefulBullets = slide.bullets.filter((bullet) =>
+      !visibleTextIntegrityReason(bullet, false)
+      && normalizedMessage(bullet) !== normalizedMessage(slide.thesis)
+      && semanticOverlap(bullet, slide.thesis) < 0.8,
+    );
+    const issues: QualityIssue[] = [];
+    if (visibleTextIntegrityReason(slide.thesis, false) || hasMetaSlideLanguage(slide.thesis)) {
+      issues.push({ slideId: slide.id, severity: "major", category: "generic_text", field: "thesis", message: "Content slide must contain one complete, topic-specific thesis.", repairInstruction: "Project the first complete claim from accepted narration into the thesis without changing the narration." });
+    }
+    if (usefulBullets.length < 2 || usefulBullets.length > 3) {
+      issues.push({ slideId: slide.id, severity: "major", category: "generic_text", field: "contentContract", message: "Content slide must contain two or three distinct support points, unless its quote or diagram exception is explicit.", repairInstruction: "Derive two or three distinct complete support points from accepted narration only; do not invent facts." });
+    }
+    return issues;
+  });
+}
+
+export function contentSlideExceptionReason(slide: Slide): string | null {
+  if (slide.layout === "quote" && slide.blocks.some((block) => block.type === "quote" && !visibleTextIntegrityReason(block.content, false))) return "a complete central quotation is the slide's evidence";
+  const diagramTypes = new Set(["process_diagram", "comparison_diagram", "cause_effect_diagram", "timeline", "mind_map", "schema"]);
+  if (diagramTypes.has(slide.visual.type) && (slide.visual.diagram || slide.visual.graph || slide.visual.items.length >= 2 || slide.visual.rows.length >= 2)) return "a structured explanatory diagram carries the support points";
+  return null;
+}
+
 /** Detects safe, exact repetitions inside one slide before they escape into export. */
 export function findIntraSlideDuplicateIssues(presentation: PresentationDocument): QualityIssue[] {
   const issues: QualityIssue[] = [];
@@ -992,9 +1019,13 @@ export function applyVisualPlanFallbacks(presentation: PresentationDocument, iss
     .filter((id): id is string => Boolean(id)));
   const needsCoverageRepair = issues.some((issue) => issue.message.includes("visual coverage") || issue.message.includes("Three consecutive"));
   const duplicateAssetIds = new Set(issues.filter((issue) => issue.field === "visual.image.objectKey").map((issue) => issue.slideId).filter((id): id is string => Boolean(id)));
+  const unfulfilledImageIds = new Set(issues.filter((issue) => issue.field === "visual.image.url").map((issue) => issue.slideId).filter((id): id is string => Boolean(id)));
   const slides = presentation.slides.map((slide) => {
-    if (!duplicateAssetIds.has(slide.id) || slide.visual.image?.provider !== "tavily") return slide;
-    return { ...slide, visual: { ...slide.visual, image: undefined } };
+    if (unfulfilledImageIds.has(slide.id)) {
+      return { ...slide, layout: "statement" as const, visual: { ...slide.visual, type: "none" as const, image: undefined } };
+    }
+    if (duplicateAssetIds.has(slide.id) && slide.visual.image?.provider === "tavily") return { ...slide, visual: { ...slide.visual, image: undefined } };
+    return slide;
   });
   const slideByOrder = new Map(slides.map((slide) => [slide.order, slide]));
   const coverageFallbackOrders = new Set<number>();
@@ -1397,6 +1428,7 @@ export function critiquePresentationDeterministically(
   const issues = dedupeIssues([
     ...findGenericTextIssues(presentation),
     ...findVisibleTextIntegrityIssues(presentation),
+    ...findContentSlideContractIssues(presentation),
     ...findIntraSlideDuplicateIssues(presentation),
     ...findRepeatedTitleIssues(presentation),
     ...findLongSlideTextIssues(presentation),
@@ -1578,6 +1610,7 @@ export async function improvePresentationQuality(
 
   const contentIssues = [
     ...findVisibleTextIntegrityIssues(best),
+    ...findContentSlideContractIssues(best),
     ...findIntraSlideDuplicateIssues(best),
     // Exact deck-wide central-claim repeats are safe to replace locally from
     // the matching narrative-plan job. Softer semantic matches stay in the
@@ -1596,6 +1629,7 @@ export async function improvePresentationQuality(
     const fallbackCritique = critiquePresentationDeterministically(fallback, sources, project);
     const remaining = [
       ...findVisibleTextIntegrityIssues(fallback),
+      ...findContentSlideContractIssues(fallback),
       ...findIntraSlideDuplicateIssues(fallback),
       ...findDeckWideDuplicateIssues(fallback).filter((issue) => issue.severity === "blocker"),
     ];
@@ -1613,7 +1647,7 @@ export async function improvePresentationQuality(
     }, "presentation duplicate or fragment repair applied");
   }
 
-  const visualPlanIssues = findVisualPlanIssues(best, project);
+  const visualPlanIssues = [...findVisualPlanIssues(best, project), ...findVisualFulfillmentIssues(best)];
   if (visualPlanIssues.length) {
     const affectedSlideIds = new Set(visualPlanIssues.map((issue) => issue.slideId).filter((id): id is string => Boolean(id)));
     const directionBefore = new Map((best.designBrief?.slideDirections || []).map((direction) => [direction.slideOrder, JSON.stringify(direction)]));
@@ -1739,7 +1773,7 @@ export function applyVisibleTextIntegrityFallbacks(
   project: QualityProjectInput,
 ): PresentationDocument {
   const affected = new Set(issues
-    .filter((issue) => issue.category === "duplicate" || issue.message.startsWith("Visible text is incomplete:"))
+    .filter((issue) => issue.category === "duplicate" || issue.message.startsWith("Visible text is incomplete:") || issue.field === "contentContract")
     .map((issue) => issue.slideId)
     .filter((id): id is string => Boolean(id)));
   const fieldsBySlide = new Map<string, Set<string>>();
@@ -1886,11 +1920,14 @@ function rebuildVisibleContentFromAcceptedNarration(
   const slides = presentation.slides.map((slide) => {
     if (!affected.has(slide.id)) return slide;
     const affectedFields = fieldsBySlide?.get(slide.id);
+    const strictContentRepair = slide.slideKind === "content" && affectedFields?.has("contentContract");
     const replaceAllVisible = !affectedFields || affectedFields.has("keyMessage");
-    const needsField = (prefix: string) => replaceAllVisible || [...affectedFields || []].some((field) => field === prefix || field.startsWith(`${prefix}.`));
+    const needsField = (prefix: string) => strictContentRepair || replaceAllVisible || [...affectedFields || []].some((field) => field === prefix || field.startsWith(`${prefix}.`));
     const script = presentation.speechScript.find((item) => item.slideOrder === slide.order)?.text || "";
     const narrative = presentation.narrativePlan.find((item) => item.slideOrder === slide.order);
-    const sentences = acceptedNarrationSentences([slide.speakerNotes, script]);
+    const accepted = parseAcceptedNarrationSections(presentation.generatedText).find((section) => section.order === slide.order)?.text || "";
+    const sentences = acceptedNarrationSentences(strictContentRepair ? [accepted] : [slide.speakerNotes, script]);
+    if (strictContentRepair && sentences.length < 3) return slide;
     const fallbackSentences = acceptedNarrationSentences([narrative?.keyMessage || "", narrative?.slidePurpose || ""]);
     const candidates = sentences.length ? sentences : fallbackSentences;
     const title = compactTitle(narrative?.slideTitle || candidates[0] || project.title || slide.title);
@@ -1899,7 +1936,9 @@ function rebuildVisibleContentFromAcceptedNarration(
     const safeBullets = bullets.length >= 2
       ? bullets.slice(0, 3)
       : uniqueCompactSentences([narrative?.keyMessage || "", narrative?.slidePurpose || "", ...candidates], thesis).slice(0, 3);
-    const candidateBullets = safeBullets.length >= 2
+    const candidateBullets = strictContentRepair
+      ? uniqueCompactSentences(candidates.slice(1), thesis).slice(0, 3)
+      : safeBullets.length >= 2
       ? safeBullets
       : [compactSentence(narrative?.keyMessage || thesis, 18), compactSentence(narrative?.slidePurpose || `${project.title}: ключевой вывод.`, 18)].filter(Boolean);
     const repairedBullets = candidateBullets.filter((bullet) => normalizedMessage(bullet) !== normalizedMessage(thesis));

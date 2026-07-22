@@ -43,6 +43,7 @@ import {
   slideTextPlanSchema,
 } from "@studydeck/shared";
 import {
+  findContentSlideContractIssues,
   improvePresentationQuality,
   productionQualityReleaseResult,
   type QualityRepairResponse,
@@ -945,6 +946,10 @@ export function assertPresentationQuality(presentation: PresentationDocument, pr
   const blockingSlideTextIssues = slideTextIssues.filter(isBlockingSlideTextIssue);
   if (blockingSlideTextIssues.length) {
     issues.push(...blockingSlideTextIssues.map((issue) => `slide ${issue.slideOrder} visible text ${issue.reasons.join(", ")}`));
+  }
+  const contentContractIssues = findContentSlideContractIssues(presentation);
+  if (contentContractIssues.length) {
+    issues.push(...contentContractIssues.map((issue) => `slide ${presentation.slides.find((slide) => slide.id === issue.slideId)?.order || "?"} ${issue.message}`));
   }
 
   if (!/Слайд\s+1\s*:/i.test(presentation.generatedText)) {
