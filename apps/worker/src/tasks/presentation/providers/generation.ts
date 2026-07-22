@@ -340,20 +340,14 @@ export async function generateYandexPresentationFromNarration(project: ProjectIn
     { yandexApiKey: apiKey },
   );
   const slideBlueprints = buildSlideBlueprints(project, narrationText, narrativePlan, designBrief);
-  let parsed: unknown;
-  try {
-    parsed = await generatePresentationDocumentWithProvider("yandex", project, sources, narrationText, narrativePlan, {
-      researchBrief,
-      deckStory,
-      designBrief,
-      slideBlueprints,
-      slideTextPlans,
-      yandexApiKey: apiKey,
-    });
-  } catch (error) {
-    logger.warn({ projectId: project.id, stage: "building_slides", provider: "yandex", ...errorLogFields(error) }, "structured presentation generation failed; using narration fallback document");
-    parsed = {};
-  }
+  const parsed = await generatePresentationDocumentWithProvider("yandex", project, sources, narrationText, narrativePlan, {
+    researchBrief,
+    deckStory,
+    designBrief,
+    slideBlueprints,
+    slideTextPlans,
+    yandexApiKey: apiKey,
+  });
   return finalizeGeneratedPresentation(
     parsed,
     project,
@@ -382,10 +376,16 @@ export async function generateYandexNarration(apiKey: string, project: ProjectIn
     } catch (error) {
       lastError = error;
       // Yandex can stop a long one-shot answer around five minutes even with
-      // a high output allowance. Use the three agreed recovery calls for
-      // fresh slide ranges instead of requesting the same short answer again.
+      // a high output allowance. A duration-only failure already has valid
+      // slide sections, so complete that usable answer before spending a
+      // recovery request. Paid retries remain for malformed narration.
       if (attempt === 0 && isNarrationDurationShortfall(error)) {
-        return generateYandexNarrationByChunks(apiKey, project, sources, narrativePlan, researchBrief);
+        try {
+          return recoverShortYandexNarration(outputText, project, narrativePlan);
+        } catch (recoveryError) {
+          lastError = recoveryError;
+          return generateYandexNarrationByChunks(apiKey, project, sources, narrativePlan, researchBrief);
+        }
       }
       if (attempt === NARRATION_MAX_PROVIDER_ATTEMPTS - 1 || !shouldRetryNarration(error)) {
         break;
@@ -439,8 +439,11 @@ async function generateYandexNarrationByChunks(
     narrationParts.push(sections.map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n"));
   }
 
-  const combinedNarration = narrationParts.join("\n\n");
-  let candidateNarration = combinedNarration;
+  return recoverShortYandexNarration(narrationParts.join("\n\n"), project, narrativePlan);
+}
+
+function recoverShortYandexNarration(narrationText: string, project: ProjectInput, narrativePlan: SlideNarrative[]) {
+  let candidateNarration = narrationText;
   try {
     return normalizeNarrationText(candidateNarration, project);
   } catch (error) {

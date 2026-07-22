@@ -144,20 +144,17 @@ import { normalizeProvider } from "../quality/orchestration.js";
 
 export function selectAiProviders(env: EnvLike = process.env): AiGenerationMode[] {
   const requested = normalizeProvider(env.AI_PROVIDER);
-  const available: AiGenerationMode[] = [];
   const hasOpenAI = Boolean(env.OPENAI_API_KEY?.trim());
   const hasYandex = Boolean(env.YANDEX_API_KEY?.trim() && (env.YANDEX_MODEL_URI?.trim() || env.YANDEX_FOLDER_ID?.trim()));
 
-  if (hasOpenAI) available.push("openai");
-  if (hasYandex) available.push("yandex");
-
-  if (!requested) {
-    return available;
-  }
+  // An explicit provider selection is a contract, not a preference.  In
+  // particular, a failed Yandex request must never spend OpenAI credits or
+  // produce a result from a different model.
+  if (requested === "openai") return hasOpenAI ? ["openai"] : [];
+  if (requested === "yandex") return hasYandex ? ["yandex"] : [];
 
   return [
-    ...(available.includes(requested) ? [requested] : []),
-    ...available.filter((provider) => provider !== requested),
+    ...(hasOpenAI ? ["openai" as const] : []),
+    ...(hasYandex ? ["yandex" as const] : []),
   ];
 }
-

@@ -180,6 +180,21 @@ describe("ProjectsService revision protection", () => {
   });
 });
 
+describe("ProjectsService public generation errors", () => {
+  it("does not expose Yandex provider details in a failed project response", async () => {
+    const { service } = createHarness();
+    vi.spyOn(service as any, "getProjectDetail").mockResolvedValue(project({
+      status: "failed",
+      error: "Yandex schema validation failed for yandex-secret123456",
+    }) as never);
+
+    const result = await service.getAccessible("user-1", "project-1");
+
+    expect(result.error).toMatch(/[А-Яа-яЁё]/);
+    expect(result.error).not.toMatch(/yandex|schema|secret/i);
+  });
+});
+
 describe("ProjectsService defense lifecycle", () => {
   it("duplicates the editable defense workspace without report history", async () => {
     const { prisma, service, storage, tx } = createHarness();

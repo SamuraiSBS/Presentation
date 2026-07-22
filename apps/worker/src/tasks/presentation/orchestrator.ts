@@ -253,19 +253,14 @@ export async function generatePresentationFromNarration(
     }
   }
 
-  // Once the speech has been accepted, it is a complete, user-approved
-  // recovery checkpoint. Provider output improves the deck, but it must not
-  // be a prerequisite for delivering a readable presentation. This path is
-  // deliberately independent from ALLOW_DEMO_GENERATION: it preserves the
-  // accepted speech rather than inventing a demo script.
-  logger.warn({
-    projectId: project.id,
-    stage: "building_slides",
-    providers,
-    errors,
-    recovery: "accepted_narration_safe_deck",
-  }, "AI slide generation unavailable; building a local presentation from accepted narration");
-  return buildSafePresentationFromNarration(project, sources, fixedNarration);
+  if (!providers.length) {
+    throw new Error("No configured AI provider. Set OPENAI_API_KEY or YANDEX_API_KEY with YANDEX_FOLDER_ID/YANDEX_MODEL_URI.");
+  }
+
+  // Accepted narration remains available for a retry, but it is not a
+  // substitute for a provider-produced presentation.  The worker catches
+  // this error before persistence, so no demo-fallback revision is saved.
+  throw new Error(`AI slide generation failed. ${errors.join(" | ")}`);
 }
 
 /**

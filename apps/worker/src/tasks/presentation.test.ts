@@ -148,6 +148,23 @@ describe("presentation compatibility facade", () => {
     expect(validateNarrationSections(parseNarrationSections(completed), project)).not.toContain(expect.stringContaining("duration is below"));
   });
 
+  it.each([6, 8, 10, 12, 14])("applies the local duration completion to a %i-slide timing contract", (slideCount) => {
+    const project = { id: "project", title: "Тема", prompt: "Подготовь университетскую презентацию о теме", scenario: "report", level: "university_student", mode: "create", slideCount };
+    const shortNarration = Array.from({ length: slideCount }, (_, index) => `Слайд ${index + 1}: Раздел ${index + 1}\n${Array.from({ length: 60 }, (_, word) => `слово${index + 1}_${word + 1}`).join(" ")}.`).join("\n\n");
+    const plan = Array.from({ length: slideCount }, (_, index) => ({
+      slideOrder: index + 1,
+      slideTitle: `Раздел ${index + 1}`,
+      slidePurpose: `объяснить аспект ${index + 1}`,
+      keyMessage: `ключевой тезис ${index + 1} подтверждается фактами`,
+      audienceQuestion: `какую роль играет аспект ${index + 1}`,
+      transitionToNext: "",
+      evidenceOrExplanation: `конкретное объяснение аспекта ${index + 1}`,
+      whyItMatters: `это меняет понимание аспекта ${index + 1}`,
+    }));
+    const completed = completeYandexNarrationDuration(shortNarration, project, plan);
+    expect(validateNarrationSections(parseNarrationSections(completed), project)).not.toContain(expect.stringContaining("duration is below"));
+  });
+
   it("replaces a generic Yandex narration sentence with its narrative-plan conclusion", () => {
     const narration = "Слайд 1: Итог\nСатурн остаётся одной из самых удивительных планет, изучение которой имеет большое значение для будущего астрономии.";
     const repaired = replaceTemplateNarration(narration, [{ slideOrder: 1, slideTitle: "Итог", slidePurpose: "подвести итог", keyMessage: "кольца Сатурна состоят из множества частиц", audienceQuestion: "что показывают кольца", transitionToNext: "", whyItMatters: "Наблюдение за кольцами помогает изучать процессы формирования планетных систем" }]);
@@ -544,7 +561,7 @@ function weakOverlongNarrationForSlides(titles: string[]) {
 }
 
 describe("selectAiProviders", () => {
-  it("falls back to configured Yandex when OpenAI is selected but missing a key", () => {
+  it("does not fall back to Yandex when explicitly selected OpenAI is unavailable", () => {
     expect(
       selectAiProviders({
         AI_PROVIDER: "openai",
@@ -552,10 +569,10 @@ describe("selectAiProviders", () => {
         YANDEX_API_KEY: "yandex-key",
         YANDEX_FOLDER_ID: "folder-id",
       }),
-    ).toEqual(["yandex"]);
+    ).toEqual([]);
   });
 
-  it("orders the requested configured provider first", () => {
+  it("uses only the explicitly requested provider even when both are configured", () => {
     expect(
       selectAiProviders({
         AI_PROVIDER: "yandex",
@@ -563,7 +580,15 @@ describe("selectAiProviders", () => {
         YANDEX_API_KEY: "yandex-key",
         YANDEX_FOLDER_ID: "folder-id",
       }),
-    ).toEqual(["yandex", "openai"]);
+    ).toEqual(["yandex"]);
+    expect(
+      selectAiProviders({
+        AI_PROVIDER: "openai",
+        OPENAI_API_KEY: "openai-key",
+        YANDEX_API_KEY: "yandex-key",
+        YANDEX_FOLDER_ID: "folder-id",
+      }),
+    ).toEqual(["openai"]);
   });
 });
 
@@ -996,7 +1021,7 @@ describe("generatePresentation fallback behavior", () => {
     expect(draft.narrativePlan).toHaveLength(4);
   });
 
-  it("builds the final presentation from the accepted narration text", async () => {
+  it("rejects accepted narration instead of creating a demo-fallback deck when no provider is configured", async () => {
     process.env.AI_PROVIDER = "";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "";
@@ -1012,7 +1037,7 @@ describe("generatePresentation fallback behavior", () => {
       "Экология города складывается из решений власти, бизнеса и самих жителей. Если люди чаще выбирают общественный транспорт, нагрузка на воздух становится меньше. Раздельный сбор помогает не превращать полезные материалы в лишний мусор. Небольшие привычки работают сильнее, когда их поддерживает много людей. Главный вывод в том, что чистый город начинается с понятных ежедневных действий.",
     ].join("\n");
 
-    const presentation = await generatePresentationFromNarration(
+    await expect(generatePresentationFromNarration(
       {
         id: "project-script",
         title: "Экология города",
@@ -1024,19 +1049,14 @@ describe("generatePresentation fallback behavior", () => {
       },
       [{ id: "src-1", label: "Prompt", type: "PROMPT", excerpt: "Городская экология зависит от воздуха, транспорта и поведения жителей." }],
       acceptedNarration,
-    );
-
-    expect(presentation.generatedText).toContain("Городской воздух меняется из-за транспорта");
-    expect(presentation.slides[0].speakerNotes).toContain("Городской воздух меняется из-за транспорта");
-    expect(presentation.speechScript[0].text).toContain("Городской воздух меняется из-за транспорта");
-    expect(presentation.slides).toHaveLength(2);
+    )).rejects.toThrow("No configured AI provider");
   });
 
-  it("uses the clean topic instead of the student prompt in demo fallback slides", async () => {
-    process.env.AI_PROVIDER = "";
+  it("does not use the accepted narration fallback when the configured Yandex call fails", async () => {
+    process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
-    process.env.YANDEX_API_KEY = "";
-    process.env.YANDEX_FOLDER_ID = "";
+    process.env.YANDEX_API_KEY = "yandex-key";
+    process.env.YANDEX_FOLDER_ID = "folder-id";
     process.env.YANDEX_MODEL_URI = "";
     process.env.ALLOW_DEMO_GENERATION = "true";
 
@@ -1049,8 +1069,11 @@ describe("generatePresentation fallback behavior", () => {
       "После кризиса стало очевидно, что ядерное сдерживание требует каналов связи и взаимного контроля. Политические лидеры увидели, что давление без переговоров повышает риск ошибки. Компромисс позволил избежать войны, хотя напряжение между системами не исчезло. Этот опыт повлиял на дальнейшие соглашения о безопасности. Главный вывод в том, что ответственность в кризисе важнее демонстрации силы.",
     ].join("\n");
 
-    const presentation = await generatePresentationFromNarration(
-      {
+    const originalFetch = global.fetch;
+    global.fetch = async () => { throw new Error("Yandex request failed: 503 unavailable"); };
+    try {
+      await expect(generatePresentationFromNarration(
+        {
         id: "project-script",
         title: studentPrompt,
         prompt: studentPrompt,
@@ -1060,13 +1083,11 @@ describe("generatePresentation fallback behavior", () => {
         slideCount: 2,
       },
       [{ id: "src-prompt", label: "Prompt", type: "PROMPT", size: 0, excerpt: studentPrompt }],
-      acceptedNarration,
-    );
-
-    const visibleText = visiblePresentationText(presentation);
-    expect(presentation.title).toBe("Карибский кризис");
-    expect(visibleText).toContain("Карибский кризис");
-    expectNoForbiddenSlideText(visibleText);
+        acceptedNarration,
+      )).rejects.toThrow("AI slide generation failed");
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 
   it("stores the stable StudyDeck editorial theme across topics", async () => {
@@ -2533,7 +2554,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("keeps the narration fallback schema-valid when the structured deck response is truncated", async () => {
+  it("rejects a truncated Yandex structured deck response instead of creating narration fallback slides", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -2546,7 +2567,7 @@ describe("generatePresentation fallback behavior", () => {
     mockYandexTwoStep(narrationForSlides(titles), "{");
 
     try {
-      const presentation = await generatePresentation(
+      await expect(generatePresentationFromNarration(
         {
           id: "project-1",
           title: "Porsche 911 heritage and innovation across generations of sports car engineering and design history worldwide",
@@ -2557,12 +2578,8 @@ describe("generatePresentation fallback behavior", () => {
           slideCount: 3,
         },
         [],
-      );
-
-      expect(presentation.slides).toHaveLength(3);
-      expect(presentation.slides[2].visual.items).toHaveLength(3);
-      expect(presentation.slides[2].visual.items.every((item) => item.label.length <= 100 && item.text.length <= 180)).toBe(true);
-      expect(() => presentationSchema.parse(presentation)).not.toThrow();
+        narrationForSlides(titles),
+      )).rejects.toThrow("AI slide generation failed");
     } finally {
       global.fetch = originalFetch;
     }
