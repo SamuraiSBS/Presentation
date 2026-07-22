@@ -9,8 +9,9 @@ import { extractTextFromSource } from "./extract.js";
 import { enrichPresentationImages } from "./image-search.js";
 import {
   classifyGenerationError,
+  generationFailureCategory,
   logGenerationStage,
-  safeErrorSummary,
+  safeGenerationError,
   updateGenerationProgress,
   type GenerationProgressStage,
 } from "./job-progress.js";
@@ -214,6 +215,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     // Image fulfillment and canvas composition happen after the model-facing
     // quality loop. Re-audit the exact document that will be persisted: a
     // rejected candidate must never increment a revision or become ready.
+    await setStage("validating");
     const release = productionQualityReleaseResult(presentation, presentation.sources, generationProject);
     logger.info({
       projectId,
@@ -230,7 +232,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       ...presentation,
       productionQualityGate: { version: 1, capability: "silent-production-quality-gate" },
     };
-    finishStage("polishing");
+    finishStage("validating");
     await setStage("saving");
     // The release capability, persisted canvas and ready status describe one
     // revision. Do not expose ready if writing that canonical document fails.
@@ -250,14 +252,15 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     });
     await prisma.userActivityEvent.create({ data: { userId: job.data.userId, projectId, type: "generation.completed", metadata: { kind } } });
   } catch (error) {
-    const message = safeErrorSummary(error);
+    const recovery = safeGenerationError(error);
+    const failureCategory = generationFailureCategory(error);
     const retryClass = classifyGenerationError(error);
     const attempts = typeof job.opts.attempts === "number" ? job.opts.attempts : 1;
     const willRetry = retryClass === "transient" && job.attemptsMade + 1 < attempts;
     if (!willRetry) {
       job.discard();
     }
-    logGenerationStage({ projectId, jobId: job.id, stage: "failed", durationMs: 0, error });
+    logGenerationStage({ projectId, jobId: job.id, stage: "failed", durationMs: 0, error, attempt: job.attemptsMade + 1, failureCategory, finalDisposition: willRetry ? "retry_scheduled" : "failed" });
     captureGenerationError(error, {
       projectId,
       jobId: job.id,
@@ -265,13 +268,17 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       provider: process.env.AI_PROVIDER,
     });
     if (!willRetry) {
-      await prisma.project.update({ where: { id: projectId }, data: { status: "failed", error: message } });
+      const existing = await prisma.presentation.findUnique({ where: { projectId }, select: { id: true } });
+      await prisma.project.update({
+        where: { id: projectId },
+        data: { status: existing ? "ready" : "failed", error: recovery.message },
+      });
     }
     await prisma.generationJob.updateMany({
       where: jobWhere,
       data: {
         status: willRetry ? "active" : "failed",
-        error: message,
+        error: recovery.message,
         progressStage: willRetry ? "queued" : "failed",
         progressLabel: willRetry ? "Временная ошибка, попробуем ещё раз" : "Не получилось",
         progressPercent: willRetry ? 5 : 100,

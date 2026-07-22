@@ -17,6 +17,7 @@
     "lint": "eslint apps packages e2e --max-warnings 57",
     "test": "npm run test --workspaces --if-present",
     "test:e2e": "playwright test",
+    "smoke:generation:live": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/live-generation-smoke.ps1",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",

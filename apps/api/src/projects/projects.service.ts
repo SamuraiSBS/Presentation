@@ -25,6 +25,7 @@ import {
   planLimits,
   presentationSchema,
   resolvePresentationTheme,
+  safeGenerationRecovery,
   slideCanvasSchema,
 } from "@studydeck/shared";
 import { ProjectAccessService } from "../access/project-access.service.js";
@@ -132,6 +133,8 @@ export class ProjectsService {
     const project = await this.getProjectDetail(id);
     return {
       ...project,
+      error: publicProjectError(project.error, project.status),
+      jobs: project.jobs.map((job) => ({ ...job, error: publicJobError(job.error, job.status) })),
       accessRole: access.role,
       presentationRevision: project.presentation?.revision ?? 0,
       owner: project.user,
@@ -724,6 +727,16 @@ export class ProjectsService {
     }
     return this.s3Client;
   }
+}
+
+function publicProjectError(value: string | null, status: string) {
+  if (!value) return null;
+  return safeGenerationRecovery(status === "failed" ? "unknown" : "transient").message;
+}
+
+function publicJobError(value: string | null, status: string) {
+  if (!value) return null;
+  return safeGenerationRecovery(status === "failed" ? "unknown" : "transient").message;
 }
 
 function revisionConflict(currentRevision: number) {

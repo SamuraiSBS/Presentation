@@ -1,4 +1,5 @@
 import type { Job } from "bullmq";
+import { safeGenerationRecovery, type GenerationFailureCategory } from "@studydeck/shared";
 import { errorLogFields, logger } from "../observability.js";
 
 export const GENERATION_PROGRESS_STAGES = [
@@ -15,6 +16,7 @@ export const GENERATION_PROGRESS_STAGES = [
   "selecting_visuals",
   "polishing",
   "repairing_layout",
+  "validating",
   "saving",
   "completed",
   "failed",
@@ -25,6 +27,7 @@ export type GenerationProgressStage = typeof GENERATION_PROGRESS_STAGES[number];
 export type GenerationRetryClass = "transient" | "repairable_schema" | "fatal";
 
 const STAGE_META: Record<GenerationProgressStage, { label: string; percent: number }> = {
+  validating: { label: "Проверяем итоговую версию", percent: 94 },
   queued: { label: "В очереди", percent: 0 },
   extracting_sources: { label: "Разбираем материалы проекта", percent: 12 },
   extracting_requirements: { label: "Выделяем факты и требования", percent: 36 },
@@ -119,6 +122,20 @@ export function classifyGenerationError(error: unknown): GenerationRetryClass {
   return "fatal";
 }
 
+export function generationFailureCategory(error: unknown): GenerationFailureCategory {
+  const text = `${error instanceof Error ? error.name : ""} ${error instanceof Error ? error.message : String(error || "")}`.toLowerCase();
+  if (classifyGenerationError(error) === "transient") return "transient";
+  if (/layout|canvas|overflow|geometry/.test(text)) return "layout";
+  if (/image|photo|visual/.test(text)) return "image";
+  if (/quality check|quality gate|template phrase|validation/.test(text)) return "quality";
+  if (/api.?key|is required|unsupported|folder_id|model_uri/.test(text)) return "configuration";
+  return "unknown";
+}
+
+export function safeGenerationError(error: unknown) {
+  return safeGenerationRecovery(generationFailureCategory(error));
+}
+
 export function safeErrorSummary(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "Generation failed");
   return errorLogFields(error).errorMessage || message.slice(0, 500);
@@ -130,12 +147,18 @@ export function logGenerationStage(input: {
   stage: GenerationProgressStage;
   durationMs: number;
   error?: unknown;
+  attempt?: number;
+  failureCategory?: GenerationFailureCategory;
+  finalDisposition?: string;
 }) {
   const payload = {
     projectId: input.projectId,
     jobId: input.jobId ? String(input.jobId) : "",
     stage: input.stage,
     durationMs: Math.max(0, Math.round(input.durationMs)),
+    attempt: input.attempt,
+    failureCategory: input.failureCategory,
+    finalDisposition: input.finalDisposition,
     ...(input.error ? errorLogFields(input.error) : {}),
   };
   logger.info(payload, "generation stage");

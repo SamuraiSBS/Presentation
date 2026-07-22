@@ -4,6 +4,8 @@ import {
   generationJobOptions,
   progressForStage,
   safeErrorSummary,
+  generationFailureCategory,
+  safeGenerationError,
   updateGenerationProgress,
 } from "./job-progress.js";
 
@@ -59,6 +61,13 @@ describe("generation retry classification", () => {
     error.name = "StructuredGenerationError";
 
     expect(classifyGenerationError(error)).toBe("repairable_schema");
+    expect(generationFailureCategory(error)).toBe("quality");
+  });
+
+  it("exposes recovery copy without provider or schema detail", () => {
+    const recovery = safeGenerationError(new Error("OpenAI returned schema validation error for sk-secret123456"));
+    expect(recovery.category).toBe("quality");
+    expect(recovery.message).not.toMatch(/openai|schema|sk-secret/i);
   });
 
   it("redacts likely API tokens from safe summaries", () => {
