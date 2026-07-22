@@ -539,11 +539,18 @@ export function isUsableNarrationSentence(sentence: string, section: NarrationSe
 }
 
 export function isGenericNarrationSentence(sentence: string) {
+  if (/собрать ответ на главный вопрос|связать его с предыдущими смысловыми шагами|оставить 2[–-]3 разных подтвержденных вывода/iu.test(sentence)) {
+    return true;
+  }
   const normalized = normalizeExactForQuality(sentence);
   const genericFragments = [
     "\u0440\u0430\u0441\u0441\u043a\u0430\u0437 \u043f\u0440\u043e",
     "\u0447\u0442\u043e \u0441\u0442\u043e\u0438\u0442 \u043f\u043e\u043d\u044f\u0442\u044c \u0441\u043d\u0430\u0447\u0430\u043b\u0430",
     "\u0433\u043b\u0430\u0432\u043d\u044b\u0439 \u0432\u044b\u0432\u043e\u0434 \u043f\u043e \u0442\u0435\u043c\u0435",
+    "\u0441\u043e\u0431\u0440\u0430\u0442\u044c \u043e\u0442\u0432\u0435\u0442 \u043d\u0430 \u0433\u043b\u0430\u0432\u043d\u044b\u0439 \u0432\u043e\u043f\u0440\u043e\u0441",
+    "\u0441\u0432\u044f\u0437\u0430\u0442\u044c \u0435\u0433\u043e \u0441 \u043f\u0440\u0435\u0434\u044b\u0434\u0443\u0449\u0438\u043c\u0438 \u0441\u043c\u044b\u0441\u043b\u043e\u0432\u044b\u043c\u0438 \u0448\u0430\u0433\u0430\u043c\u0438",
+    "\u043e\u0441\u0442\u0430\u0432\u0438\u0442\u044c 2\u20133 \u0440\u0430\u0437\u043d\u044b\u0445 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u043d\u044b\u0445 \u0432\u044b\u0432\u043e\u0434\u0430",
+    "\u043e\u0441\u0442\u0430\u0432\u0438\u0442\u044c 2-3 \u0440\u0430\u0437\u043d\u044b\u0445 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u043d\u044b\u0445 \u0432\u044b\u0432\u043e\u0434\u0430",
     "\u043d\u0430 \u044d\u0442\u043e\u043c \u0441\u043b\u0430\u0439\u0434\u0435",
     "\u044d\u0442\u043e\u0442 \u0441\u043b\u0430\u0439\u0434",
     "\u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0430\u044f \u0447\u0430\u0441\u0442\u044c",
@@ -557,6 +564,7 @@ export function isGenericNarrationSentence(sentence: string) {
     "одной из самых удивительных планет",
   ];
   return hasForbiddenTemplateText(sentence)
+    || GENERIC_NARRATION_PHRASES.some((phrase) => normalized.includes(normalizeExactForQuality(phrase)))
     || genericFragments.some((phrase) => normalized.includes(normalizeExactForQuality(phrase)));
 }
 

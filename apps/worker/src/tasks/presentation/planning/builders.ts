@@ -776,15 +776,24 @@ export function normalizeConclusionNarrativeItem(item: SlideNarrative, project: 
   const title = isGenericConclusionEnding(item.slideTitle) ? fallback.slideTitle : item.slideTitle;
   const keyMessage = isGenericConclusionEnding(item.keyMessage) ? fallback.keyMessage : item.keyMessage;
   const purpose = cleanText(item.slidePurpose);
-  const conclusionPurpose = "Сформулировать ответ на главный вопрос темы, связать его с предыдущими смысловыми шагами и оставить 2–3 разных подтвержденных вывода без новых фактов.";
   return {
     ...item,
     slideTitle: title,
     keyMessage,
-    slidePurpose: purpose.includes("2–3") || purpose.includes("2-3") ? purpose : `${purpose || fallback.slidePurpose} ${conclusionPurpose}`,
+    // The prompt still requires a strong synthesis, but these fields are also
+    // narration input. Do not let a planner instruction become speaker text.
+    slidePurpose: isConclusionPlanningInstruction(purpose) ? fallback.slidePurpose : purpose || fallback.slidePurpose,
     audienceQuestion: isGenericConclusionEnding(item.audienceQuestion) ? fallback.audienceQuestion : item.audienceQuestion,
     transitionToNext: "",
   };
+}
+
+function isConclusionPlanningInstruction(value: string) {
+  const normalized = value.toLowerCase();
+  return normalized.includes("собрать ответ на главный вопрос")
+    || normalized.includes("связать его с предыдущими смысловыми шагами")
+    || normalized.includes("оставить 2–3")
+    || normalized.includes("оставить 2-3");
 }
 
 function isGenericConclusionEnding(value: unknown) {
@@ -860,11 +869,11 @@ export function buildFallbackNarrativeItem(project: ProjectInput, order: number,
       order === 1
         ? `Задать понятный контекст темы «${topic}» и показать, с какого вопроса начинается выступление.`
         : order === project.slideCount
-        ? `Собрать ответ на главный вопрос темы «${topic}», связать его с предыдущими смысловыми шагами и оставить 2–3 разных подтвержденных вывода.`
+        ? `Показать, как ключевые аспекты темы «${topic}» образуют целостную картину и объясняют её значение.`
           : `Раскрыть важную часть темы «${topic}» через отдельный смысловой шаг выступления.`,
     keyMessage:
       order === project.slideCount
-        ? `Тема «${topic}» требует цельного вывода: центральная мысль должна опираться на уже раскрытые причины, примеры или последствия.`
+        ? `Ключевые аспекты темы «${topic}» вместе показывают её значение и связи между рассмотренными явлениями.`
         : `Тема «${topic}» становится понятнее через конкретный аспект: ${title}.`,
     audienceQuestion:
       order === 1

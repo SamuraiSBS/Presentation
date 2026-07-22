@@ -18,8 +18,8 @@ import { generatePresentation as generatePresentationFromOrchestrator } from "./
 import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./presentation/prompts/builders.js";
 import { buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
 import { buildNarrationRepairPrompt } from "./presentation/prompts/builders.js";
-import { normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
-import { completeYandexNarrationDuration, NARRATION_MAX_PROVIDER_ATTEMPTS, narrationRecoveryChunks, replaceTemplateNarration } from "./presentation/providers/generation.js";
+import { buildFallbackNarrativeItem, normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
+import { completeYandexNarrationDuration, NARRATION_MAX_PROVIDER_ATTEMPTS, narrationRecoveryChunks, replaceTemplateNarration, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
 import { NARRATION_SYSTEM_PROMPT } from "./presentation/constants.js";
 import { sourceEvidenceForSlide } from "./presentation/planning/builders.js";
 import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
@@ -170,6 +170,46 @@ describe("presentation compatibility facade", () => {
     const repaired = replaceTemplateNarration(narration, [{ slideOrder: 1, slideTitle: "Итог", slidePurpose: "подвести итог", keyMessage: "кольца Сатурна состоят из множества частиц", audienceQuestion: "что показывают кольца", transitionToNext: "", whyItMatters: "Наблюдение за кольцами помогает изучать процессы формирования планетных систем" }]);
     expect(repaired).toContain("Наблюдение за кольцами помогает изучать процессы формирования планетных систем");
     expect(repaired).not.toContain("одной из самых удивительных планет");
+  });
+
+  it("keeps a fallback Saturn conclusion out of template narration and repairs only its template sentence", () => {
+    const project = {
+      id: "saturn-template-repair",
+      title: "Система Сатурна",
+      prompt: "Подготовь учебную презентацию о системе Сатурна",
+      scenario: "lesson",
+      level: "school",
+      mode: "create",
+      slideCount: 10,
+    } as const;
+    const finalPlan = buildFallbackNarrativeItem(project, 10);
+    expect(finalPlan.slidePurpose).not.toContain("Собрать ответ на главный вопрос");
+    expect(finalPlan.slidePurpose).not.toContain("оставить 2–3");
+
+    const narration = Array.from({ length: 10 }, (_, index) => {
+      const order = index + 1;
+      const text = order === 10
+        ? "Собрать ответ на главный вопрос темы «Система Сатурна», связать его с предыдущими смысловыми шагами и оставить 2–3 разных подтвержденных вывода. Строение, кольца и спутники раскрывают разные стороны системы Сатурна без добавления новых фактов для учебного объяснения."
+        : `Наблюдение ${order} связывает выбранный аспект с системой Сатурна и объясняет его место в общей картине. Различие ${order} сохраняет последовательность наблюдений и делает ход учебного объяснения яснее.`;
+      return `Слайд ${order}: Раздел ${order}\n${text}`;
+    }).join("\n\n");
+    const plan = Array.from({ length: 10 }, (_, index) => ({
+      slideOrder: index + 1,
+      slideTitle: `Раздел ${index + 1}`,
+      slidePurpose: index === 9 ? finalPlan.slidePurpose : `Рассмотреть аспект ${index + 1} системы Сатурна.`,
+      keyMessage: index === 9 ? finalPlan.keyMessage : `Аспект ${index + 1} раскрывает выбранную сторону системы Сатурна.`,
+      audienceQuestion: "",
+      transitionToNext: "",
+      evidenceOrExplanation: index === 9 ? "Строение, кольца и спутники вместе показывают научную ценность системы Сатурна." : "",
+      whyItMatters: index === 9 ? "Строение, кольца и спутники вместе показывают научную ценность системы Сатурна." : "",
+    }));
+
+    const templateOnlyNarration = narration.replace(" Строение, кольца и спутники раскрывают разные стороны системы Сатурна без добавления новых фактов для учебного объяснения.", "");
+    expect(validateNarrationSections(parseNarrationSections(templateOnlyNarration), project).some((issue) => issue.includes("contains template narration"))).toBe(true);
+    const repaired = replaceTemplateNarration(narration, plan);
+    expect(repaired).toContain("Строение, кольца и спутники вместе показывают научную ценность системы Сатурна.");
+    expect(repaired).not.toContain("Собрать ответ на главный вопрос");
+    expect(parseNarrationSections(normalizeNarrationText(repaired, project))).toHaveLength(10);
   });
   it("allows one narration pass and three automatic full-regeneration attempts", () => {
     const project = {
@@ -337,7 +377,8 @@ describe("presentation compatibility facade", () => {
     });
     expect(plan.at(-1)?.slideTitle).not.toBe("Спасибо за внимание");
     expect(plan.at(-1)?.keyMessage).not.toBe("Спасибо за внимание.");
-    expect(plan.at(-1)?.slidePurpose).toContain("2–3");
+    expect(plan.at(-1)?.slidePurpose).not.toContain("Собрать ответ на главный вопрос");
+    expect(plan.at(-1)?.slidePurpose).not.toContain("оставить 2–3");
     expect(buildGenerationPrompt(project, [], "", plan)).toContain("never use a standalone final slide");
   });
 
@@ -670,6 +711,19 @@ describe("buildGenerationPrompt", () => {
 });
 
 describe("structured generation helper", () => {
+  it("classifies only recoverable Yandex structured-presentation failures", () => {
+    expect(isRecoverableYandexStructuredPresentationError(new StructuredGenerationError("studydeck_presentation", new SyntaxError("Unterminated string in JSON")))).toBe(true);
+    expect(isRecoverableYandexStructuredPresentationError(new Error("structured presentation response must contain 10 slides"))).toBe(true);
+    expect(isRecoverableYandexStructuredPresentationError(new Error("Yandex generation request failed: 401"))).toBe(false);
+    expect(isRecoverableYandexStructuredPresentationError(new Error("AI narration quality check failed"))).toBe(false);
+    expect(isRecoverableYandexStructuredPresentationError(new Error("Production quality gate rejected generated presentation"))).toBe(false);
+  });
+
+  it("partitions presentation recovery into exact ordered chunks", () => {
+    expect(presentationRecoveryChunks(10)).toEqual([[1, 2, 3], [4, 5, 6], [7, 8, 9, 10]]);
+    expect(presentationRecoveryChunks(2)).toEqual([[1], [2]]);
+  });
+
   it("uses the Vercel AI SDK path for OpenAI structured output", async () => {
     const calls: any[] = [];
     const fakeGenerateText = async (body: any) => {
