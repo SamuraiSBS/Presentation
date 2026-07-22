@@ -199,39 +199,16 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       ...presentationWithImages,
       slides: presentationWithImages.slides.map((slide) => ({ ...slide, canvas: undefined })),
     });
-    let unsafeCanvases = canvasAuditIssues(presentation);
+    const unsafeCanvases = canvasAuditIssues(presentation);
     if (unsafeCanvases.length) {
-      // A layout audit is a local rendering issue, not an AI-provider failure.
-      // Recompose the already generated, paid-for content into a conservative
-      // one-idea-per-slide layout before treating the job as failed.
-      await setStage("repairing_layout");
-      presentation = repairPresentationLayout(presentation);
-      unsafeCanvases = canvasAuditIssues(presentation);
-    }
-    if (unsafeCanvases.length) {
-      // The regular repair can still inherit a generated text slot whose
-      // auto-fit flag reaches the readable minimum.  At this point the speech
-      // has already been accepted, so persist an intentionally plain canvas
-      // rather than turning a local rendering concern into a failed project.
-      logger.warn({
-        projectId,
-        jobId: job.id,
-        stage: "repairing_layout",
-        issues: unsafeCanvases.slice(0, 8),
-        recovery: "emergency_readable_canvas",
-      }, "layout repair needs the emergency readable canvas");
-      presentation = buildEmergencyReadablePresentation(presentation);
-      unsafeCanvases = canvasAuditIssues(presentation);
-      if (unsafeCanvases.length) {
-        throw new Error(`Emergency presentation canvas failed its invariant: ${unsafeCanvases.slice(0, 8).join("; ")}`);
-      }
+      throw new Error(`Production quality gate rejected canvas safety: ${unsafeCanvases.slice(0, 8).join("; ")}`);
     }
     if (defenseBundle) assertDefensePresentation(presentation, defenseBundle);
     // Image fulfillment and canvas composition happen after the model-facing
     // quality loop. Re-audit the exact document that will be persisted: a
     // rejected candidate must never increment a revision or become ready.
     await setStage("validating");
-    let release = productionQualityReleaseResult(presentation, presentation.sources, generationProject);
+    const release = productionQualityReleaseResult(presentation, presentation.sources, generationProject);
     logger.info({
       projectId,
       jobId: job.id,
@@ -241,20 +218,14 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       finalAction: release.finalDisposition,
     }, "presentation production quality gate");
     if (release.finalDisposition !== "released") {
-      // The accepted speech is more valuable than a strict visual-quality
-      // score. Convert an unreleased generated deck into the conservative
-      // local layout instead of sending the user back to a failed state after
-      // they have already approved the narration.
-      await setStage("repairing_layout");
-      presentation = repairPresentationLayout(presentation);
-      release = productionQualityReleaseResult(presentation, presentation.sources, generationProject);
       logger.warn({
         projectId,
         jobId: job.id,
         stage: "validating",
         issueCategories: release.issueCategories,
-        finalAction: release.finalDisposition === "released" ? "released_after_safe_layout" : "released_safe_accepted_narration_fallback",
-      }, "production quality gate fell back to the accepted-narration safe deck");
+        finalAction: "rejected",
+      }, "presentation production quality gate rejected generated document");
+      throw new Error(`Production quality gate rejected generated presentation: ${release.issueCategories.join(", ") || "unspecified quality issue"}`);
     }
     presentation = {
       ...presentation,
