@@ -448,6 +448,7 @@ function regularGenerationJobWhere(
 
 export async function prepareGenerationSources(project: {
   id: string;
+  title?: string | null;
   prompt: string;
   mode: string;
   workflow?: string;
@@ -553,7 +554,7 @@ export async function prepareGenerationSources(project: {
     const prisma = getPrisma();
     let webSources: Source[];
     try {
-      webSources = await searchWebSources(project.prompt);
+      webSources = await searchWebSources({ prompt: project.prompt, title: project.title });
     } catch (error) {
       captureGenerationError(error, {
         projectId: project.id,
@@ -602,6 +603,21 @@ export async function prepareGenerationSources(project: {
     sources.push({
       id: `${project.id}-accepted-speech`,
       label: "Accepted speech text",
+      type: "PROMPT",
+      size: text.length,
+      excerpt: makeExcerpt(text, project.prompt) || text.slice(0, 1100),
+      included: true,
+    });
+  }
+
+  // Web research is optional grounding. When every search result is rejected,
+  // let the new job continue from the user's own brief instead of inventing a
+  // WEB source or failing solely because Tavily returned poor matches.
+  if (!sources.length && project.prompt.trim()) {
+    const text = cleanText(project.prompt).slice(0, 9000);
+    sources.push({
+      id: `${project.id}-project-prompt`,
+      label: "Project brief",
       type: "PROMPT",
       size: text.length,
       excerpt: makeExcerpt(text, project.prompt) || text.slice(0, 1100),

@@ -19,6 +19,7 @@ import {
 } from "@studydeck/shared";
 import { errorLogFields, logger } from "../observability.js";
 import { STOP_WORDS } from "./presentation/constants.js";
+import { hasGenericOrMetaScreenText } from "./presentation/quality/orchestration.js";
 
 export type QualityProjectInput = {
   id: string;

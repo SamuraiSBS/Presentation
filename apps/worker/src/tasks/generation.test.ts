@@ -173,16 +173,21 @@ describe("prepareGenerationSources", () => {
     expect(searchWebSources).not.toHaveBeenCalled();
   });
 
-  it("fails clearly when no source or accepted speech fallback exists", async () => {
+  it("uses the project brief when web research returns no acceptable sources", async () => {
     vi.mocked(searchWebSources).mockResolvedValue([]);
 
-    await expect(prepareGenerationSources({
+    const sources = await prepareGenerationSources({
       id: "project-empty",
       prompt: "Short topic",
       mode: "with_sources",
       speechDraft: "",
       sources: [],
-    })).rejects.toThrow("No source material was found for generation");
+    });
+
+    expect(sources).toEqual([
+      expect.objectContaining({ id: "project-empty-project-prompt", type: "PROMPT", label: "Project brief" }),
+    ]);
+    expect(searchWebSources).toHaveBeenCalledWith({ prompt: "Short topic", title: undefined });
   });
 
   it("uses only approved stored web sources for presentation generation", async () => {

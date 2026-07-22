@@ -41,6 +41,16 @@ describe("buildTavilyWebSearchQuery", () => {
     expect(query.toLowerCase()).not.toContain("презентацию");
     expect(query.toLowerCase()).not.toContain("красивые слайды");
   });
+
+  it("prefers an explicit Russian topic over adjectives from a long creation brief", () => {
+    const query = buildTavilyWebSearchQuery({
+      title: "Academic student presentation",
+      prompt: "\u0421\u0434\u0435\u043b\u0430\u0439 \u0430\u043a\u0430\u0434\u0435\u043c\u0438\u0447\u0435\u0441\u043a\u0443\u044e \u043f\u0440\u0435\u0437\u0435\u043d\u0442\u0430\u0446\u0438\u044e \u043f\u043e \u0442\u0435\u043c\u0435: \u041a\u043e\u0441\u043c\u043e\u0441 \u2014 \u043f\u043b\u0430\u043d\u0435\u0442\u0430 \u0421\u0430\u0442\u0443\u0440\u043d. \u0414\u043e\u0431\u0430\u0432\u044c \u0441\u043b\u0430\u0439\u0434\u044b \u0438 \u0432\u044b\u0432\u043e\u0434\u044b.",
+    });
+
+    expect(query).toContain("\u0421\u0430\u0442\u0443\u0440\u043d");
+    expect(query.toLowerCase()).not.toContain("\u0430\u043a\u0430\u0434\u0435\u043c\u0438\u0447\u0435\u0441\u043a");
+  });
 });
 
 describe("tavilyResultsToSources", () => {
@@ -76,6 +86,35 @@ describe("tavilyResultsToSources", () => {
         ],
       }),
     ).toEqual([]);
+  });
+
+  it("keeps relevant primary and university sources above secondary sources", () => {
+    const topic = "\u041a\u043e\u0441\u043c\u043e\u0441 \u043f\u043b\u0430\u043d\u0435\u0442\u0430 \u0421\u0430\u0442\u0443\u0440\u043d";
+    const sources = tavilyResultsToSources({
+      results: [
+        { title: "\u0421\u0430\u0442\u0443\u0440\u043d: \u0444\u0430\u043a\u0442\u044b", url: "https://example.com/saturn", content: "\u0421\u0430\u0442\u0443\u0440\u043d \u2014 \u043f\u043b\u0430\u043d\u0435\u0442\u0430 \u0421\u043e\u043b\u043d\u0435\u0447\u043d\u043e\u0439 \u0441\u0438\u0441\u0442\u0435\u043c\u044b." },
+        { title: "Saturn", url: "https://astronomy.nasa.gov/saturn", content: "NASA explains the planet Saturn, its rings and atmosphere." },
+        { title: "\u041a\u043e\u0441\u043c\u043e\u0441: \u043f\u043b\u0430\u043d\u0435\u0442\u0430 \u0421\u0430\u0442\u0443\u0440\u043d", url: "https://physics.example.edu/saturn", content: "\u0423\u043d\u0438\u0432\u0435\u0440\u0441\u0438\u0442\u0435\u0442\u0441\u043a\u0438\u0435 \u043d\u0430\u0431\u043b\u044e\u0434\u0435\u043d\u0438\u044f \u043f\u043b\u0430\u043d\u0435\u0442\u044b \u0421\u0430\u0442\u0443\u0440\u043d." },
+      ],
+    }, { title: topic, prompt: `\u043f\u043e \u0442\u0435\u043c\u0435: ${topic}` });
+
+    expect(sources.slice(0, 2).map((source) => source.url)).toEqual(expect.arrayContaining([
+      "https://astronomy.nasa.gov/saturn",
+      "https://physics.example.edu/saturn",
+    ]));
+    expect(sources[2]?.url).toBe("https://example.com/saturn");
+  });
+
+  it("rejects unrelated, map, catalogue and dictionary results", () => {
+    const sources = tavilyResultsToSources({
+      results: [
+        { title: "\u0410\u043a\u0430\u0434\u0435\u043c\u0438\u0447\u0435\u0441\u043a\u0430\u044f metro station", url: "https://maps.example.com/akademicheskaya", content: "Metro station reference." },
+        { title: "Saturn dictionary", url: "https://dictionary.example.com/saturn", content: "A dictionary entry for Saturn." },
+        { title: "Unrelated trivia", url: "https://example.com/trivia", content: "A partial mention of Saturn without related context." },
+      ],
+    }, "Topic: Saturn planetary science");
+
+    expect(sources).toEqual([]);
   });
 });
 
