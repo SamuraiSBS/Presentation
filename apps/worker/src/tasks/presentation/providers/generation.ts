@@ -149,7 +149,7 @@ import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, Q
 import { buildResearchBrief, buildDesignBrief, logStructuredGenerationValidationFailure, buildDeckStory, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "../planning/builders.js";
 import { shouldRetryNarration, requestYandexText, normalizeNarrationText, parseNarrationSections, findSpokenNarrationIssues } from "../narration/processing.js";
 import { speechSentences } from "../normalization/presentation.js";
-import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildFullNarrationDurationRewritePrompt, buildSpokenNarrationRewritePrompt, buildGenerationPrompt, buildYandexPresentationRecoveryPrompt } from "../prompts/builders.js";
+import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildFullNarrationDurationRewritePrompt, buildSpokenNarrationRewritePrompt, buildGenerationPrompt, buildYandexPresentationRecoveryPrompt, getYandexModelConfig } from "../prompts/builders.js";
 import type { YandexModelTier } from "../prompts/builders.js";
 import { ensureDesignBriefDirections } from "../normalization/presentation.js";
 import { finalizeGeneratedPresentation, repairSlideTextWithOpenAI, repairSlideTextWithYandex, critiquePresentationQualityWithOpenAI, critiquePresentationQualityWithYandex, repairPresentationQualityWithOpenAI, repairPresentationQualityWithYandex } from "../quality/orchestration.js";
@@ -432,7 +432,7 @@ export async function generateYandexNarration(apiKey: string, project: ProjectIn
   for (let attempt = 0; attempt < NARRATION_MAX_PROVIDER_ATTEMPTS; attempt += 1) {
     let outputText = "";
     try {
-      outputText = await requestYandexText(apiKey, NARRATION_SYSTEM_PROMPT, prompt, { jsonObject: false });
+      outputText = await requestYandexText(apiKey, NARRATION_SYSTEM_PROMPT, prompt, { jsonObject: false, modelTier: "narration" });
       const spokenIssues = findSpokenNarrationIssues(parseNarrationSections(outputText), narrativePlan);
       if (spokenIssues.length) {
         // Await so a duration shortfall in the targeted rewrite is handled by
@@ -473,19 +473,19 @@ async function rewriteShortYandexNarration(
   previousText: string,
   error: unknown,
 ) {
-  logger.warn({ projectId: project.id, stage: "drafting_speech", provider: "yandex", recovery: "full_duration_rewrite" }, "rewriting short Yandex narration as one complete speech");
+  logger.warn({ projectId: project.id, stage: "drafting_speech", provider: "yandex", model: getYandexModelConfig("narration").model, recovery: "full_duration_rewrite" }, "rewriting short Yandex narration as one complete speech");
   const rewritten = await requestYandexText(
     apiKey,
     NARRATION_SYSTEM_PROMPT,
     buildFullNarrationDurationRewritePrompt(project, sources, narrativePlan, previousText, error, researchBrief),
-    { jsonObject: false },
+    { jsonObject: false, modelTier: "narration" },
   );
   const spokenIssues = findSpokenNarrationIssues(parseNarrationSections(rewritten), narrativePlan);
   if (spokenIssues.length) {
     throw new Error(`AI narration quality check failed after full duration rewrite: ${spokenIssues.map((issue) => issue.message).join("; ")}`);
   }
   const accepted = normalizeNarrationText(rewritten, project, narrativePlan);
-  logger.info({ projectId: project.id, stage: "drafting_speech", provider: "yandex", recovery: "full_duration_rewrite", words: narrationWordCount(accepted) }, "accepted full Yandex narration duration rewrite");
+  logger.info({ projectId: project.id, stage: "drafting_speech", provider: "yandex", model: getYandexModelConfig("narration").model, recovery: "full_duration_rewrite", words: narrationWordCount(accepted) }, "accepted full Yandex narration duration rewrite");
   return accepted;
 }
 
@@ -503,7 +503,7 @@ async function rewriteSpokenYandexNarration(
     apiKey,
     NARRATION_SYSTEM_PROMPT,
     buildSpokenNarrationRewritePrompt(project, sources, narrativePlan, canonicalNarration, orders, issues.map((issue) => issue.message), researchBrief),
-    { jsonObject: false },
+    { jsonObject: false, modelTier: "narration" },
   );
   const canonicalSections = parseNarrationSections(canonicalNarration);
   const rewrittenSections = parseNarrationSections(rewritten);
@@ -515,7 +515,7 @@ async function rewriteSpokenYandexNarration(
     .map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`)
     .join("\n\n");
   const accepted = normalizeNarrationText(merged, project, narrativePlan);
-  logger.info({ projectId: project.id, stage: "drafting_speech", provider: "yandex", recovery: "spoken_narration_rewrite", orders, words: narrationWordCount(accepted) }, "accepted targeted Yandex spoken-narration rewrite");
+  logger.info({ projectId: project.id, stage: "drafting_speech", provider: "yandex", model: getYandexModelConfig("narration").model, recovery: "spoken_narration_rewrite", orders, words: narrationWordCount(accepted) }, "accepted targeted Yandex spoken-narration rewrite");
   return accepted;
 }
 

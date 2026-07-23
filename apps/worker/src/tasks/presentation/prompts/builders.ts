@@ -640,7 +640,7 @@ export function formatSourceText(sources: Source[]) {
     .slice(0, 18000);
 }
 
-export type YandexModelTier = "primary" | "economy";
+export type YandexModelTier = "primary" | "economy" | "narration";
 
 export function getYandexModelConfig(tier: YandexModelTier = "primary") {
   if (tier === "economy") {
@@ -651,6 +651,20 @@ export function getYandexModelConfig(tier: YandexModelTier = "primary") {
     if (!process.env.YANDEX_FOLDER_ID?.trim()) {
       throw new Error("YANDEX_FOLDER_ID or YANDEX_ECONOMY_MODEL_URI is required for Yandex generation");
     }
+    return { model, uri: `gpt://${process.env.YANDEX_FOLDER_ID}/${model}` };
+  }
+
+  if (tier === "narration") {
+    const model = process.env.YANDEX_NARRATION_MODEL_NAME?.trim();
+    const uri = process.env.YANDEX_NARRATION_MODEL_URI?.trim();
+    if (!model && !uri) return getYandexModelConfig("primary");
+    if (!model) throw new Error("YANDEX_NARRATION_MODEL_NAME is required when YANDEX_NARRATION_MODEL_URI is set");
+    if (!/^[a-z0-9][a-z0-9.-]*$/i.test(model)) throw new Error("YANDEX_NARRATION_MODEL_NAME must be a supported Yandex model identifier");
+    if (uri) {
+      if (!/^gpt:\/\/[^/\s]+\/[^/\s]+(?:\/(?:latest|rc))?$/i.test(uri)) throw new Error("YANDEX_NARRATION_MODEL_URI must be a valid Yandex GPT model URI");
+      return { model, uri };
+    }
+    if (!process.env.YANDEX_FOLDER_ID?.trim()) throw new Error("YANDEX_FOLDER_ID or YANDEX_NARRATION_MODEL_URI is required for Yandex narration");
     return { model, uri: `gpt://${process.env.YANDEX_FOLDER_ID}/${model}` };
   }
 

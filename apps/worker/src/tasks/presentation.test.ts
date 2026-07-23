@@ -528,6 +528,32 @@ describe("Yandex narration full duration rewrite", () => {
     }
   });
 
+  it("uses an explicit narration candidate for the initial speech and its full duration rewrite", async () => {
+    process.env.YANDEX_FOLDER_ID = "test-folder";
+    process.env.YANDEX_NARRATION_MODEL_NAME = "yandexgpt-5.1";
+    process.env.YANDEX_NARRATION_MODEL_URI = "gpt://test-folder/yandexgpt-5.1";
+    const short = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 60)).join("\n\n");
+    const originalFetch = global.fetch;
+    const bodies: Record<string, unknown>[] = [];
+    let calls = 0;
+    global.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body || "{}")));
+      return yandexTextResponse(calls++ === 0 ? short : completeNarration());
+    };
+
+    try {
+      await generateYandexNarration("test-key", project, [], plan);
+      expect(bodies.map((body) => body.modelUri)).toEqual([
+        "gpt://test-folder/yandexgpt-5.1",
+        "gpt://test-folder/yandexgpt-5.1",
+      ]);
+    } finally {
+      process.env.YANDEX_NARRATION_MODEL_NAME = "";
+      process.env.YANDEX_NARRATION_MODEL_URI = "";
+      global.fetch = originalFetch;
+    }
+  });
+
   it("uses the same full rewrite after an awaited targeted spoken rewrite becomes too short", async () => {
     process.env.YANDEX_FOLDER_ID = "test-folder";
     const initial = completeNarration(120).replace("fact2_0_0", `${";".repeat(93)} fact2_0_0`);

@@ -174,6 +174,7 @@ function priceFor(provider: string, model: string, at: Date): Price | null {
     // resolves to Pro 5 during its supported lifetime.
     "yandexgpt": yandexPrice("1200", "yandex-ai-studio-pricing-2026-07-20"),
     "yandexgpt-5-pro": yandexPrice("1200", "yandex-ai-studio-pricing-2026-07-20"),
+    "yandexgpt-5.1": yandexPrice("800", "yandex-ai-studio-pricing-2026-07-23"),
     "yandexgpt-5-lite": yandexPrice("200", "yandex-ai-studio-pricing-2026-07-20"),
   };
   const catalogPrice = yandexCurrent[model.trim().toLowerCase()];
