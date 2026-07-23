@@ -24,8 +24,25 @@
 3. `03-slide-content-contract.md`
 4. `04-visual-coverage-and-layout-variety.md`
 5. `05-release-gate-and-runtime-validation.md`
+6. `06-late-narration-template-repair-and-runtime-validation.md`
+7. `07-yandex-structured-json-recovery-and-runtime-validation.md`
+8. `08-yandex-quality-gate-repair-and-runtime-validation.md`
+9. `09-yandex-narration-duration-recovery-without-padding.md`
+10. `10-spoken-narration-quality-gate-and-yandex-rewrite.md`
+11. `11-quality-first-ten-slide-timing-contract.md`
+12. `12-full-yandex-narration-rewrite-before-safe-failure.md`
+13. `13-yandex-pro-narration-ab-experiment.md`
 
 Каждый следующий чат обязан сначала проверить, что предыдущий пункт действительно внедрён и его тесты существуют. Не повторять уже реализованные изменения и не откатывать пользовательские изменения в рабочем дереве.
+
+Пункты 12 и 13 добавлены после live-проверок 23 июля 2026 года. Фактическая цепочка `chunked_duration_recovery` и последующий per-section recovery доказала, что Yandex может вернуть 508, 691 и 827 слов вместо минимума 1170. Пункт 12 заменяет именно эту неудачную duration-ветку одной связной полной rewrite через Yandex, после которой допустим только safe failure. Пункт 13 выполняется только после принятия пункта 12: он вводит управляемую конфигурацию и измерение для сравнения текущего primary alias с явной доступной версией YandexGPT Pro, но не переключает production-модель автоматически.
+
+## Дополнительные решения для narration (2026-07-22)
+
+- Yandex остаётся единственным автором речи. Не добавлять OpenAI, `demo` или `demo-fallback` как запасной путь.
+- Дополнительные вызовы **Yandex** допустимы, когда deterministic-проверка отклонила плохую речь. Это предпочтительнее локальной подстановки или механического дописывания слов.
+- Длительность — ориентир качества, а не повод принять плохой текст. Для 10 слайдов допускается немного более короткая, но естественная речь; точный контракт вводит пункт 11.
+- Не сохранять `speechDraft`, если он содержит склейку полей narrative plan, шаблонную мета-инструкцию, массовые повторы или не проходит повторную валидацию.
 
 ## Общий технический контекст
 
@@ -48,4 +65,3 @@
 4. Не добавлять новую параллельную pipeline: расширять существующие seam'ы и shared Zod-контракты только при реальной необходимости.
 5. Мокать Yandex/Tavily/скачивание изображений в тестах. Реальные запросы — только в явно запрошенной runtime-проверке.
 6. После изменения worker-поверхности выполнить targeted tests, typecheck и `git diff --check`. Docker worker пересобирать и проверять `localhost:3010` только когда пользователь отдельно просит применить изменения к локальному runtime.
-

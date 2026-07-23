@@ -32,7 +32,7 @@ type SpeechTimingPreset = Omit<SpeechTimingBudget, "minWords" | "targetWords" | 
 const rawPresets: readonly SpeechTimingPreset[] = [
   { slideCount: 6, label: "Короткое выступление", minMinutes: 5, targetMinutes: 6, maxMinutes: 7, titleWordTarget: 80, contentWordTarget: 150, conclusionWordTarget: 100 },
   { slideCount: 8, label: "Доклад на паре", minMinutes: 7, targetMinutes: 8, maxMinutes: 9, titleWordTarget: 80, contentWordTarget: 140, conclusionWordTarget: 120 },
-  { slideCount: 10, label: "Обычная презентация", minMinutes: 10, targetMinutes: 11, maxMinutes: 12, titleWordTarget: 90, contentWordTarget: 150, conclusionWordTarget: 140 },
+  { slideCount: 10, label: "Обычная презентация", minMinutes: 9, targetMinutes: 10, maxMinutes: 12, titleWordTarget: 80, contentWordTarget: 140, conclusionWordTarget: 100 },
   { slideCount: 12, label: "Подробный доклад", minMinutes: 12, targetMinutes: 13.5, maxMinutes: 15, titleWordTarget: 95, contentWordTarget: 150, conclusionWordTarget: 160 },
   // The UI promise is deliberately open-ended: this is a floor, not a hidden maximum.
   { slideCount: 14, label: "Защита проекта", minMinutes: 15, targetMinutes: 15, titleWordTarget: 100, contentWordTarget: 140, conclusionWordTarget: 170 },

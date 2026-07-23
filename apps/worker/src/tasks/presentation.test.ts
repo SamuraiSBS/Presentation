@@ -132,9 +132,10 @@ describe("presentation compatibility facade", () => {
     expect(presentation.slides.flatMap((slide) => slide.canvas ? [] : [slide.order])).toEqual([]);
   });
 
-  it("makes an explicit speech-duration budget stronger than the generic per-slide timing hint", () => {
-    expect(NARRATION_SYSTEM_PROMPT).toContain("hard contract");
-    expect(NARRATION_SYSTEM_PROMPT).toContain("more than 55 seconds");
+  it("makes the speech-duration budget quality-first rather than a padding target", () => {
+    expect(NARRATION_SYSTEM_PROMPT).toContain("quality-first range");
+    expect(NARRATION_SYSTEM_PROMPT).toContain("never pad");
+    expect(NARRATION_SYSTEM_PROMPT).not.toContain("hard contract");
   });
 
   it("rejects a short narration instead of locally extending it from the narrative plan", () => {
@@ -241,7 +242,7 @@ describe("presentation compatibility facade", () => {
     expect(narrationRecoveryChunks(10)).toEqual([[1, 2, 3], [4, 5, 6], [7, 8, 9, 10]]);
   });
 
-  it("flags ten-slide narration outside its ten-to-twelve-minute Russian speech budget", () => {
+  it("accepts a nine-minute ten-slide narration and flags text below that duration", () => {
     const project = {
       id: "speech-budget",
       title: "BMW history",
@@ -256,16 +257,18 @@ describe("presentation compatibility facade", () => {
       return `\u0421\u043b\u0430\u0439\u0434 ${index + 1}: BMW ${index + 1}\n${words}.`;
     }).join("\n\n");
 
-    const shortIssues = validateNarrationSections(parseNarrationSections(narration(129)), project);
+    const belowMinimumIssues = validateNarrationSections(parseNarrationSections(narration(116)), project);
+    const nineMinuteIssues = validateNarrationSections(parseNarrationSections(narration(117)), project);
     const longIssues = validateNarrationSections(parseNarrationSections(narration(157)), project);
-    expect(shortIssues.some((issue) => issue.includes("duration is below 10 minutes"))).toBe(true);
+    expect(belowMinimumIssues.some((issue) => issue.includes("duration is below 9 minutes"))).toBe(true);
+    expect(nineMinuteIssues.some((issue) => issue.includes("narration duration"))).toBe(false);
     expect(longIssues.some((issue) => issue.includes("duration exceeds 12 minutes"))).toBe(true);
   });
 
   it.each([
     [6, "5–7 минут", "5-7 minutes"],
     [8, "7–9 минут", "7-9 minutes"],
-    [10, "10–12 минут", "10-12 minutes"],
+    [10, "9–12 минут", "9-12 minutes"],
     [12, "12–15 минут", "12-15 minutes"],
     [14, "15+ минут", "15+ minutes"],
   ])("puts the %s-slide duration contract into narrative and narration prompts", (slideCount, narrativeDuration, narrationDuration) => {
@@ -282,16 +285,22 @@ describe("presentation compatibility facade", () => {
     const narrationPrompt = buildNarrationPrompt(project, []);
     expect(narrativePrompt).toContain(narrativeDuration);
     expect(narrationPrompt).toContain(narrationDuration);
-    expect(`${narrativePrompt}\n${narrationPrompt}`).not.toContain("7-10");
+    const combinedPrompt = `${narrativePrompt}\n${narrationPrompt}`;
+    expect(combinedPrompt).not.toContain("7-10");
+    expect(combinedPrompt).not.toContain("hard contract");
+    if (slideCount === 10) {
+      expect(combinedPrompt).toContain("compact, substantive explanation");
+      expect(combinedPrompt).toContain("1300 words");
+    }
   });
 
   it("allocates the ten-slide narration target across title, content, and conclusion", () => {
     const project = { id: "speech-plan", title: "BMW history", prompt: "Explain BMW history", scenario: "university_report", level: "university_student", mode: "with_sources", slideCount: 10 };
     const plan = normalizeNarrativePlan([], project);
-    expect(plan[0].speechWordTarget).toBe(90);
-    expect(plan.at(-1)?.speechWordTarget).toBe(140);
-    expect(plan.slice(1, -1).every((item) => item.speechWordTarget === 150)).toBe(true);
-    expect(plan.reduce((total, item) => total + (item.speechWordTarget || 0), 0)).toBe(1430);
+    expect(plan[0].speechWordTarget).toBe(80);
+    expect(plan.at(-1)?.speechWordTarget).toBe(100);
+    expect(plan.slice(1, -1).every((item) => item.speechWordTarget === 140)).toBe(true);
+    expect(plan.reduce((total, item) => total + (item.speechWordTarget || 0), 0)).toBe(1300);
   });
 
   it("never shortens visible copy into an ellipsis or treats an incomplete source excerpt as evidence", () => {
@@ -492,7 +501,7 @@ describe("Yandex narration duration recovery", () => {
   it("uses only bounded Yandex chunks for a duration shortfall and accepts their complete ordered narration", async () => {
     process.env.YANDEX_FOLDER_ID = "test-folder";
     const short = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 60)).join("\n\n");
-    const recovered = narrationRecoveryChunks(10).map((orders) => orders.map((order) => narrationSection(order, order === 1 ? 110 : order === 10 ? 150 : 155)).join("\n\n"));
+    const recovered = narrationRecoveryChunks(10).map((orders) => orders.map((order) => narrationSection(order, order === 1 ? 105 : order === 10 ? 130 : 155)).join("\n\n"));
     const responses = [short, ...recovered];
     const originalFetch = global.fetch;
     let calls = 0;
@@ -526,9 +535,50 @@ describe("Yandex narration duration recovery", () => {
     }
   });
 
+  it("rewrites only under-target recovery sections with bounded single-slide Yandex calls", async () => {
+    process.env.YANDEX_FOLDER_ID = "test-folder";
+    const short = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 60)).join("\n\n");
+    const firstRecovery = narrationRecoveryChunks(10).map((orders) => orders.map((order) => narrationSection(order, order === 1 ? 105 : order === 10 ? 130 : 100)).join("\n\n"));
+    const sectionRewrites = Array.from({ length: 8 }, (_, index) => narrationSection(index + 2, 140));
+    const responses = [short, ...firstRecovery, ...sectionRewrites];
+    const originalFetch = global.fetch;
+    let calls = 0;
+    global.fetch = async () => yandexTextResponse(responses[calls++] || "");
+
+    try {
+      const result = await generateYandexNarration("test-key", project, [], plan);
+      expect(calls).toBe(12);
+      expect(() => normalizeNarrationText(result, project)).not.toThrow();
+      expect(parseNarrationSections(result).slice(1, -1).every((section) => section.text.split(/\s+/).filter(Boolean).length === 140)).toBe(true);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("uses bounded Yandex duration recovery when a targeted spoken rewrite is still too short", async () => {
+    process.env.YANDEX_FOLDER_ID = "test-folder";
+    const initialSections = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, index === 0 ? 105 : index === 9 ? 130 : 100));
+    initialSections[1] = `${initialSections[1]}${";".repeat(93)}`;
+    const rewriteTooShort = narrationSection(2, 60);
+    const recovered = narrationRecoveryChunks(10).map((orders) => orders.map((order) => narrationSection(order, order === 1 ? 105 : order === 10 ? 130 : 155)).join("\n\n"));
+    const responses = [initialSections.join("\n\n"), rewriteTooShort, ...recovered];
+    const originalFetch = global.fetch;
+    let calls = 0;
+    global.fetch = async () => yandexTextResponse(responses[calls++] || "");
+
+    try {
+      const result = await generateYandexNarration("test-key", project, [], plan);
+      expect(calls).toBe(5);
+      expect(parseNarrationSections(result).map((section) => section.order)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      expect(() => normalizeNarrationText(result, project)).not.toThrow();
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it("rewrites only defective Saturn narration sections with Yandex and keeps the accepted contract atomic", async () => {
     process.env.YANDEX_FOLDER_ID = "test-folder";
-    const clean = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, index === 1 ? 155 : index === 0 ? 110 : index === 9 ? 150 : 155));
+    const clean = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, index === 1 ? 155 : index === 0 ? 105 : index === 9 ? 130 : 155));
     const leakedPurpose = plan[1].slidePurpose;
     const leakedQuestion = plan[1].audienceQuestion;
     clean[1] = `${clean[1]} ${leakedPurpose}. ${leakedQuestion}? Кольца Сатурна состоят из множества ледяных и каменных частиц. Кольца Сатурна состоят из множества ледяных и каменных частиц.${";".repeat(93)}`;

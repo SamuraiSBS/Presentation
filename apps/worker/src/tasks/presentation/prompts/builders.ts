@@ -301,6 +301,7 @@ export function buildNarrationPrompt(project: ProjectInput, sources: Source[], n
     "- every section must explain the real topic, not the slide object;",
     "- every section must include at least one concrete detail, example, reason, consequence, contrast, or definition;",
     "- keep the full explanation in narration; visible slide text will be compressed later;",
+    "- prefer a compact, substantive explanation inside the allowed range to weak repetition, filler transitions, or meta-commentary; if a section needs more substance, rewrite it naturally from the grounded argument rather than padding it with local words;",
     "- make neighboring openings and endings different in wording and rhythm;",
     "- make the final section a human university-level conclusion tied to the topic.",
     "Narrative plan rules:",
@@ -358,6 +359,8 @@ export function buildNarrationRepairPrompt(
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
 export function buildSpokenNarrationRewritePrompt(
   project: ProjectInput,
   sources: Source[],
@@ -368,13 +371,13 @@ export function buildSpokenNarrationRewritePrompt(
   researchBrief?: ResearchBrief,
 ) {
   const sections = cleanMultilineText(canonicalNarration)
-    .split(/(?=?????\s+\d+\s*:)/iu)
-    .filter((section) => issueOrders.some((order) => new RegExp(`^?????\\s+${order}\\s*:`, "iu").test(section.trim())))
+    .split(/(?=Слайд\s+\d+\s*:)/iu)
+    .filter((section) => issueOrders.some((order) => new RegExp(`^Слайд\\s+${order}\\s*:`, "iu").test(section.trim())))
     .join("\n\n");
   const selectedPlan = narrativePlan.filter((item) => issueOrders.includes(item.slideOrder));
   return [
     "Rewrite only the requested Russian oral-narration sections. Return plain text only, without Markdown or commentary.",
-    `Return exactly these sections once each and in this order: ${issueOrders.join(", ")}. Keep their headers exactly as \`????? N: existing title\`.`,
+    `Return exactly these sections once each and in this order: ${issueOrders.join(", ")}. Keep their headers exactly as \`Слайд N: existing title\`.`,
     `Project: ${project.title}. Request: ${project.prompt}.`,
     `Defects to correct: ${issueReasons.join("; ")}.`,
     "Keep all supported facts and the section meaning. Do not add facts, dates, figures, citations, URLs, source names, slidePurpose, audienceQuestion, planner instructions, or questions for the audience.",
@@ -384,7 +387,6 @@ export function buildSpokenNarrationRewritePrompt(
     researchBrief ? `Allowed research context:\n${JSON.stringify(researchBrief)}` : "",
     sources.length ? `Allowed source context:\n${formatSourceText(sources)}` : "",
   ].filter(Boolean).join("\n\n");
-}
 }
 
 export function formatNarrativePlanForPrompt(narrativePlan: SlideNarrative[]) {
@@ -566,6 +568,40 @@ export function legacyBuildGenerationPrompt(project: ProjectInput, sources: Sour
     "layout: hero, statement или summary. blocks лучше возвращать как один callout; bullets допустимы только если это 1-2 короткие фразы.",
     `Материалы для внутренней фактологии, не показывать пользователю:\n${formatSourceText(sources)}`,
   ].join("\n\n");
+}
+
+export function buildYandexPresentationRecoveryPrompt(
+  project: ProjectInput,
+  sources: Source[],
+  narrationText: string,
+  narrativePlan: SlideNarrative[],
+  artifacts: PromptArtifacts,
+  slideOrders: number[],
+  chunkNumber: number,
+  chunkCount: number,
+) {
+  const selectedPlan = narrativePlan.filter((item) => slideOrders.includes(item.slideOrder));
+  const selectedBlueprints = artifacts.slideBlueprints?.filter((item) => slideOrders.includes(item.slideOrder)) || [];
+  const selectedTextPlans = artifacts.slideTextPlans?.filter((item) => slideOrders.includes(item.slideOrder)) || [];
+  const narrationSections = cleanMultilineText(narrationText)
+    .split(/(?=Слайд\s+\d+\s*:)/iu)
+    .filter((section) => slideOrders.some((order) => new RegExp(`^Слайд\\s+${order}\\s*:`, "iu").test(section.trim())))
+    .join("\n\n");
+  return [
+    "Return one JSON object only, with exactly one key: slides.",
+    `This is recovery chunk ${chunkNumber} of ${chunkCount}. Return slides only for these exact orders, once each and in this order: ${slideOrders.join(", ")}.`,
+    "Do not return Markdown, a JSON fence, document metadata, or any extra slide.",
+    "All user-facing text must be Russian. Keep every fact grounded in the provided narration, plan, and sources; do not add dates, figures, citations, URLs, or entities.",
+    `Project: ${project.title}. Requested topic: ${project.prompt}.`,
+    `Canonical accepted narration for this range (copy its meaning into speakerNotes and speechScript without rewriting it):\n${narrationSections}`,
+    `Narrative plan for this range:\n${JSON.stringify(selectedPlan)}`,
+    selectedBlueprints.length ? `Slide blueprints for this range:\n${JSON.stringify(selectedBlueprints)}` : "",
+    selectedTextPlans.length ? `Slide text plans for this range:\n${JSON.stringify(selectedTextPlans)}` : "",
+    artifacts.designBrief ? `Use this design direction without inventing a new theme:\n${JSON.stringify(artifacts.designBrief)}` : "",
+    sources.length ? `Grounding excerpts:\n${formatSourceText(sources)}` : "",
+    "Each slide must include the normal StudyDeck slide fields: id, order, title, slideKind, layout, thesis, bullets, definition, keyConcepts, visual, highlights, blocks, speakerNotes, timingSeconds, sourceRefs.",
+    "Use concise visible text and preserve a substantive conclusion when the requested range contains the final slide.",
+  ].filter(Boolean).join("\n\n");
 }
 
 export function formatSourceText(sources: Source[]) {

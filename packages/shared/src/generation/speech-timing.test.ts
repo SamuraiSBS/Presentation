@@ -12,7 +12,7 @@ describe("Russian student speech timing", () => {
   it.each([
     [6, "Короткое выступление", 5, 6, 7, 650, 780, 910],
     [8, "Доклад на паре", 7, 8, 9, 910, 1040, 1170],
-    [10, "Обычная презентация", 10, 11, 12, 1300, 1430, 1560],
+    [10, "Обычная презентация", 9, 10, 12, 1170, 1300, 1560],
     [12, "Подробный доклад", 12, 13.5, 15, 1560, 1755, 1950],
   ])("maps %i slides to its visible timing contract", (slideCount, label, minMinutes, targetMinutes, maxMinutes, minWords, targetWords, maxWords) => {
     expect(getRussianStudentSpeechTimingBudget(project(slideCount))).toMatchObject({ label, minMinutes, targetMinutes, maxMinutes, minWords, targetWords, maxWords, wordsPerMinute: RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE });
@@ -23,6 +23,14 @@ describe("Russian student speech timing", () => {
     expect(budget).toMatchObject({ minMinutes: 15, targetMinutes: 15, minWords: 1950, targetWords: 1950 });
     expect(budget?.maxMinutes).toBeUndefined();
     expect(budget?.maxWords).toBeUndefined();
+  });
+
+  it("allocates the ten-slide target across title, content, and conclusion", () => {
+    expect(getRussianStudentSpeechTimingBudget(project(10))).toMatchObject({
+      titleWordTarget: 80,
+      contentWordTarget: 140,
+      conclusionWordTarget: 100,
+    });
   });
 
   it.each([4, 7, 9, 11, 13, 20])("does not invent a preset for %i slides", (slideCount) => {

@@ -437,7 +437,9 @@ export async function generateYandexNarration(apiKey: string, project: ProjectIn
       outputText = await requestYandexText(apiKey, NARRATION_SYSTEM_PROMPT, prompt, { jsonObject: false });
       const spokenIssues = findSpokenNarrationIssues(parseNarrationSections(outputText), narrativePlan);
       if (spokenIssues.length) {
-        return rewriteSpokenYandexNarration(apiKey, project, sources, narrativePlan, researchBrief, outputText, spokenIssues);
+        // Await so a duration shortfall in the targeted rewrite is handled by
+        // the same bounded Yandex-only recovery path as a first-pass shortfall.
+        return await rewriteSpokenYandexNarration(apiKey, project, sources, narrativePlan, researchBrief, outputText, spokenIssues);
       }
       return normalizeNarrationText(outputText, project, narrativePlan);
     } catch (error) {
@@ -501,9 +503,63 @@ async function generateYandexNarrationByChunks(
     narrationParts.push(sections.map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n"));
   }
 
-  const recovered = normalizeNarrationText(narrationParts.join("\n\n"), project, narrativePlan);
+  const merged = narrationParts.join("\n\n");
+  const sectionsNeedingRecovery = narrationSectionsBelowMinimumTarget(parseNarrationSections(merged), project);
+  const recoveredText = sectionsNeedingRecovery.length
+    ? await recoverShortYandexNarrationSections(apiKey, project, sources, narrativePlan, researchBrief, merged, sectionsNeedingRecovery)
+    : merged;
+  const recovered = normalizeNarrationText(recoveredText, project, narrativePlan);
   logger.info({ projectId: project.id, stage: "drafting_speech", provider: "yandex", recovery: "chunked_duration_recovery", words: narrationWordCount(recovered) }, "accepted bounded Yandex narration recovery");
   return recovered;
+}
+
+function narrationSectionsBelowMinimumTarget(sections: ReturnType<typeof parseNarrationSections>, project: ProjectInput) {
+  const budget = getRussianStudentSpeechTimingBudget(project);
+  if (!budget || sections.length !== project.slideCount) return [];
+  const ratio = budget.minWords / budget.targetWords;
+  return sections
+    .filter((section, index) => {
+      const target = index === 0
+        ? budget.titleWordTarget
+        : index === project.slideCount - 1
+          ? budget.conclusionWordTarget
+          : budget.contentWordTarget;
+      const minimum = Math.ceil(target * ratio);
+      return narrationWordCount(section.text) < minimum;
+    })
+    .map((section) => section.order);
+}
+
+async function recoverShortYandexNarrationSections(
+  apiKey: string,
+  project: ProjectInput,
+  sources: Source[],
+  narrativePlan: SlideNarrative[],
+  researchBrief: ResearchBrief | undefined,
+  narrationText: string,
+  orders: number[],
+) {
+  const sections = parseNarrationSections(narrationText);
+  const replacements = new Map<number, string>();
+  logger.warn({ projectId: project.id, stage: "drafting_speech", provider: "yandex", recovery: "per_section_duration_recovery", orders }, "recovering undersized Yandex narration sections individually");
+
+  for (const order of orders) {
+    const outputText = await requestYandexText(
+      apiKey,
+      NARRATION_SYSTEM_PROMPT,
+      buildNarrationChunkRecoveryPrompt(project, sources, narrativePlan, researchBrief, [order], order, project.slideCount),
+      { jsonObject: false },
+    );
+    const [replacement] = parseNarrationSections(outputText);
+    if (!replacement || replacement.order !== order) {
+      throw new Error(`AI narration quality check failed: recovery for slide ${order} did not contain exactly that slide`);
+    }
+    replacements.set(order, replacement.text);
+  }
+
+  return sections
+    .map((section) => `Слайд ${section.order}: ${section.title}\n${replacements.get(section.order) || section.text}`)
+    .join("\n\n");
 }
 
 async function rewriteSpokenYandexNarration(

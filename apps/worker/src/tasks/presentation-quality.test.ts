@@ -149,7 +149,8 @@ describe("presentation quality checks", () => {
     }) as PresentationDocument;
     const project = (slideCount: number) => ({ id: `timing-${slideCount}`, title: "Тема", prompt: "Тема", scenario: "university_report", level: "university_student", mode: "with_sources", slideCount });
 
-    expect(findSpeechTimingIssues(presentation(1287), project(10))).toHaveLength(1); // 9.9 min
+    expect(findSpeechTimingIssues(presentation(1169), project(10))).toHaveLength(1); // below 9 min
+    expect(findSpeechTimingIssues(presentation(1170), project(10))).toHaveLength(0); // 9 min
     expect(findSpeechTimingIssues(presentation(1300), project(10))).toHaveLength(0);
     expect(findSpeechTimingIssues(presentation(1560), project(10))).toHaveLength(0);
     expect(findSpeechTimingIssues(presentation(1573), project(10))).toHaveLength(1); // 12.1 min
