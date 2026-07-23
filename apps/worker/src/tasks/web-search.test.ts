@@ -1,5 +1,56 @@
-import { describe, expect, it } from "vitest";
-import { buildSourceResearchBrief, buildTavilyWebSearchQuery, tavilyResultsToSources } from "./web-search.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const recordCostEvent = vi.fn();
+const currentUsageContext = vi.fn();
+
+vi.mock("../usage-ledger.js", () => ({
+  recordCostEvent,
+  currentUsageContext,
+}));
+
+const { buildSourceResearchBrief, buildTavilyWebSearchQuery, searchWebSources, tavilyResultsToSources } = await import("./web-search.js");
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  recordCostEvent.mockReset();
+  currentUsageContext.mockReset();
+});
+
+describe("searchWebSources telemetry", () => {
+  it("records one valid Tavily cost event with the current project and generation job context", async () => {
+    vi.stubEnv("WEB_SEARCH_PROVIDER", "tavily");
+    vi.stubEnv("TAVILY_API_KEY", "test-key");
+    currentUsageContext.mockReturnValue({ userId: "user-1", projectId: "project-1", generationJobId: "generation-1" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [] }), { status: 200 })));
+
+    await searchWebSources({ title: "Saturn", prompt: "Topic: Saturn" });
+
+    expect(recordCostEvent).toHaveBeenCalledWith(expect.objectContaining({
+      category: "web_search",
+      provider: "tavily",
+      quantity: "1",
+      unit: "api_credit",
+      currency: "USD",
+      measurement: "calculated",
+    }));
+    expect(recordCostEvent.mock.calls[0]?.[0]?.idempotencyKey).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("keeps successful Tavily results usable after recording telemetry", async () => {
+    vi.stubEnv("WEB_SEARCH_PROVIDER", "tavily");
+    vi.stubEnv("TAVILY_API_KEY", "test-key");
+    currentUsageContext.mockReturnValue({ userId: "user-1", projectId: "project-1", generationJobId: "generation-1" });
+    recordCostEvent.mockResolvedValue(undefined);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [
+      { title: "Saturn facts", url: "https://nasa.gov/saturn", content: "Saturn is a planet with rings." },
+    ] }), { status: 200 })));
+
+    await expect(searchWebSources("Topic: Saturn")).resolves.toEqual([
+      expect.objectContaining({ type: "WEB", url: "https://nasa.gov/saturn" }),
+    ]);
+  });
+});
 
 describe("buildTavilyWebSearchQuery", () => {
   it("keeps Tavily web queries below the provider limit", () => {

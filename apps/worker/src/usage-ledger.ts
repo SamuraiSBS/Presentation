@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import crypto from "node:crypto";
 import { getPrisma } from "./prisma.js";
-import { errorLogFields, logger } from "./observability.js";
+import { errorLogFields, logger, redactLogString } from "./observability.js";
 
 export type UsageContext = {
   userId: string;
@@ -113,7 +113,11 @@ export async function recordCostEvent(input: {
 }) {
   const store = currentUsageContext();
   if (!store) return;
-  const sourceCost = input.unitPrice ? multiply(input.quantity, input.unitPrice) : null;
+  // Environment variables use an empty string for an unset value. Prisma's
+  // Decimal parser rejects that value, while the CostEvent contract requires
+  // unknown prices to be recorded as null.
+  const unitPrice = optionalDecimal(input.unitPrice);
+  const sourceCost = unitPrice ? multiply(input.quantity, unitPrice) : null;
   const exchangeRate = sourceCost ? await latestExchangeRate(input.currency) : null;
   try {
     await getPrisma().costEvent.upsert({
@@ -124,12 +128,15 @@ export async function recordCostEvent(input: {
         category: input.category,
         userId: store.userId,
         projectId: store.projectId,
-        generationJobId: store.generationJobId,
-        exportId: input.exportId,
+        // Prisma nullable scalar fields must be represented as null, not an
+        // omitted/undefined value. This keeps telemetry valid for the web
+        // search and image-search contexts, which do not have an export id.
+        generationJobId: store.generationJobId ?? null,
+        exportId: input.exportId ?? null,
         provider: input.provider,
         quantity: input.quantity,
         unit: input.unit,
-        unitPrice: input.unitPrice,
+        unitPrice,
         sourceCurrency: input.currency,
         sourceCost,
         exchangeRateToRub: exchangeRate,
@@ -140,7 +147,20 @@ export async function recordCostEvent(input: {
       },
     });
   } catch (error) {
-    logger.error({ ...errorLogFields(error), category: input.category, provider: input.provider }, "cost telemetry could not be persisted");
+    // Prisma's standard error field is deliberately short for general logs.
+    // Cost telemetry needs the complete, redacted validation cause to be
+    // diagnosable without exposing prompts, source content, or credentials.
+    const prismaErrorMessage = redactLogString(
+      error instanceof Error ? error.message : String(error || "Unknown error"),
+      5000,
+    );
+    logger.error({
+      ...errorLogFields(error),
+      prismaErrorMessage,
+      category: input.category,
+      provider: input.provider,
+      hasUsageContext: Boolean(store),
+    }, "cost telemetry could not be persisted");
   }
 }
 
@@ -212,6 +232,7 @@ async function latestExchangeRate(currency: string) {
 }
 
 function multiply(left: string, right: string) { return scaledToString((toScaled(left) * toScaled(right)) / 100_000_000n); }
+function optionalDecimal(value: string | undefined) { const normalized = value?.trim(); return normalized || null; }
 function toScaled(value: string) { const [whole, fraction = ""] = value.split("."); return BigInt(`${whole || "0"}${fraction.padEnd(8, "0").slice(0, 8)}`); }
 function scaledToString(value: bigint) { const text = value.toString().padStart(9, "0"); return `${text.slice(0, -8)}.${text.slice(-8)}`; }
 function record(value: unknown) { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined; }
