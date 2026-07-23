@@ -361,6 +361,32 @@ export function buildNarrationRepairPrompt(
     .join("\n\n");
 }
 
+export function buildFullNarrationDurationRewritePrompt(
+  project: ProjectInput,
+  sources: Source[],
+  narrativePlan: SlideNarrative[],
+  previousText: string,
+  error: unknown,
+  researchBrief?: ResearchBrief,
+) {
+  const timingBudget = getRussianStudentSpeechTimingBudget(project);
+  const message = error instanceof Error ? error.message : String(error);
+  return [
+    buildNarrationPrompt(project, sources, narrativePlan, researchBrief),
+    "The previous full narration was too short and must be discarded.",
+    `Validation error for diagnosis only: ${message}`,
+    "Write one completely new, coherent report for every requested slide in order. Do not extend, merge with, or reuse passages from the previous answer.",
+    timingBudget
+      ? `Keep the whole speech inside the quality-first range of ${timingBudget.minWords}-${timingBudget.maxWords} words; ${timingBudget.targetWords} words is a meaningful target, not a quota to reach with filler.`
+      : "Keep the narration substantive and naturally paced.",
+    "Distribute substance by meaning: use complete sentences, grounded explanations, and distinct transitions. A coherent report is better than repetitive length.",
+    "Do not reuse old opening or closing formulas, describe the planning process, copy slidePurpose or audienceQuestion labels, or patch isolated sections.",
+    previousText ? `Previous invalid answer for diagnosis only; never quote or continue it:\n${cleanMultilineText(previousText).slice(0, 12000)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 export function buildSpokenNarrationRewritePrompt(
   project: ProjectInput,
   sources: Source[],

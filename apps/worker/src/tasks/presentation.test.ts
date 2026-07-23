@@ -19,7 +19,7 @@ import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./prese
 import { buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
 import { buildNarrationRepairPrompt } from "./presentation/prompts/builders.js";
 import { buildFallbackNarrativeItem, normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
-import { generateYandexNarration, NARRATION_MAX_PROVIDER_ATTEMPTS, narrationRecoveryChunks, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
+import { generateYandexNarration, NARRATION_MAX_PROVIDER_ATTEMPTS, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
 import { NARRATION_SYSTEM_PROMPT } from "./presentation/constants.js";
 import { sourceEvidenceForSlide } from "./presentation/planning/builders.js";
 import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
@@ -239,7 +239,6 @@ describe("presentation compatibility facade", () => {
     expect(NARRATION_MAX_PROVIDER_ATTEMPTS).toBe(4);
     expect(prompt).toContain("automatic full regeneration attempt 4 of 4");
     expect(prompt).toContain("Rewrite the full narration from scratch");
-    expect(narrationRecoveryChunks(10)).toEqual([[1, 2, 3], [4, 5, 6], [7, 8, 9, 10]]);
   });
 
   it("accepts a nine-minute ten-slide narration and flags text below that duration", () => {
@@ -468,11 +467,11 @@ function yandexTextResponse(text: string) {
   );
 }
 
-describe("Yandex narration duration recovery", () => {
+describe("Yandex narration full duration rewrite", () => {
   const project = {
-    id: "saturn-duration-recovery",
-    title: "\u0421\u0430\u0442\u0443\u0440\u043d",
-    prompt: "\u041f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u044c \u043f\u0440\u0435\u0437\u0435\u043d\u0442\u0430\u0446\u0438\u044e \u043e \u0421\u0430\u0442\u0443\u0440\u043d\u0435",
+    id: "saturn-duration-rewrite",
+    title: "Saturn",
+    prompt: "Prepare a presentation about Saturn",
     scenario: "university_report",
     level: "university_student",
     mode: "with_sources",
@@ -480,39 +479,48 @@ describe("Yandex narration duration recovery", () => {
   };
   const plan = Array.from({ length: 10 }, (_, index) => ({
     slideOrder: index + 1,
-    slideTitle: `\u0421\u0430\u0442\u0443\u0440\u043d ${index + 1}`,
-    slidePurpose: `\u041f\u0440\u0435\u0434\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0440\u0430\u0437\u0434\u0435\u043b ${index + 1}`,
-    keyMessage: `\u041a\u043b\u044e\u0447\u0435\u0432\u043e\u0439 \u0444\u0430\u043a\u0442 ${index + 1}`,
-    audienceQuestion: `\u041a\u0430\u043a\u043e\u0432\u0430 \u0440\u043e\u043b\u044c ${index + 1}?`,
+    slideTitle: `Saturn ${index + 1}`,
+    slidePurpose: `Present section ${index + 1}`,
+    keyMessage: `Key fact ${index + 1}`,
+    audienceQuestion: `What is the role of section ${index + 1}?`,
     transitionToNext: "",
-    evidenceOrExplanation: `\u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043d\u043d\u043e\u0435 \u043e\u0431\u044a\u044f\u0441\u043d\u0435\u043d\u0438\u0435 ${index + 1}`,
-    whyItMatters: `\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435 \u0440\u0430\u0437\u0434\u0435\u043b\u0430 ${index + 1}`,
+    evidenceOrExplanation: `Grounded explanation ${index + 1}`,
+    whyItMatters: `Meaning ${index + 1}`,
   }));
 
   function narrationSection(order: number, words: number) {
     const sentenceWords = Math.floor(words / 3);
     const sentence = (part: number) => Array.from(
       { length: part === 2 ? words - sentenceWords * 2 : sentenceWords },
-      (_, index) => `\u0444\u0430\u043a\u0442${order}_${part}_${index}`,
+      (_, index) => `fact${order}_${part}_${index}`,
     ).join(" ");
-    return `\u0421\u043b\u0430\u0439\u0434 ${order}: \u0421\u0430\u0442\u0443\u0440\u043d ${order}\n${sentence(0)}. ${sentence(1)}. ${sentence(2)}.`;
+    return `Слайд ${order}: Saturn ${order}\n${sentence(0)}. ${sentence(1)}. ${sentence(2)}.`;
   }
 
-  it("uses only bounded Yandex chunks for a duration shortfall and accepts their complete ordered narration", async () => {
+  function completeNarration(contentWords = 155) {
+    return Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, index === 0 ? 105 : index === 9 ? 130 : contentWords)).join("\n\n");
+  }
+
+  it("uses one full Yandex rewrite for a short narration and accepts only the complete replacement", async () => {
     process.env.YANDEX_FOLDER_ID = "test-folder";
     const short = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 60)).join("\n\n");
-    const recovered = narrationRecoveryChunks(10).map((orders) => orders.map((order) => narrationSection(order, order === 1 ? 105 : order === 10 ? 130 : 155)).join("\n\n"));
-    const responses = [short, ...recovered];
     const originalFetch = global.fetch;
+    const bodies: Record<string, unknown>[] = [];
     let calls = 0;
-    global.fetch = async () => yandexTextResponse(responses[calls++] || "");
+    global.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body || "{}")));
+      return yandexTextResponse(calls++ === 0 ? short : completeNarration());
+    };
 
     try {
       const result = await generateYandexNarration("test-key", project, [], plan);
-      expect(calls).toBe(4);
+      expect(calls).toBe(2);
       expect(parseNarrationSections(result).map((section) => section.order)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-      expect(() => normalizeNarrationText(result, project)).not.toThrow();
-      expect(result).not.toContain(";");
+      expect(() => normalizeNarrationText(result, project, plan)).not.toThrow();
+      const rewritePrompt = String((bodies[1] as { messages?: Array<{ text?: string }> }).messages?.[1]?.text || "");
+      expect(rewritePrompt).toContain("completely new, coherent report");
+      expect(rewritePrompt).toContain("1170-1560 words");
+      expect(rewritePrompt).not.toContain("hard contract");
       expect(result).not.toContain(plan[0].slidePurpose);
       expect(result).not.toContain(plan[0].audienceQuestion);
     } finally {
@@ -520,92 +528,38 @@ describe("Yandex narration duration recovery", () => {
     }
   });
 
-  it("fails on an invalid duration-recovery chunk instead of accepting padded narration", async () => {
+  it("uses the same full rewrite after an awaited targeted spoken rewrite becomes too short", async () => {
+    process.env.YANDEX_FOLDER_ID = "test-folder";
+    const initial = completeNarration(120).replace("fact2_0_0", `${";".repeat(93)} fact2_0_0`);
+    const originalFetch = global.fetch;
+    let calls = 0;
+    global.fetch = async () => yandexTextResponse([initial, narrationSection(2, 60), completeNarration()][calls++] || "");
+
+    try {
+      const result = await generateYandexNarration("test-key", project, [], plan);
+      expect(calls).toBe(3);
+      expect(() => normalizeNarrationText(result, project, plan)).not.toThrow();
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("fails safely when the sole full rewrite remains below the minimum", async () => {
     process.env.YANDEX_FOLDER_ID = "test-folder";
     const short = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 60)).join("\n\n");
     const originalFetch = global.fetch;
     let calls = 0;
-    global.fetch = async () => yandexTextResponse(calls++ === 0 ? short : narrationSection(2, 155));
+    global.fetch = async () => yandexTextResponse(calls++ === 0 ? short : short);
 
     try {
-      await expect(generateYandexNarration("test-key", project, [], plan)).rejects.toThrow("recovery chunk 1 did not contain exactly slides 1, 2, 3");
+      await expect(generateYandexNarration("test-key", project, [], plan)).rejects.toThrow("duration is below");
       expect(calls).toBe(2);
     } finally {
       global.fetch = originalFetch;
     }
   });
 
-  it("rewrites only under-target recovery sections with bounded single-slide Yandex calls", async () => {
-    process.env.YANDEX_FOLDER_ID = "test-folder";
-    const short = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 60)).join("\n\n");
-    const firstRecovery = narrationRecoveryChunks(10).map((orders) => orders.map((order) => narrationSection(order, order === 1 ? 105 : order === 10 ? 130 : 100)).join("\n\n"));
-    const sectionRewrites = Array.from({ length: 8 }, (_, index) => narrationSection(index + 2, 140));
-    const responses = [short, ...firstRecovery, ...sectionRewrites];
-    const originalFetch = global.fetch;
-    let calls = 0;
-    global.fetch = async () => yandexTextResponse(responses[calls++] || "");
-
-    try {
-      const result = await generateYandexNarration("test-key", project, [], plan);
-      expect(calls).toBe(12);
-      expect(() => normalizeNarrationText(result, project)).not.toThrow();
-      expect(parseNarrationSections(result).slice(1, -1).every((section) => section.text.split(/\s+/).filter(Boolean).length === 140)).toBe(true);
-    } finally {
-      global.fetch = originalFetch;
-    }
-  });
-
-  it("uses bounded Yandex duration recovery when a targeted spoken rewrite is still too short", async () => {
-    process.env.YANDEX_FOLDER_ID = "test-folder";
-    const initialSections = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, index === 0 ? 105 : index === 9 ? 130 : 100));
-    initialSections[1] = `${initialSections[1]}${";".repeat(93)}`;
-    const rewriteTooShort = narrationSection(2, 60);
-    const recovered = narrationRecoveryChunks(10).map((orders) => orders.map((order) => narrationSection(order, order === 1 ? 105 : order === 10 ? 130 : 155)).join("\n\n"));
-    const responses = [initialSections.join("\n\n"), rewriteTooShort, ...recovered];
-    const originalFetch = global.fetch;
-    let calls = 0;
-    global.fetch = async () => yandexTextResponse(responses[calls++] || "");
-
-    try {
-      const result = await generateYandexNarration("test-key", project, [], plan);
-      expect(calls).toBe(5);
-      expect(parseNarrationSections(result).map((section) => section.order)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-      expect(() => normalizeNarrationText(result, project)).not.toThrow();
-    } finally {
-      global.fetch = originalFetch;
-    }
-  });
-
-  it("rewrites only defective Saturn narration sections with Yandex and keeps the accepted contract atomic", async () => {
-    process.env.YANDEX_FOLDER_ID = "test-folder";
-    const clean = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, index === 1 ? 155 : index === 0 ? 105 : index === 9 ? 130 : 155));
-    const leakedPurpose = plan[1].slidePurpose;
-    const leakedQuestion = plan[1].audienceQuestion;
-    clean[1] = `${clean[1]} ${leakedPurpose}. ${leakedQuestion}? Кольца Сатурна состоят из множества ледяных и каменных частиц. Кольца Сатурна состоят из множества ледяных и каменных частиц.${";".repeat(93)}`;
-    const initial = clean.join("\n\n");
-    const originalFetch = global.fetch;
-    let calls = 0;
-    global.fetch = async () => yandexTextResponse(calls++ === 0 ? initial : narrationSection(2, 155));
-
-    try {
-      const detected = findSpokenNarrationIssues(parseNarrationSections(initial), plan);
-      expect(detected).toEqual(expect.arrayContaining([
-        expect.objectContaining({ order: 2, code: "plan_echo" }),
-        expect.objectContaining({ order: 2, code: "repeated_sentence" }),
-        expect.objectContaining({ order: 2, code: "semicolon_run" }),
-      ]));
-      const accepted = await generateYandexNarration("test-key", project, [], plan);
-      expect(calls).toBe(2);
-      expect(parseNarrationSections(accepted).map((section) => section.order)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-      expect(accepted).not.toContain(leakedPurpose);
-      expect(accepted).not.toContain(leakedQuestion);
-      expect(findSpokenNarrationIssues(parseNarrationSections(accepted), plan)).toEqual([]);
-    } finally {
-      global.fetch = originalFetch;
-    }
-  });
-
-  it("does not enter duration recovery for a non-duration Yandex failure", async () => {
+  it("does not invoke a duration rewrite for non-duration provider or section failures", async () => {
     process.env.YANDEX_FOLDER_ID = "test-folder";
     const originalFetch = global.fetch;
     let calls = 0;
@@ -615,14 +569,13 @@ describe("Yandex narration duration recovery", () => {
     };
 
     try {
-      await expect(generateYandexNarration("test-key", project, [], plan)).rejects.toThrow("Yandex request failed: 503 unavailable");
+      await expect(generateYandexNarration("test-key", project, [], plan)).rejects.toThrow("503 unavailable");
       expect(calls).toBe(1);
     } finally {
       global.fetch = originalFetch;
     }
   });
 });
-
 function narrativePlanForTitles(titles: string[]) {
   return titles.map((title, index) => ({
     slideOrder: index + 1,
