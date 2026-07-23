@@ -371,6 +371,7 @@ export function buildFullNarrationDurationRewritePrompt(
 ) {
   const timingBudget = getRussianStudentSpeechTimingBudget(project);
   const message = error instanceof Error ? error.message : String(error);
+  const sectionGuidance = buildFullNarrationDurationSectionGuidance(project, timingBudget);
   return [
     buildNarrationPrompt(project, sources, narrativePlan, researchBrief),
     "The previous full narration was too short and must be discarded.",
@@ -379,12 +380,39 @@ export function buildFullNarrationDurationRewritePrompt(
     timingBudget
       ? `Keep the whole speech inside the quality-first range of ${timingBudget.minWords}-${timingBudget.maxWords} words; ${timingBudget.targetWords} words is a meaningful target, not a quota to reach with filler.`
       : "Keep the narration substantive and naturally paced.",
-    "Distribute substance by meaning: use complete sentences, grounded explanations, and distinct transitions. A coherent report is better than repetitive length.",
-    "Do not reuse old opening or closing formulas, describe the planning process, copy slidePurpose or audienceQuestion labels, or patch isolated sections.",
+    sectionGuidance,
+    "Treat this as editorial structure, not a word-padding exercise: every section must develop its argument with an explanation and, where supported, an example, evidence, or consequence. A coherent report is better than repetitive length.",
+    "Do not use filler, meta-commentary, planner field labels, artificial connective phrases, old opening or closing formulas, or copied slidePurpose or audienceQuestion text. Do not describe the planning process or patch isolated sections.",
     previousText ? `Previous invalid answer for diagnosis only; never quote or continue it:\n${cleanMultilineText(previousText).slice(0, 12000)}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/**
+ * Gives the sole duration-rewrite path a checkable per-section editorial
+ * structure while keeping every number tied to the shared timing preset.
+ */
+function buildFullNarrationDurationSectionGuidance(
+  project: ProjectInput,
+  timingBudget: ReturnType<typeof getRussianStudentSpeechTimingBudget>,
+) {
+  if (!timingBudget) return "Return exactly one headed section for every requested slide, in slide order.";
+
+  const { slideCount, titleWordTarget, contentWordTarget, conclusionWordTarget } = timingBudget;
+  if (slideCount === 10) {
+    return [
+      "Return all ten headers exactly once: `Слайд 1:` through `Слайд 10:`, with exactly one complete section per slide.",
+      `For this ten-slide budget, make slide 1 at least ${titleWordTarget + 25} words, slide 10 at least ${conclusionWordTarget + 30} words, and slides 2-9 approximately ${contentWordTarget - 25}-${contentWordTarget + 5} words each. Keep the total inside the stated range.`,
+    ].join(" ");
+  }
+
+  const middleLow = Math.max(1, contentWordTarget - 25);
+  const middleHigh = contentWordTarget + 25;
+  return [
+    `Return all ${slideCount} headers exactly once: \`Слайд 1:\` through \`Слайд ${slideCount}:\`, with exactly one complete section per slide.`,
+    `Derive the distribution from this preset: slide 1 is about ${titleWordTarget} words, slide ${slideCount} is about ${conclusionWordTarget} words, and the middle sections are approximately ${middleLow}-${middleHigh} words each while the whole speech stays inside the stated range.`,
+  ].join(" ");
 }
 
 export function buildSpokenNarrationRewritePrompt(

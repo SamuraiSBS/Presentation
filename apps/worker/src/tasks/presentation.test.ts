@@ -16,7 +16,7 @@ import {
 } from "./presentation.js";
 import { generatePresentation as generatePresentationFromOrchestrator } from "./presentation/orchestrator.js";
 import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./presentation/prompts/builders.js";
-import { buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
+import { buildFullNarrationDurationRewritePrompt, buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
 import { buildNarrationRepairPrompt } from "./presentation/prompts/builders.js";
 import { buildFallbackNarrativeItem, normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
 import { generateYandexNarration, NARRATION_MAX_PROVIDER_ATTEMPTS, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
@@ -500,6 +500,46 @@ describe("Yandex narration full duration rewrite", () => {
   function completeNarration(contentWords = 155) {
     return Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, index === 0 ? 105 : index === 9 ? 130 : contentWords)).join("\n\n");
   }
+
+  it("gives the ten-slide full rewrite an exact budget-derived editorial structure", () => {
+    const prompt = buildFullNarrationDurationRewritePrompt(
+      project,
+      [],
+      plan,
+      "short invalid speech",
+      new Error("AI narration quality check failed: narration duration is below 9 minutes"),
+    );
+
+    expect(prompt).toContain("1170-1560 words");
+    expect(prompt).toContain("all ten headers exactly once");
+    expect(prompt).toContain("Слайд 1:");
+    expect(prompt).toContain("Слайд 10:");
+    expect(prompt).toContain("slide 1 at least 105 words");
+    expect(prompt).toContain("slide 10 at least 130 words");
+    expect(prompt).toContain("slides 2-9 approximately 115-145 words each");
+    expect(prompt).toContain("not a word-padding exercise");
+    expect(prompt).toContain("Do not use filler");
+    expect(prompt).toContain("copied slidePurpose or audienceQuestion text");
+    expect(prompt).not.toContain("hard contract");
+  });
+
+  it("derives non-ten-slide full rewrite guidance from that preset rather than the ten-slide rule", () => {
+    const eightSlideProject = { ...project, id: "eight-slide-duration-rewrite", slideCount: 8 };
+    const prompt = buildFullNarrationDurationRewritePrompt(
+      eightSlideProject,
+      [],
+      plan.slice(0, 8),
+      "short invalid speech",
+      new Error("AI narration quality check failed: narration duration is below 7 minutes"),
+    );
+
+    expect(prompt).toContain("910-1170 words");
+    expect(prompt).toContain("all 8 headers exactly once");
+    expect(prompt).toContain("slide 1 is about 80 words");
+    expect(prompt).toContain("slide 8 is about 120 words");
+    expect(prompt).toContain("middle sections are approximately 115-165 words each");
+    expect(prompt).not.toContain("slides 2-9 approximately 115-145 words each");
+  });
 
   it("uses one full Yandex rewrite for a short narration and accepts only the complete replacement", async () => {
     process.env.YANDEX_FOLDER_ID = "test-folder";

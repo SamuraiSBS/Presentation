@@ -1,0 +1,8 @@
+{
+  "title": "Smoke — Saturn duration baseline 2026-07-23",
+  "prompt": "Подготовь содержательный университетский доклад на русском языке о Сатурне, его кольцах, атмосфере и спутниках, опираясь только на приложенный материал.",
+  "scenario": "university_report",
+  "level": "university_student",
+  "mode": "fast_draft",
+  "slideCount": 10
+}
