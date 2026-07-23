@@ -68,6 +68,12 @@ type NarrationSection = {
   text: string;
 };
 
+export type SpokenNarrationIssue = {
+  order: number;
+  code: "plan_echo" | "repeated_sentence" | "repeated_fact" | "semicolon_run" | "planning_formula";
+  message: string;
+};
+
 type SlideTextIssue = {
   slideOrder: number;
   fields: string[];
@@ -256,17 +262,17 @@ export function isYandexJsonSchemaCompatible(schema: unknown): boolean {
   return Object.values(node).every(isYandexJsonSchemaCompatible);
 }
 
-export function normalizeNarrationText(value: unknown, project: ProjectInput) {
+export function normalizeNarrationText(value: unknown, project: ProjectInput, narrativePlan: SlideNarrative[] = []) {
   const text = cleanMultilineText(value);
   if (!text || text.startsWith("{")) {
     throw new Error("AI narration quality check failed: response is not plain slide narration");
   }
 
   let sections = repairShortNarrationSections(parseNarrationSections(text), project);
-  let issues = validateNarrationSections(sections, project);
+  let issues = validateNarrationSections(sections, project, narrativePlan);
   if (issues.length && sections.length === project.slideCount && issues.every(isRepairableNarrationQualityIssue)) {
     sections = repairNarrationQualitySections(sections, project);
-    issues = validateNarrationSections(sections, project);
+    issues = validateNarrationSections(sections, project, narrativePlan);
   }
   if (issues.length) {
     throw new Error(`AI narration quality check failed: ${issues.join("; ")}`);
@@ -341,7 +347,7 @@ export function parseNarrationHeader(line: string) {
   return { order: Number(header[1]), title };
 }
 
-export function validateNarrationSections(sections: NarrationSection[], project: ProjectInput) {
+export function validateNarrationSections(sections: NarrationSection[], project: ProjectInput, narrativePlan: SlideNarrative[] = []) {
   const issues: string[] = [];
   const budget = getRussianStudentSpeechTimingBudget(project);
   if (sections.length !== project.slideCount) {
@@ -421,7 +427,62 @@ export function validateNarrationSections(sections: NarrationSection[], project:
     }
   }
 
+  issues.push(...findSpokenNarrationIssues(sections, narrativePlan).map((issue) =>
+    `[${issue.code}] slide ${issue.order}: ${issue.message}`,
+  ));
+
   return issues;
+}
+
+/**
+ * Conservative blockers for text that is formally long enough but cannot be
+ * read aloud naturally.  These are intentionally deterministic: they only
+ * identify a defect; wording is repaired by Yandex, never by local fallback.
+ */
+export function findSpokenNarrationIssues(sections: NarrationSection[], narrativePlan: SlideNarrative[] = []): SpokenNarrationIssue[] {
+  const issues: SpokenNarrationIssue[] = [];
+  const planByOrder = new Map(narrativePlan.map((item) => [item.slideOrder, item]));
+  const seenSentences = new Map<string, number>();
+
+  for (const section of sections) {
+    const sentences = speechSentences(section.text);
+    const plan = planByOrder.get(section.order);
+    const protectedPlanFields = [plan?.slidePurpose, plan?.audienceQuestion]
+      .map((value) => normalizeExactForQuality(String(value || "")))
+      .filter((value) => value.length >= 12);
+
+    for (const sentence of sentences) {
+      const key = normalizeExactForQuality(sentence).replace(/[^\p{L}\p{N}\s]/gu, "").replace(/\s+/g, " ").trim();
+      if (!key) continue;
+      if (protectedPlanFields.some((field) => key === field || key.includes(field))) {
+        issues.push({ order: section.order, code: "plan_echo", message: "narration repeats a narrative-plan field" });
+      }
+      const previousOrder = seenSentences.get(key);
+      if (previousOrder !== undefined && key.split(" ").length >= 5) {
+        issues.push({
+          order: section.order,
+          code: previousOrder === section.order ? "repeated_sentence" : "repeated_fact",
+          message: previousOrder === section.order ? "section repeats a complete sentence" : `repeats a complete fact from slide ${previousOrder}`,
+        });
+      } else {
+        seenSentences.set(key, section.order);
+      }
+    }
+
+    const semicolons = (section.text.match(/;/g) || []).length;
+    if (/,\s*;/u.test(section.text) || semicolons >= 4) {
+      issues.push({ order: section.order, code: "semicolon_run", message: "narration contains an abnormal semicolon sequence" });
+    }
+    const finalSentence = sentences[sentences.length - 1] || "";
+    if (/\?$/.test(finalSentence) && /(?:нужно|следует|как|почему|каков|какая|какие)\b/iu.test(finalSentence)) {
+      issues.push({ order: section.order, code: "planning_formula", message: "narration ends with an unresolved planning question" });
+    }
+    if (/(?:собрать ответ на главный вопрос|связать его с предыдущими смысловыми шагами|оставить 2[–-]3 разных подтвержденных вывода)/iu.test(section.text)) {
+      issues.push({ order: section.order, code: "planning_formula", message: "narration contains a planning formula" });
+    }
+  }
+
+  return issues.filter((issue, index, all) => all.findIndex((candidate) => candidate.order === issue.order && candidate.code === issue.code && candidate.message === issue.message) === index);
 }
 
 export function isRepairableNarrationQualityIssue(issue: string) {

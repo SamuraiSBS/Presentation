@@ -149,9 +149,9 @@ export const PRESENTATION_RECOVERY_CHUNK_COUNT = 3;
 import type { YandexCompletionResponse } from "../constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
 import { buildResearchBrief, buildDesignBrief, logStructuredGenerationValidationFailure, buildDeckStory, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "../planning/builders.js";
-import { shouldRetryNarration, requestYandexText, normalizeNarrationText, parseNarrationSections, isGenericNarrationSentence } from "../narration/processing.js";
+import { shouldRetryNarration, requestYandexText, normalizeNarrationText, parseNarrationSections, findSpokenNarrationIssues } from "../narration/processing.js";
 import { speechSentences } from "../normalization/presentation.js";
-import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildGenerationPrompt, buildYandexPresentationRecoveryPrompt } from "../prompts/builders.js";
+import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildSpokenNarrationRewritePrompt, buildGenerationPrompt, buildYandexPresentationRecoveryPrompt } from "../prompts/builders.js";
 import type { YandexModelTier } from "../prompts/builders.js";
 import { ensureDesignBriefDirections } from "../normalization/presentation.js";
 import { finalizeGeneratedPresentation, repairSlideTextWithOpenAI, repairSlideTextWithYandex, critiquePresentationQualityWithOpenAI, critiquePresentationQualityWithYandex, repairPresentationQualityWithOpenAI, repairPresentationQualityWithYandex } from "../quality/orchestration.js";
@@ -435,18 +435,13 @@ export async function generateYandexNarration(apiKey: string, project: ProjectIn
     let outputText = "";
     try {
       outputText = await requestYandexText(apiKey, NARRATION_SYSTEM_PROMPT, prompt, { jsonObject: false });
-      return normalizeNarrationText(outputText, project);
+      const spokenIssues = findSpokenNarrationIssues(parseNarrationSections(outputText), narrativePlan);
+      if (spokenIssues.length) {
+        return rewriteSpokenYandexNarration(apiKey, project, sources, narrativePlan, researchBrief, outputText, spokenIssues);
+      }
+      return normalizeNarrationText(outputText, project, narrativePlan);
     } catch (error) {
       lastError = error;
-      if (isLateNarrationPlanningTemplateError(error)) {
-        try {
-          const repaired = normalizeNarrationText(replaceTemplateNarration(outputText, narrativePlan), project);
-          logger.warn({ projectId: project.id, stage: "drafting_speech", provider: "yandex", recovery: "template_sentence_replacement", words: narrationWordCount(repaired), msg: "replaced template narration with narrative-plan content" });
-          return repaired;
-        } catch (repairError) {
-          lastError = repairError;
-        }
-      }
       // A duration-only failure can have correctly shaped sections, but it
       // still is not accepted narration. Recover it only with fresh Yandex
       // text; never splice narrative-plan fields into the student's speech.
@@ -506,42 +501,39 @@ async function generateYandexNarrationByChunks(
     narrationParts.push(sections.map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n"));
   }
 
-  const recovered = normalizeNarrationText(narrationParts.join("\n\n"), project);
+  const recovered = normalizeNarrationText(narrationParts.join("\n\n"), project, narrativePlan);
   logger.info({ projectId: project.id, stage: "drafting_speech", provider: "yandex", recovery: "chunked_duration_recovery", words: narrationWordCount(recovered) }, "accepted bounded Yandex narration recovery");
   return recovered;
 }
 
-function isTemplateNarrationError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error || "");
-  return message.includes("contains template narration") || message.includes("template phrase detected");
-}
-
-function isLateNarrationPlanningTemplateError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error || "");
-  return isTemplateNarrationError(error)
-    && /собрать ответ на главный вопрос|связать его с предыдущими смысловыми шагами|оставить 2[–-]3 разных подтвержденных вывода/i.test(message);
-}
-
-export function replaceTemplateNarration(narrationText: string, narrativePlan: SlideNarrative[]) {
-  const plansByOrder = new Map(narrativePlan.map((plan) => [plan.slideOrder, plan]));
-  return parseNarrationSections(narrationText)
-    .map((section, index, sections) => {
-      const plan = plansByOrder.get(section.order);
-      const fallback = [
-        plan?.whyItMatters,
-        plan?.evidenceOrExplanation,
-        plan?.keyMessage,
-        plan?.slidePurpose,
-        index > 0 ? sections[index - 1]?.text : "",
-      ]
-        .map((value) => String(value || "").trim())
-        .find((value) => value && !isGenericNarrationSentence(value));
-      const text = speechSentences(section.text)
-        .map((sentence) => isGenericNarrationSentence(sentence) && fallback ? `${fallback.replace(/[.!?…]+\s*$/, "")}.` : sentence)
-        .join(" ");
-      return `Слайд ${section.order}: ${section.title}\n${text}`;
-    })
+async function rewriteSpokenYandexNarration(
+  apiKey: string,
+  project: ProjectInput,
+  sources: Source[],
+  narrativePlan: SlideNarrative[],
+  researchBrief: ResearchBrief | undefined,
+  canonicalNarration: string,
+  issues: ReturnType<typeof findSpokenNarrationIssues>,
+) {
+  const orders = [...new Set(issues.map((issue) => issue.order))].sort((left, right) => left - right);
+  const rewritten = await requestYandexText(
+    apiKey,
+    NARRATION_SYSTEM_PROMPT,
+    buildSpokenNarrationRewritePrompt(project, sources, narrativePlan, canonicalNarration, orders, issues.map((issue) => issue.message), researchBrief),
+    { jsonObject: false },
+  );
+  const canonicalSections = parseNarrationSections(canonicalNarration);
+  const rewrittenSections = parseNarrationSections(rewritten);
+  if (rewrittenSections.length !== orders.length || rewrittenSections.some((section, index) => section.order !== orders[index])) {
+    throw new Error(`AI narration quality check failed: spoken rewrite must contain exactly slides ${orders.join(", ")}`);
+  }
+  const replacement = new Map(rewrittenSections.map((section) => [section.order, section]));
+  const merged = canonicalSections.map((section) => replacement.get(section.order) || section)
+    .map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`)
     .join("\n\n");
+  const accepted = normalizeNarrationText(merged, project, narrativePlan);
+  logger.info({ projectId: project.id, stage: "drafting_speech", provider: "yandex", recovery: "spoken_narration_rewrite", orders, words: narrationWordCount(accepted) }, "accepted targeted Yandex spoken-narration rewrite");
+  return accepted;
 }
 
 function narrationWordCount(text: string) {

@@ -358,6 +358,33 @@ export function buildNarrationRepairPrompt(
   ]
     .filter(Boolean)
     .join("\n\n");
+export function buildSpokenNarrationRewritePrompt(
+  project: ProjectInput,
+  sources: Source[],
+  narrativePlan: SlideNarrative[],
+  canonicalNarration: string,
+  issueOrders: number[],
+  issueReasons: string[],
+  researchBrief?: ResearchBrief,
+) {
+  const sections = cleanMultilineText(canonicalNarration)
+    .split(/(?=?????\s+\d+\s*:)/iu)
+    .filter((section) => issueOrders.some((order) => new RegExp(`^?????\\s+${order}\\s*:`, "iu").test(section.trim())))
+    .join("\n\n");
+  const selectedPlan = narrativePlan.filter((item) => issueOrders.includes(item.slideOrder));
+  return [
+    "Rewrite only the requested Russian oral-narration sections. Return plain text only, without Markdown or commentary.",
+    `Return exactly these sections once each and in this order: ${issueOrders.join(", ")}. Keep their headers exactly as \`????? N: existing title\`.`,
+    `Project: ${project.title}. Request: ${project.prompt}.`,
+    `Defects to correct: ${issueReasons.join("; ")}.`,
+    "Keep all supported facts and the section meaning. Do not add facts, dates, figures, citations, URLs, source names, slidePurpose, audienceQuestion, planner instructions, or questions for the audience.",
+    "Write natural connected speech that can be read aloud. Do not repeat a complete sentence or fact already present in the supplied sections.",
+    `Canonical defective sections to rewrite:\n${sections}`,
+    selectedPlan.length ? `Narrative plan for meaning only (never copy its field labels or questions):\n${JSON.stringify(selectedPlan)}` : "",
+    researchBrief ? `Allowed research context:\n${JSON.stringify(researchBrief)}` : "",
+    sources.length ? `Allowed source context:\n${formatSourceText(sources)}` : "",
+  ].filter(Boolean).join("\n\n");
+}
 }
 
 export function formatNarrativePlanForPrompt(narrativePlan: SlideNarrative[]) {

@@ -19,14 +19,14 @@ import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./prese
 import { buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
 import { buildNarrationRepairPrompt } from "./presentation/prompts/builders.js";
 import { buildFallbackNarrativeItem, normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
-import { generateYandexNarration, NARRATION_MAX_PROVIDER_ATTEMPTS, narrationRecoveryChunks, replaceTemplateNarration, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
+import { generateYandexNarration, NARRATION_MAX_PROVIDER_ATTEMPTS, narrationRecoveryChunks, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
 import { NARRATION_SYSTEM_PROMPT } from "./presentation/constants.js";
 import { sourceEvidenceForSlide } from "./presentation/planning/builders.js";
 import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
 import { applyNarrationFallbacks } from "./presentation/quality/orchestration.js";
 import { looksLikeSentenceFragment } from "./presentation/quality/orchestration.js";
 import { normalizeLayout as normalizeLayoutFromLayer, normalizeVisual } from "./presentation/normalization/presentation.js";
-import { normalizeNarrationText, parseNarrationSections, validateNarrationSections } from "./presentation/narration/processing.js";
+import { findSpokenNarrationIssues, normalizeNarrationText, parseNarrationSections, validateNarrationSections } from "./presentation/narration/processing.js";
 import { shortenSentence } from "./presentation/utilities.js";
 
 const originalEnv = { ...process.env };
@@ -176,14 +176,7 @@ describe("presentation compatibility facade", () => {
     expect(plan.some((item) => shortNarration.includes(item.slidePurpose) || shortNarration.includes(item.audienceQuestion))).toBe(false);
   });
 
-  it("replaces a generic Yandex narration sentence with its narrative-plan conclusion", () => {
-    const narration = "Слайд 1: Итог\nСатурн остаётся одной из самых удивительных планет, изучение которой имеет большое значение для будущего астрономии.";
-    const repaired = replaceTemplateNarration(narration, [{ slideOrder: 1, slideTitle: "Итог", slidePurpose: "подвести итог", keyMessage: "кольца Сатурна состоят из множества частиц", audienceQuestion: "что показывают кольца", transitionToNext: "", whyItMatters: "Наблюдение за кольцами помогает изучать процессы формирования планетных систем" }]);
-    expect(repaired).toContain("Наблюдение за кольцами помогает изучать процессы формирования планетных систем");
-    expect(repaired).not.toContain("одной из самых удивительных планет");
-  });
-
-  it("keeps a fallback Saturn conclusion out of template narration and repairs only its template sentence", () => {
+  it("keeps template narration blocked instead of replacing it locally from the narrative plan", () => {
     const project = {
       id: "saturn-template-repair",
       title: "Система Сатурна",
@@ -217,10 +210,9 @@ describe("presentation compatibility facade", () => {
 
     const templateOnlyNarration = narration.replace(" Строение, кольца и спутники раскрывают разные стороны системы Сатурна без добавления новых фактов для учебного объяснения.", "");
     expect(validateNarrationSections(parseNarrationSections(templateOnlyNarration), project).some((issue) => issue.includes("contains template narration"))).toBe(true);
-    const repaired = replaceTemplateNarration(narration, plan);
-    expect(repaired).toContain("Строение, кольца и спутники вместе показывают научную ценность системы Сатурна.");
-    expect(repaired).not.toContain("Собрать ответ на главный вопрос");
-    expect(parseNarrationSections(normalizeNarrationText(repaired, project))).toHaveLength(10);
+    expect(validateNarrationSections(parseNarrationSections(narration), project, plan))
+      .toContainEqual(expect.stringContaining("[planning_formula]"));
+    expect(() => normalizeNarrationText(narration, project, plan)).toThrow("contains template narration");
   });
   it("allows one narration pass and three automatic full-regeneration attempts", () => {
     const project = {
@@ -534,6 +526,35 @@ describe("Yandex narration duration recovery", () => {
     }
   });
 
+  it("rewrites only defective Saturn narration sections with Yandex and keeps the accepted contract atomic", async () => {
+    process.env.YANDEX_FOLDER_ID = "test-folder";
+    const clean = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, index === 1 ? 155 : index === 0 ? 110 : index === 9 ? 150 : 155));
+    const leakedPurpose = plan[1].slidePurpose;
+    const leakedQuestion = plan[1].audienceQuestion;
+    clean[1] = `${clean[1]} ${leakedPurpose}. ${leakedQuestion}? Кольца Сатурна состоят из множества ледяных и каменных частиц. Кольца Сатурна состоят из множества ледяных и каменных частиц.${";".repeat(93)}`;
+    const initial = clean.join("\n\n");
+    const originalFetch = global.fetch;
+    let calls = 0;
+    global.fetch = async () => yandexTextResponse(calls++ === 0 ? initial : narrationSection(2, 155));
+
+    try {
+      const detected = findSpokenNarrationIssues(parseNarrationSections(initial), plan);
+      expect(detected).toEqual(expect.arrayContaining([
+        expect.objectContaining({ order: 2, code: "plan_echo" }),
+        expect.objectContaining({ order: 2, code: "repeated_sentence" }),
+        expect.objectContaining({ order: 2, code: "semicolon_run" }),
+      ]));
+      const accepted = await generateYandexNarration("test-key", project, [], plan);
+      expect(calls).toBe(2);
+      expect(parseNarrationSections(accepted).map((section) => section.order)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      expect(accepted).not.toContain(leakedPurpose);
+      expect(accepted).not.toContain(leakedQuestion);
+      expect(findSpokenNarrationIssues(parseNarrationSections(accepted), plan)).toEqual([]);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it("does not enter duration recovery for a non-duration Yandex failure", async () => {
     process.env.YANDEX_FOLDER_ID = "test-folder";
     const originalFetch = global.fetch;
@@ -625,7 +646,18 @@ function mockYandexNarrationRewrite(initialText: string, rewrittenText: string) 
     const systemText = String(body.messages?.[0]?.text || "");
     if (systemText.includes("full Russian oral narration")) {
       narrationCalls += 1;
-      return yandexTextResponse(narrationCalls === 1 ? initialText : rewrittenText);
+      if (narrationCalls === 1) return yandexTextResponse(initialText);
+      const requested = String(body.messages?.[1]?.text || "").match(/Return exactly these sections once each and in this order:\s*([\d, ]+)/i)?.[1]
+        .split(",")
+        .map((value: string) => Number(value.trim()))
+        .filter(Number.isFinite);
+      const replacement = requested?.length
+        ? parseNarrationSections(rewrittenText)
+          .filter((section) => requested.includes(section.order))
+          .map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`)
+          .join("\n\n")
+        : rewrittenText;
+      return yandexTextResponse(replacement);
     }
     if (systemText.includes("story planner")) {
       return yandexTextResponse(JSON.stringify(narrativePlanForTitles(titles)));
@@ -1725,7 +1757,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("rewrites the full narration when neighboring slides repeat the same closing sentence", async () => {
+  it("rewrites only the marked narration section when neighboring slides repeat a closing sentence", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1758,7 +1790,9 @@ describe("generatePresentation fallback behavior", () => {
         [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Conflict story excerpt." }],
       );
       expect(() => presentationSchema.parse(presentation)).not.toThrow();
-      expect(presentation.generatedText).toBe(rewrittenText);
+      const acceptedSections = parseNarrationSections(presentation.generatedText);
+      expect(acceptedSections[0]?.text).toBe(parseNarrationSections(repeatedText)[0]?.text);
+      expect(acceptedSections[1]?.text).toBe(parseNarrationSections(rewrittenText)[1]?.text);
       expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
