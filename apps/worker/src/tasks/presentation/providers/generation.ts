@@ -144,13 +144,14 @@ type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief"
 // narration. This is deliberately separate from BullMQ transport retries.
 export const NARRATION_MAX_PROVIDER_ATTEMPTS = 4;
 export const NARRATION_RECOVERY_CHUNK_COUNT = 3;
+export const PRESENTATION_RECOVERY_CHUNK_COUNT = 3;
 
 import type { YandexCompletionResponse } from "../constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
 import { buildResearchBrief, buildDesignBrief, logStructuredGenerationValidationFailure, buildDeckStory, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "../planning/builders.js";
 import { shouldRetryNarration, requestYandexText, normalizeNarrationText, parseNarrationSections, isGenericNarrationSentence } from "../narration/processing.js";
 import { speechSentences } from "../normalization/presentation.js";
-import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildGenerationPrompt } from "../prompts/builders.js";
+import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildGenerationPrompt, buildYandexPresentationRecoveryPrompt } from "../prompts/builders.js";
 import type { YandexModelTier } from "../prompts/builders.js";
 import { ensureDesignBriefDirections } from "../normalization/presentation.js";
 import { finalizeGeneratedPresentation, repairSlideTextWithOpenAI, repairSlideTextWithYandex, critiquePresentationQualityWithOpenAI, critiquePresentationQualityWithYandex, repairPresentationQualityWithOpenAI, repairPresentationQualityWithYandex } from "../quality/orchestration.js";
@@ -288,20 +289,9 @@ export async function generateWithYandex(project: ProjectInput, sources: Source[
     { yandexApiKey: apiKey },
   );
   const slideBlueprints = buildSlideBlueprints(project, narrationText, narrativePlan, designBrief);
-  let parsed: unknown;
-  try {
-    parsed = await generatePresentationDocumentWithProvider("yandex", project, sources, narrationText, narrativePlan, {
-      researchBrief,
-      deckStory,
-      designBrief,
-      slideBlueprints,
-      slideTextPlans,
-      yandexApiKey: apiKey,
-    });
-  } catch (error) {
-    logger.warn({ projectId: project.id, stage: "building_slides", provider: "yandex", ...errorLogFields(error) }, "structured presentation generation failed; using narration fallback document");
-    parsed = {};
-  }
+  const parsed = await generateYandexPresentationDocumentWithRecovery(project, sources, narrationText, narrativePlan, apiKey, {
+    researchBrief, deckStory, designBrief, slideBlueprints, slideTextPlans,
+  });
   return finalizeGeneratedPresentation(
     parsed,
     project,
@@ -340,15 +330,9 @@ export async function generateYandexPresentationFromNarration(project: ProjectIn
     { yandexApiKey: apiKey },
   );
   const slideBlueprints = buildSlideBlueprints(project, narrationText, narrativePlan, designBrief);
-  const parsed = await generatePresentationDocumentWithProvider("yandex", project, sources, narrationText, narrativePlan, {
-    researchBrief,
-    deckStory,
-    designBrief,
-    slideBlueprints,
-    slideTextPlans,
-    yandexApiKey: apiKey,
+  const parsed = await generateYandexPresentationDocumentWithRecovery(project, sources, narrationText, narrativePlan, apiKey, {
+    researchBrief, deckStory, designBrief, slideBlueprints, slideTextPlans,
   });
-  assertCompleteStructuredPresentation(parsed, project);
   return finalizeGeneratedPresentation(
     parsed,
     project,
@@ -365,7 +349,7 @@ export async function generateYandexPresentationFromNarration(project: ProjectIn
   );
 }
 
-function assertCompleteStructuredPresentation(parsed: unknown, project: ProjectInput) {
+function assertCompleteStructuredPresentation(parsed: unknown, project: ProjectInput, requireExactOrders = false) {
   if (!parsed || typeof parsed !== "object") {
     throw new Error("structured presentation response is not an object");
   }
@@ -373,6 +357,74 @@ function assertCompleteStructuredPresentation(parsed: unknown, project: ProjectI
   if (!Array.isArray(slides) || slides.length !== project.slideCount) {
     throw new Error(`structured presentation response must contain ${project.slideCount} slides`);
   }
+  const orders = slides.map((slide) => typeof slide === "object" && slide ? (slide as { order?: unknown }).order : undefined);
+  if (requireExactOrders && orders.some((order, index) => order !== index + 1)) {
+    throw new Error("structured presentation response must contain slides in exact requested order");
+  }
+}
+
+export function presentationRecoveryChunks(slideCount: number) {
+  const chunkCount = Math.min(PRESENTATION_RECOVERY_CHUNK_COUNT, Math.max(1, slideCount));
+  const baseSize = Math.floor(slideCount / chunkCount);
+  const chunks: number[][] = [];
+  let nextOrder = 1;
+  for (let index = 0; index < chunkCount; index += 1) {
+    const size = baseSize + (index === chunkCount - 1 ? slideCount % chunkCount : 0);
+    chunks.push(Array.from({ length: size }, () => nextOrder++));
+  }
+  return chunks;
+}
+
+export function isRecoverableYandexStructuredPresentationError(error: unknown) {
+  if (error instanceof StructuredGenerationError && error.schemaName === "studydeck_presentation") {
+    return isRecoverableStructuredPresentationDetail(error.validationError);
+  }
+  return isRecoverableStructuredPresentationDetail(error);
+}
+
+function isRecoverableStructuredPresentationDetail(error: unknown) {
+  if (error instanceof SyntaxError) return true;
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /unexpected end of json input|unterminated string|unexpected token.*json|structured presentation response (is not an object|must contain|in exact requested order)|zoderror|invalid_type|validation/i.test(message);
+}
+
+async function generateYandexPresentationDocumentWithRecovery(
+  project: ProjectInput,
+  sources: Source[],
+  narrationText: string,
+  narrativePlan: SlideNarrative[],
+  apiKey: string,
+  artifacts: PromptArtifacts,
+) {
+  try {
+    const parsed = await generatePresentationDocumentWithProvider("yandex", project, sources, narrationText, narrativePlan, { ...artifacts, yandexApiKey: apiKey });
+    assertCompleteStructuredPresentation(parsed, project);
+    return parsed;
+  } catch (error) {
+    if (!isRecoverableYandexStructuredPresentationError(error)) throw error;
+    logger.warn({ projectId: project.id, stage: "building_slides", provider: "yandex", recovery: "chunked_structured_json", ...errorLogFields(error) }, "recovering incomplete Yandex structured presentation with bounded chunks");
+  }
+
+  const chunks = presentationRecoveryChunks(project.slideCount);
+  const recoveredSlides: unknown[] = [];
+  for (const [index, orders] of chunks.entries()) {
+    const outputText = await requestYandexText(apiKey, SYSTEM_PROMPT, buildYandexPresentationRecoveryPrompt(project, sources, narrationText, narrativePlan, artifacts, orders, index + 1, chunks.length), {
+      jsonObject: true, modelTier: "primary", maxTokens: 4200,
+    });
+    const parsed = parseJsonText(outputText);
+    const slides = parsed && typeof parsed === "object" ? (parsed as { slides?: unknown }).slides : undefined;
+    if (!Array.isArray(slides) || slides.length !== orders.length) {
+      throw new Error(`Yandex structured presentation recovery chunk ${index + 1} did not contain exactly requested slides`);
+    }
+    const returnedOrders = slides.map((slide) => typeof slide === "object" && slide ? (slide as { order?: unknown }).order : undefined);
+    if (returnedOrders.some((order, slideIndex) => order !== orders[slideIndex])) {
+      throw new Error(`Yandex structured presentation recovery chunk ${index + 1} returned missing, extra, duplicate, or out-of-order slides`);
+    }
+    recoveredSlides.push(...slides);
+  }
+  const recovered = { slides: recoveredSlides };
+  assertCompleteStructuredPresentation(recovered, project, true);
+  return recovered;
 }
 
 export async function generateYandexNarration(apiKey: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief) {
@@ -386,17 +438,21 @@ export async function generateYandexNarration(apiKey: string, project: ProjectIn
       return normalizeNarrationText(outputText, project);
     } catch (error) {
       lastError = error;
-      // Yandex can stop a long one-shot answer around five minutes even with
-      // a high output allowance. A duration-only failure already has valid
-      // slide sections, so complete that usable answer before spending a
-      // recovery request. Paid retries remain for malformed narration.
-      if (attempt === 0 && isNarrationDurationShortfall(error)) {
+      if (isLateNarrationPlanningTemplateError(error)) {
         try {
-          return recoverShortYandexNarration(outputText, project, narrativePlan);
-        } catch (recoveryError) {
-          lastError = recoveryError;
-          return generateYandexNarrationByChunks(apiKey, project, sources, narrativePlan, researchBrief);
+          const repaired = normalizeNarrationText(replaceTemplateNarration(outputText, narrativePlan), project);
+          logger.warn({ projectId: project.id, stage: "drafting_speech", provider: "yandex", recovery: "template_sentence_replacement", words: narrationWordCount(repaired), msg: "replaced template narration with narrative-plan content" });
+          return repaired;
+        } catch (repairError) {
+          lastError = repairError;
         }
+      }
+      // A duration-only failure can have correctly shaped sections, but it
+      // still is not accepted narration. Recover it only with fresh Yandex
+      // text; never splice narrative-plan fields into the student's speech.
+      if (attempt === 0 && isNarrationDurationShortfall(error)) {
+        logger.warn({ projectId: project.id, stage: "drafting_speech", provider: "yandex", recovery: "chunked_duration_recovery" }, "recovering short Yandex narration with bounded chunks");
+        return generateYandexNarrationByChunks(apiKey, project, sources, narrativePlan, researchBrief);
       }
       if (attempt === NARRATION_MAX_PROVIDER_ATTEMPTS - 1 || !shouldRetryNarration(error)) {
         break;
@@ -450,28 +506,9 @@ async function generateYandexNarrationByChunks(
     narrationParts.push(sections.map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n"));
   }
 
-  return recoverShortYandexNarration(narrationParts.join("\n\n"), project, narrativePlan);
-}
-
-function recoverShortYandexNarration(narrationText: string, project: ProjectInput, narrativePlan: SlideNarrative[]) {
-  let candidateNarration = narrationText;
-  try {
-    return normalizeNarrationText(candidateNarration, project);
-  } catch (error) {
-    if (!isNarrationDurationShortfall(error)) throw error;
-    candidateNarration = completeYandexNarrationDuration(candidateNarration, project, narrativePlan);
-  }
-
-  try {
-    const result = normalizeNarrationText(candidateNarration, project);
-    logger.warn({ projectId: project.id, stage: "drafting_speech", provider: "yandex", recovery: "local_duration_completion", words: narrationWordCount(result), msg: "completed short Yandex narration from the validated narrative plan" });
-    return result;
-  } catch (error) {
-    if (!isTemplateNarrationError(error)) throw error;
-    const result = normalizeNarrationText(replaceTemplateNarration(candidateNarration, narrativePlan), project);
-    logger.warn({ projectId: project.id, stage: "drafting_speech", provider: "yandex", recovery: "template_sentence_replacement", words: narrationWordCount(result), msg: "replaced template narration with narrative-plan content" });
-    return result;
-  }
+  const recovered = normalizeNarrationText(narrationParts.join("\n\n"), project);
+  logger.info({ projectId: project.id, stage: "drafting_speech", provider: "yandex", recovery: "chunked_duration_recovery", words: narrationWordCount(recovered) }, "accepted bounded Yandex narration recovery");
+  return recovered;
 }
 
 function isTemplateNarrationError(error: unknown) {
@@ -479,67 +516,32 @@ function isTemplateNarrationError(error: unknown) {
   return message.includes("contains template narration") || message.includes("template phrase detected");
 }
 
+function isLateNarrationPlanningTemplateError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return isTemplateNarrationError(error)
+    && /собрать ответ на главный вопрос|связать его с предыдущими смысловыми шагами|оставить 2[–-]3 разных подтвержденных вывода/i.test(message);
+}
+
 export function replaceTemplateNarration(narrationText: string, narrativePlan: SlideNarrative[]) {
   const plansByOrder = new Map(narrativePlan.map((plan) => [plan.slideOrder, plan]));
   return parseNarrationSections(narrationText)
-    .map((section) => {
+    .map((section, index, sections) => {
       const plan = plansByOrder.get(section.order);
-      const fallback = String(plan?.whyItMatters || plan?.evidenceOrExplanation || plan?.keyMessage || plan?.slidePurpose || "").trim();
+      const fallback = [
+        plan?.whyItMatters,
+        plan?.evidenceOrExplanation,
+        plan?.keyMessage,
+        plan?.slidePurpose,
+        index > 0 ? sections[index - 1]?.text : "",
+      ]
+        .map((value) => String(value || "").trim())
+        .find((value) => value && !isGenericNarrationSentence(value));
       const text = speechSentences(section.text)
         .map((sentence) => isGenericNarrationSentence(sentence) && fallback ? `${fallback.replace(/[.!?…]+\s*$/, "")}.` : sentence)
         .join(" ");
       return `Слайд ${section.order}: ${section.title}\n${text}`;
     })
     .join("\n\n");
-}
-
-export function completeYandexNarrationDuration(narrationText: string, project: ProjectInput, narrativePlan: SlideNarrative[]) {
-  const budget = getRussianStudentSpeechTimingBudget(project);
-  if (!budget) return narrationText;
-
-  const plansByOrder = new Map(narrativePlan.map((plan) => [plan.slideOrder, plan]));
-  return parseNarrationSections(narrationText)
-    .map((section, index) => {
-      const target = index === 0
-        ? budget.titleWordTarget
-        : index === project.slideCount - 1
-          ? budget.conclusionWordTarget
-          : budget.contentWordTarget;
-      const currentWords = narrationWordCount(section.text);
-      if (currentWords >= target) return `Слайд ${section.order}: ${section.title}\n${section.text}`;
-
-      const requiredWords = target - currentWords;
-      const continuation = narrativePlanContinuation(plansByOrder.get(section.order), requiredWords, section.order);
-      const text = section.text.trim().replace(/[.!?…]+\s*$/, "");
-      return `Слайд ${section.order}: ${section.title}\n${text}; ${continuation}.`;
-    })
-    .join("\n\n");
-}
-
-function narrativePlanContinuation(plan: SlideNarrative | undefined, requiredWords: number, slideOrder: number) {
-  const facts = [
-    plan?.keyMessage,
-    plan?.evidenceOrExplanation,
-    plan?.whyItMatters,
-    plan?.slidePurpose,
-    plan?.audienceQuestion,
-    plan?.bridgeFromPrevious,
-  ]
-    .map((value) => String(value || "").replace(/[\r\n]+/g, " ").replace(/[.!?…]+/g, ",").replace(/\s+/g, " ").trim())
-    .filter(Boolean)
-    .join("; ");
-  const fallback = `смысл этого положения раскрывается через конкретные причины, последствия и факты, относящиеся к теме данного исследования`;
-  const sourceWords = (facts || fallback).split(/\s+/).filter(Boolean);
-  const lead = [
-    "важно учитывать, что",
-    "существенно также следующее:",
-    "в этом случае необходимо видеть, что",
-    "отдельного внимания заслуживает то, что",
-  ][(slideOrder - 1) % 4];
-  const leadWords = lead.split(/\s+/);
-  const desiredFactWords = Math.max(1, requiredWords - leadWords.length);
-  const repeatedFacts = Array.from({ length: desiredFactWords }, (_, index) => sourceWords[index % sourceWords.length]);
-  return [...leadWords, ...repeatedFacts].join(" ");
 }
 
 function narrationWordCount(text: string) {

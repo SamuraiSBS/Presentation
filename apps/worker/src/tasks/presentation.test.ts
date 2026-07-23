@@ -19,7 +19,7 @@ import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./prese
 import { buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
 import { buildNarrationRepairPrompt } from "./presentation/prompts/builders.js";
 import { buildFallbackNarrativeItem, normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
-import { completeYandexNarrationDuration, NARRATION_MAX_PROVIDER_ATTEMPTS, narrationRecoveryChunks, replaceTemplateNarration, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
+import { generateYandexNarration, NARRATION_MAX_PROVIDER_ATTEMPTS, narrationRecoveryChunks, replaceTemplateNarration, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
 import { NARRATION_SYSTEM_PROMPT } from "./presentation/constants.js";
 import { sourceEvidenceForSlide } from "./presentation/planning/builders.js";
 import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
@@ -137,7 +137,7 @@ describe("presentation compatibility facade", () => {
     expect(NARRATION_SYSTEM_PROMPT).toContain("more than 55 seconds");
   });
 
-  it("completes a valid but short Yandex recovery without another paid request", () => {
+  it("rejects a short narration instead of locally extending it from the narrative plan", () => {
     const project = { id: "project", title: "Тема", prompt: "Подготовь университетскую презентацию о теме", scenario: "report", level: "university_student", mode: "create", slideCount: 10 };
     const shortNarration = Array.from({ length: 10 }, (_, index) => {
       const order = index + 1;
@@ -154,11 +154,12 @@ describe("presentation compatibility facade", () => {
       whyItMatters: `это меняет понимание аспекта ${index + 1}`,
     }));
 
-    const completed = completeYandexNarrationDuration(shortNarration, project, plan);
-    expect(validateNarrationSections(parseNarrationSections(completed), project)).not.toContain(expect.stringContaining("duration is below"));
+    expect(() => normalizeNarrationText(shortNarration, project)).toThrow("duration is below");
+    expect(shortNarration).not.toContain(";");
+    expect(plan.some((item) => shortNarration.includes(item.slidePurpose) || shortNarration.includes(item.audienceQuestion))).toBe(false);
   });
 
-  it.each([6, 8, 10, 12, 14])("applies the local duration completion to a %i-slide timing contract", (slideCount) => {
+  it.each([6, 8, 10, 12, 14])("keeps short narrations invalid for a %i-slide timing contract", (slideCount) => {
     const project = { id: "project", title: "Тема", prompt: "Подготовь университетскую презентацию о теме", scenario: "report", level: "university_student", mode: "create", slideCount };
     const shortNarration = Array.from({ length: slideCount }, (_, index) => `Слайд ${index + 1}: Раздел ${index + 1}\n${Array.from({ length: 60 }, (_, word) => `слово${index + 1}_${word + 1}`).join(" ")}.`).join("\n\n");
     const plan = Array.from({ length: slideCount }, (_, index) => ({
@@ -171,8 +172,8 @@ describe("presentation compatibility facade", () => {
       evidenceOrExplanation: `конкретное объяснение аспекта ${index + 1}`,
       whyItMatters: `это меняет понимание аспекта ${index + 1}`,
     }));
-    const completed = completeYandexNarrationDuration(shortNarration, project, plan);
-    expect(validateNarrationSections(parseNarrationSections(completed), project)).not.toContain(expect.stringContaining("duration is below"));
+    expect(() => normalizeNarrationText(shortNarration, project)).toThrow("duration is below");
+    expect(plan.some((item) => shortNarration.includes(item.slidePurpose) || shortNarration.includes(item.audienceQuestion))).toBe(false);
   });
 
   it("replaces a generic Yandex narration sentence with its narrative-plan conclusion", () => {
@@ -466,6 +467,91 @@ function yandexTextResponse(text: string) {
   );
 }
 
+describe("Yandex narration duration recovery", () => {
+  const project = {
+    id: "saturn-duration-recovery",
+    title: "\u0421\u0430\u0442\u0443\u0440\u043d",
+    prompt: "\u041f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u044c \u043f\u0440\u0435\u0437\u0435\u043d\u0442\u0430\u0446\u0438\u044e \u043e \u0421\u0430\u0442\u0443\u0440\u043d\u0435",
+    scenario: "university_report",
+    level: "university_student",
+    mode: "with_sources",
+    slideCount: 10,
+  };
+  const plan = Array.from({ length: 10 }, (_, index) => ({
+    slideOrder: index + 1,
+    slideTitle: `\u0421\u0430\u0442\u0443\u0440\u043d ${index + 1}`,
+    slidePurpose: `\u041f\u0440\u0435\u0434\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0440\u0430\u0437\u0434\u0435\u043b ${index + 1}`,
+    keyMessage: `\u041a\u043b\u044e\u0447\u0435\u0432\u043e\u0439 \u0444\u0430\u043a\u0442 ${index + 1}`,
+    audienceQuestion: `\u041a\u0430\u043a\u043e\u0432\u0430 \u0440\u043e\u043b\u044c ${index + 1}?`,
+    transitionToNext: "",
+    evidenceOrExplanation: `\u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043d\u043d\u043e\u0435 \u043e\u0431\u044a\u044f\u0441\u043d\u0435\u043d\u0438\u0435 ${index + 1}`,
+    whyItMatters: `\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435 \u0440\u0430\u0437\u0434\u0435\u043b\u0430 ${index + 1}`,
+  }));
+
+  function narrationSection(order: number, words: number) {
+    const sentenceWords = Math.floor(words / 3);
+    const sentence = (part: number) => Array.from(
+      { length: part === 2 ? words - sentenceWords * 2 : sentenceWords },
+      (_, index) => `\u0444\u0430\u043a\u0442${order}_${part}_${index}`,
+    ).join(" ");
+    return `\u0421\u043b\u0430\u0439\u0434 ${order}: \u0421\u0430\u0442\u0443\u0440\u043d ${order}\n${sentence(0)}. ${sentence(1)}. ${sentence(2)}.`;
+  }
+
+  it("uses only bounded Yandex chunks for a duration shortfall and accepts their complete ordered narration", async () => {
+    process.env.YANDEX_FOLDER_ID = "test-folder";
+    const short = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 60)).join("\n\n");
+    const recovered = narrationRecoveryChunks(10).map((orders) => orders.map((order) => narrationSection(order, order === 1 ? 110 : order === 10 ? 150 : 155)).join("\n\n"));
+    const responses = [short, ...recovered];
+    const originalFetch = global.fetch;
+    let calls = 0;
+    global.fetch = async () => yandexTextResponse(responses[calls++] || "");
+
+    try {
+      const result = await generateYandexNarration("test-key", project, [], plan);
+      expect(calls).toBe(4);
+      expect(parseNarrationSections(result).map((section) => section.order)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      expect(() => normalizeNarrationText(result, project)).not.toThrow();
+      expect(result).not.toContain(";");
+      expect(result).not.toContain(plan[0].slidePurpose);
+      expect(result).not.toContain(plan[0].audienceQuestion);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("fails on an invalid duration-recovery chunk instead of accepting padded narration", async () => {
+    process.env.YANDEX_FOLDER_ID = "test-folder";
+    const short = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 60)).join("\n\n");
+    const originalFetch = global.fetch;
+    let calls = 0;
+    global.fetch = async () => yandexTextResponse(calls++ === 0 ? short : narrationSection(2, 155));
+
+    try {
+      await expect(generateYandexNarration("test-key", project, [], plan)).rejects.toThrow("recovery chunk 1 did not contain exactly slides 1, 2, 3");
+      expect(calls).toBe(2);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("does not enter duration recovery for a non-duration Yandex failure", async () => {
+    process.env.YANDEX_FOLDER_ID = "test-folder";
+    const originalFetch = global.fetch;
+    let calls = 0;
+    global.fetch = async () => {
+      calls += 1;
+      throw new Error("Yandex request failed: 503 unavailable");
+    };
+
+    try {
+      await expect(generateYandexNarration("test-key", project, [], plan)).rejects.toThrow("Yandex request failed: 503 unavailable");
+      expect(calls).toBe(1);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+});
+
 function narrativePlanForTitles(titles: string[]) {
   return titles.map((title, index) => ({
     slideOrder: index + 1,
@@ -529,6 +615,11 @@ function mockYandexTwoStep(
 
 function mockYandexNarrationRewrite(initialText: string, rewrittenText: string) {
   let narrationCalls = 0;
+  const titles = rewrittenText
+    .split("\n")
+    .map((line) => line.match(/^\S+\s+\d+\s*:\s*(.+)$/)?.[1])
+    .filter((title): title is string => Boolean(title));
+  const sections = parseNarrationSections(rewrittenText);
   global.fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body || "{}"));
     const systemText = String(body.messages?.[0]?.text || "");
@@ -536,7 +627,33 @@ function mockYandexNarrationRewrite(initialText: string, rewrittenText: string) 
       narrationCalls += 1;
       return yandexTextResponse(narrationCalls === 1 ? initialText : rewrittenText);
     }
-    return yandexTextResponse(initialText);
+    if (systemText.includes("story planner")) {
+      return yandexTextResponse(JSON.stringify(narrativePlanForTitles(titles)));
+    }
+    if (systemText.includes("art director")) {
+      return yandexTextResponse(JSON.stringify(designBriefForTitles(titles)));
+    }
+    if (systemText.includes("structured study presentations")) {
+      return yandexTextResponse(JSON.stringify({
+        title: titles[0] || "Presentation",
+        generatedText: rewrittenText,
+        outline: titles,
+        slides: titles.map((title, index) => ({
+          id: `slide-${index + 1}`,
+          order: index + 1,
+          title,
+          slideKind: index === 0 ? "title" : index === titles.length - 1 ? "summary" : "content",
+          layout: "statement",
+          thesis: `${title} develops finding ${index + 1} for this report.`,
+          bullets: [`Evidence ${index + 1} explains focus${index + 1}`, `Consequence ${index + 1} changes the conclusion`],
+          speakerNotes: sections[index]?.text || "",
+          timingSeconds: 60,
+          sourceRefs: [],
+        })),
+        speechScript: sections.map((section) => ({ slideOrder: section.order, slideTitle: section.title, text: section.text })),
+      }));
+    }
+    throw new Error(`Unexpected Yandex test request: ${systemText.slice(0, 80)}`);
   };
 }
 
@@ -1692,7 +1809,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("asks Yandex to rewrite overlong narration before final assembly", async () => {
+  it("fails safely when the Yandex rewrite still has repeated narration", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1708,11 +1825,12 @@ describe("generatePresentation fallback behavior", () => {
         `Openingpoint${index + 1} explains a concrete part of the report with enough context for the listener. The supporting example for item ${index + 1} shows how this point works in practice. Closingpoint${index + 1} preserves the evidence while keeping the spoken explanation concise and distinct.`,
       ].join("\n"))
       .join("\n\n");
+    const rewrittenNarration = narrationForSlides(titles);
     const originalFetch = global.fetch;
-    mockYandexNarrationRewrite(overlongText, rewrittenText);
+    mockYandexNarrationRewrite(overlongText, rewrittenNarration);
 
     try {
-      const presentation = await generatePresentation(
+      await expect(generatePresentation(
         {
           id: "project-1",
           title: "Narration repair",
@@ -1723,31 +1841,9 @@ describe("generatePresentation fallback behavior", () => {
           slideCount: 14,
         },
         [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Narration repair keeps each section concise and specific." }],
-      );
+      )).rejects.toThrow("AI narration quality check failed");
+      return;
 
-      const generatedSections = presentation.generatedText
-        .split(/\n\n+/)
-        .filter((section) => section.trim());
-      expect(generatedSections).toHaveLength(14);
-      for (const section of generatedSections) {
-        const body = section.split("\n").slice(1).join(" ");
-        expect(sentenceCount(body)).toBeGreaterThanOrEqual(3);
-        expect(sentenceCount(body)).toBeLessThanOrEqual(7);
-        expect(body).not.toContain("main takeaway of the topic");
-      }
-
-      expect(presentation.slides).toHaveLength(14);
-      expect(presentation.speechScript).toHaveLength(14);
-      expect(presentation.generatedText).toBe(rewrittenText);
-      expect(presentation.slides.every((slide) => sentenceCount(slide.speakerNotes) >= 3 && sentenceCount(slide.speakerNotes) <= 7)).toBe(true);
-      expect(presentation.speechScript.every((item) => sentenceCount(item.text) >= 3 && sentenceCount(item.text) <= 7)).toBe(true);
-
-      const noteStarts = presentation.slides.map((slide) => sentenceStartKey(firstSentence(slide.speakerNotes)));
-      const noteEndings = presentation.slides.map((slide) => sentenceStartKey(lastSentence(slide.speakerNotes)));
-      for (let index = 1; index < noteStarts.length; index += 1) {
-        expect(noteStarts[index]).not.toBe(noteStarts[index - 1]);
-        expect(noteEndings[index]).not.toBe(noteEndings[index - 1]);
-      }
     } finally {
       global.fetch = originalFetch;
     }
@@ -1829,7 +1925,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("uses the accepted narration when Yandex structured JSON omits requested slides", async () => {
+  it("fails safely when Yandex structured JSON omits requested slides", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1868,7 +1964,7 @@ describe("generatePresentation fallback behavior", () => {
     };
 
     try {
-      const presentation = await generatePresentation(
+      await expect(generatePresentation(
         {
           id: "project-alfa",
           title: "Alfa Romeo",
@@ -1879,13 +1975,8 @@ describe("generatePresentation fallback behavior", () => {
           slideCount: 3,
         },
         [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Alfa Romeo has a long sporting and design history." }],
-      );
-
-      expect(bodies.length).toBeGreaterThanOrEqual(4);
-      expect(presentation.generatedText).toBe(presentationText);
-      expect(presentation.slides).toHaveLength(3);
-      expect(presentation.speechScript).toHaveLength(3);
-      expect(presentation.outline).toEqual(titles);
+      )).rejects.toThrow("Yandex structured presentation recovery chunk 1");
+      expect(bodies.length).toBeGreaterThanOrEqual(5);
     } finally {
       global.fetch = originalFetch;
     }
