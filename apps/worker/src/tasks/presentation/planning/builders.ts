@@ -275,7 +275,7 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
     rhythm: {
       titleStyle: theme.fonts.tone === "bookish" ? "editorial" : theme.fonts.tone === "strict" ? "academic" : "bold",
       density: "low",
-      imageFrequency: "frequent",
+      imageFrequency: "sparse",
       sectionBreaks: project.slideCount >= 6,
     },
     visualDirection: `${researchBrief.topic}: ${researchBrief.angle}`,
@@ -286,7 +286,7 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
       "Keep every photo in its own 35-60 percent grid column and never put text over an image.",
       `Support ${Math.max(1, narrativePlan.length)} planned story beats with distinct visual rhythm.`,
     ],
-    imageStrategy: "New-generation visual policy: real_photo, diagram, or none only. Use a real photo only for a concrete source-grounded person, place, object, event, model, or period; turn abstract claims into a diagram, comparison, timeline, or statement.",
+    imageStrategy: "New-generation visual policy: real_photo, diagram, or none only. Use one real photo per five slides (hard maximum two) and only for a concrete source-grounded person, place, object, event, model, or period; turn abstract claims into a diagram, comparison, timeline, or statement.",
     slideDirections: directions,
   });
 }
@@ -447,13 +447,13 @@ export function balanceDeterministicVisualDirections(
   hasGroundedVisualContext: boolean,
 ) {
   if (!hasGroundedVisualContext || directions.length < 3 || !hasConcreteVisualTopic(project, narrativePlan)) {
-    return diversifySceneTextModes(directions, project, narrativePlan);
+    return applyEconomicPhotoAllocation(diversifySceneTextModes(directions, project, narrativePlan), project, narrativePlan);
   }
 
   const contentIndexes = directions
     .map((direction, index) => ({ direction, index }))
     .filter(({ direction }) => direction.slideOrder !== 1 && direction.visualRole !== "summary");
-  if (!contentIndexes.length) return diversifySceneTextModes(directions, project, narrativePlan);
+  if (!contentIndexes.length) return applyEconomicPhotoAllocation(diversifySceneTextModes(directions, project, narrativePlan), project, narrativePlan);
 
   const minimumVisuals = Math.ceil(contentIndexes.length * 0.6);
   const maximumVisuals = Math.max(minimumVisuals, Math.floor(contentIndexes.length * 0.75));
@@ -517,7 +517,37 @@ export function balanceDeterministicVisualDirections(
     }
   }
 
-  return diversifySceneTextModes(balanced, project, narrativePlan);
+  return applyEconomicPhotoAllocation(diversifySceneTextModes(balanced, project, narrativePlan), project, narrativePlan);
+}
+
+/** Economic standard runs reserve at most two concrete web-photo directions. */
+export function applyEconomicPhotoAllocation(
+  directions: DesignBrief["slideDirections"],
+  project: ProjectInput,
+  narrativePlan: SlideNarrative[],
+) {
+  const photoLimit = Math.min(2, Math.max(0, Math.ceil(project.slideCount / 5)));
+  let retained = 0;
+  return directions.map((direction, index) => {
+    if (direction.imageStrategy !== "real_photo") return direction;
+    if (retained < photoLimit) {
+      retained += 1;
+      return direction;
+    }
+    const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, direction.slideOrder);
+    const diagram = ["context", "explain", "evidence", "sequence", "compare"].includes(direction.visualRole);
+    const imageStrategy = diagram ? "diagram" as const : "none" as const;
+    const layoutIntent = diagram ? "diagram" as const : "statement" as const;
+    return {
+      ...direction,
+      imageStrategy,
+      layoutIntent,
+      sceneTextMode: diagram ? "visual_labels" as const : "talk_sentences" as const,
+      visualPurpose: diagram ? "diagram" as const : "text_only" as const,
+      visualRationale: diagram ? "The economic photo allocation is exhausted; explain this material locally." : "The economic photo allocation is exhausted; keep this conclusion text-led.",
+      visualPrompt: buildDeterministicVisualPrompt(project, plan, imageStrategy, layoutIntent),
+    };
+  });
 }
 
 function hasConcreteVisualTopic(project: ProjectInput, narrativePlan: SlideNarrative[]) {

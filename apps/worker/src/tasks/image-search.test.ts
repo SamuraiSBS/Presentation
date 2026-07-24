@@ -5,6 +5,7 @@ import {
   buildSlideImageQuery,
   buildRefinedImageQueries,
   chooseImageCandidate,
+  economicPhotoLimit,
   enrichPresentationImages,
   processPresentationImage,
   shouldSearchForSlideImage,
@@ -37,7 +38,7 @@ describe("image search helpers", () => {
     expect(query).toContain("historical photograph");
   });
 
-  it("retries refined documentary queries, preserves attribution, and never reuses the selected candidate", async () => {
+  it("uses one query per permitted slide, preserves attribution, and falls back after the deck cap", async () => {
     process.env.PRESENTATION_IMAGES_ENABLED = "true";
     const presentation = fixturePresentation();
     const deck = {
@@ -68,7 +69,7 @@ describe("image search helpers", () => {
       },
     );
 
-    expect(queries.length).toBeGreaterThanOrEqual(2);
+    expect(queries).toHaveLength(1);
     expect(enriched.slides[0].visual.image).toMatchObject({ sourceTitle: "BMW Group archive", sourceUrl: "https://www.bmwgroup.com/archive" });
     expect(enriched.slides[1].visual.image).toBeUndefined();
     expect(enriched.designBrief?.slideDirections[1]).toMatchObject({ imageStrategy: "diagram", layoutIntent: "diagram" });
@@ -79,7 +80,72 @@ describe("image search helpers", () => {
     const slide = { ...presentation.slides[0], title: "Why a model becomes iconic" };
     const direction = { slideOrder: 1, visualRole: "visual_statement" as const, layoutIntent: "statement" as const, imageStrategy: "real_photo" as const, visualPrompt: "Abstract claim about brand meaning and cultural value" };
     expect(shouldSearchForSlideImage(slide, direction)).toBe(false);
-    expect(buildRefinedImageQueries({ id: "bmw", title: "BMW M3 history", prompt: "Explain the model" }, slide, direction).length).toBeGreaterThanOrEqual(2);
+    expect(buildRefinedImageQueries({ id: "bmw", title: "BMW M3 history", prompt: "Explain the model" }, slide, direction)).toHaveLength(1);
+  });
+
+  it("caps economic runs at one photo per five slides and two photos overall", () => {
+    expect(economicPhotoLimit(1)).toBe(1);
+    expect(economicPhotoLimit(5)).toBe(1);
+    expect(economicPhotoLimit(10)).toBe(2);
+    expect(economicPhotoLimit(25)).toBe(2);
+  });
+
+  it("keeps a ten-slide concrete deck to two searches and two stored web images", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    const slides = Array.from({ length: 10 }, (_, index) => ({
+      ...presentation.slides[0],
+      id: `slide-${index + 1}`,
+      order: index + 1,
+      slideKind: "content" as const,
+      title: `BMW M3 generation ${index + 1}`,
+      visual: { ...presentation.slides[0].visual, image: undefined },
+    }));
+    const directions = slides.map((slide) => ({
+      slideOrder: slide.order,
+      visualRole: "context" as const,
+      layoutIntent: "split_image_text" as const,
+      imageStrategy: "real_photo" as const,
+      visualPrompt: `${slide.title} documentary automobile photograph`,
+    }));
+    const queries: string[] = [];
+    const enriched = await enrichPresentationImages(
+      { id: "bmw-10", title: "BMW M3 history", prompt: "Explain the model generations" },
+      { ...presentation, slideCount: 10, slides, designBrief: { ...presentation.designBrief!, slideDirections: directions } },
+      {
+        searchImages: async (query) => {
+          queries.push(query);
+          return [{ url: `https://cdn.example.com/${queries.length}.jpg`, description: query, sourceTitle: "BMW archive" }];
+        },
+        downloadImage: async () => ({ buffer: Buffer.from("image"), contentType: "image/jpeg", extension: "jpg" }),
+        putObject: async () => undefined,
+      },
+    );
+
+    expect(queries).toHaveLength(2);
+    expect(enriched.slides.filter((slide) => slide.visual.image?.provider === "tavily")).toHaveLength(2);
+    expect(enriched.designBrief?.slideDirections.filter((direction) => direction.imageStrategy === "real_photo")).toHaveLength(2);
+  });
+
+  it("uses a local fallback when the image bucket cannot be reserved", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    let searchCalls = 0;
+    const enriched = await enrichPresentationImages(
+      { id: "budget-refusal", title: "AI in education", prompt: "Explain practical AI in school" },
+      { ...presentation, slides: [presentation.slides[0]] },
+      {
+        reserveImageBucket: async () => "blocked",
+        searchImages: async () => {
+          searchCalls += 1;
+          return [];
+        },
+      },
+    );
+
+    expect(searchCalls).toBe(0);
+    expect(enriched.slides[0].visual.image).toBeUndefined();
+    expect(enriched.designBrief?.slideDirections[0]).toMatchObject({ imageStrategy: "diagram", layoutIntent: "diagram" });
   });
   it("prefers the design brief visual prompt in a short concrete query", () => {
     const presentation = fixturePresentation();

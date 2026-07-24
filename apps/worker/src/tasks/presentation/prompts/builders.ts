@@ -227,7 +227,7 @@ export function buildDesignBriefPrompt(
     "Use real_photo only for a concrete, searchable person, place, object, company, event, artwork, historical scene, laboratory object, product, or environment that makes the idea more memorable.",
     "Use diagram for processes, comparisons, causes and effects, concept maps, timelines, structures, and systems. Diagram slides must be understandable from deterministic shapes and labels without an external image.",
     "Use none for strong theses, abstract claims, thinly sourced topics, reflective moments, and the final takeaway. Never request a random stock image merely to fill space.",
-    "Across grounded decks, use a real_photo on roughly 50-70 percent of non-summary slides and a diagram on most remaining explanatory slides.",
+    "Economic standard policy: use at most one real_photo per five slides, rounded up, with a hard maximum of two photos per deck. Use local diagrams for the remaining explanatory slides.",
     "Every real photo must occupy 35-60 percent of the slide in a separate grid column. Never place text over an image.",
     "Keep density low: one strong claim and no more than three short supporting points. Full explanation belongs in speaker notes.",
     "For real_photo or generated_illustration, visualPrompt must be a short, concrete, searchable subject describing visible people, place, object, action, or event. Do not write generic phrases such as 'educational presentation image'.",
