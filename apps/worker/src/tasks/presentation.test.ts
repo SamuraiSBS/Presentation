@@ -651,13 +651,23 @@ describe("Yandex narration full duration rewrite", () => {
     const short = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 60)).join("\n\n");
     let calls = 0;
     const client = {
-      responses: { create: async () => ({ output_text: [short, completeNarration()][calls++] }) },
+      responses: { create: async () => ({ output_text: [short, completeNarration()][calls++], usage: { input_tokens: 100, output_tokens: 100 } }) },
     } as never;
 
     const result = await generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan);
     expect(MAX_AITUNNEL_NARRATION_TEXT_CALLS).toBe(2);
     expect(calls).toBe(2);
     expect(() => normalizeNarrationText(result, project, plan)).not.toThrow();
+  });
+
+  it("accepts a valid initial AITUNNEL narration without a rewrite", async () => {
+    let calls = 0;
+    const client = {
+      responses: { create: async () => ({ output_text: completeNarration(), usage: { input_tokens: 100, output_tokens: 100 }, id: `response-${++calls}` }) },
+    } as never;
+
+    await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).resolves.toContain("Слайд 1:");
+    expect(calls).toBe(1);
   });
 
   it("does not retry an AITUNNEL provider failure", async () => {
@@ -667,6 +677,24 @@ describe("Yandex narration full duration rewrite", () => {
     } as never;
 
     await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).rejects.toThrow("narration_provider_failure");
+    expect(calls).toBe(1);
+  });
+
+  it("sends AITUNNEL narration limits and fails safely when provider usage is absent", async () => {
+    let calls = 0;
+    const client = {
+      responses: { create: async (request: Record<string, unknown>) => {
+        calls += 1;
+        expect(request).toMatchObject({
+          model: "gemini-3.6-flash",
+          max_output_tokens: 2400,
+          reasoning: { effort: "minimal", exclude: true },
+        });
+        return { output_text: completeNarration() };
+      } },
+    } as never;
+
+    await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).rejects.toThrow("narration_usage_unavailable_failure");
     expect(calls).toBe(1);
   });
 });

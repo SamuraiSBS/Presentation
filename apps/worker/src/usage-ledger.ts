@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import crypto from "node:crypto";
+import { AITUNNEL_NARRATION_PRICE } from "./aitunnel-narration-budget.js";
 import { getPrisma } from "./prisma.js";
 import { errorLogFields, logger, redactLogString } from "./observability.js";
 
@@ -201,7 +202,7 @@ function priceFor(provider: string, model: string, at: Date): Price | null {
   if (catalogPrice && catalogPrice.effectiveFrom <= at) return catalogPrice;
 
   if (provider === "aitunnel" && model.trim().toLowerCase() === "gemini-3.6-flash") {
-    return { input: "455", output: "2275", currency: "RUB", version: "aitunnel-gemini-3.6-flash-pricing-2026-07-24", effectiveFrom: new Date("2026-07-24T00:00:00Z") };
+    return { input: AITUNNEL_NARRATION_PRICE.inputRubPerMillion, output: AITUNNEL_NARRATION_PRICE.outputRubPerMillion, currency: "RUB", version: AITUNNEL_NARRATION_PRICE.version, effectiveFrom: new Date("2026-07-24T00:00:00Z") };
   }
 
   const input = process.env.YANDEX_INPUT_PRICE_RUB_PER_MILLION;

@@ -6,6 +6,14 @@ import { captureGenerationError, errorLogFields, logger } from "../../../observa
 import { normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
 import { aitunnelConfig, createAitunnelClient, createOpenAIClient, createOpenAIProvider } from "../../../openai-client.js";
 import {
+  aitunnelNarrationBudgetConfig,
+  canStartCall,
+  estimateInputTokens,
+  remainingBudget,
+  reserveNarrationCall,
+  settleCall,
+} from "../../../aitunnel-narration-budget.js";
+import {
   type DesignBrief,
   type DeckStory,
   type GenerationPipelineArtifacts,
@@ -308,35 +316,91 @@ export async function generateOpenAINarration(client: OpenAI, project: ProjectIn
 }
 
 export async function generateAitunnelNarration(client: OpenAI, model: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief) {
-  let initialText = "";
-  try {
-    const startedAt = new Date();
-    const response = await client.responses.create({ model, input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: buildNarrationPrompt(project, sources, narrativePlan, researchBrief) }] });
-    await recordOpenAIResponse(response, "narration", "studydeck_narration", startedAt, "aitunnel", model);
-    initialText = response.output_text || "";
-  } catch {
-    logAitunnelNarrationCall(project.id, model, 1, "none", { failureCategory: "provider_error" });
-    throw narrationFailure("provider");
-  }
+  const policy = aitunnelNarrationBudgetConfig();
+  const initial = await requestAitunnelNarrationCall({
+    client, model, project, sources, narrativePlan, researchBrief, policy, narrationTextCall: 1, recovery: "none",
+    prompt: buildNarrationPrompt(project, sources, narrativePlan, researchBrief), remainingBudgetRub: policy.budgetRub,
+  });
+  let initialText = initial.text;
   try {
     return validateAitunnelNarration(initialText, project, narrativePlan, model, 1, "none");
   } catch (error) {
-    let rewritten = "";
+    const rewritePrompt = buildFullNarrationDurationRewritePrompt(project, sources, narrativePlan, initialText, error, researchBrief);
+    const rewrite = await requestAitunnelNarrationCall({
+      client, model, project, sources, narrativePlan, researchBrief, policy, narrationTextCall: 2, recovery: "full_narration_rewrite",
+      prompt: rewritePrompt, remainingBudgetRub: initial.remainingBudgetRub,
+    });
     try {
-      const startedAt = new Date();
-      const response = await client.responses.create({ model, input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: buildFullNarrationDurationRewritePrompt(project, sources, narrativePlan, initialText, error, researchBrief) }] });
-      await recordOpenAIResponse(response, "narration", "studydeck_narration", startedAt, "aitunnel", model);
-      rewritten = response.output_text || "";
-    } catch {
-      logAitunnelNarrationCall(project.id, model, 2, "full_narration_rewrite", { failureCategory: "provider_error" });
-      throw narrationFailure("provider");
-    }
-    try {
-      return validateAitunnelNarration(rewritten, project, narrativePlan, model, 2, "full_narration_rewrite");
+      return validateAitunnelNarration(rewrite.text, project, narrativePlan, model, 2, "full_narration_rewrite");
     } catch {
       throw narrationFailure("quality");
     }
   }
+}
+
+type AitunnelNarrationRequest = {
+  client: OpenAI;
+  model: string;
+  project: ProjectInput;
+  sources: Source[];
+  narrativePlan: SlideNarrative[];
+  researchBrief?: ResearchBrief;
+  policy: ReturnType<typeof aitunnelNarrationBudgetConfig>;
+  narrationTextCall: 1 | 2;
+  recovery: "none" | "full_narration_rewrite";
+  prompt: string;
+  remainingBudgetRub: string;
+};
+
+async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
+  const request = {
+    model: input.model,
+    input: [{ role: "system" as const, content: NARRATION_SYSTEM_PROMPT }, { role: "user" as const, content: input.prompt }],
+    max_output_tokens: input.policy.maxOutputTokens,
+    reasoning: { effort: input.policy.reasoningEffort, exclude: true },
+  };
+  const reservation = reserveNarrationCall({
+    estimatedInputTokens: estimateInputTokens(request),
+    maxOutputTokens: input.policy.maxOutputTokens,
+  });
+  if (!canStartCall({ remainingBudgetRub: input.remainingBudgetRub, reservation })) {
+    logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, {
+      failureCategory: "narration_budget_exhausted", budgetRub: input.policy.budgetRub, reservationRub: reservation.costRub, remainingRub: input.remainingBudgetRub,
+    });
+    throw narrationFailure("budget_exhausted");
+  }
+
+  let response: unknown;
+  const startedAt = new Date();
+  try {
+    response = await input.client.responses.create(request);
+    await recordOpenAIResponse(response, "narration", "studydeck_narration", startedAt, "aitunnel", input.model);
+  } catch {
+    logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, {
+      failureCategory: "provider_error", budgetRub: input.policy.budgetRub, reservationRub: reservation.costRub, remainingRub: input.remainingBudgetRub,
+    });
+    throw narrationFailure("provider");
+  }
+
+  const responseItem = response as { output_text?: string; usage?: unknown };
+  const settled = settleCall({ reservation, actualUsage: normalizeOpenAIUsage(responseItem.usage) });
+  if (settled.status === "usage_unavailable") {
+    logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, {
+      failureCategory: "narration_usage_unavailable", budgetRub: input.policy.budgetRub, reservationRub: reservation.costRub, remainingRub: input.remainingBudgetRub,
+    });
+    throw narrationFailure("usage_unavailable");
+  }
+  const nextBudget = remainingBudget(input.remainingBudgetRub, settled.actualCostRub);
+  if (settled.overrun) {
+    logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, {
+      failureCategory: "narration_budget_overrun", budgetRub: input.policy.budgetRub, reservationRub: reservation.costRub, actualCostRub: settled.actualCostRub, remainingRub: nextBudget,
+    });
+    throw narrationFailure("budget_overrun");
+  }
+  logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, {
+    budgetRub: input.policy.budgetRub, reservationRub: reservation.costRub, actualCostRub: settled.actualCostRub, remainingRub: nextBudget,
+  });
+  return { text: responseItem.output_text || "", remainingBudgetRub: nextBudget };
 }
 
 function validateAitunnelNarration(text: string, project: ProjectInput, narrativePlan: SlideNarrative[], model: string, narrationTextCall: 1 | 2, recovery: "none" | "full_narration_rewrite") {
@@ -355,7 +419,14 @@ function validateAitunnelNarration(text: string, project: ProjectInput, narrativ
   }
 }
 
-function logAitunnelNarrationCall(projectId: string, model: string, narrationTextCall: 1 | 2, recovery: "none" | "full_narration_rewrite", extra: { words?: number; failureCategory?: "provider_error" | "quality" }) {
+function logAitunnelNarrationCall(projectId: string, model: string, narrationTextCall: 1 | 2, recovery: "none" | "full_narration_rewrite", extra: {
+  words?: number;
+  failureCategory?: "provider_error" | "quality" | "narration_budget_exhausted" | "narration_budget_overrun" | "narration_usage_unavailable";
+  budgetRub?: string;
+  reservationRub?: string;
+  actualCostRub?: string;
+  remainingRub?: string;
+}) {
   const durationMinutes = extra.words === undefined ? undefined : Number(russianSpeechMinutesFromWords(extra.words).toFixed(1));
   logger.info({ projectId, stage: "drafting_speech", provider: "aitunnel", model, narrationTextCall, maxNarrationTextCalls: MAX_AITUNNEL_NARRATION_TEXT_CALLS, recovery, ...extra, durationMinutes }, "AITUNNEL narration text call completed");
 }
@@ -565,7 +636,7 @@ async function rewriteInvalidYandexNarration(
   }
 }
 
-function narrationFailure(category: "provider" | "quality") {
+function narrationFailure(category: "provider" | "quality" | "budget_exhausted" | "budget_overrun" | "usage_unavailable") {
   const error = new Error(`narration_${category}_failure`);
   error.name = "NarrationGenerationFailure";
   return error;
