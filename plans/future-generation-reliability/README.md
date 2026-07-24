@@ -32,10 +32,15 @@
 11. `11-quality-first-ten-slide-timing-contract.md`
 12. `12-full-yandex-narration-rewrite-before-safe-failure.md`
 13. `13-yandex-pro-narration-ab-experiment.md`
+14. `14-yandex-full-rewrite-duration-compliance-and-controlled-smoke.md`
+15. `15-web-search-cost-event-telemetry-repair.md`
+16. `16-yandex-narration-output-budget-and-length-compliance.md`
 
 Каждый следующий чат обязан сначала проверить, что предыдущий пункт действительно внедрён и его тесты существуют. Не повторять уже реализованные изменения и не откатывать пользовательские изменения в рабочем дереве.
 
 Пункты 12 и 13 добавлены после live-проверок 23 июля 2026 года. Фактическая цепочка `chunked_duration_recovery` и последующий per-section recovery доказала, что Yandex может вернуть 508, 691 и 827 слов вместо минимума 1170. Пункт 12 заменяет именно эту неудачную duration-ветку одной связной полной rewrite через Yandex, после которой допустим только safe failure. Пункт 13 выполняется только после принятия пункта 12: он вводит управляемую конфигурацию и измерение для сравнения текущего primary alias с явной доступной версией YandexGPT Pro, но не переключает production-модель автоматически.
+
+Пункт 16 выполняется только после принятия пункта 15. Он использует результаты контролируемого baseline/candidate smoke: оба run получили одну initial narration и одну full duration rewrite с одинаковым source fixture и без Tavily. Baseline `yandexgpt/latest` завершился на 441 слове, candidate `yandexgpt-5.1` — на 585 словах; оба результата были корректно отброшены safe failure. Цель 16 — найти детерминированно подтверждаемую причину раннего окончания и исправить только этот seam, не превращая shortfall в дополнительные calls или локальное дописывание текста.
 
 ## Дополнительные решения для narration (2026-07-22)
 

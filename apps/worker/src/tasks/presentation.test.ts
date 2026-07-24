@@ -18,7 +18,7 @@ import { generatePresentation as generatePresentationFromOrchestrator } from "./
 import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./presentation/prompts/builders.js";
 import { buildFullNarrationDurationRewritePrompt, buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
 import { buildFallbackNarrativeItem, normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
-import { generateYandexNarration, MAX_YANDEX_NARRATION_TEXT_CALLS, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
+import { generateAitunnelNarration, generateYandexNarration, MAX_AITUNNEL_NARRATION_TEXT_CALLS, MAX_YANDEX_NARRATION_TEXT_CALLS, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
 import { NARRATION_SYSTEM_PROMPT } from "./presentation/constants.js";
 import { sourceEvidenceForSlide } from "./presentation/planning/builders.js";
 import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
@@ -645,6 +645,29 @@ describe("Yandex narration full duration rewrite", () => {
     } finally {
       global.fetch = originalFetch;
     }
+  });
+
+  it("caps AITUNNEL narration at one initial call and one complete rewrite", async () => {
+    const short = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 60)).join("\n\n");
+    let calls = 0;
+    const client = {
+      responses: { create: async () => ({ output_text: [short, completeNarration()][calls++] }) },
+    } as never;
+
+    const result = await generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan);
+    expect(MAX_AITUNNEL_NARRATION_TEXT_CALLS).toBe(2);
+    expect(calls).toBe(2);
+    expect(() => normalizeNarrationText(result, project, plan)).not.toThrow();
+  });
+
+  it("does not retry an AITUNNEL provider failure", async () => {
+    let calls = 0;
+    const client = {
+      responses: { create: async () => { calls += 1; throw new Error("provider unavailable"); } },
+    } as never;
+
+    await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).rejects.toThrow("narration_provider_failure");
+    expect(calls).toBe(1);
   });
 });
 function narrativePlanForTitles(titles: string[]) {
@@ -1288,6 +1311,8 @@ describe("generatePresentation fallback behavior", () => {
     process.env.YANDEX_API_KEY = "";
     process.env.YANDEX_FOLDER_ID = "";
     process.env.YANDEX_MODEL_URI = "";
+    process.env.AITUNNEL_API_KEY = "";
+    process.env.AI_PROVIDER = "";
     process.env.ALLOW_DEMO_GENERATION = "true";
 
     const draft = await generateNarrationDraft(
@@ -2195,6 +2220,8 @@ describe("generatePresentation fallback behavior", () => {
     process.env.YANDEX_API_KEY = "";
     process.env.YANDEX_FOLDER_ID = "";
     process.env.YANDEX_MODEL_URI = "";
+    process.env.AITUNNEL_API_KEY = "";
+    process.env.AI_PROVIDER = "";
     process.env.ALLOW_DEMO_GENERATION = "true";
 
     const presentation = await generatePresentation(
@@ -2907,6 +2934,8 @@ describe("generatePresentation fallback behavior", () => {
     process.env.YANDEX_API_KEY = "";
     process.env.YANDEX_FOLDER_ID = "";
     process.env.YANDEX_MODEL_URI = "";
+    process.env.AITUNNEL_API_KEY = "";
+    process.env.AI_PROVIDER = "";
     process.env.ALLOW_DEMO_GENERATION = "false";
 
     await expect(
@@ -2930,6 +2959,8 @@ describe("generatePresentation fallback behavior", () => {
     process.env.YANDEX_API_KEY = "";
     process.env.YANDEX_FOLDER_ID = "";
     process.env.YANDEX_MODEL_URI = "";
+    process.env.AITUNNEL_API_KEY = "";
+    process.env.AI_PROVIDER = "";
     process.env.ALLOW_DEMO_GENERATION = "true";
 
     const presentation = await generatePresentation(

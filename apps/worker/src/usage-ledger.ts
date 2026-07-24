@@ -28,7 +28,7 @@ export function runWithUsageContext<T>(value: UsageContext, callback: () => Prom
 export function currentUsageContext() { return context.getStore(); }
 
 export async function recordAiUsage(input: {
-  provider: "openai" | "yandex";
+  provider: "openai" | "yandex" | "aitunnel";
   model: string;
   operation: string;
   schemaName?: string;
@@ -200,6 +200,10 @@ function priceFor(provider: string, model: string, at: Date): Price | null {
   const catalogPrice = yandexCurrent[model.trim().toLowerCase()];
   if (catalogPrice && catalogPrice.effectiveFrom <= at) return catalogPrice;
 
+  if (provider === "aitunnel" && model.trim().toLowerCase() === "gemini-3.6-flash") {
+    return { input: "455", output: "2275", currency: "RUB", version: "aitunnel-gemini-3.6-flash-pricing-2026-07-24", effectiveFrom: new Date("2026-07-24T00:00:00Z") };
+  }
+
   const input = process.env.YANDEX_INPUT_PRICE_RUB_PER_MILLION;
   const output = process.env.YANDEX_OUTPUT_PRICE_RUB_PER_MILLION;
   if (!input || !output) return null;
@@ -210,7 +214,7 @@ function yandexPrice(rate: string, version: string): Price {
   return { input: rate, cached: rate, output: rate, currency: "RUB", version, effectiveFrom: new Date("2026-05-01T00:00:00Z") };
 }
 
-export function calculateProviderCost(provider: "openai" | "yandex", model: string, at: Date, usage: NormalizedUsage) {
+export function calculateProviderCost(provider: "openai" | "yandex" | "aitunnel", model: string, at: Date, usage: NormalizedUsage) {
   const price = priceFor(provider, model, at);
   return price ? { status: "priced" as const, sourceCost: calculateCost(usage, price), currency: price.currency, version: price.version } : { status: "unknown_price" as const, sourceCost: null, currency: null, version: null };
 }

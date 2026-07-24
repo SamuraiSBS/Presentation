@@ -57,7 +57,7 @@ type ProjectInput = {
   slideCount: number;
 };
 
-type AiGenerationMode = "openai" | "yandex";
+type AiGenerationMode = "openai" | "yandex" | "aitunnel";
 type FallbackGenerationMode = "demo" | "demo-fallback";
 type EnvLike = Record<string, string | undefined>;
 
@@ -141,17 +141,20 @@ type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief"
 import type { YandexCompletionResponse } from "../constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
 import { normalizeProvider } from "../quality/orchestration.js";
+import { aitunnelConfig } from "../../../openai-client.js";
 
 export function selectAiProviders(env: EnvLike = process.env): AiGenerationMode[] {
   const requested = normalizeProvider(env.AI_PROVIDER);
   const hasOpenAI = Boolean(env.OPENAI_API_KEY?.trim());
   const hasYandex = Boolean(env.YANDEX_API_KEY?.trim() && (env.YANDEX_MODEL_URI?.trim() || env.YANDEX_FOLDER_ID?.trim()));
+  const hasAitunnel = Boolean(aitunnelConfig(env));
 
   // An explicit provider selection is a contract, not a preference.  In
   // particular, a failed Yandex request must never spend OpenAI credits or
   // produce a result from a different model.
   if (requested === "openai") return hasOpenAI ? ["openai"] : [];
   if (requested === "yandex") return hasYandex ? ["yandex"] : [];
+  if (requested === "aitunnel") return hasAitunnel ? ["aitunnel"] : [];
 
   return [
     ...(hasOpenAI ? ["openai" as const] : []),

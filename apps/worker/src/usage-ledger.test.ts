@@ -44,6 +44,12 @@ describe("usage ledger pricing", () => {
     expect(calculateProviderCost("yandex", "yandexgpt-5.1", at, { inputTokens: 1_000, outputTokens: 2_000 })).toMatchObject({ status: "priced", sourceCost: "2.40000000", currency: "RUB" });
   });
 
+  it("prices the explicit AITUNNEL Gemini model in RUB and leaves unknown models unknown", () => {
+    const at = new Date("2026-07-24T12:00:00Z");
+    expect(calculateProviderCost("aitunnel", "gemini-3.6-flash", at, { inputTokens: 1_000, outputTokens: 2_000 })).toMatchObject({ status: "priced", sourceCost: "5.00500000", currency: "RUB", version: "aitunnel-gemini-3.6-flash-pricing-2026-07-24" });
+    expect(calculateProviderCost("aitunnel", "unknown", at, { inputTokens: 1_000 })).toMatchObject({ status: "unknown_price", sourceCost: null });
+  });
+
   it("normalizes AI SDK and Responses usage classes", () => {
     expect(normalizeOpenAIUsage({ inputTokens: 20, outputTokens: 9, totalTokens: 29, inputTokenDetails: { cacheReadTokens: 4 }, outputTokenDetails: { reasoningTokens: 2 } })).toEqual({ inputTokens: 20, outputTokens: 9, cachedInputTokens: 4, reasoningTokens: 2, totalTokens: 29 });
     expect(normalizeOpenAIUsage({ input_tokens: 11, output_tokens: 5, total_tokens: 16, input_tokens_details: { cached_tokens: 3 } })?.cachedInputTokens).toBe(3);

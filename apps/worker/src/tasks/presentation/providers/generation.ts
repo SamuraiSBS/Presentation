@@ -1,10 +1,10 @@
 import crypto from "node:crypto";
 import OpenAI from "openai";
 import { generateText, Output } from "ai";
-import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import { captureGenerationError, errorLogFields, logger } from "../../../observability.js";
 import { normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
+import { aitunnelConfig, createAitunnelClient, createOpenAIClient, createOpenAIProvider } from "../../../openai-client.js";
 import {
   type DesignBrief,
   type DeckStory,
@@ -58,7 +58,7 @@ type ProjectInput = {
   slideCount: number;
 };
 
-type AiGenerationMode = "openai" | "yandex";
+type AiGenerationMode = "openai" | "yandex" | "aitunnel";
 type FallbackGenerationMode = "demo" | "demo-fallback";
 type EnvLike = Record<string, string | undefined>;
 
@@ -101,6 +101,7 @@ type GenerateStructuredOptions<T> = {
   schemaName: string;
   parse?: (value: unknown) => T;
   openAIClient?: OpenAI;
+  openAIModel?: string;
   openAIGenerateText?: typeof generateText;
   yandexApiKey?: string;
   jsonSchema?: Record<string, unknown>;
@@ -143,6 +144,7 @@ type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief"
 // Narration has one initial text call and, after any validation failure, one
 // complete replacement. This is deliberately separate from BullMQ transport retries.
 export const MAX_YANDEX_NARRATION_TEXT_CALLS = 2;
+export const MAX_AITUNNEL_NARRATION_TEXT_CALLS = 2;
 const OPENAI_NARRATION_MAX_PROVIDER_ATTEMPTS = 4;
 export const PRESENTATION_RECOVERY_CHUNK_COUNT = 3;
 
@@ -159,7 +161,7 @@ import { parseJsonText } from "../utilities.js";
 import { jsonSchema, narrativePlanJsonSchema, designBriefJsonSchema } from "../schemas.js";
 
 export async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const client = createOpenAIClient();
   const researchBrief = buildResearchBrief(project, sources);
   const narrativePlan = await generateNarrativePlanWithProvider("openai", project, sources, researchBrief, { openAIClient: client });
   const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
@@ -194,8 +196,29 @@ export async function generateWithOpenAI(project: ProjectInput, sources: Source[
   designBrief);
 }
 
+export async function generateWithAitunnel(project: ProjectInput, sources: Source[]) {
+  const config = aitunnelConfig();
+  if (!config) throw new Error("AITUNNEL_API_KEY and an explicit AITUNNEL_NARRATION_MODEL are required");
+  const client = createAitunnelClient();
+  const researchBrief = buildResearchBrief(project, sources);
+  const narrativePlan = await generateNarrativePlanWithProvider("aitunnel", project, sources, researchBrief, { openAIClient: client, openAIModel: config.narrationModel });
+  const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
+  const narrationText = await generateAitunnelNarration(client, config.narrationModel, project, sources, narrativePlan, researchBrief);
+  const slideTextPlans = buildSlideTextPlans(project, narrationText, narrativePlan, deckStory, sources);
+  const designBrief = await generateDesignBriefWithProvider("aitunnel", project, sources, researchBrief, narrativePlan, deckStory, slideTextPlans, { openAIClient: client, openAIModel: config.narrationModel });
+  const slideBlueprints = buildSlideBlueprints(project, narrationText, narrativePlan, designBrief);
+  const parsed = await generatePresentationDocumentWithProvider("aitunnel", project, sources, narrationText, narrativePlan, {
+    researchBrief, deckStory, designBrief, slideBlueprints, slideTextPlans, openAIClient: client, openAIModel: config.narrationModel,
+  });
+  return finalizeGeneratedPresentation(parsed, project, sources, "aitunnel", narrationText, narrativePlan, (presentation, issues) =>
+    repairSlideTextWithOpenAI(client, presentation, issues, { provider: "aitunnel", model: config.narrationModel }), {
+      critique: (presentation, deterministic) => critiquePresentationQualityWithOpenAI(client, presentation, deterministic, { provider: "aitunnel", model: config.narrationModel }),
+      repair: (presentation, issues, attempt) => repairPresentationQualityWithOpenAI(client, presentation, issues, attempt, { provider: "aitunnel", model: config.narrationModel }),
+    }, designBrief);
+}
+
 export async function generateOpenAIPresentationFromNarration(project: ProjectInput, sources: Source[], narrationText: string) {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const client = createOpenAIClient();
   const researchBrief = buildResearchBrief(project, sources);
   const narrativePlan = await generateNarrativePlanWithProvider("openai", project, sources, researchBrief, { openAIClient: client });
   const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
@@ -227,6 +250,24 @@ export async function generateOpenAIPresentationFromNarration(project: ProjectIn
     repair: (presentation, issues, attempt) => repairPresentationQualityWithOpenAI(client, presentation, issues, attempt),
   },
   designBrief);
+}
+
+export async function generateAitunnelPresentationFromNarration(project: ProjectInput, sources: Source[], narrationText: string) {
+  const config = aitunnelConfig();
+  if (!config) throw new Error("AITUNNEL_API_KEY and an explicit AITUNNEL_NARRATION_MODEL are required");
+  const client = createAitunnelClient();
+  const researchBrief = buildResearchBrief(project, sources);
+  const narrativePlan = await generateNarrativePlanWithProvider("aitunnel", project, sources, researchBrief, { openAIClient: client, openAIModel: config.narrationModel });
+  const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
+  const slideTextPlans = buildSlideTextPlans(project, narrationText, narrativePlan, deckStory, sources);
+  const designBrief = await generateDesignBriefWithProvider("aitunnel", project, sources, researchBrief, narrativePlan, deckStory, slideTextPlans, { openAIClient: client, openAIModel: config.narrationModel });
+  const slideBlueprints = buildSlideBlueprints(project, narrationText, narrativePlan, designBrief);
+  const parsed = await generatePresentationDocumentWithProvider("aitunnel", project, sources, narrationText, narrativePlan, { researchBrief, deckStory, designBrief, slideBlueprints, slideTextPlans, openAIClient: client, openAIModel: config.narrationModel });
+  return finalizeGeneratedPresentation(parsed, project, sources, "aitunnel", narrationText, narrativePlan, (presentation, issues) =>
+    repairSlideTextWithOpenAI(client, presentation, issues, { provider: "aitunnel", model: config.narrationModel }), {
+      critique: (presentation, deterministic) => critiquePresentationQualityWithOpenAI(client, presentation, deterministic, { provider: "aitunnel", model: config.narrationModel }),
+      repair: (presentation, issues, attempt) => repairPresentationQualityWithOpenAI(client, presentation, issues, attempt, { provider: "aitunnel", model: config.narrationModel }),
+    }, designBrief);
 }
 
 export async function generateOpenAINarration(client: OpenAI, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief) {
@@ -264,6 +305,59 @@ export async function generateOpenAINarration(client: OpenAI, project: ProjectIn
   }
 
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+export async function generateAitunnelNarration(client: OpenAI, model: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief) {
+  let initialText = "";
+  try {
+    const startedAt = new Date();
+    const response = await client.responses.create({ model, input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: buildNarrationPrompt(project, sources, narrativePlan, researchBrief) }] });
+    await recordOpenAIResponse(response, "narration", "studydeck_narration", startedAt, "aitunnel", model);
+    initialText = response.output_text || "";
+  } catch {
+    logAitunnelNarrationCall(project.id, model, 1, "none", { failureCategory: "provider_error" });
+    throw narrationFailure("provider");
+  }
+  try {
+    return validateAitunnelNarration(initialText, project, narrativePlan, model, 1, "none");
+  } catch (error) {
+    let rewritten = "";
+    try {
+      const startedAt = new Date();
+      const response = await client.responses.create({ model, input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: buildFullNarrationDurationRewritePrompt(project, sources, narrativePlan, initialText, error, researchBrief) }] });
+      await recordOpenAIResponse(response, "narration", "studydeck_narration", startedAt, "aitunnel", model);
+      rewritten = response.output_text || "";
+    } catch {
+      logAitunnelNarrationCall(project.id, model, 2, "full_narration_rewrite", { failureCategory: "provider_error" });
+      throw narrationFailure("provider");
+    }
+    try {
+      return validateAitunnelNarration(rewritten, project, narrativePlan, model, 2, "full_narration_rewrite");
+    } catch {
+      throw narrationFailure("quality");
+    }
+  }
+}
+
+function validateAitunnelNarration(text: string, project: ProjectInput, narrativePlan: SlideNarrative[], model: string, narrationTextCall: 1 | 2, recovery: "none" | "full_narration_rewrite") {
+  const spokenIssues = findSpokenNarrationIssues(parseNarrationSections(text), narrativePlan);
+  if (spokenIssues.length) {
+    logAitunnelNarrationCall(project.id, model, narrationTextCall, recovery, { failureCategory: "quality" });
+    throw new Error("AI narration quality check failed");
+  }
+  try {
+    const accepted = normalizeNarrationText(text, project, narrativePlan);
+    logAitunnelNarrationCall(project.id, model, narrationTextCall, recovery, { words: narrationWordCount(accepted) });
+    return accepted;
+  } catch (error) {
+    logAitunnelNarrationCall(project.id, model, narrationTextCall, recovery, { failureCategory: "quality" });
+    throw error;
+  }
+}
+
+function logAitunnelNarrationCall(projectId: string, model: string, narrationTextCall: 1 | 2, recovery: "none" | "full_narration_rewrite", extra: { words?: number; failureCategory?: "provider_error" | "quality" }) {
+  const durationMinutes = extra.words === undefined ? undefined : Number(russianSpeechMinutesFromWords(extra.words).toFixed(1));
+  logger.info({ projectId, stage: "drafting_speech", provider: "aitunnel", model, narrationTextCall, maxNarrationTextCalls: MAX_AITUNNEL_NARRATION_TEXT_CALLS, recovery, ...extra, durationMinutes }, "AITUNNEL narration text call completed");
 }
 
 export async function generateWithYandex(project: ProjectInput, sources: Source[]) {
@@ -508,7 +602,7 @@ export async function generateNarrativePlanWithProvider(
   project: ProjectInput,
   sources: Source[],
   researchBrief: ResearchBrief,
-  options: Pick<GenerateStructuredOptions<SlideNarrative[]>, "openAIClient" | "yandexApiKey">,
+  options: Pick<GenerateStructuredOptions<SlideNarrative[]>, "openAIClient" | "openAIModel" | "yandexApiKey">,
 ): Promise<SlideNarrative[]> {
   return generateStructuredWithProvider<SlideNarrative[]>({
     provider,
@@ -531,7 +625,7 @@ export async function generateDesignBriefWithProvider(
   narrativePlan: SlideNarrative[],
   deckStory: DeckStory,
   slideTextPlans: SlideTextPlan[],
-  options: Pick<GenerateStructuredOptions<DesignBrief>, "openAIClient" | "yandexApiKey">,
+  options: Pick<GenerateStructuredOptions<DesignBrief>, "openAIClient" | "openAIModel" | "yandexApiKey">,
 ): Promise<DesignBrief> {
   try {
     return await generateStructuredWithProvider<DesignBrief>({
@@ -558,7 +652,7 @@ export async function generatePresentationDocumentWithProvider(
   sources: Source[],
   narrationText: string,
   narrativePlan: SlideNarrative[],
-  options: PromptArtifacts & Pick<GenerateStructuredOptions<unknown>, "openAIClient" | "yandexApiKey">,
+  options: PromptArtifacts & Pick<GenerateStructuredOptions<unknown>, "openAIClient" | "openAIModel" | "yandexApiKey">,
 ) {
   return generateStructuredWithProvider({
     provider,
@@ -570,6 +664,7 @@ export async function generatePresentationDocumentWithProvider(
     jsonSchema,
     strict: false,
     openAIClient: options.openAIClient,
+    openAIModel: options.openAIModel,
     yandexApiKey: options.yandexApiKey,
   });
 }
@@ -582,6 +677,7 @@ export async function generateStructuredWithProvider<T>({
   schemaName,
   parse,
   openAIClient,
+  openAIModel,
   openAIGenerateText,
   yandexApiKey,
   jsonSchema: schemaJson,
@@ -590,7 +686,7 @@ export async function generateStructuredWithProvider<T>({
   temperature = 0.25,
   yandexModelTier = "primary",
 }: GenerateStructuredOptions<T>): Promise<T> {
-  if (provider === "openai") {
+  if (provider === "openai" || provider === "aitunnel") {
     const sdkGenerateText = openAIGenerateText || generateText;
     const legacyClient = openAIClient;
     return generateAndValidate({
@@ -610,6 +706,8 @@ export async function generateStructuredWithProvider<T>({
             schemaName,
             schemaJson,
             strict,
+            provider,
+            model: openAIModel || process.env.OPENAI_MODEL || "gpt-4.1-mini",
           });
         }
         return requestOpenAIStructuredWithSdk({
@@ -666,8 +764,7 @@ export async function requestOpenAIStructuredWithSdk<T>({
   temperature: number;
 }) {
   const startedAt = new Date();
-  const apiKey = process.env.OPENAI_API_KEY;
-  const provider = createOpenAI(apiKey ? { apiKey } : undefined);
+  const provider = createOpenAIProvider();
   const model = provider(process.env.OPENAI_MODEL || "gpt-4.1-mini");
   const output = isUnknownSchema(schema)
     ? Output.json({ name: schemaName })
@@ -702,6 +799,8 @@ export async function requestOpenAIStructuredLegacy({
   schemaName,
   schemaJson,
   strict,
+  provider = "openai",
+  model = process.env.OPENAI_MODEL || "gpt-4.1-mini",
 }: {
   client: OpenAI;
   system: string;
@@ -710,11 +809,13 @@ export async function requestOpenAIStructuredLegacy({
   schemaName: string;
   schemaJson?: Record<string, unknown>;
   strict: boolean;
+  provider?: "openai" | "aitunnel";
+  model?: string;
 }) {
   const startedAt = new Date();
   try {
   const response = await client.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    model,
     input: [
       { role: "system", content: system },
       { role: "user", content: repairPrompt || withJsonPromptRules(prompt) },
@@ -731,10 +832,10 @@ export async function requestOpenAIStructuredLegacy({
       : undefined,
   });
   const typedResponse = response as typeof response & { output_parsed?: unknown };
-  await recordOpenAIResponse(response, "structured_generation_legacy", schemaName, startedAt);
+  await recordOpenAIResponse(response, "structured_generation_legacy", schemaName, startedAt, provider, model);
   return typedResponse.output_parsed || response.output_text || "";
   } catch (error) {
-    await recordAiUsage({ provider: "openai", model: process.env.OPENAI_MODEL || "gpt-4.1-mini", operation: "structured_generation_legacy", schemaName, startedAt, error });
+    await recordAiUsage({ provider, model, operation: "structured_generation_legacy", schemaName, startedAt, error });
     throw error;
   }
 }
@@ -743,11 +844,11 @@ export function isUnknownSchema(schema: z.ZodType<unknown, z.ZodTypeDef, unknown
   return (schema as z.ZodTypeAny)._def.typeName === z.ZodFirstPartyTypeKind.ZodUnknown;
 }
 
-export async function recordOpenAIResponse(response: unknown, operation: string, schemaName: string | undefined, startedAt: Date) {
+export async function recordOpenAIResponse(response: unknown, operation: string, schemaName: string | undefined, startedAt: Date, provider: "openai" | "aitunnel" = "openai", model = process.env.OPENAI_MODEL || "gpt-4.1-mini") {
   const item = response as Record<string, unknown>;
   await recordAiUsage({
-    provider: "openai",
-    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    provider,
+    model,
     operation,
     schemaName,
     providerRequestId: typeof item._request_id === "string" ? item._request_id : typeof item.id === "string" ? item.id : undefined,

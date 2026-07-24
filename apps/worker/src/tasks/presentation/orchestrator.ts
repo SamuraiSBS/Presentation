@@ -1,10 +1,10 @@
 import crypto from "node:crypto";
 import OpenAI from "openai";
 import { generateText, Output } from "ai";
-import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import { captureGenerationError, errorLogFields, logger } from "../../observability.js";
 import { normalizeOpenAIUsage, recordAiUsage } from "../../usage-ledger.js";
+import { aitunnelConfig, createAitunnelClient, createOpenAIClient } from "../../openai-client.js";
 import {
   type DesignBrief,
   type DeckStory,
@@ -58,7 +58,7 @@ type ProjectInput = {
   slideCount: number;
 };
 
-type AiGenerationMode = "openai" | "yandex";
+type AiGenerationMode = "openai" | "yandex" | "aitunnel";
 type FallbackGenerationMode = "demo" | "demo-fallback";
 type EnvLike = Record<string, string | undefined>;
 
@@ -142,7 +142,7 @@ type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief"
 import type { YandexCompletionResponse } from "./constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "./constants.js";
 import { selectAiProviders } from "./providers/provider-selection.js";
-import { generateWithOpenAI, generateOpenAIPresentationFromNarration, generateOpenAINarration, generateWithYandex, generateYandexPresentationFromNarration, generateYandexNarration, generateNarrativePlanWithProvider } from "./providers/generation.js";
+import { generateWithAitunnel, generateWithOpenAI, generateAitunnelPresentationFromNarration, generateOpenAIPresentationFromNarration, generateAitunnelNarration, generateOpenAINarration, generateWithYandex, generateYandexPresentationFromNarration, generateYandexNarration, generateNarrativePlanWithProvider } from "./providers/generation.js";
 import { buildResearchBrief, buildDesignBrief, buildDeckStory, buildSlideTextPlans, normalizeNarrativePlan } from "./planning/builders.js";
 import { normalizeNarrationText, parseNarrationSections } from "./narration/processing.js";
 import { normalizePresentation } from "./normalization/presentation.js";
@@ -155,9 +155,9 @@ export async function generatePresentation(project: ProjectInput, sources: Sourc
 
   for (const provider of providers) {
     try {
-      return provider === "openai"
-        ? await generateWithOpenAI(project, sources)
-        : await generateWithYandex(project, sources);
+      return provider === "openai" ? await generateWithOpenAI(project, sources)
+        : provider === "aitunnel" ? await generateWithAitunnel(project, sources)
+          : await generateWithYandex(project, sources);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       errors.push(`${provider}: ${message}`);
@@ -166,12 +166,12 @@ export async function generatePresentation(project: ProjectInput, sources: Sourc
     }
   }
 
-  if (isDemoGenerationAllowed()) {
+  if (isDemoGenerationAllowed() && process.env.AI_PROVIDER?.trim().toLowerCase() !== "aitunnel") {
     return demoPresentation(project, sources, providers.length ? "demo-fallback" : "demo");
   }
 
   if (!providers.length) {
-    throw new Error("No configured AI provider. Set OPENAI_API_KEY or YANDEX_API_KEY with YANDEX_FOLDER_ID/YANDEX_MODEL_URI.");
+    throw new Error("No configured AI provider. Configure OpenAI, Yandex, or AITUNNEL with an explicit model.");
   }
 
   throw new Error(`AI generation failed. ${errors.join(" | ")}`);
@@ -184,12 +184,26 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
   for (const provider of providers) {
     try {
       if (provider === "openai") {
-        const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        const client = createOpenAIClient();
         const researchBrief = buildResearchBrief(project, sources);
         const narrativePlan = await generateNarrativePlanWithProvider(provider, project, sources, researchBrief, { openAIClient: client });
         const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
         const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
         const text = await generateOpenAINarration(client, project, sources, narrativePlan, researchBrief);
+        const slideTextPlans = buildSlideTextPlans(project, text, narrativePlan, deckStory, sources);
+        generationPipelineArtifactsSchema.parse({ researchBrief, narrativePlan, deckStory, designBrief, slideBlueprints: [], slideTextPlans });
+        return { text, narrativePlan, generationMode: provider };
+      }
+
+      if (provider === "aitunnel") {
+        const config = aitunnelConfig();
+        if (!config) throw new Error("AITUNNEL_API_KEY and an explicit AITUNNEL_NARRATION_MODEL are required");
+        const client = createAitunnelClient();
+        const researchBrief = buildResearchBrief(project, sources);
+        const narrativePlan = await generateNarrativePlanWithProvider(provider, project, sources, researchBrief, { openAIClient: client, openAIModel: config.narrationModel });
+        const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
+        const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
+        const text = await generateAitunnelNarration(client, config.narrationModel, project, sources, narrativePlan, researchBrief);
         const slideTextPlans = buildSlideTextPlans(project, text, narrativePlan, deckStory, sources);
         generationPipelineArtifactsSchema.parse({ researchBrief, narrativePlan, deckStory, designBrief, slideBlueprints: [], slideTextPlans });
         return { text, narrativePlan, generationMode: provider };
@@ -216,7 +230,7 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
     }
   }
 
-  if (isDemoGenerationAllowed()) {
+  if (isDemoGenerationAllowed() && process.env.AI_PROVIDER?.trim().toLowerCase() !== "aitunnel") {
     return {
       text: buildFallbackGeneratedText(project),
       narrativePlan: normalizeNarrativePlan([], project),
@@ -225,7 +239,7 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
   }
 
   if (!providers.length) {
-    throw new Error("No configured AI provider. Set OPENAI_API_KEY or YANDEX_API_KEY with YANDEX_FOLDER_ID/YANDEX_MODEL_URI.");
+    throw new Error("No configured AI provider. Configure OpenAI, Yandex, or AITUNNEL with an explicit model.");
   }
 
   throw new Error(`AI narration generation failed. ${errors.join(" | ")}`);
@@ -242,9 +256,9 @@ export async function generatePresentationFromNarration(
 
   for (const provider of providers) {
     try {
-      return provider === "openai"
-        ? await generateOpenAIPresentationFromNarration(project, sources, fixedNarration)
-        : await generateYandexPresentationFromNarration(project, sources, fixedNarration);
+      return provider === "openai" ? await generateOpenAIPresentationFromNarration(project, sources, fixedNarration)
+        : provider === "aitunnel" ? await generateAitunnelPresentationFromNarration(project, sources, fixedNarration)
+          : await generateYandexPresentationFromNarration(project, sources, fixedNarration);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       errors.push(`${provider}: ${message}`);
@@ -254,7 +268,7 @@ export async function generatePresentationFromNarration(
   }
 
   if (!providers.length) {
-    throw new Error("No configured AI provider. Set OPENAI_API_KEY or YANDEX_API_KEY with YANDEX_FOLDER_ID/YANDEX_MODEL_URI.");
+    throw new Error("No configured AI provider. Configure OpenAI, Yandex, or AITUNNEL with an explicit model.");
   }
 
   // Accepted narration remains available for a retry, but it is not a

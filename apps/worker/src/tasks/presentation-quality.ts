@@ -34,7 +34,7 @@ export type QualityProjectInput = {
   researchBrief?: unknown;
 };
 
-export type GenerationMode = "openai" | "yandex" | "demo" | "demo-fallback";
+export type GenerationMode = "openai" | "yandex" | "aitunnel" | "demo" | "demo-fallback";
 
 export type QualityRepairResponse = {
   generatedText?: unknown;

@@ -67,7 +67,11 @@ export async function analyzeDefenseCandidates(
     raw = await dependencies.generate(prompt);
     provider = "openai";
   } else {
-    const providers = dependencies.providers || selectAiProviders();
+    // Defense analysis has no AITUNNEL contract in this plan. Do not route it
+    // through Yandex or OpenAI when AITUNNEL is explicitly selected.
+    const providers = (dependencies.providers || selectAiProviders()).filter(
+      (candidate): candidate is "openai" | "yandex" => candidate === "openai" || candidate === "yandex",
+    );
     for (const candidate of providers) {
       try {
         if (candidate === "openai") {

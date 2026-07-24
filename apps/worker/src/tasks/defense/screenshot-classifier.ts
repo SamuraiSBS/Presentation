@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import sharp from "sharp";
 import { z } from "zod";
 import { normalizeOpenAIUsage, recordAiUsage } from "../../usage-ledger.js";
+import { createOpenAIClient } from "../../openai-client.js";
 
 const screenshotKindSchema = z.enum([
   "landing",
@@ -47,7 +48,7 @@ export async function classifyDefenseScreenshot(input: {
   const fallback = metadataClassification(input, metadata.width, metadata.height);
   if (process.env.VISION_PROVIDER !== "openai" || !process.env.OPENAI_API_KEY?.trim()) return fallback;
 
-  const client = dependencies.openAI || new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const client = dependencies.openAI || createOpenAIClient();
   const startedAt = new Date();
   try {
     const response = await client.responses.create({

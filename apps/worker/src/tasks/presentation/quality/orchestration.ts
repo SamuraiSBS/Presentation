@@ -60,7 +60,7 @@ type ProjectInput = {
   slideCount: number;
 };
 
-type AiGenerationMode = "openai" | "yandex";
+type AiGenerationMode = "openai" | "yandex" | "aitunnel";
 type FallbackGenerationMode = "demo" | "demo-fallback";
 type EnvLike = Record<string, string | undefined>;
 
@@ -344,10 +344,12 @@ export function canLocallyRepairNarrationSections(sections: NarrationSection[], 
   });
 }
 
-export async function repairSlideTextWithOpenAI(client: OpenAI, presentation: PresentationDocument, issues: SlideTextIssue[]) {
+type OpenAICompatibleUsage = { provider: "openai" | "aitunnel"; model: string };
+
+export async function repairSlideTextWithOpenAI(client: OpenAI, presentation: PresentationDocument, issues: SlideTextIssue[], usage: OpenAICompatibleUsage = { provider: "openai", model: process.env.OPENAI_MODEL || "gpt-4.1-mini" }) {
   const startedAt = new Date();
   const response = await client.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    model: usage.model,
     input: [
       {
         role: "system",
@@ -368,7 +370,7 @@ export async function repairSlideTextWithOpenAI(client: OpenAI, presentation: Pr
       },
     },
   });
-  await recordOpenAIResponse(response, "slide_text_repair", "studydeck_slide_text_repair", startedAt);
+  await recordOpenAIResponse(response, "slide_text_repair", "studydeck_slide_text_repair", startedAt, usage.provider, usage.model);
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   return typedResponse.output_parsed || parseJsonText(response.output_text || "");
 }
@@ -387,10 +389,11 @@ export async function critiquePresentationQualityWithOpenAI(
   client: OpenAI,
   presentation: PresentationDocument,
   deterministic: QualityCritique,
+  usage: OpenAICompatibleUsage = { provider: "openai", model: process.env.OPENAI_MODEL || "gpt-4.1-mini" },
 ) {
   const startedAt = new Date();
   const response = await client.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    model: usage.model,
     input: [
       { role: "system", content: QUALITY_CRITIC_SYSTEM_PROMPT },
       { role: "user", content: buildQualityCriticPrompt(presentation, deterministic) },
@@ -404,7 +407,7 @@ export async function critiquePresentationQualityWithOpenAI(
       },
     },
   });
-  await recordOpenAIResponse(response, "quality_critique", "studydeck_quality_critique", startedAt);
+  await recordOpenAIResponse(response, "quality_critique", "studydeck_quality_critique", startedAt, usage.provider, usage.model);
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   return typedResponse.output_parsed || parseJsonText(response.output_text || "");
 }
@@ -428,10 +431,11 @@ export async function repairPresentationQualityWithOpenAI(
   presentation: PresentationDocument,
   issues: QualityIssue[],
   attempt: number,
+  usage: OpenAICompatibleUsage = { provider: "openai", model: process.env.OPENAI_MODEL || "gpt-4.1-mini" },
 ): Promise<QualityRepairResponse> {
   const startedAt = new Date();
   const response = await client.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    model: usage.model,
     input: [
       { role: "system", content: QUALITY_REPAIR_SYSTEM_PROMPT },
       { role: "user", content: buildQualityRepairPrompt(presentation, issues, attempt) },
@@ -445,7 +449,7 @@ export async function repairPresentationQualityWithOpenAI(
       },
     },
   });
-  await recordOpenAIResponse(response, "quality_repair", "studydeck_quality_repair", startedAt);
+  await recordOpenAIResponse(response, "quality_repair", "studydeck_quality_repair", startedAt, usage.provider, usage.model);
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   return (typedResponse.output_parsed || parseJsonText(response.output_text || "")) as QualityRepairResponse;
 }
@@ -870,7 +874,7 @@ export function safeLabelFromSentence(value: string) {
 
 export function normalizeProvider(value: string | undefined): AiGenerationMode | undefined {
   const normalized = value?.toLowerCase().trim();
-  return normalized === "openai" || normalized === "yandex" ? normalized : undefined;
+  return normalized === "openai" || normalized === "yandex" || normalized === "aitunnel" ? normalized : undefined;
 }
 
 export function isDemoGenerationAllowed() {
