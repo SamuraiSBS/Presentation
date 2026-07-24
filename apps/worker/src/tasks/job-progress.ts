@@ -139,7 +139,7 @@ export function generationFailureCategory(error: unknown): GenerationFailureCate
   if (classifyGenerationError(error) === "transient") return "transient";
   if (/layout|canvas|overflow|geometry/.test(text)) return "layout";
   if (/image|photo|visual/.test(text)) return "image";
-  if (/quality check|quality gate|template phrase|validation/.test(text)) return "quality";
+  if (/quality check|quality gate|economic release gate|template phrase|validation/.test(text)) return "quality";
   if (/api.?key|is required|unsupported|folder_id|model_uri/.test(text)) return "configuration";
   return "unknown";
 }

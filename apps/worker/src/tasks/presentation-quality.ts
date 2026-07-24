@@ -1470,17 +1470,25 @@ export function productionQualityReleaseResult(
   attempts = 0,
 ): ProductionQualityReleaseResult {
   const critique = critiquePresentationDeterministically(presentation, sources, project);
-  // New automatic jobs have one permitted model path.  Keep this check in the
-  // same release result as grounding, content, visual and canvas checks so a
-  // document can never be persisted after a provider fallback.
-  const issues = presentation.generationMode === "yandex"
+  // The normal production path remains Yandex-only.  A run with a persisted
+  // economic source snapshot is different: its paid provider work ended at
+  // accepted narration and the document is the required local projection.
+  // Neither path may pass with a demo or fallback document.
+  const allowedGenerationModes = project.mandatorySourceSnapshot
+    ? ["local"]
+    : ["yandex"];
+  const issues = allowedGenerationModes.includes(presentation.generationMode)
     ? critique.issues
     : [...critique.issues, {
         severity: "blocker" as const,
         category: "schema_risk" as const,
         field: "generationMode",
-        message: "Generated presentation was not produced by the required Yandex provider.",
-        repairInstruction: "Run a new generation with Yandex configured; do not substitute a local fallback document.",
+        message: project.mandatorySourceSnapshot
+          ? "Economic presentation was not assembled from accepted narration locally."
+          : "Generated presentation was not produced by the required Yandex provider.",
+        repairInstruction: project.mandatorySourceSnapshot
+          ? "Resume the linked presentation job from the accepted narration; do not use a demo or provider fallback document."
+          : "Run a new generation with Yandex configured; do not substitute a local fallback document.",
       }];
   return {
     issueCategories: [...new Set(issues.map((issue) => issue.category))],

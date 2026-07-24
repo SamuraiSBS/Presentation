@@ -121,18 +121,54 @@ export class AdminService {
     if (query.category) costWhere.category = query.category as Prisma.EnumCostCategoryFilter;
     if (query.measurement) costWhere.measurement = query.measurement;
     if (query.userId) costWhere.userId = query.userId;
-    const [ai, other, aiSum, otherSum, unknownCount] = await Promise.all([
+    if (query.projectId) costWhere.projectId = query.projectId;
+    const envelopeWhere: Prisma.CostEnvelopeWhereInput = { createdAt: dateFilter(range.from, range.to) };
+    if (query.projectId) envelopeWhere.projectId = query.projectId;
+    if (query.userId) envelopeWhere.project = { userId: query.userId };
+    const [ai, other, aiSum, otherSum, unknownCount, envelopes] = await Promise.all([
       this.prisma.aiUsageEvent.findMany({ where: aiWhere, orderBy: { createdAt: "desc" }, take: query.pageSize, skip: (query.page - 1) * query.pageSize }),
       this.prisma.costEvent.findMany({ where: costWhere, orderBy: { occurredAt: "desc" }, take: query.pageSize, skip: (query.page - 1) * query.pageSize }),
       this.prisma.aiUsageEvent.aggregate({ where: aiWhere, _sum: { rubCostAtEvent: true } }),
       this.prisma.costEvent.aggregate({ where: costWhere, _sum: { rubCostAtEvent: true } }),
       this.prisma.aiUsageEvent.count({ where: { ...aiWhere, status: { in: ["unknown_price", "unknown_usage"] } } }),
+      this.prisma.costEnvelope.findMany({
+        where: envelopeWhere,
+        orderBy: { createdAt: "desc" },
+        take: query.pageSize,
+        include: {
+          reservations: { orderBy: { createdAt: "asc" } },
+          aiUsageEvents: { select: { provider: true, model: true } },
+          costEvents: { select: { category: true, provider: true, quantity: true, sourceCost: true, sourceCurrency: true, rubCostAtEvent: true, measurement: true } },
+        },
+      }),
     ]);
     const currentTotal = await this.currentCostTotal(range.from, range.to);
     return {
       summary: { totalRubAtEvent: add(decimal(aiSum._sum.rubCostAtEvent), decimal(otherSum._sum.rubCostAtEvent)), totalRubCurrent: currentTotal, unknownCount },
       ai: ai.map((item) => ({ id: item.id, provider: item.provider, model: item.model, stage: item.stage, status: item.status, inputTokens: item.inputTokens, outputTokens: item.outputTokens, cachedInputTokens: item.cachedInputTokens, reasoningTokens: item.reasoningTokens, sourceCost: nullableDecimal(item.sourceCost), sourceCurrency: item.sourceCurrency, rubCostAtEvent: nullableDecimal(item.rubCostAtEvent), occurredAt: item.createdAt.toISOString() })),
       other: other.map((item) => ({ id: item.id, category: item.category, provider: item.provider, quantity: decimal(item.quantity), unit: item.unit, sourceCost: nullableDecimal(item.sourceCost), sourceCurrency: item.sourceCurrency, rubCostAtEvent: nullableDecimal(item.rubCostAtEvent), measurement: item.measurement, occurredAt: item.occurredAt.toISOString() })),
+      envelopes: envelopes.map((envelope) => {
+        const terminal = envelope.reservations.find((item) => !["settled", "released"].includes(item.status));
+        const tavilyQueries = envelope.costEvents
+          .filter((item) => item.provider === "tavily" && (item.category === "web_search" || item.category === "image_search"))
+          .reduce((total, item) => total + Number(item.quantity), 0);
+        return {
+          id: envelope.id,
+          projectId: envelope.projectId,
+          policyVersion: envelope.policyVersion,
+          status: envelope.status,
+          limitRub: decimal(envelope.limitRub),
+          reservedRub: decimal(envelope.reservedRub),
+          settledRub: decimal(envelope.settledRub),
+          remainingRub: subtract(subtract(decimal(envelope.limitRub), decimal(envelope.reservedRub)), decimal(envelope.settledRub)),
+          terminationReason: terminal?.reason || (envelope.status === "active" ? null : envelope.status),
+          tavilyQueries,
+          actualModels: [...new Set(envelope.aiUsageEvents.map((item) => `${item.provider}:${item.model}`))],
+          reservations: envelope.reservations.map((item) => ({ id: item.id, bucket: item.bucket, stage: item.stage, status: item.status, reservedRub: decimal(item.reservedRub), settledRub: decimal(item.settledRub), releasedRub: decimal(item.releasedRub), reason: item.reason })),
+          costSources: envelope.costEvents.map((item) => ({ category: item.category, provider: item.provider, quantity: decimal(item.quantity), sourceCost: nullableDecimal(item.sourceCost), currency: item.sourceCurrency, rubCostAtEvent: nullableDecimal(item.rubCostAtEvent), measurement: item.measurement })),
+          createdAt: envelope.createdAt.toISOString(),
+        };
+      }),
     };
   }
 

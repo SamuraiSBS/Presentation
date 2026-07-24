@@ -18,6 +18,7 @@ import { generateNarrationDraft, generatePresentationFromNarration } from "./pre
 import { searchWebSources } from "./web-search.js";
 import { runWithUsageContext } from "../usage-ledger.js";
 import { failCostEnvelope, reserveCostEnvelope, settleCostEnvelope } from "../cost-envelope.js";
+import { EconomicReleaseGateError, evaluateEconomicReleaseGate } from "../economic-release-gate.js";
 import { createMandatorySourceSnapshot, parseMandatorySourceSnapshot, snapshotSources } from "../source-snapshot.js";
 import {
   handleDefenseAnalysisJob,
@@ -231,6 +232,36 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       }, "presentation production quality gate rejected generated document");
       throw new Error(`Production quality gate rejected generated presentation: ${release.issueCategories.join(", ") || "unspecified quality issue"}`);
     }
+    if (job.data.costEnvelopeId) {
+      const envelope = await prisma.costEnvelope.findUniqueOrThrow({
+        where: { id: job.data.costEnvelopeId },
+        select: {
+          limitRub: true,
+          reservedRub: true,
+          settledRub: true,
+          status: true,
+          sourceSnapshot: true,
+          reservations: { select: { status: true, reason: true } },
+          _count: { select: { costEvents: { where: { category: "image_search" } } } },
+        },
+      });
+      const economicGate = evaluateEconomicReleaseGate({
+        presentation,
+        sources,
+        project: { ...generationProject, mandatorySourceSnapshot: true },
+        envelope: {
+          limitRub: envelope.limitRub.toString(),
+          reservedRub: envelope.reservedRub.toString(),
+          settledRub: envelope.settledRub.toString(),
+          status: envelope.status,
+          sourceSnapshot: envelope.sourceSnapshot,
+          reservations: envelope.reservations,
+          imageSearchQueries: envelope._count.costEvents,
+        },
+      });
+      logger.info({ projectId, jobId: job.id, stage: "validating", releaseGate: "economic_standard", passed: economicGate.passed, categories: economicGate.categories }, "economic presentation release gate");
+      if (!economicGate.passed) throw new EconomicReleaseGateError(economicGate.categories);
+    }
     presentation = {
       ...presentation,
       productionQualityGate: { version: 1, capability: "silent-production-quality-gate" },
@@ -257,6 +288,9 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
   } catch (error) {
     const recovery = safeGenerationError(error);
     const failureCategory = generationFailureCategory(error);
+    const internalError = error instanceof EconomicReleaseGateError
+      ? `economic_release_gate:${error.categories.join(",")}`
+      : recovery.message;
     const attempts = typeof job.opts.attempts === "number" ? job.opts.attempts : 1;
     const willRetry = shouldRetryGenerationJob(kind, error, job.attemptsMade, attempts);
     if (!willRetry) {
@@ -278,9 +312,12 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     }
     await prisma.generationJob.updateMany({
       where: jobWhere,
-      data: {
-        status: willRetry ? "active" : "failed",
-        error: recovery.message,
+        data: {
+          status: willRetry ? "active" : "failed",
+          // Project responses are sanitized by the API.  GenerationJob keeps a
+          // compact operational category for admins without persisting provider
+          // messages, tokens, or stack traces.
+          error: internalError,
         progressStage: willRetry ? "queued" : "failed",
         progressLabel: willRetry ? "Временная ошибка, попробуем ещё раз" : "Не получилось",
         progressPercent: willRetry ? 5 : 100,

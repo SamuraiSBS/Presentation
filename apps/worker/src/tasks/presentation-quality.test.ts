@@ -66,6 +66,19 @@ const mandatorySourceProject = {
 };
 
 describe("mandatory source snapshot release gate", () => {
+  it("permits only the local accepted-narration projection for an economic run", () => {
+    const presentation = makePresentation({ generationMode: "local" });
+    const sources = [1, 2, 3].map((number) => ({ ...source, id: `snapshot-${number}`, url: `https://example.edu/${number}` }));
+    const attributed = presentationSchema.parse({
+      ...presentation,
+      sources,
+      slides: presentation.slides.map((slide, index) => ({ ...slide, sourceRefs: [{ sourceId: sources[index % 3].id, label: sources[index % 3].label, excerpt: sources[index % 3].excerpt, page: null }] })),
+    });
+    const release = productionQualityReleaseResult(attributed, sources, { ...mandatorySourceProject, slideCount: 2 });
+
+    expect(release.issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ field: "generationMode" })]));
+  });
+
   it("blocks a standard economical run until all snapshot sources are attributed", () => {
     const presentation = makePresentation();
     const sources = [1, 2, 3].map((number) => ({

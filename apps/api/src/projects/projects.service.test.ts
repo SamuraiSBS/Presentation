@@ -48,6 +48,14 @@ function createHarness() {
       create: vi.fn().mockResolvedValue({ id: "workspace-copy" }),
       update: vi.fn(),
     },
+    generationJob: {
+      create: vi.fn().mockResolvedValue({ id: "job-1" }),
+    },
+    costEnvelope: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({ id: "envelope-1" }),
+      update: vi.fn(),
+    },
   };
   const prisma = {
     $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
