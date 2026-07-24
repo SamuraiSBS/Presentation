@@ -163,8 +163,8 @@ import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, Q
 import { buildResearchBrief, buildDesignBrief, logStructuredGenerationValidationFailure, buildDeckStory, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "../planning/builders.js";
 import { shouldRetryNarration, requestYandexText, normalizeNarrationText, parseNarrationSections, findSpokenNarrationIssues } from "../narration/processing.js";
 import { speechSentences } from "../normalization/presentation.js";
-import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildFullNarrationDurationRewritePrompt, buildGenerationPrompt, buildYandexPresentationRecoveryPrompt, getYandexModelConfig } from "../prompts/builders.js";
-import type { YandexModelTier } from "../prompts/builders.js";
+import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildFullNarrationDurationRewritePrompt, buildAitunnelFullNarrationRewritePrompt, buildGenerationPrompt, buildYandexPresentationRecoveryPrompt, getYandexModelConfig } from "../prompts/builders.js";
+import type { NarrationRewriteFailureCategory, YandexModelTier } from "../prompts/builders.js";
 import { ensureDesignBriefDirections } from "../normalization/presentation.js";
 import { finalizeGeneratedPresentation, repairSlideTextWithOpenAI, repairSlideTextWithYandex, critiquePresentationQualityWithOpenAI, critiquePresentationQualityWithYandex, repairPresentationQualityWithOpenAI, repairPresentationQualityWithYandex } from "../quality/orchestration.js";
 import { parseJsonText } from "../utilities.js";
@@ -328,14 +328,14 @@ export async function generateAitunnelNarration(client: OpenAI, model: string, p
     client, model, project, sources, narrativePlan, researchBrief, policy, narrationTextCall: 1, recovery: "none",
     prompt: buildNarrationPrompt(project, sources, narrativePlan, researchBrief),
   });
-  let initialText = initial.text;
   try {
-    return validateAitunnelNarration(initialText, project, narrativePlan, model, 1, "none");
+    return validateAitunnelNarration(initial.text, project, narrativePlan, model, 1, "none");
   } catch (error) {
-    const rewritePrompt = buildFullNarrationDurationRewritePrompt(project, sources, narrativePlan, initialText, error, researchBrief);
+    const failureCategory = classifyAitunnelNarrationRewriteFailure(error);
+    const rewritePrompt = buildAitunnelFullNarrationRewritePrompt(project, sources, narrativePlan, researchBrief, failureCategory);
     const rewrite = await requestAitunnelNarrationCall({
       client, model, project, sources, narrativePlan, researchBrief, policy, narrationTextCall: 2, recovery: "full_narration_rewrite",
-      prompt: rewritePrompt,
+      prompt: rewritePrompt, failureCategory,
     });
     try {
       return validateAitunnelNarration(rewrite.text, project, narrativePlan, model, 2, "full_narration_rewrite");
@@ -356,6 +356,7 @@ type AitunnelNarrationRequest = {
   narrationTextCall: 1 | 2;
   recovery: "none" | "full_narration_rewrite";
   prompt: string;
+  failureCategory?: NarrationRewriteFailureCategory;
 };
 
 async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
@@ -402,6 +403,7 @@ async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
   }
   logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, {
     budgetRub: input.policy.budgetRub, reservationRub: settled.reservation.costRub, actualCostRub: settled.actualCostRub, remainingRub: settled.projectRemaining,
+    rewriteFailureCategory: input.failureCategory,
   });
   return { text: responseItem.output_text || "" };
 }
@@ -422,6 +424,15 @@ function validateAitunnelNarration(text: string, project: ProjectInput, narrativ
   }
 }
 
+export function classifyAitunnelNarrationRewriteFailure(error: unknown): NarrationRewriteFailureCategory {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("duration") || message.includes("words")) return "duration";
+  if (message.includes("missing narration section") || message.includes("expected") && message.includes("narration sections") || message.includes("header")) return "headers_or_sections";
+  if (message.includes("narrative-plan field") || message.includes("plan_echo") || message.includes("planning_formula") || message.includes("semicolon_run")) return "spoken_quality";
+  if (message.includes("template") || message.includes("repeat")) return "template_or_repetition";
+  return "narration_quality";
+}
+
 function logAitunnelNarrationCall(projectId: string, model: string, narrationTextCall: 1 | 2, recovery: "none" | "full_narration_rewrite", extra: {
   words?: number;
   failureCategory?: "provider_error" | "quality" | "narration_budget_exhausted" | "narration_budget_overrun" | "narration_usage_unavailable";
@@ -429,6 +440,7 @@ function logAitunnelNarrationCall(projectId: string, model: string, narrationTex
   reservationRub?: string;
   actualCostRub?: string;
   remainingRub?: string;
+  rewriteFailureCategory?: NarrationRewriteFailureCategory;
 }) {
   const durationMinutes = extra.words === undefined ? undefined : Number(russianSpeechMinutesFromWords(extra.words).toFixed(1));
   logger.info({ projectId, stage: "drafting_speech", provider: "aitunnel", model, narrationTextCall, maxNarrationTextCalls: MAX_AITUNNEL_NARRATION_TEXT_CALLS, recovery, ...extra, durationMinutes }, "AITUNNEL narration text call completed");

@@ -389,6 +389,49 @@ export function buildFullNarrationDurationRewritePrompt(
     .join("\n\n");
 }
 
+export type NarrationRewriteFailureCategory =
+  | "duration"
+  | "spoken_quality"
+  | "headers_or_sections"
+  | "template_or_repetition"
+  | "narration_quality";
+
+const AITUNNEL_REWRITE_CATEGORY_GUIDANCE: Record<NarrationRewriteFailureCategory, string> = {
+  duration: "Meet the stated whole-speech and per-section timing range with substantive topic explanation, not filler.",
+  spoken_quality: "Use natural spoken Russian and avoid repeated facts, repeated sentences, planning formulas, and semicolon-run phrasing.",
+  headers_or_sections: "Return every requested slide section exactly once, in order, with its exact heading and a complete section body.",
+  template_or_repetition: "Avoid template language, repeated openings or closings, and generic presentation commentary; use concrete topic-specific wording.",
+  narration_quality: "Satisfy every narration quality requirement in the original contract with a coherent, substantive report.",
+};
+
+/**
+ * AITUNNEL's second narration call is a context-light, full replacement.
+ * Unlike the Yandex rewrite builder above, it deliberately receives neither
+ * the rejected narration nor a raw validator error.
+ */
+export function buildAitunnelFullNarrationRewritePrompt(
+  project: ProjectInput,
+  sources: Source[],
+  narrativePlan: SlideNarrative[],
+  researchBrief: ResearchBrief | undefined,
+  failureCategory: NarrationRewriteFailureCategory,
+) {
+  const timingBudget = getRussianStudentSpeechTimingBudget(project);
+  const sectionGuidance = buildFullNarrationDurationSectionGuidance(project, timingBudget);
+  return [
+    buildNarrationPrompt(project, sources, narrativePlan, researchBrief),
+    "A previous draft was rejected. Discard it completely and return a fresh, complete narration for every requested slide.",
+    AITUNNEL_REWRITE_CATEGORY_GUIDANCE[failureCategory],
+    "Do not quote, continue, merge, patch, or reuse any text from the rejected draft. Write the whole report from scratch in slide order.",
+    timingBudget
+      ? `Keep the whole speech inside the quality-first range of ${timingBudget.minWords}-${timingBudget.maxWords} words; ${timingBudget.targetWords} words is a meaningful target, not a quota to reach with filler.`
+      : "Keep the narration substantive and naturally paced.",
+    sectionGuidance,
+    "Treat this as editorial structure, not a word-padding exercise: every section must develop its argument with an explanation and, where supported, an example, evidence, or consequence. A coherent report is better than repetitive length.",
+    "Do not use filler, meta-commentary, planner field labels, artificial connective phrases, or copied slidePurpose or audienceQuestion text. Do not describe the planning process.",
+  ].filter(Boolean).join("\n\n");
+}
+
 /**
  * Gives the sole duration-rewrite path a checkable per-section editorial
  * structure while keeping every number tied to the shared timing preset.

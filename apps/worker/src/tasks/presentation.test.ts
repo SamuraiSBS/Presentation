@@ -16,9 +16,10 @@ import {
 } from "./presentation.js";
 import { generatePresentation as generatePresentationFromOrchestrator } from "./presentation/orchestrator.js";
 import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./presentation/prompts/builders.js";
-import { buildFullNarrationDurationRewritePrompt, buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
+import { buildAitunnelFullNarrationRewritePrompt, buildFullNarrationDurationRewritePrompt, buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
 import { buildFallbackNarrativeItem, normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
-import { generateAitunnelNarration, generateYandexNarration, MAX_AITUNNEL_NARRATION_TEXT_CALLS, MAX_YANDEX_NARRATION_TEXT_CALLS, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
+import { classifyAitunnelNarrationRewriteFailure, generateAitunnelNarration, generateYandexNarration, MAX_AITUNNEL_NARRATION_TEXT_CALLS, MAX_YANDEX_NARRATION_TEXT_CALLS, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
+import { AitunnelProjectBudget, estimateInputTokens } from "../aitunnel-narration-budget.js";
 import { NARRATION_SYSTEM_PROMPT } from "./presentation/constants.js";
 import { sourceEvidenceForSlide } from "./presentation/planning/builders.js";
 import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
@@ -658,6 +659,41 @@ describe("Yandex narration full duration rewrite", () => {
     expect(MAX_AITUNNEL_NARRATION_TEXT_CALLS).toBe(2);
     expect(calls).toBe(2);
     expect(() => normalizeNarrationText(result, project, plan)).not.toThrow();
+  });
+
+  it("uses a context-light full AITUNNEL rewrite without rejected text or raw validation details", () => {
+    const sentinel = "REJECTED_NARRATION_SENTINEL_DO_NOT_SEND";
+    const rawError = "RAW_VALIDATION_DETAIL_DO_NOT_SEND";
+    const oldPrompt = buildFullNarrationDurationRewritePrompt(project, [], plan, sentinel.repeat(600), new Error(rawError));
+    const rewritePrompt = buildAitunnelFullNarrationRewritePrompt(project, [], plan, undefined, "duration");
+
+    expect(rewritePrompt).toContain("Discard it completely");
+    expect(rewritePrompt).toContain("fresh, complete narration for every requested slide");
+    expect(rewritePrompt).toContain("1170-1560 words");
+    expect(rewritePrompt).not.toContain(sentinel);
+    expect(rewritePrompt).not.toContain(rawError);
+    expect(rewritePrompt).not.toContain("Previous invalid answer");
+    expect(estimateInputTokens({ input: rewritePrompt })).toBeLessThan(estimateInputTokens({ input: oldPrompt }));
+  });
+
+  it("maps narration validation defects to safe rewrite categories without preserving their text", () => {
+    expect(classifyAitunnelNarrationRewriteFailure(new Error("narration duration is below 9 minutes"))).toBe("duration");
+    expect(classifyAitunnelNarrationRewriteFailure(new Error("missing narration section 4"))).toBe("headers_or_sections");
+    expect(classifyAitunnelNarrationRewriteFailure(new Error("template phrase detected"))).toBe("template_or_repetition");
+    expect(classifyAitunnelNarrationRewriteFailure(new Error("section repeats a complete sentence"))).toBe("template_or_repetition");
+    expect(classifyAitunnelNarrationRewriteFailure(new Error("narration repeats a narrative-plan field"))).toBe("spoken_quality");
+    expect(classifyAitunnelNarrationRewriteFailure(new Error("PRIVATE_PROVIDER_DERIVED_DETAIL"))).toBe("narration_quality");
+  });
+
+  it("fits the ten-slide initial actual cost and context-light rewrite reservation inside the narration cap", () => {
+    const initialPrompt = buildNarrationPrompt(project, [], plan);
+    const rewritePrompt = buildAitunnelFullNarrationRewritePrompt(project, [], plan, undefined, "duration");
+    const initialRequest = { model: "gemini-3.6-flash", input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: initialPrompt }], max_output_tokens: 2400, reasoning: { effort: "minimal", exclude: true } };
+    const rewriteRequest = { ...initialRequest, input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: rewritePrompt }] };
+    const budget = new AitunnelProjectBudget({ AITUNNEL_PROJECT_BUDGET_RUB: "30", AITUNNEL_NARRATION_JOB_BUDGET_RUB: "20" });
+    expect(budget.reserve("initial", "narration", initialRequest)).toMatchObject({ status: "reserved" });
+    expect(budget.settle("initial", { inputTokens: 100, outputTokens: 100 })).toMatchObject({ status: "settled" });
+    expect(budget.reserve("rewrite", "narration_rewrite", rewriteRequest)).toMatchObject({ status: "reserved" });
   });
 
   it("accepts a valid initial AITUNNEL narration without a rewrite", async () => {
