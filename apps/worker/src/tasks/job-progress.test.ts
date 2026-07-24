@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   classifyGenerationError,
   generationJobOptions,
+  narrationJobOptions,
   progressForStage,
   safeErrorSummary,
   generationFailureCategory,
   safeGenerationError,
+  shouldRetryGenerationJob,
   updateGenerationProgress,
 } from "./job-progress.js";
 
@@ -49,6 +51,14 @@ describe("generation retry classification", () => {
     expect(classifyGenerationError(new Error("fetch failed: ECONNRESET"))).toBe("transient");
     expect(classifyGenerationError(new Error("Yandex generation request failed: 503 unavailable"))).toBe("transient");
     expect(generationJobOptions().attempts).toBe(3);
+  });
+
+  it("makes narration failures final while preserving presentation retries", () => {
+    const error = new Error("fetch failed: ECONNRESET");
+    expect(narrationJobOptions()).toEqual(expect.objectContaining({ attempts: 1 }));
+    expect(narrationJobOptions()).not.toHaveProperty("backoff");
+    expect(shouldRetryGenerationJob("narration", error, 0, 1)).toBe(false);
+    expect(shouldRetryGenerationJob("presentation", error, 0, 3)).toBe(true);
   });
 
   it("does not retry fatal configuration or accepted narration errors", () => {

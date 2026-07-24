@@ -30,7 +30,7 @@ import {
 } from "@studydeck/shared";
 import { ProjectAccessService } from "../access/project-access.service.js";
 import { badRequest, conflict, resourceNotFound } from "../errors/api-error.js";
-import { generationJobOptions } from "../jobs/job-options.js";
+import { generationJobOptions, narrationJobOptions } from "../jobs/job-options.js";
 import { errorLogFields, injectTraceContext, logger, withTraceSpan } from "../observability.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { ProjectStorageService, rewriteProjectDocument } from "../storage/project-storage.service.js";
@@ -439,7 +439,7 @@ export class ProjectsService {
       const queueJob = await this.generationQueue.add(
         "generate-narration",
         { projectId: project.id, userId: access.project.userId, generationJobId: job.id, traceContext: injectTraceContext() },
-        generationJobOptions(),
+        narrationJobOptions(),
       );
       await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
       return { projectId: project.id, jobId: job.id, queueJobId: queueJob.id, status: "script_queued" };

@@ -30,7 +30,7 @@ import {
 } from "@studydeck/shared";
 import { ProjectAccessService } from "../access/project-access.service.js";
 import { badRequest, conflict, resourceNotFound } from "../errors/api-error.js";
-import { generationJobOptions } from "../jobs/job-options.js";
+import { generationJobOptions, narrationJobOptions } from "../jobs/job-options.js";
 import { enqueueOrRetryJob, needsQueueRecovery } from "../jobs/queue-recovery.js";
 import { injectTraceContext, withTraceSpan } from "../observability.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -725,7 +725,7 @@ export class DefenseService {
           planRevision,
           traceContext: injectTraceContext(),
         },
-        { ...generationJobOptions(), jobId: `defense-narration-${narrationJob.id}` },
+        { ...narrationJobOptions(), jobId: `defense-narration-${narrationJob.id}` },
       );
     } catch (error) {
       await this.prisma.$transaction([

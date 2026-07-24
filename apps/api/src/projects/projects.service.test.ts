@@ -148,6 +148,22 @@ describe("ProjectsService generation", () => {
     expect(usage.reserveCreationSlot).not.toHaveBeenCalled();
   });
 
+  it("queues narration with one final BullMQ attempt", async () => {
+    const { prisma, queue, service } = createHarness();
+    prisma.project.findUnique.mockResolvedValue(project());
+    prisma.generationJob.findFirst.mockResolvedValueOnce(null);
+    prisma.generationJob.create.mockResolvedValueOnce({ id: "narration-job-1" });
+
+    await service.enqueueNarration("user-1", "project-1");
+
+    expect(queue.add).toHaveBeenCalledWith(
+      "generate-narration",
+      expect.objectContaining({ projectId: "project-1", userId: "user-1" }),
+      expect.objectContaining({ attempts: 1 }),
+    );
+    expect(queue.add.mock.calls[0][2]).not.toHaveProperty("backoff");
+  });
+
   it("returns ready without queueing when a presentation already exists", async () => {
     const { prisma, queue, service } = createHarness();
     prisma.project.findUnique.mockResolvedValueOnce(project({

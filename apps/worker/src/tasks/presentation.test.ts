@@ -17,9 +17,8 @@ import {
 import { generatePresentation as generatePresentationFromOrchestrator } from "./presentation/orchestrator.js";
 import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./presentation/prompts/builders.js";
 import { buildFullNarrationDurationRewritePrompt, buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
-import { buildNarrationRepairPrompt } from "./presentation/prompts/builders.js";
 import { buildFallbackNarrativeItem, normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
-import { generateYandexNarration, NARRATION_MAX_PROVIDER_ATTEMPTS, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
+import { generateYandexNarration, MAX_YANDEX_NARRATION_TEXT_CALLS, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
 import { NARRATION_SYSTEM_PROMPT } from "./presentation/constants.js";
 import { sourceEvidenceForSlide } from "./presentation/planning/builders.js";
 import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
@@ -215,7 +214,7 @@ describe("presentation compatibility facade", () => {
       .toContainEqual(expect.stringContaining("[planning_formula]"));
     expect(() => normalizeNarrationText(narration, project, plan)).toThrow("contains template narration");
   });
-  it("allows one narration pass and three automatic full-regeneration attempts", () => {
+  it("caps narration at one initial call and one full replacement", () => {
     const project = {
       id: "narration-recovery-budget",
       title: "Saturn",
@@ -226,19 +225,7 @@ describe("presentation compatibility facade", () => {
       slideCount: 10,
     };
 
-    const prompt = buildNarrationRepairPrompt(
-      project,
-      [],
-      [],
-      "Short invalid narration",
-      new Error("AI narration quality check failed: narration duration is below 10 minutes"),
-      undefined,
-      4,
-    );
-
-    expect(NARRATION_MAX_PROVIDER_ATTEMPTS).toBe(4);
-    expect(prompt).toContain("automatic full regeneration attempt 4 of 4");
-    expect(prompt).toContain("Rewrite the full narration from scratch");
+    expect(MAX_YANDEX_NARRATION_TEXT_CALLS).toBe(2);
   });
 
   it("accepts a nine-minute ten-slide narration and flags text below that duration", () => {
@@ -594,16 +581,16 @@ describe("Yandex narration full duration rewrite", () => {
     }
   });
 
-  it("uses the same full rewrite after an awaited targeted spoken rewrite becomes too short", async () => {
+  it("uses a full rewrite directly for an initial spoken-narration defect", async () => {
     process.env.YANDEX_FOLDER_ID = "test-folder";
     const initial = completeNarration(120).replace("fact2_0_0", `${";".repeat(93)} fact2_0_0`);
     const originalFetch = global.fetch;
     let calls = 0;
-    global.fetch = async () => yandexTextResponse([initial, narrationSection(2, 60), completeNarration()][calls++] || "");
+    global.fetch = async () => yandexTextResponse([initial, completeNarration()][calls++] || "");
 
     try {
       const result = await generateYandexNarration("test-key", project, [], plan);
-      expect(calls).toBe(3);
+      expect(calls).toBe(2);
       expect(() => normalizeNarrationText(result, project, plan)).not.toThrow();
     } finally {
       global.fetch = originalFetch;
@@ -618,7 +605,7 @@ describe("Yandex narration full duration rewrite", () => {
     global.fetch = async () => yandexTextResponse(calls++ === 0 ? short : short);
 
     try {
-      await expect(generateYandexNarration("test-key", project, [], plan)).rejects.toThrow("duration is below");
+      await expect(generateYandexNarration("test-key", project, [], plan)).rejects.toThrow("narration_quality_failure");
       expect(calls).toBe(2);
     } finally {
       global.fetch = originalFetch;
@@ -635,7 +622,7 @@ describe("Yandex narration full duration rewrite", () => {
     };
 
     try {
-      await expect(generateYandexNarration("test-key", project, [], plan)).rejects.toThrow("503 unavailable");
+      await expect(generateYandexNarration("test-key", project, [], plan)).rejects.toThrow("narration_provider_failure");
       expect(calls).toBe(1);
     } finally {
       global.fetch = originalFetch;
@@ -1812,7 +1799,7 @@ describe("generatePresentation fallback behavior", () => {
       expect(bodies).toHaveLength(5);
       expect(bodies[0].json_schema?.schema).toBeTruthy();
       expect(bodies[1].json_object).toBeUndefined();
-      expect(bodies[2].messages[1].text).toContain("Rewrite the full narration from scratch");
+      expect(bodies[2].messages[1].text).toContain("completely new, coherent report");
       expect(bodies[3].json_schema?.schema).toBeTruthy();
       expect(bodies[4].json_object).toBe(true);
       expect(bodies[4].json_schema).toBeUndefined();
@@ -1826,7 +1813,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("rewrites only the marked narration section when neighboring slides repeat a closing sentence", async () => {
+  it("rewrites the full narration when neighboring slides repeat a closing sentence", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -1860,8 +1847,7 @@ describe("generatePresentation fallback behavior", () => {
       );
       expect(() => presentationSchema.parse(presentation)).not.toThrow();
       const acceptedSections = parseNarrationSections(presentation.generatedText);
-      expect(acceptedSections[0]?.text).toBe(parseNarrationSections(repeatedText)[0]?.text);
-      expect(acceptedSections[1]?.text).toBe(parseNarrationSections(rewrittenText)[1]?.text);
+      expect(acceptedSections.map((section) => section.text)).toEqual(parseNarrationSections(rewrittenText).map((section) => section.text));
       expectNoForbiddenNarration(visiblePresentationText(presentation));
     } finally {
       global.fetch = originalFetch;
@@ -1944,7 +1930,7 @@ describe("generatePresentation fallback behavior", () => {
           slideCount: 14,
         },
         [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Narration repair keeps each section concise and specific." }],
-      )).rejects.toThrow("AI narration quality check failed");
+      )).rejects.toThrow("narration_quality_failure");
       return;
 
     } finally {
@@ -1985,7 +1971,7 @@ describe("generatePresentation fallback behavior", () => {
           },
           [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "Narration repair keeps each section concise and specific." }],
         ),
-      ).rejects.toThrow("must have 2-7 narration sentences");
+      ).rejects.toThrow("AI generation failed. yandex: narration_quality_failure");
     } finally {
       global.fetch = originalFetch;
     }
@@ -2022,7 +2008,7 @@ describe("generatePresentation fallback behavior", () => {
           },
           [{ id: "src-1", label: "Source", type: "WEB", size: 0, excerpt: "A process has ordered steps." }],
         ),
-      ).rejects.toThrow("expected 3 narration sections");
+      ).rejects.toThrow("narration_quality_failure");
     } finally {
       global.fetch = originalFetch;
     }

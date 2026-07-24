@@ -8,10 +8,10 @@ import { readObjectBuffer } from "../storage.js";
 import { extractTextFromSource } from "./extract.js";
 import { enrichPresentationImages } from "./image-search.js";
 import {
-  classifyGenerationError,
   generationFailureCategory,
   logGenerationStage,
   safeGenerationError,
+  shouldRetryGenerationJob,
   updateGenerationProgress,
   type GenerationProgressStage,
 } from "./job-progress.js";
@@ -253,9 +253,8 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
   } catch (error) {
     const recovery = safeGenerationError(error);
     const failureCategory = generationFailureCategory(error);
-    const retryClass = classifyGenerationError(error);
     const attempts = typeof job.opts.attempts === "number" ? job.opts.attempts : 1;
-    const willRetry = retryClass === "transient" && job.attemptsMade + 1 < attempts;
+    const willRetry = shouldRetryGenerationJob(kind, error, job.attemptsMade, attempts);
     if (!willRetry) {
       job.discard();
     }

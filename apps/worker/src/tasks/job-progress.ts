@@ -59,6 +59,18 @@ export function generationJobOptions() {
   };
 }
 
+export function narrationJobOptions() {
+  return {
+    attempts: 1,
+    removeOnComplete: { age: 60 * 60 * 24, count: 100 },
+    removeOnFail: { age: 60 * 60 * 24 * 7, count: 200 },
+  };
+}
+
+export function shouldRetryGenerationJob(kind: "narration" | "presentation", error: unknown, attemptsMade: number, attempts: number) {
+  return kind !== "narration" && classifyGenerationError(error) === "transient" && attemptsMade + 1 < attempts;
+}
+
 export async function updateGenerationProgress(
   job: Pick<Job, "id" | "updateProgress">,
   stage: GenerationProgressStage,
