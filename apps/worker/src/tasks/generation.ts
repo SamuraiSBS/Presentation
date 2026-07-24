@@ -18,6 +18,8 @@ import {
 import { generateNarrationDraft, generatePresentationFromNarration } from "./presentation.js";
 import { searchWebSources } from "./web-search.js";
 import { runWithUsageContext } from "../usage-ledger.js";
+import { failCostEnvelope, reserveCostEnvelope, settleCostEnvelope } from "../cost-envelope.js";
+import { createMandatorySourceSnapshot, parseMandatorySourceSnapshot, snapshotSources } from "../source-snapshot.js";
 import {
   handleDefenseAnalysisJob,
   handleDefenseComplianceJob,
@@ -138,7 +140,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       "studydeck.provider": process.env.WEB_SEARCH_PROVIDER || "tavily",
     }, () => defenseBundle
       ? Promise.resolve([defenseGroundingSource(project.id, defenseBundle)])
-      : prepareGenerationSources(project, { refreshWeb: kind === "narration" }), traceContext);
+      : prepareGenerationSources(project, { refreshWeb: kind === "narration", costEnvelopeId: job.data.costEnvelopeId }), traceContext);
     finishStage("researching");
 
     if (kind === "narration") {
@@ -215,7 +217,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     // quality loop. Re-audit the exact document that will be persisted: a
     // rejected candidate must never increment a revision or become ready.
     await setStage("validating");
-    const release = productionQualityReleaseResult(presentation, presentation.sources, generationProject);
+    const release = productionQualityReleaseResult(presentation, presentation.sources, { ...generationProject, mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId) });
     logger.info({
       projectId,
       jobId: job.id,
@@ -441,13 +443,23 @@ export async function prepareGenerationSources(project: {
     text: string;
     included?: boolean;
   }>;
-}, options: { refreshWeb?: boolean } = {}) {
+}, options: { refreshWeb?: boolean; costEnvelopeId?: string } = {}) {
   // Requirements-driven projects may use the web for user-approved decorative
   // images, but never as factual grounding. Keep that boundary server-side so
   // a legacy `with_sources` mode cannot accidentally trigger Tavily research.
   const refreshWeb = project.workflow === "requirements_driven" ? false : options.refreshWeb ?? true;
   const sources: Source[] = [];
   const storedWebSources: Source[] = [];
+
+  if (options.costEnvelopeId) {
+    const envelope = await getPrisma().costEnvelope.findUnique({
+      where: { id: options.costEnvelopeId },
+      select: { sourceSnapshot: true, policySnapshot: true },
+    });
+    const snapshot = parseMandatorySourceSnapshot(envelope?.sourceSnapshot);
+    if (snapshot) return snapshotSources(snapshot);
+    if (!refreshWeb) throw new Error("Mandatory source snapshot is unavailable for this generation run");
+  }
 
   for (const source of project.sources) {
     if (source.included === false) continue;
@@ -527,9 +539,18 @@ export async function prepareGenerationSources(project: {
     }
   }
 
-  if (refreshWeb && (!sources.length || project.mode === "with_sources")) {
+  if (options.costEnvelopeId && refreshWeb) {
     const prisma = getPrisma();
     let webSources: Source[];
+    const reservationKey = `${options.costEnvelopeId}:mandatory-source-search`;
+    const envelope = await prisma.costEnvelope.findUniqueOrThrow({ where: { id: options.costEnvelopeId }, select: { policySnapshot: true } });
+    const amountRub = String((envelope.policySnapshot as { buckets?: { sources?: string } }).buckets?.sources || "");
+    const reservation = await reserveCostEnvelope({ envelopeId: options.costEnvelopeId, idempotencyKey: reservationKey, bucket: "sources", stage: "mandatory_source_search", amountRub });
+    if (reservation.status !== "reserved") throw new Error("Mandatory source research is unavailable for this generation run");
+    // The reservation is the run-scoped mutex. A concurrent BullMQ retry
+    // must wait for the first attempt to persist its snapshot instead of
+    // issuing a second paid Tavily request with the same reservation key.
+    if (reservation.idempotent) throw new Error("Mandatory source research is already in progress for this generation run");
     try {
       webSources = await searchWebSources({ prompt: project.prompt, title: project.title });
     } catch (error) {
@@ -538,18 +559,11 @@ export async function prepareGenerationSources(project: {
         stage: "researching",
         provider: process.env.WEB_SEARCH_PROVIDER || "tavily",
       });
-      if (sources.length || storedWebSources.length) {
-        logger.warn({ projectId: project.id, fallback: "stored_sources", ...errorLogFields(error) }, "web research failed; continuing with saved source material");
-        return [...sources, ...storedWebSources];
-      }
+      await failCostEnvelope({ envelopeId: options.costEnvelopeId, idempotencyKey: reservationKey, reason: "mandatory_source_search_failed" }).catch(() => undefined);
       throw error;
     }
-
-    // Keep the last successful web research intact until a replacement has
-    // actually arrived. A transient Tavily outage must not erase grounding.
-    await prisma.source.deleteMany({ where: { projectId: project.id, type: "WEB" } });
-
-    for (const source of webSources) {
+    const snapshotCandidates: Source[] = [];
+    for (const source of webSources.slice(0, 4)) {
       const created = await prisma.source.create({
         data: {
           projectId: project.id,
@@ -562,7 +576,7 @@ export async function prepareGenerationSources(project: {
         },
       });
 
-      sources.push({
+      snapshotCandidates.push({
         id: created.id,
         label: created.label,
         type: created.type,
@@ -572,6 +586,31 @@ export async function prepareGenerationSources(project: {
         url: created.url || undefined,
         included: true,
       });
+    }
+    const snapshot = createMandatorySourceSnapshot(snapshotCandidates);
+    if (!snapshot) {
+      await failCostEnvelope({ envelopeId: options.costEnvelopeId, idempotencyKey: reservationKey, reason: "mandatory_source_search_insufficient" });
+      throw new Error("Mandatory source research did not return enough relevant sources");
+    }
+    await prisma.costEnvelope.update({ where: { id: options.costEnvelopeId }, data: { sourceSnapshot: snapshot } });
+    await settleCostEnvelope({ envelopeId: options.costEnvelopeId, idempotencyKey: reservationKey, actualRub: amountRub });
+    return snapshotSources(snapshot);
+  }
+
+  if (refreshWeb && (!sources.length || project.mode === "with_sources")) {
+    const prisma = getPrisma();
+    let webSources: Source[];
+    try {
+      webSources = await searchWebSources({ prompt: project.prompt, title: project.title });
+    } catch (error) {
+      captureGenerationError(error, { projectId: project.id, stage: "researching", provider: process.env.WEB_SEARCH_PROVIDER || "tavily" });
+      if (sources.length || storedWebSources.length) return [...sources, ...storedWebSources];
+      throw error;
+    }
+    await prisma.source.deleteMany({ where: { projectId: project.id, type: "WEB" } });
+    for (const source of webSources) {
+      const created = await prisma.source.create({ data: { projectId: project.id, label: source.label, type: source.type, excerpt: source.excerpt, text: source.excerpt, url: source.url, included: true } });
+      sources.push({ id: created.id, label: created.label, type: created.type, size: created.size, objectKey: created.objectKey || undefined, excerpt: created.excerpt, url: created.url || undefined, included: true });
     }
   }
 

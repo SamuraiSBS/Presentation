@@ -707,6 +707,7 @@ model CostEnvelope {
   limitRub          Decimal            @db.Decimal(24, 8)
   policySnapshot    Json
   catalogSnapshot   Json
+  sourceSnapshot    Json?
   reservedRub       Decimal            @default(0) @db.Decimal(24, 8)
   settledRub        Decimal            @default(0) @db.Decimal(24, 8)
   releasedRub       Decimal            @default(0) @db.Decimal(24, 8)

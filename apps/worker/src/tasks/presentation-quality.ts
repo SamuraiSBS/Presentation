@@ -32,6 +32,7 @@ export type QualityProjectInput = {
   slideCount: number;
   generationBrief?: unknown;
   researchBrief?: unknown;
+  mandatorySourceSnapshot?: boolean;
 };
 
 export type GenerationMode = "openai" | "yandex" | "aitunnel" | "demo" | "demo-fallback";
@@ -1191,6 +1192,15 @@ export function findFactualRiskIssues(presentation: PresentationDocument, source
   });
 }
 
+function findMandatorySourceSnapshotIssues(presentation: PresentationDocument, sources: Source[], project?: QualityProjectInput): QualityIssue[] {
+  if (!project?.mandatorySourceSnapshot) return [];
+  const webSources = sources.filter((source) => source.type === "WEB" && source.url).slice(0, 4);
+  if (webSources.length < 3) return [{ severity: "blocker", category: "factual_risk", message: "The mandatory source snapshot has fewer than three web sources.", repairInstruction: "Stop this run before release; collect a new source snapshot in a new generation run." }];
+  const referenced = new Set(presentation.slides.flatMap((slide) => slide.sourceRefs.map((reference) => reference.sourceId)));
+  const missing = webSources.filter((source) => !referenced.has(source.id));
+  return missing.length ? [{ severity: "blocker", category: "factual_risk", message: "The released presentation is missing required source attributions.", repairInstruction: "Attach references from the saved source snapshot to factual slides before release." }] : [];
+}
+
 /**
  * Repairs provenance deterministically: attach only a source whose available
  * label/excerpt actually supports the claim, otherwise remove false precision.
@@ -1534,6 +1544,7 @@ export function critiquePresentationDeterministically(
     ...findDeckWideDuplicateIssues(presentation),
     ...findRepeatedSentenceStartIssues(presentation),
     ...findFactualRiskIssues(presentation, sources),
+    ...findMandatorySourceSnapshotIssues(presentation, sources, project),
     ...findEntityCategoryMismatchIssues(presentation),
     ...(project ? findWeakConclusionIssues(presentation, project) : []),
     ...(project ? findTopicRelevanceIssues(presentation, project) : []),

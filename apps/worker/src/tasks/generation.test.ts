@@ -5,17 +5,22 @@ import { searchWebSources } from "./web-search.js";
 import { readObjectBuffer } from "../storage.js";
 import { extractTextFromSource } from "./extract.js";
 
+const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, costEnvelope, prismaMock } = vi.hoisted(() => ({
+  reserveCostEnvelope: vi.fn(),
+  settleCostEnvelope: vi.fn(),
+  failCostEnvelope: vi.fn(),
+  costEnvelope: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
+  prismaMock: {
+    source: { create: vi.fn(), deleteMany: vi.fn(), update: vi.fn() },
+    costEnvelope: undefined as unknown,
+    operationalEvent: { create: vi.fn().mockResolvedValue({}) },
+  },
+}));
+
+prismaMock.costEnvelope = costEnvelope;
+
 vi.mock("../prisma.js", () => ({
-  getPrisma: () => ({
-    source: {
-      create: vi.fn(),
-      deleteMany: vi.fn(),
-      update: vi.fn(),
-    },
-    operationalEvent: {
-      create: vi.fn().mockResolvedValue({}),
-    },
-  }),
+  getPrisma: () => prismaMock,
 }));
 
 vi.mock("../storage.js", () => ({
@@ -34,11 +39,23 @@ vi.mock("./web-search.js", () => ({
   searchWebSources: vi.fn(),
 }));
 
+vi.mock("../cost-envelope.js", () => ({
+  reserveCostEnvelope,
+  settleCostEnvelope,
+  failCostEnvelope,
+}));
+
 describe("prepareGenerationSources", () => {
   beforeEach(() => {
     vi.mocked(searchWebSources).mockReset();
     vi.mocked(readObjectBuffer).mockReset();
     vi.mocked(extractTextFromSource).mockReset();
+    reserveCostEnvelope.mockReset();
+    settleCostEnvelope.mockReset();
+    failCostEnvelope.mockReset();
+    costEnvelope.findUnique.mockReset();
+    costEnvelope.findUniqueOrThrow.mockReset();
+    costEnvelope.update.mockReset();
   });
 
   it("uses existing extracted sources without network search", async () => {
@@ -218,6 +235,53 @@ describe("prepareGenerationSources", () => {
 
     expect(searchWebSources).not.toHaveBeenCalled();
     expect(sources[0]).toMatchObject({ id: "defense-project-accepted-speech", type: "PROMPT" });
+  });
+
+  it("creates one persisted mandatory snapshot and reuses it on BullMQ replay", async () => {
+    const policySnapshot = { buckets: { sources: "0.50000000" } };
+    const snapshot = {
+      version: 1,
+      capturedAt: "2026-07-24T10:00:00.000Z",
+      provenance: { provider: "tavily", queryAt: "2026-07-24T10:00:00.000Z" },
+      sources: [
+        { sourceId: "saved-1", title: "One", url: "https://nasa.gov/one", evidenceExcerpt: "Evidence one" },
+        { sourceId: "saved-2", title: "Two", url: "https://esa.int/two", evidenceExcerpt: "Evidence two" },
+        { sourceId: "saved-3", title: "Three", url: "https://example.edu/three", evidenceExcerpt: "Evidence three" },
+      ],
+    };
+    costEnvelope.findUnique.mockResolvedValueOnce({ sourceSnapshot: null, policySnapshot });
+    costEnvelope.findUniqueOrThrow.mockResolvedValue({ policySnapshot });
+    reserveCostEnvelope.mockResolvedValue({ status: "reserved" });
+    settleCostEnvelope.mockResolvedValue({ status: "settled" });
+    const created = ["saved-1", "saved-2", "saved-3"].map((id, index) => ({ id, label: ["One", "Two", "Three"][index], type: "WEB", size: 0, objectKey: null, excerpt: `Evidence ${["one", "two", "three"][index]}`, url: [`https://nasa.gov/one`, `https://esa.int/two`, `https://example.edu/three`][index] }));
+    vi.mocked(prismaMock.source.create).mockImplementation(async () => created.shift());
+    vi.mocked(searchWebSources).mockResolvedValue([
+      { id: "web-1", label: "One", type: "WEB", size: 0, excerpt: "Evidence one", url: "https://nasa.gov/one" },
+      { id: "web-2", label: "Two", type: "WEB", size: 0, excerpt: "Evidence two", url: "https://esa.int/two" },
+      { id: "web-3", label: "Three", type: "WEB", size: 0, excerpt: "Evidence three", url: "https://example.edu/three" },
+    ]);
+
+    const project = { id: "project-snapshot", prompt: "Saturn", mode: "standard", speechDraft: null, sources: [] };
+    const first = await prepareGenerationSources(project, { refreshWeb: true, costEnvelopeId: "envelope-1" });
+    expect(first.map((source) => source.id)).toEqual(["saved-1", "saved-2", "saved-3"]);
+    expect(searchWebSources).toHaveBeenCalledTimes(1);
+    expect(reserveCostEnvelope).toHaveBeenCalledWith(expect.objectContaining({ bucket: "sources", idempotencyKey: "envelope-1:mandatory-source-search" }));
+
+    costEnvelope.findUnique.mockResolvedValueOnce({ sourceSnapshot: snapshot, policySnapshot });
+    const replay = await prepareGenerationSources(project, { refreshWeb: true, costEnvelopeId: "envelope-1" });
+    expect(replay.map((source) => source.id)).toEqual(["saved-1", "saved-2", "saved-3"]);
+    expect(searchWebSources).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not duplicate Tavily work when a concurrent retry owns the source reservation", async () => {
+    const policySnapshot = { buckets: { sources: "0.50000000" } };
+    costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: null, policySnapshot });
+    costEnvelope.findUniqueOrThrow.mockResolvedValue({ policySnapshot });
+    reserveCostEnvelope.mockResolvedValue({ status: "reserved", idempotent: true });
+
+    await expect(prepareGenerationSources({ id: "project-in-flight", prompt: "Saturn", mode: "standard", speechDraft: null, sources: [] }, { refreshWeb: true, costEnvelopeId: "envelope-in-flight" }))
+      .rejects.toThrow("already in progress");
+    expect(searchWebSources).not.toHaveBeenCalled();
   });
 
   it("repairs an unsafe generated layout locally without another AI request", () => {

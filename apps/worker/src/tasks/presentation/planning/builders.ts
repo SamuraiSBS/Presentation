@@ -148,9 +148,9 @@ import { hasGenericOrMetaScreenText, looksLikeSentenceFragment, completeNarratio
 import { parseJsonText, cleanMultilineText, cleanText, projectTopic, shortenSentence, shortenWords } from "../utilities.js";
 
 export function buildResearchBrief(project: ProjectInput, sources: Source[]): ResearchBrief {
-  const facts = sources
+  const facts = sources.slice(0, 4)
     .map((source) => {
-      const text = completeSourceSentence(source.excerpt || source.label || project.prompt, 260);
+      const text = completeSourceSentence((source.excerpt || source.label || project.prompt).slice(0, 320), 260);
       return {
         text,
         sourceId: source.id,
@@ -169,7 +169,7 @@ export function buildResearchBrief(project: ProjectInput, sources: Source[]): Re
 }
 
 export function buildResearchVocabulary(project: ProjectInput, sources: Source[]) {
-  const text = [project.title, project.prompt, ...sources.map((source) => source.excerpt || source.label)].join(" ");
+  const text = [project.title, project.prompt, ...sources.slice(0, 4).map((source) => (source.excerpt || source.label).slice(0, 320))].join(" ");
   const terms = [...new Set(text.match(/[\p{L}\p{N}][\p{L}\p{N}-]{5,}/gu) || [])]
     .filter((term) => !/^\d+$/.test(term))
     .slice(0, 6);

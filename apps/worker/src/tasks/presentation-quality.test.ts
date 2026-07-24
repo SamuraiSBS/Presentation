@@ -54,6 +54,34 @@ const source = {
   excerpt: "The source explains distinct study points with enough grounding.",
 };
 
+const mandatorySourceProject = {
+  id: "project-mandatory-sources",
+  title: "Quality deck",
+  prompt: "Quality deck",
+  scenario: "lesson",
+  level: "beginner",
+  mode: "standard",
+  slideCount: 2,
+  mandatorySourceSnapshot: true,
+};
+
+describe("mandatory source snapshot release gate", () => {
+  it("blocks a standard economical run until all snapshot sources are attributed", () => {
+    const presentation = makePresentation();
+    const sources = [1, 2, 3].map((number) => ({
+      ...source,
+      id: `snapshot-${number}`,
+      url: `https://example.edu/${number}`,
+    }));
+    const release = productionQualityReleaseResult(presentation, sources, mandatorySourceProject);
+
+    expect(release.finalDisposition).toBe("rejected");
+    expect(release.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: "factual_risk", severity: "blocker" }),
+    ]));
+  });
+});
+
 function makePresentation(overrides: Partial<PresentationDocument> = {}) {
   const slides = overrides.slides || [
     makeSlide(1, "Why the topic matters", "The topic changes how students understand the problem.", [
