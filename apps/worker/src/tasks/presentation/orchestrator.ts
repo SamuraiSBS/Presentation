@@ -27,6 +27,7 @@ import {
   type MermaidDiagramSpec,
   type Source,
   ensureEditableCanvas,
+  sourceRefFromSource,
   presentationSchema,
   PREMIUM_PRESENTATION_THEMES,
   PREMIUM_PRESENTATION_THEME_IDS,
@@ -58,7 +59,7 @@ type ProjectInput = {
   slideCount: number;
 };
 
-type AiGenerationMode = "openai" | "yandex" | "aitunnel";
+type AiGenerationMode = "openai" | "yandex" | "aitunnel" | "local";
 type FallbackGenerationMode = "demo" | "demo-fallback";
 type EnvLike = Record<string, string | undefined>;
 
@@ -143,10 +144,10 @@ import type { YandexCompletionResponse } from "./constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "./constants.js";
 import { selectAiProviders } from "./providers/provider-selection.js";
 import { generateWithAitunnel, generateWithOpenAI, generateAitunnelPresentationFromNarration, generateOpenAIPresentationFromNarration, generateAitunnelNarration, generateOpenAINarration, generateWithYandex, generateYandexPresentationFromNarration, generateYandexNarration, generateNarrativePlanWithProvider } from "./providers/generation.js";
-import { buildResearchBrief, buildDesignBrief, buildDeckStory, buildSlideTextPlans, normalizeNarrativePlan } from "./planning/builders.js";
+import { buildResearchBrief, buildDesignBrief, buildDeckStory, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "./planning/builders.js";
 import { normalizeNarrationText, parseNarrationSections } from "./narration/processing.js";
 import { normalizePresentation } from "./normalization/presentation.js";
-import { isDemoGenerationAllowed } from "./quality/orchestration.js";
+import { assertPresentationQuality, isDemoGenerationAllowed } from "./quality/orchestration.js";
 import { buildFallbackGeneratedText, demoPresentation } from "./utilities.js";
 import { AitunnelProjectBudget, runWithAitunnelProjectBudget } from "../../aitunnel-narration-budget.js";
 
@@ -248,7 +249,109 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
   throw new Error(`AI narration generation failed. ${errors.join(" | ")}`);
 }
 
+/**
+ * Economic presentation generation starts after narration is accepted.  This
+ * projection is intentionally local: it never instantiates a provider or
+ * invokes a model repair/critic path.
+ */
 export async function generatePresentationFromNarration(
+  project: ProjectInput,
+  sources: Source[],
+  narrationText: string,
+): Promise<PresentationDocument> {
+  return buildLocalPresentationFromAcceptedNarration(project, sources, narrationText);
+}
+
+export function buildLocalPresentationFromAcceptedNarration(
+  project: ProjectInput,
+  sources: Source[],
+  narrationText: string,
+): PresentationDocument {
+  const acceptedNarration = normalizeNarrationText(narrationText, project);
+  const sections = parseNarrationSections(acceptedNarration);
+  if (sections.length !== project.slideCount || sections.some((section, index) => section.order !== index + 1 || !section.text)) {
+    throw new Error("Accepted narration does not contain one complete section per slide");
+  }
+
+  const researchBrief = buildResearchBrief(project, sources);
+  const narrativePlan = normalizeNarrativePlan(sections.map((section, index) => ({
+    ...localNarrativeFields(section.text),
+    slideOrder: index + 1,
+    slideTitle: section.title,
+    audienceQuestion: section.title,
+    transitionToNext: "",
+    supportedFactSourceIds: relevantSourceIds(section.text, sources),
+  })), project);
+  const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
+  const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
+  const slideTextPlans = buildSlideTextPlans(project, acceptedNarration, narrativePlan, deckStory, sources);
+  const slideBlueprints = buildSlideBlueprints(project, acceptedNarration, narrativePlan, designBrief);
+  generationPipelineArtifactsSchema.parse({ researchBrief, narrativePlan, deckStory, designBrief, slideBlueprints, slideTextPlans });
+
+  const raw = {
+    title: project.title,
+    generatedText: acceptedNarration,
+    narrativePlan,
+    designBrief,
+    slides: slideTextPlans.map((textPlan, index) => {
+      const sourceIds = narrativePlan[index]?.supportedFactSourceIds || [];
+      return {
+        order: textPlan.slideOrder,
+        slideKind: index === 0 ? "title" : index === project.slideCount - 1 ? "summary" : "content",
+        title: textPlan.title,
+        thesis: textPlan.thesis,
+        bullets: localSectionBullets(sections[index].text, textPlan.bullets),
+        speakerNotes: sections[index].text,
+        sourceRefs: sourceIds
+          .map((sourceId) => sources.find((source) => source.id === sourceId))
+          .filter((source): source is Source => Boolean(source))
+          .map(sourceRefFromSource),
+      };
+    }),
+    speechScript: sections.map((section) => ({ slideOrder: section.order, slideTitle: section.title, text: section.text })),
+  };
+  const normalized = normalizePresentation(raw, project, sources, "local", acceptedNarration, narrativePlan, true, designBrief);
+  const concise = presentationSchema.parse({
+    ...normalized,
+    slides: normalized.slides.map((slide) => ({
+      ...slide,
+      bullets: slide.bullets.slice(0, 3).map(shortLocalBullet),
+      blocks: slide.blocks.map((block) => block.type === "bullets" ? { ...block, items: block.items.slice(0, 3).map(shortLocalBullet) } : block),
+    })),
+  });
+  assertPresentationQuality(concise, project, "local");
+  return ensureEditableCanvas({ ...concise, slides: concise.slides.map((slide) => ({ ...slide, canvas: undefined })) });
+}
+
+function localNarrativeFields(sectionText: string) {
+  const sentence = sectionText.split(/(?<=[.!?])\s+/)[0]?.trim() || sectionText;
+  const keyMessage = sentence.length <= 160 ? sentence : `${sentence.slice(0, 156).replace(/\s+\S*$/, "").trim()}.`;
+  return { slidePurpose: keyMessage, keyMessage, evidenceOrExplanation: keyMessage, whyItMatters: keyMessage };
+}
+
+function shortLocalBullet(value: string) {
+  const words = value.split(/\s+/).filter(Boolean);
+  return words.length <= 5 ? value : `${words.slice(0, 4).join(" ")}.`;
+}
+
+function localSectionBullets(sectionText: string, fallback: string[]) {
+  const bullets = sectionText.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean).slice(1, 4).map(shortLocalBullet);
+  return bullets.length >= 2 ? bullets : fallback.slice(0, 3).map(shortLocalBullet);
+}
+
+function relevantSourceIds(sectionText: string, sources: Source[]) {
+  const terms = new Set(sectionText.toLowerCase().match(/[\p{L}\p{N}]{5,}/gu) || []);
+  return sources.filter((source) => {
+    const sourceText = `${source.label} ${source.excerpt || ""}`.toLowerCase();
+    let matches = 0;
+    for (const term of terms) if (sourceText.includes(term) && ++matches >= 2) return true;
+    return false;
+  }).map((source) => source.id);
+}
+
+// Kept for direct provider regression coverage. Production jobs use the
+// local accepted-narration projection above.
+export async function generatePresentationFromNarrationWithProviders(
   project: ProjectInput,
   sources: Source[],
   narrationText: string,

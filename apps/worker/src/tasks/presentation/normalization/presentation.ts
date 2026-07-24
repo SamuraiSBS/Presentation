@@ -59,7 +59,7 @@ type ProjectInput = {
   slideCount: number;
 };
 
-type AiGenerationMode = "openai" | "yandex" | "aitunnel";
+type AiGenerationMode = "openai" | "yandex" | "aitunnel" | "local";
 type FallbackGenerationMode = "demo" | "demo-fallback";
 type EnvLike = Record<string, string | undefined>;
 

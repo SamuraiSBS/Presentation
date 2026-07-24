@@ -14,7 +14,7 @@ export const AITUNNEL_NARRATION_DEFAULT_REASONING_EFFORT = "minimal";
 export const AITUNNEL_ECONOMY_MODEL = "gemini-3.5-flash-lite";
 export const AITUNNEL_PRIMARY_MODEL = "gemini-3.6-flash";
 
-export type AitunnelStage = "narrative_plan" | "design_brief" | "quality_critique" | "narration" | "narration_rewrite" | "presentation" | "slide_text_repair" | "quality_repair";
+export type AitunnelStage = "narrative_plan" | "design_brief" | "quality_critique" | "narration_candidate" | "narration_fallback" | "narration" | "narration_rewrite" | "presentation" | "slide_text_repair" | "quality_repair";
 export type AitunnelNarrationReasoningEffort = "minimal" | "low" | "medium" | "high";
 export type AitunnelNarrationBudgetConfig = { budgetRub: string; maxOutputTokens: number; reasoningEffort: AitunnelNarrationReasoningEffort };
 export type AitunnelNarrationUsage = { inputTokens?: number; outputTokens?: number; reasoningTokens?: number };
@@ -24,6 +24,8 @@ const STAGE_POLICIES: Record<AitunnelStage, { model: "economy" | "primary"; maxO
   narrative_plan: { model: "economy", maxOutputTokens: 1200, reasoningEffort: "minimal" },
   design_brief: { model: "economy", maxOutputTokens: 1200, reasoningEffort: "minimal" },
   quality_critique: { model: "economy", maxOutputTokens: 800, reasoningEffort: "minimal" },
+  narration_candidate: { model: "economy", maxOutputTokens: 2400, reasoningEffort: "minimal" },
+  narration_fallback: { model: "primary", maxOutputTokens: 2400, reasoningEffort: "minimal" },
   narration: { model: "primary", maxOutputTokens: 2400, reasoningEffort: "minimal" },
   narration_rewrite: { model: "primary", maxOutputTokens: 2400, reasoningEffort: "minimal" },
   presentation: { model: "primary", maxOutputTokens: 6000, reasoningEffort: "minimal" },
@@ -45,7 +47,7 @@ export function aitunnelEconomyModel(env: EnvLike = process.env) {
 export function aitunnelStagePolicy(stage: AitunnelStage, env: EnvLike = process.env) {
   const base = STAGE_POLICIES[stage];
   const narration = aitunnelNarrationBudgetConfig(env);
-  return { model: aitunnelModelForStage(stage, env), maxOutputTokens: stage === "narration" || stage === "narration_rewrite" ? narration.maxOutputTokens : base.maxOutputTokens, reasoningEffort: stage === "narration" || stage === "narration_rewrite" ? narration.reasoningEffort : base.reasoningEffort };
+  return { model: aitunnelModelForStage(stage, env), maxOutputTokens: stage === "narration_candidate" || stage === "narration_fallback" || stage === "narration" || stage === "narration_rewrite" ? narration.maxOutputTokens : base.maxOutputTokens, reasoningEffort: stage === "narration_candidate" || stage === "narration_fallback" || stage === "narration" || stage === "narration_rewrite" ? narration.reasoningEffort : base.reasoningEffort };
 }
 export function aitunnelPriceForModel(model: string) {
   return aitunnelPriceForApprovedModel(model);

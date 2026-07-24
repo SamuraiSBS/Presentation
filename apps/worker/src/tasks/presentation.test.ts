@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { presentationSchema } from "@studydeck/shared";
+import { auditSlideCanvas, presentationSchema } from "@studydeck/shared";
 import {
   buildGenerationPrompt,
   buildSafePresentationFromNarration,
@@ -14,12 +14,12 @@ import {
   normalizeNarrativePlan,
   selectAiProviders,
 } from "./presentation.js";
-import { generatePresentation as generatePresentationFromOrchestrator } from "./presentation/orchestrator.js";
+import { generatePresentation as generatePresentationFromOrchestrator, generatePresentationFromNarrationWithProviders } from "./presentation/orchestrator.js";
 import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./presentation/prompts/builders.js";
 import { buildAitunnelFullNarrationRewritePrompt, buildFullNarrationDurationRewritePrompt, buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
 import { buildFallbackNarrativeItem, normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
 import { classifyAitunnelNarrationRewriteFailure, generateAitunnelNarration, generateYandexNarration, MAX_AITUNNEL_NARRATION_TEXT_CALLS, MAX_YANDEX_NARRATION_TEXT_CALLS, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
-import { AitunnelProjectBudget, estimateInputTokens } from "../aitunnel-narration-budget.js";
+import { AitunnelProjectBudget, estimateInputTokens, runWithAitunnelProjectBudget } from "../aitunnel-narration-budget.js";
 import { NARRATION_SYSTEM_PROMPT } from "./presentation/constants.js";
 import { sourceEvidenceForSlide } from "./presentation/planning/builders.js";
 import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
@@ -507,6 +507,27 @@ describe("Yandex narration full duration rewrite", () => {
     return Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, index === 0 ? 105 : index === 9 ? 130 : contentWords)).join("\n\n");
   }
 
+  it("builds a release-ready ten-slide local document from accepted narration without provider calls", async () => {
+    const accepted = completeNarration();
+    const originalFetch = global.fetch;
+    global.fetch = async () => { throw new Error("provider access is forbidden in the local presentation path"); };
+    try {
+      const presentation = await generatePresentationFromNarration(project, [{
+        id: "saturn-source", label: "Saturn reference", type: "WEB", url: "https://science.example/saturn",
+        excerpt: "Saturn is a planet with rings and a complex system of moons.",
+      }], accepted);
+
+      expect(presentation.generationMode).toBe("local");
+      expect(presentation.slides).toHaveLength(10);
+      expect(presentation.generatedText).toBe(accepted);
+      expect(presentation.speechScript.map((item) => item.text).join("\n\n")).toBe(accepted.replace(/Слайд \d+: [^\n]+\n/g, "").trim());
+      expect(presentation.slides.every((slide) => slide.bullets.length >= 2 && slide.bullets.length <= 3)).toBe(true);
+      expect(presentation.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!))).toEqual([]);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it("gives the ten-slide full rewrite an exact budget-derived editorial structure", () => {
     const prompt = buildFullNarrationDurationRewritePrompt(
       project,
@@ -651,13 +672,15 @@ describe("Yandex narration full duration rewrite", () => {
   it("caps AITUNNEL narration at one initial call and one complete rewrite", async () => {
     const short = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 60)).join("\n\n");
     let calls = 0;
+    const models: string[] = [];
     const client = {
-      responses: { create: async () => ({ output_text: [short, completeNarration()][calls++], usage: { input_tokens: 100, output_tokens: 100 } }) },
+      responses: { create: async (request: { model: string }) => { models.push(request.model); return { output_text: [short, completeNarration()][calls++], usage: { input_tokens: 100, output_tokens: 100 } }; } },
     } as never;
 
     const result = await generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan);
     expect(MAX_AITUNNEL_NARRATION_TEXT_CALLS).toBe(2);
     expect(calls).toBe(2);
+    expect(models).toEqual(["gemini-3.5-flash-lite", "gemini-3.6-flash"]);
     expect(() => normalizeNarrationText(result, project, plan)).not.toThrow();
   });
 
@@ -698,12 +721,32 @@ describe("Yandex narration full duration rewrite", () => {
 
   it("accepts a valid initial AITUNNEL narration without a rewrite", async () => {
     let calls = 0;
+    const models: string[] = [];
     const client = {
-      responses: { create: async () => ({ output_text: completeNarration(), usage: { input_tokens: 100, output_tokens: 100 }, id: `response-${++calls}` }) },
+      responses: { create: async (request: { model: string }) => { models.push(request.model); return { output_text: completeNarration(), usage: { input_tokens: 100, output_tokens: 100 }, id: `response-${++calls}` }; } },
     } as never;
 
     await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).resolves.toContain("Слайд 1:");
     expect(calls).toBe(1);
+    expect(models).toEqual(["gemini-3.5-flash-lite"]);
+  });
+
+  it("stops after an invalid Lite candidate and invalid single Flash fallback", async () => {
+    const short = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 60)).join("\n\n");
+    const models: string[] = [];
+    const client = { responses: { create: async (request: { model: string }) => { models.push(request.model); return { output_text: short, usage: { input_tokens: 100, output_tokens: 100 } }; } } } as never;
+
+    await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).rejects.toThrow("narration_quality_failure");
+    expect(models).toEqual(["gemini-3.5-flash-lite", "gemini-3.6-flash"]);
+  });
+
+  it("does not spend on a narration call when its reservation is refused", async () => {
+    let calls = 0;
+    const client = { responses: { create: async () => { calls += 1; return { output_text: completeNarration(), usage: { input_tokens: 100, output_tokens: 100 } }; } } } as never;
+    const budget = new AitunnelProjectBudget({ AITUNNEL_PROJECT_BUDGET_RUB: "0.00000001", AITUNNEL_NARRATION_JOB_BUDGET_RUB: "0.00000001" });
+
+    await expect(runWithAitunnelProjectBudget(budget, () => generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan))).rejects.toThrow("narration_budget_exhausted_failure");
+    expect(calls).toBe(0);
   });
 
   it("does not retry an AITUNNEL provider failure", async () => {
@@ -722,7 +765,7 @@ describe("Yandex narration full duration rewrite", () => {
       responses: { create: async (request: Record<string, unknown>) => {
         calls += 1;
         expect(request).toMatchObject({
-          model: "gemini-3.6-flash",
+          model: "gemini-3.5-flash-lite",
           max_output_tokens: 2400,
           reasoning: { effort: "minimal", exclude: true },
         });
@@ -1413,7 +1456,7 @@ describe("generatePresentation fallback behavior", () => {
       "Экология города складывается из решений власти, бизнеса и самих жителей. Если люди чаще выбирают общественный транспорт, нагрузка на воздух становится меньше. Раздельный сбор помогает не превращать полезные материалы в лишний мусор. Небольшие привычки работают сильнее, когда их поддерживает много людей. Главный вывод в том, что чистый город начинается с понятных ежедневных действий.",
     ].join("\n");
 
-    await expect(generatePresentationFromNarration(
+    await expect(generatePresentationFromNarrationWithProviders(
       {
         id: "project-script",
         title: "Экология города",
@@ -1448,7 +1491,7 @@ describe("generatePresentation fallback behavior", () => {
     const originalFetch = global.fetch;
     global.fetch = async () => { throw new Error("Yandex request failed: 503 unavailable"); };
     try {
-      await expect(generatePresentationFromNarration(
+      await expect(generatePresentationFromNarrationWithProviders(
         {
         id: "project-script",
         title: studentPrompt,
@@ -2921,7 +2964,7 @@ describe("generatePresentation fallback behavior", () => {
     mockYandexTwoStep(narrationForSlides(titles), "{");
 
     try {
-      await expect(generatePresentationFromNarration(
+      await expect(generatePresentationFromNarrationWithProviders(
         {
           id: "project-1",
           title: "Porsche 911 heritage and innovation across generations of sports car engineering and design history worldwide",

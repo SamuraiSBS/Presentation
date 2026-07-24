@@ -35,7 +35,7 @@ export type QualityProjectInput = {
   mandatorySourceSnapshot?: boolean;
 };
 
-export type GenerationMode = "openai" | "yandex" | "aitunnel" | "demo" | "demo-fallback";
+export type GenerationMode = "openai" | "yandex" | "aitunnel" | "local" | "demo" | "demo-fallback";
 
 export type QualityRepairResponse = {
   generatedText?: unknown;

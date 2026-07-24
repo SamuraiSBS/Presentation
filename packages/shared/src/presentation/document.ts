@@ -12,7 +12,7 @@ export const presentationSchema = z.object({
   scenario: z.string(),
   level: z.string(),
   slideCount: z.number().int().positive(),
-  generationMode: z.enum(["openai", "yandex", "aitunnel", "demo", "demo-fallback"]),
+  generationMode: z.enum(["openai", "yandex", "aitunnel", "local", "demo", "demo-fallback"]),
   generatedText: z.string().default(""),
   sources: z.array(sourceSchema),
   outline: z.array(z.string()),

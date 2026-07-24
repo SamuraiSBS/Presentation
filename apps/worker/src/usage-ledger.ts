@@ -36,6 +36,7 @@ export async function recordAiUsage(input: {
   provider: "openai" | "yandex" | "aitunnel";
   model: string;
   operation: string;
+  stage?: string;
   schemaName?: string;
   attempt?: number;
   providerRequestId?: string;
@@ -75,7 +76,7 @@ export async function recordAiUsage(input: {
         model: input.model,
         operation: input.operation,
         schemaName: input.schemaName,
-        stage: store.stage,
+        stage: input.stage || store.stage,
         attempt: input.attempt || 1,
         providerRequestId: input.providerRequestId,
         status,

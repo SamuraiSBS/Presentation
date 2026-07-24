@@ -3,7 +3,9 @@ import OpenAI from "openai";
 import { generateText, Output } from "ai";
 import { z } from "zod";
 import { captureGenerationError, errorLogFields, logger } from "../../../observability.js";
-import { normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
+import { calculateProviderCost, currentUsageContext, normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
+import { failCostEnvelope, reserveCostEnvelope, settleCostEnvelope } from "../../../cost-envelope.js";
+import { getPrisma } from "../../../prisma.js";
 import { aitunnelConfig, createAitunnelClient, createOpenAIClient, createOpenAIProvider } from "../../../openai-client.js";
 import {
   aitunnelNarrationBudgetConfig,
@@ -325,7 +327,7 @@ export async function generateAitunnelNarration(client: OpenAI, model: string, p
   if (!currentAitunnelProjectBudget()) return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), () => generateAitunnelNarration(client, model, project, sources, narrativePlan, researchBrief));
   const policy = aitunnelNarrationBudgetConfig();
   const initial = await requestAitunnelNarrationCall({
-    client, model, project, sources, narrativePlan, researchBrief, policy, narrationTextCall: 1, recovery: "none",
+    client, model: "gemini-3.5-flash-lite", project, sources, narrativePlan, researchBrief, policy, narrationTextCall: 1, recovery: "none", stage: "narration_candidate",
     prompt: buildNarrationPrompt(project, sources, narrativePlan, researchBrief),
   });
   try {
@@ -334,7 +336,7 @@ export async function generateAitunnelNarration(client: OpenAI, model: string, p
     const failureCategory = classifyAitunnelNarrationRewriteFailure(error);
     const rewritePrompt = buildAitunnelFullNarrationRewritePrompt(project, sources, narrativePlan, researchBrief, failureCategory);
     const rewrite = await requestAitunnelNarrationCall({
-      client, model, project, sources, narrativePlan, researchBrief, policy, narrationTextCall: 2, recovery: "full_narration_rewrite",
+      client, model: "gemini-3.6-flash", project, sources, narrativePlan, researchBrief, policy, narrationTextCall: 2, recovery: "full_narration_rewrite", stage: "narration_fallback",
       prompt: rewritePrompt, failureCategory,
     });
     try {
@@ -357,6 +359,7 @@ type AitunnelNarrationRequest = {
   recovery: "none" | "full_narration_rewrite";
   prompt: string;
   failureCategory?: NarrationRewriteFailureCategory;
+  stage: "narration_candidate" | "narration_fallback";
 };
 
 async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
@@ -367,7 +370,8 @@ async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
     reasoning: { effort: input.policy.reasoningEffort, exclude: true },
   };
   const budget = currentAitunnelProjectBudget();
-  const reserved = budget?.reserve(`narration-${input.narrationTextCall}`, input.narrationTextCall === 1 ? "narration" : "narration_rewrite", request);
+  const reservationKey = await reservePersistedNarrationEnvelope(input);
+  const reserved = reservationKey ? { status: "reserved" as const } : budget?.reserve(`narration-${input.narrationTextCall}`, input.stage, request);
   if (!reserved || reserved.status !== "reserved") {
     logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, {
       failureCategory: "narration_budget_exhausted", budgetRub: input.policy.budgetRub,
@@ -379,8 +383,10 @@ async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
   const startedAt = new Date();
   try {
     response = await input.client.responses.create(request);
-    await recordOpenAIResponse(response, "narration", "studydeck_narration", startedAt, "aitunnel", input.model);
+    await recordOpenAIResponse(response, input.stage, "studydeck_narration", startedAt, "aitunnel", input.model, input.narrationTextCall, input.stage);
   } catch {
+    if (reservationKey) await failCostEnvelope({ envelopeId: currentUsageContext()!.costEnvelopeId!, idempotencyKey: reservationKey, reason: "narration_provider_error" }).catch(() => undefined);
+    await recordAiUsage({ provider: "aitunnel", model: input.model, operation: input.stage, schemaName: "studydeck_narration", attempt: input.narrationTextCall, stage: input.stage, startedAt, error: new Error("narration_provider_error") });
     logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, {
       failureCategory: "provider_error", budgetRub: input.policy.budgetRub,
     });
@@ -388,7 +394,27 @@ async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
   }
 
   const responseItem = response as { output_text?: string; usage?: unknown };
-  const settled = budget!.settle(`narration-${input.narrationTextCall}`, normalizeOpenAIUsage(responseItem.usage));
+  const usage = normalizeOpenAIUsage(responseItem.usage);
+  if (reservationKey) {
+    const envelopeId = currentUsageContext()!.costEnvelopeId!;
+    // Cost-envelope settlement requires the provider-reported cost. We only
+    // have token usage here, so use the same catalog arithmetic as telemetry.
+    if (!usage || usage.inputTokens === undefined || usage.outputTokens === undefined) {
+      await settleCostEnvelope({ envelopeId, idempotencyKey: reservationKey, reason: "usage_unavailable" });
+      logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, { failureCategory: "narration_usage_unavailable", budgetRub: input.policy.budgetRub });
+      throw narrationFailure("usage_unavailable");
+    }
+    const priced = calculateProviderCost("aitunnel", input.model, startedAt, usage);
+    if (priced.status !== "priced" || !priced.sourceCost) {
+      await settleCostEnvelope({ envelopeId, idempotencyKey: reservationKey, reason: "price_unavailable" });
+      throw narrationFailure("usage_unavailable");
+    }
+    const actualCostRub = priced.sourceCost;
+    const settledEnvelope = await settleCostEnvelope({ envelopeId, idempotencyKey: reservationKey, actualRub: actualCostRub, reason: "usage_reported" });
+    if (settledEnvelope.status !== "settled") throw narrationFailure("budget_overrun");
+    return { text: responseItem.output_text || "" };
+  }
+  const settled = budget!.settle(`narration-${input.narrationTextCall}`, usage);
   if (settled.status === "aitunnel_usage_unavailable") {
     logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, {
       failureCategory: "narration_usage_unavailable", budgetRub: input.policy.budgetRub,
@@ -406,6 +432,21 @@ async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
     rewriteFailureCategory: input.failureCategory,
   });
   return { text: responseItem.output_text || "" };
+}
+
+async function reservePersistedNarrationEnvelope(input: AitunnelNarrationRequest) {
+  const envelopeId = currentUsageContext()?.costEnvelopeId;
+  if (!envelopeId) return undefined;
+  const envelope = await getPrisma().costEnvelope.findUniqueOrThrow({ where: { id: envelopeId }, select: { policySnapshot: true } });
+  const amountRub = String((envelope.policySnapshot as { buckets?: Record<string, string> }).buckets?.[input.stage] || "");
+  if (!/^\d+(?:\.\d+)?$/.test(amountRub) || amountRub === "0") throw narrationFailure("budget_exhausted");
+  const idempotencyKey = `${envelopeId}:${input.stage}`;
+  // A replay after a crash must fail closed. Reusing a settled or in-flight
+  // reservation would create another paid call outside the two-call contract.
+  const existing = await getPrisma().costEnvelopeReservation.findUnique({ where: { idempotencyKey }, select: { id: true } });
+  if (existing) return undefined;
+  const result = await reserveCostEnvelope({ envelopeId, idempotencyKey, bucket: input.stage, stage: input.stage, amountRub });
+  return result.status === "reserved" ? idempotencyKey : undefined;
 }
 
 function validateAitunnelNarration(text: string, project: ProjectInput, narrativePlan: SlideNarrative[], model: string, narrationTextCall: 1 | 2, recovery: "none" | "full_narration_rewrite") {
@@ -950,7 +991,7 @@ export function isUnknownSchema(schema: z.ZodType<unknown, z.ZodTypeDef, unknown
   return (schema as z.ZodTypeAny)._def.typeName === z.ZodFirstPartyTypeKind.ZodUnknown;
 }
 
-export async function recordOpenAIResponse(response: unknown, operation: string, schemaName: string | undefined, startedAt: Date, provider: "openai" | "aitunnel" = "openai", model = process.env.OPENAI_MODEL || "gpt-4.1-mini") {
+export async function recordOpenAIResponse(response: unknown, operation: string, schemaName: string | undefined, startedAt: Date, provider: "openai" | "aitunnel" = "openai", model = process.env.OPENAI_MODEL || "gpt-4.1-mini", attempt?: number, stage?: string) {
   const item = response as Record<string, unknown>;
   await recordAiUsage({
     provider,
@@ -960,6 +1001,8 @@ export async function recordOpenAIResponse(response: unknown, operation: string,
     providerRequestId: typeof item._request_id === "string" ? item._request_id : typeof item.id === "string" ? item.id : undefined,
     usage: normalizeOpenAIUsage(item.usage),
     startedAt,
+    attempt,
+    stage,
   });
 }
 

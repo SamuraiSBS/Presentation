@@ -6,7 +6,6 @@ import { captureGenerationError, errorLogFields, logger, type TraceCarrier, with
 import { getPrisma } from "../prisma.js";
 import { readObjectBuffer } from "../storage.js";
 import { extractTextFromSource } from "./extract.js";
-import { enrichPresentationImages } from "./image-search.js";
 import {
   generationFailureCategory,
   logGenerationStage,
@@ -192,14 +191,10 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     const groundedPresentation = defenseBundle
       ? applyDefenseGroundingToPresentation(generatedPresentation, defenseBundle, project.sources)
       : generatedPresentation;
-    await setStage("selecting_visuals");
-    const presentationWithImages = await withTraceSpan("generation.visuals", {
-      "studydeck.project_id": projectId,
-      "studydeck.job_id": String(job.id || ""),
-      "studydeck.stage": "visuals",
-      "studydeck.provider": process.env.PRESENTATION_IMAGES_ENABLED === "false" ? "disabled" : process.env.WEB_SEARCH_PROVIDER || "tavily",
-    }, () => enrichPresentationImages(generationProject, groundedPresentation), traceContext);
-    finishStage("selecting_visuals");
+    // This job begins with accepted narration and a fixed source snapshot.
+    // Keep retries local: post-acceptance image search would make the same
+    // presentation spend again and change between attempts.
+    const presentationWithImages = groundedPresentation;
     await setStage("polishing");
     // The model may return a schema-valid but geometrically unsafe canvas. A
     // generated presentation is not user-edited yet, so rebuild its canvas

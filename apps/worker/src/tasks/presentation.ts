@@ -2,6 +2,7 @@ export {
   generateNarrationDraft,
   generatePresentation,
   generatePresentationFromNarration,
+  buildLocalPresentationFromAcceptedNarration,
   buildSafePresentationFromNarration,
 } from "./presentation/orchestrator.js";
 export { selectAiProviders } from "./presentation/providers/provider-selection.js";
