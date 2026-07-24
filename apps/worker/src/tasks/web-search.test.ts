@@ -102,6 +102,17 @@ describe("buildTavilyWebSearchQuery", () => {
     expect(query).toContain("\u0421\u0430\u0442\u0443\u0440\u043d");
     expect(query.toLowerCase()).not.toContain("\u0430\u043a\u0430\u0434\u0435\u043c\u0438\u0447\u0435\u0441\u043a");
   });
+  it("uses the prompt topic when a live smoke project has a generic title", () => {
+    const query = buildTavilyWebSearchQuery({
+      title: "Live generation smoke",
+      prompt: "Create a grounded ten-slide university presentation about the practical use of artificial intelligence in higher education, with a complete narration and sources.",
+    });
+
+    expect(query).toContain("artificial intelligence higher education");
+    expect(query.toLowerCase()).not.toContain("live generation smoke");
+    expect(query.toLowerCase()).not.toContain("grounded");
+    expect(query.toLowerCase()).not.toContain("narration");
+  });
 });
 
 describe("tavilyResultsToSources", () => {

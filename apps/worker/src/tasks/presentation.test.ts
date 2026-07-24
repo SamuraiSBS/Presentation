@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { auditSlideCanvas, presentationSchema } from "@studydeck/shared";
+import { auditSlideCanvas, getRussianStudentSpeechTimingBudget, presentationSchema } from "@studydeck/shared";
 import {
   buildGenerationPrompt,
   buildSafePresentationFromNarration,
@@ -23,10 +23,11 @@ import { AitunnelProjectBudget, estimateInputTokens, runWithAitunnelProjectBudge
 import { NARRATION_SYSTEM_PROMPT } from "./presentation/constants.js";
 import { sourceEvidenceForSlide } from "./presentation/planning/builders.js";
 import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
+import { logger } from "../observability.js";
 import { applyNarrationFallbacks } from "./presentation/quality/orchestration.js";
 import { looksLikeSentenceFragment } from "./presentation/quality/orchestration.js";
 import { normalizeLayout as normalizeLayoutFromLayer, normalizeVisual } from "./presentation/normalization/presentation.js";
-import { findSpokenNarrationIssues, normalizeNarrationText, parseNarrationSections, validateNarrationSections, yandexNarrationCompletionTelemetry } from "./presentation/narration/processing.js";
+import { findAitunnelNarrationTimingReasons, findSpokenNarrationIssues, normalizeNarrationText, parseNarrationSections, validateNarrationSections, yandexNarrationCompletionTelemetry } from "./presentation/narration/processing.js";
 import { shortenSentence } from "./presentation/utilities.js";
 
 const originalEnv = { ...process.env };
@@ -697,6 +698,39 @@ describe("Yandex narration full duration rewrite", () => {
     expect(rewritePrompt).not.toContain(rawError);
     expect(rewritePrompt).not.toContain("Previous invalid answer");
     expect(estimateInputTokens({ input: rewritePrompt })).toBeLessThan(estimateInputTokens({ input: oldPrompt }));
+    expect(estimateInputTokens({ input: rewritePrompt })).toBeLessThan(estimateInputTokens({ input: buildNarrationPrompt(project, [], plan) }));
+  });
+
+  it("gives every safe AITUNNEL timing reason compact guidance from the shared speech budget", () => {
+    const sentinel = "REJECTED_NARRATION_SENTINEL_DO_NOT_SEND";
+    const rawDetail = "RAW_VALIDATION_DETAIL_DO_NOT_SEND";
+    const timingBudget = getRussianStudentSpeechTimingBudget(project);
+    expect(timingBudget).not.toBeNull();
+
+    const guidanceByReason = {
+      whole_speech_below_minimum: "Expand the substantive explanation",
+      whole_speech_above_maximum: "Shorten repeated claims",
+      section_below_minimum: "develop underfilled sections",
+      section_above_maximum: "condense overloaded sections",
+      section_sentence_count: "local sentence limit",
+    } as const;
+
+    for (const [reason, guidance] of Object.entries(guidanceByReason)) {
+      const rewritePrompt = buildAitunnelFullNarrationRewritePrompt(project, [], plan, undefined, "duration", [reason as keyof typeof guidanceByReason]);
+      expect(rewritePrompt).toContain(guidance);
+      expect(rewritePrompt).toContain(`${timingBudget!.minWords}-${timingBudget!.maxWords} words`);
+      expect(rewritePrompt).toContain(`${timingBudget!.titleWordTarget} words for the opening`);
+      expect(rewritePrompt).toContain(`${timingBudget!.contentWordTarget} for each content section`);
+      expect(rewritePrompt).toContain(`${timingBudget!.conclusionWordTarget} for the conclusion`);
+      if (reason === "whole_speech_below_minimum" || reason === "whole_speech_above_maximum") {
+        expect(rewritePrompt).toContain("Return all ten headers exactly once");
+      }
+      if (reason === "whole_speech_below_minimum") {
+        expect(rewritePrompt).toContain("verify the complete draft meets the minimum whole-speech word count");
+      }
+      expect(rewritePrompt).not.toContain(sentinel);
+      expect(rewritePrompt).not.toContain(rawDetail);
+    }
   });
 
   it("maps narration validation defects to safe rewrite categories without preserving their text", () => {
@@ -704,8 +738,33 @@ describe("Yandex narration full duration rewrite", () => {
     expect(classifyAitunnelNarrationRewriteFailure(new Error("missing narration section 4"))).toBe("headers_or_sections");
     expect(classifyAitunnelNarrationRewriteFailure(new Error("template phrase detected"))).toBe("template_or_repetition");
     expect(classifyAitunnelNarrationRewriteFailure(new Error("section repeats a complete sentence"))).toBe("template_or_repetition");
+    expect(classifyAitunnelNarrationRewriteFailure(new Error("repeated_fact"))).toBe("template_or_repetition");
     expect(classifyAitunnelNarrationRewriteFailure(new Error("narration repeats a narrative-plan field"))).toBe("spoken_quality");
+    expect(classifyAitunnelNarrationRewriteFailure(new Error("plan_echo semicolon_run"))).toBe("spoken_quality");
+    expect(classifyAitunnelNarrationRewriteFailure(new Error("expected slide 2, got slide 3"))).toBe("headers_or_sections");
     expect(classifyAitunnelNarrationRewriteFailure(new Error("PRIVATE_PROVIDER_DERIVED_DETAIL"))).toBe("narration_quality");
+  });
+
+  it("derives only safe typed AITUNNEL timing reasons from local narration sections", () => {
+    const rawDetail = "RAW_VALIDATION_DETAIL_DO_NOT_SEND";
+    const reasonsFor = (narration: string) => findAitunnelNarrationTimingReasons(parseNarrationSections(narration), project);
+
+    expect(reasonsFor(Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 60)).join("\n\n")))
+      .toContain("whole_speech_below_minimum");
+    expect(reasonsFor(Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 170)).join("\n\n")))
+      .toContain("whole_speech_above_maximum");
+    expect(reasonsFor([narrationSection(1, 24), ...Array.from({ length: 9 }, (_, index) => narrationSection(index + 2, 140))].join("\n\n")))
+      .toContain("section_below_minimum");
+    expect(reasonsFor([narrationSection(1, 109), narrationSection(2, 190), ...Array.from({ length: 8 }, (_, index) => narrationSection(index + 3, 140))].join("\n\n")))
+      .toContain("section_above_maximum");
+    const tooManySentences = `${narrationSection(1, 30).split("\n")[0]}\n${Array.from({ length: 8 }, (_, index) => `Fact ${index} provides a concrete explanation.`).join(" ")}`;
+    expect(reasonsFor([tooManySentences, ...Array.from({ length: 9 }, (_, index) => narrationSection(index + 2, 140))].join("\n\n")))
+      .toContain("section_sentence_count");
+
+    const rejectedNarrationWithRawDetail = narrationSection(1, 24).replace("Saturn 1", rawDetail);
+    const reasons = reasonsFor([rejectedNarrationWithRawDetail, ...Array.from({ length: 9 }, (_, index) => narrationSection(index + 2, 140))].join("\n\n"));
+    expect(JSON.stringify(reasons)).not.toContain(rawDetail);
+    expect(reasons).toEqual(expect.arrayContaining(["section_below_minimum"]));
   });
 
   it("fits the ten-slide initial actual cost and context-light rewrite reservation inside the narration cap", () => {
@@ -738,6 +797,27 @@ describe("Yandex narration full duration rewrite", () => {
 
     await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).rejects.toThrow("narration_quality_failure");
     expect(models).toEqual(["gemini-3.5-flash-lite", "gemini-3.6-flash"]);
+  });
+
+  it("keeps rejected narration details out of AITUNNEL logs and the public failure", async () => {
+    const sentinel = "REJECTED_NARRATION_SENTINEL_DO_NOT_LOG";
+    const rejected = [narrationSection(1, 24).replace("Saturn 1", sentinel), ...Array.from({ length: 9 }, (_, index) => narrationSection(index + 2, 60))].join("\n\n");
+    const logged: unknown[] = [];
+    const info = vi.spyOn(logger, "info").mockImplementation((payload: unknown) => {
+      logged.push(payload);
+      return logger;
+    });
+    const client = {
+      responses: { create: async () => ({ output_text: rejected, usage: { input_tokens: 100, output_tokens: 100 } }) },
+    } as never;
+
+    try {
+      await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).rejects.not.toThrow(sentinel);
+      expect(JSON.stringify(logged)).not.toContain(sentinel);
+      expect(logged).toHaveLength(4);
+    } finally {
+      info.mockRestore();
+    }
   });
 
   it("does not spend on a narration call when its reservation is refused", async () => {
@@ -1799,7 +1879,7 @@ describe("generatePresentation fallback behavior", () => {
       expect(bodies[2].messages[1].text).toContain("Choose imageStrategy independently for every slide");
       expect(bodies[2].messages[1].text).toContain("Choose sceneTextMode for every slide");
       expect(bodies[2].messages[1].text).toContain("Never request a random stock image");
-      expect(bodies[2].messages[1].text).toContain("50-70 percent");
+      expect(bodies[2].messages[1].text).toContain("35-60 percent");
       expect(bodies[2].messages[1].text).toContain("Never place text over an image");
       expect(bodies[3].json_object).toBe(true);
       expect(bodies[3].json_schema).toBeUndefined();

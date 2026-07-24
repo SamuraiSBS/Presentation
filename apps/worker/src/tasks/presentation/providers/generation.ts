@@ -163,7 +163,8 @@ export const PRESENTATION_RECOVERY_CHUNK_COUNT = 3;
 import type { YandexCompletionResponse } from "../constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
 import { buildResearchBrief, buildDesignBrief, logStructuredGenerationValidationFailure, buildDeckStory, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "../planning/builders.js";
-import { shouldRetryNarration, requestYandexText, normalizeNarrationText, parseNarrationSections, findSpokenNarrationIssues } from "../narration/processing.js";
+import { shouldRetryNarration, requestYandexText, normalizeNarrationText, parseNarrationSections, repairShortNarrationSections, findAitunnelNarrationTimingReasons, findSpokenNarrationIssues } from "../narration/processing.js";
+import type { AitunnelNarrationTimingReason } from "../narration/processing.js";
 import { speechSentences } from "../normalization/presentation.js";
 import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildFullNarrationDurationRewritePrompt, buildAitunnelFullNarrationRewritePrompt, buildGenerationPrompt, buildYandexPresentationRecoveryPrompt, getYandexModelConfig } from "../prompts/builders.js";
 import type { NarrationRewriteFailureCategory, YandexModelTier } from "../prompts/builders.js";
@@ -334,10 +335,11 @@ export async function generateAitunnelNarration(client: OpenAI, model: string, p
     return validateAitunnelNarration(initial.text, project, narrativePlan, model, 1, "none");
   } catch (error) {
     const failureCategory = classifyAitunnelNarrationRewriteFailure(error);
-    const rewritePrompt = buildAitunnelFullNarrationRewritePrompt(project, sources, narrativePlan, researchBrief, failureCategory);
+    const timingReasons = aitunnelNarrationTimingReasons(error);
+    const rewritePrompt = buildAitunnelFullNarrationRewritePrompt(project, sources, narrativePlan, researchBrief, failureCategory, timingReasons);
     const rewrite = await requestAitunnelNarrationCall({
       client, model: "gemini-3.6-flash", project, sources, narrativePlan, researchBrief, policy, narrationTextCall: 2, recovery: "full_narration_rewrite", stage: "narration_fallback",
-      prompt: rewritePrompt, failureCategory,
+      prompt: rewritePrompt, failureCategory, timingReasons,
     });
     try {
       return validateAitunnelNarration(rewrite.text, project, narrativePlan, model, 2, "full_narration_rewrite");
@@ -359,6 +361,7 @@ type AitunnelNarrationRequest = {
   recovery: "none" | "full_narration_rewrite";
   prompt: string;
   failureCategory?: NarrationRewriteFailureCategory;
+  timingReasons?: AitunnelNarrationTimingReason[];
   stage: "narration_candidate" | "narration_fallback";
 };
 
@@ -430,6 +433,7 @@ async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
   logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, {
     budgetRub: input.policy.budgetRub, reservationRub: settled.reservation.costRub, actualCostRub: settled.actualCostRub, remainingRub: settled.projectRemaining,
     rewriteFailureCategory: input.failureCategory,
+    timingReasons: input.timingReasons,
   });
   return { text: responseItem.output_text || "" };
 }
@@ -449,26 +453,49 @@ async function reservePersistedNarrationEnvelope(input: AitunnelNarrationRequest
   return result.status === "reserved" ? idempotencyKey : undefined;
 }
 
+class AitunnelNarrationValidationError extends Error {
+  constructor(readonly timingReasons: AitunnelNarrationTimingReason[] = []) {
+    super("AI narration quality check failed");
+    this.name = "AitunnelNarrationValidationError";
+  }
+}
+
+function aitunnelNarrationTimingReasons(error: unknown): AitunnelNarrationTimingReason[] {
+  return error instanceof AitunnelNarrationValidationError ? error.timingReasons : [];
+}
+
 function validateAitunnelNarration(text: string, project: ProjectInput, narrativePlan: SlideNarrative[], model: string, narrationTextCall: 1 | 2, recovery: "none" | "full_narration_rewrite") {
-  const spokenIssues = findSpokenNarrationIssues(parseNarrationSections(text), narrativePlan);
-  if (spokenIssues.length) {
-    logAitunnelNarrationCall(project.id, model, narrationTextCall, recovery, { failureCategory: "quality" });
-    throw new Error("AI narration quality check failed");
+  // Match normalizeNarrationText's harmless local completion before deciding
+  // whether a paid full rewrite is needed.
+  const sections = repairShortNarrationSections(parseNarrationSections(text), project);
+  const timingReasons = findAitunnelNarrationTimingReasons(sections, project);
+  const spokenIssues = findSpokenNarrationIssues(sections, narrativePlan);
+  if (spokenIssues.length || timingReasons.length) {
+    const issueCodes = [...new Set(spokenIssues.map((issue) => issue.code))];
+    const qualityReason = timingReasons.length ? "duration" : classifyAitunnelNarrationRewriteFailure(new Error(issueCodes.join(" ")));
+    logAitunnelNarrationCall(project.id, model, narrationTextCall, recovery, { failureCategory: "quality", qualityReason, timingReasons });
+    // Keep the retry classifier useful without leaking generated narration or
+    // provider-derived details into logs, persistence, or the next prompt.
+    throw new AitunnelNarrationValidationError(timingReasons);
   }
   try {
     const accepted = normalizeNarrationText(text, project, narrativePlan);
     logAitunnelNarrationCall(project.id, model, narrationTextCall, recovery, { words: narrationWordCount(accepted) });
     return accepted;
   } catch (error) {
-    logAitunnelNarrationCall(project.id, model, narrationTextCall, recovery, { failureCategory: "quality" });
+    logAitunnelNarrationCall(project.id, model, narrationTextCall, recovery, {
+      failureCategory: "quality",
+      qualityReason: classifyAitunnelNarrationRewriteFailure(error),
+    });
     throw error;
   }
 }
 
 export function classifyAitunnelNarrationRewriteFailure(error: unknown): NarrationRewriteFailureCategory {
+  if (aitunnelNarrationTimingReasons(error).length) return "duration";
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   if (message.includes("duration") || message.includes("words")) return "duration";
-  if (message.includes("missing narration section") || message.includes("expected") && message.includes("narration sections") || message.includes("header")) return "headers_or_sections";
+  if (message.includes("missing narration section") || message.includes("expected") && (message.includes("narration sections") || message.includes("slide")) || message.includes("header") || message.includes("has no title")) return "headers_or_sections";
   if (message.includes("narrative-plan field") || message.includes("plan_echo") || message.includes("planning_formula") || message.includes("semicolon_run")) return "spoken_quality";
   if (message.includes("template") || message.includes("repeat")) return "template_or_repetition";
   return "narration_quality";
@@ -482,6 +509,8 @@ function logAitunnelNarrationCall(projectId: string, model: string, narrationTex
   actualCostRub?: string;
   remainingRub?: string;
   rewriteFailureCategory?: NarrationRewriteFailureCategory;
+  qualityReason?: NarrationRewriteFailureCategory;
+  timingReasons?: AitunnelNarrationTimingReason[];
 }) {
   const durationMinutes = extra.words === undefined ? undefined : Number(russianSpeechMinutesFromWords(extra.words).toFixed(1));
   logger.info({ projectId, stage: "drafting_speech", provider: "aitunnel", model, narrationTextCall, maxNarrationTextCalls: MAX_AITUNNEL_NARRATION_TEXT_CALLS, recovery, ...extra, durationMinutes }, "AITUNNEL narration text call completed");

@@ -148,7 +148,7 @@ export function extractSearchTopic(request: string | WebSearchRequest) {
   const explicitTopic = extractExplicitTopic(withoutBrief);
   if (explicitTopic) return explicitTopic;
   const cleanTitle = removeInstructionWords(cleanText(title || ""));
-  if (cleanTitle && cleanTitle.length >= 3) return cleanTitle;
+  if (cleanTitle && cleanTitle.length >= 3 && !isGenericSearchTitle(cleanTitle)) return cleanTitle;
   const sentences = withoutBrief
     .split(/[.!?\n]+/)
     .map((item) => cleanText(item))
@@ -171,7 +171,16 @@ function normalizeWebSearchRequest(request: string | WebSearchRequest): Required
 
 function extractExplicitTopic(value: string) {
   const match = value.match(/(?:\b(?:topic|subject)\b|тема|по\s+теме)\s*:\s*([^\n.!?;]{3,180})/iu);
-  return match ? removeInstructionWords(match[1]) : "";
+  if (match) return removeInstructionWords(match[1]);
+
+  // API-created requests commonly describe the subject as "presentation about
+  // <topic>, with ...". Exclude delivery requirements from the search topic:
+  // they make the relevance filter reject otherwise useful sources.
+  const aboutMatch = value.match(/\babout\s+(.+?)(?:(?:,?\s+with\b)|[.!?;]|$)/iu);
+  if (!aboutMatch) return "";
+  return removeInstructionWords(aboutMatch[1])
+    .replace(/^(?:the\s+)?practical\s+use\s+of\s+/i, "")
+    .trim();
 }
 
 function assessWebResult(result: { title?: string; url: string; excerpt: string }, topic: string) {
@@ -256,6 +265,13 @@ function extractSearchTerms(text: string) {
   return result;
 }
 
+function isGenericSearchTitle(value: string) {
+  const meaningfulTerms = extractSearchTerms(value)
+    .map((term) => term.toLowerCase())
+    .filter((term) => !GENERIC_SEARCH_TITLE_TERMS.has(term));
+  return meaningfulTerms.length === 0;
+}
+
 function removeInstructionWords(value: string) {
   return cleanText(value)
     .replace(/\b(make|create|prepare|write|explain|show|add|use|generate)\b/gi, " ")
@@ -312,6 +328,10 @@ const SEARCH_STOP_WORDS = new Set([
   "and", "the", "for", "with", "from", "about", "into", "this", "that", "these", "those",
   "как", "что", "это", "для", "при", "про", "или", "без", "над", "под", "его", "её", "ее", "их",
   "нужно", "надо", "можно", "важно", "кратко", "подробно", "понятно", "простым", "языком",
+]);
+
+const GENERIC_SEARCH_TITLE_TERMS = new Set([
+  "live", "generation", "smoke", "test", "testing", "demo", "project", "new", "studydeck",
 ]);
 
 const GENERIC_TOPIC_TERMS = new Set([

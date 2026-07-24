@@ -16,6 +16,7 @@
 4. [04-deterministic-presentation-from-accepted-narration.md](./04-deterministic-presentation-from-accepted-narration.md)
 5. [05-bounded-visuals-and-local-diagrams.md](./05-bounded-visuals-and-local-diagrams.md)
 6. [06-release-gate-observability-and-runtime-proof.md](./06-release-gate-observability-and-runtime-proof.md)
+7. [07-aitunnel-narration-timing-recovery-handoff.md](./07-aitunnel-narration-timing-recovery-handoff.md) — follow-up after the live `duration` rejection; run its four prompts one per new chat.
 
 Не объединяйте эти задачи в один diff и не начинайте следующий файл, пока не выполнены его тесты и acceptance criteria.
 
@@ -36,4 +37,3 @@
 - `buildSafePresentationFromNarration()` уже существует, но сейчас не включён в основной путь и использует `demo-fallback` — это только отправная точка, не готовое решение.
 - `apps/worker/src/aitunnel-narration-budget.ts` содержит in-memory бюджет по job, дефолт 30 ₽, а цены захардкожены. Этого недостаточно для гарантии 10 ₽ на весь путь.
 - Поиск источников и изображений — Tavily; оба отдельно пишут `CostEvent`, но их расходы не резервируются в AI-бюджете.
-

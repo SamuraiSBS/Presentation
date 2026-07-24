@@ -142,6 +142,7 @@ import type { YandexCompletionResponse } from "../constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
 import { cleanMultilineText } from "../utilities.js";
 import { getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
+import type { AitunnelNarrationTimingReason } from "../narration/processing.js";
 
 export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[], _researchBrief?: ResearchBrief) {
   const timingBudget = getRussianStudentSpeechTimingBudget(project);
@@ -404,6 +405,14 @@ const AITUNNEL_REWRITE_CATEGORY_GUIDANCE: Record<NarrationRewriteFailureCategory
   narration_quality: "Satisfy every narration quality requirement in the original contract with a coherent, substantive report.",
 };
 
+const AITUNNEL_TIMING_REASON_GUIDANCE: Record<AitunnelNarrationTimingReason, string> = {
+  whole_speech_below_minimum: "Expand the substantive explanation and evidence across the fixed plan. Distribute useful material across every section; do not add filler.",
+  whole_speech_above_maximum: "Shorten repeated claims and secondary detail while preserving the causal line, evidence, and conclusion of the report.",
+  section_below_minimum: "Repair the distribution of material: develop underfilled sections with topic-specific explanation while keeping the whole speech inside its range.",
+  section_above_maximum: "Repair the distribution of material: condense overloaded sections and move only necessary substance to underfilled sections while keeping the whole speech inside its range.",
+  section_sentence_count: "Keep every section within the local sentence limit and use complete, natural spoken Russian sentences.",
+};
+
 /**
  * AITUNNEL's second narration call is a context-light, full replacement.
  * Unlike the Yandex rewrite builder above, it deliberately receives neither
@@ -413,22 +422,47 @@ export function buildAitunnelFullNarrationRewritePrompt(
   project: ProjectInput,
   sources: Source[],
   narrativePlan: SlideNarrative[],
-  researchBrief: ResearchBrief | undefined,
+  _researchBrief: ResearchBrief | undefined,
   failureCategory: NarrationRewriteFailureCategory,
+  timingReasons: readonly AitunnelNarrationTimingReason[] = [],
 ) {
   const timingBudget = getRussianStudentSpeechTimingBudget(project);
-  const sectionGuidance = buildFullNarrationDurationSectionGuidance(project, timingBudget);
+  const timingGuidance = [...new Set(timingReasons)].map((reason) => AITUNNEL_TIMING_REASON_GUIDANCE[reason]);
+  const sectionTimingGuidance = timingReasons.includes("whole_speech_below_minimum") || timingReasons.includes("whole_speech_above_maximum")
+    ? buildFullNarrationDurationSectionGuidance(project, timingBudget)
+    : "";
+  const compactPlan = narrativePlan.map((item) => ({
+    slideOrder: item.slideOrder,
+    slideTitle: item.slideTitle,
+    keyMessage: item.keyMessage,
+  }));
+  const compactSources = sources.slice(0, 4).map((source) => ({
+    sourceId: source.id,
+    title: source.label,
+    evidence: source.excerpt.replace(/\s+/g, " ").trim().slice(0, 220),
+  }));
   return [
-    buildNarrationPrompt(project, sources, narrativePlan, researchBrief),
+    "Write a fresh, complete Russian speech for a StudyDeck university presentation.",
+    `Topic and request: ${project.prompt}`,
+    `Exact slide count: ${project.slideCount}. Return one section per slide in order, headed \`Слайд N: semantic title\`.`,
+    "Each section needs 3-7 complete, natural sentences. Use the plan's key message as content, not as a label. Do not mention slides, sources, planning, or the rejected draft.",
+    compactPlan.length ? `Fixed slide plan:\n${JSON.stringify(compactPlan)}` : "",
+    compactSources.length ? `Grounding source snapshot; use facts only when supported:\n${JSON.stringify(compactSources)}` : "",
     "A previous draft was rejected. Discard it completely and return a fresh, complete narration for every requested slide.",
     AITUNNEL_REWRITE_CATEGORY_GUIDANCE[failureCategory],
+    ...timingGuidance,
     "Do not quote, continue, merge, patch, or reuse any text from the rejected draft. Write the whole report from scratch in slide order.",
     timingBudget
       ? `Keep the whole speech inside the quality-first range of ${timingBudget.minWords}-${timingBudget.maxWords} words; ${timingBudget.targetWords} words is a meaningful target, not a quota to reach with filler.`
       : "Keep the narration substantive and naturally paced.",
-    sectionGuidance,
-    "Treat this as editorial structure, not a word-padding exercise: every section must develop its argument with an explanation and, where supported, an example, evidence, or consequence. A coherent report is better than repetitive length.",
-    "Do not use filler, meta-commentary, planner field labels, artificial connective phrases, or copied slidePurpose or audienceQuestion text. Do not describe the planning process.",
+    timingBudget
+      ? `Use the shared section targets to distribute the speech: about ${timingBudget.titleWordTarget} words for the opening, ${timingBudget.contentWordTarget} for each content section, and ${timingBudget.conclusionWordTarget} for the conclusion.`
+      : "",
+    sectionTimingGuidance,
+    timingReasons.includes("whole_speech_below_minimum")
+      ? "Before returning, verify the complete draft meets the minimum whole-speech word count. Do not stop early; develop the fixed plan with supported, topic-specific explanation."
+      : "",
+    "Every section must develop the topic with an explanation and, where supported, an example, evidence, cause, consequence, or conclusion. Avoid filler, repetition, and planner-field wording.",
   ].filter(Boolean).join("\n\n");
 }
 

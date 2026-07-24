@@ -74,6 +74,16 @@ export type SpokenNarrationIssue = {
   message: string;
 };
 
+// These codes intentionally contain no counts, slide identifiers, narration,
+// or validator text.  They are the only timing detail safe to carry into an
+// AITUNNEL recovery request or telemetry.
+export type AitunnelNarrationTimingReason =
+  | "whole_speech_below_minimum"
+  | "whole_speech_above_maximum"
+  | "section_below_minimum"
+  | "section_above_maximum"
+  | "section_sentence_count";
+
 type SlideTextIssue = {
   slideOrder: number;
   fields: string[];
@@ -476,6 +486,37 @@ export function validateNarrationSections(sections: NarrationSection[], project:
   ));
 
   return issues;
+}
+
+/**
+ * Produces a deliberately small, typed timing diagnosis for AITUNNEL only.
+ * Keep this separate from validateNarrationSections' human-readable issues:
+ * those include values and slide details that must not leave local validation.
+ */
+export function findAitunnelNarrationTimingReasons(sections: NarrationSection[], project: ProjectInput): AitunnelNarrationTimingReason[] {
+  const budget = getRussianStudentSpeechTimingBudget(project);
+  const reasons = new Set<AitunnelNarrationTimingReason>();
+
+  for (let index = 0; index < project.slideCount; index += 1) {
+    const section = sections[index];
+    if (!section) continue;
+    const words = section.text.split(/\s+/).filter(Boolean).length;
+    const sentenceCount = speechSentences(section.text).length;
+    if (sentenceCount < 2 || sentenceCount > 7) reasons.add("section_sentence_count");
+    if (words < 25) reasons.add("section_below_minimum");
+    const roleTarget = budget
+      ? (index === 0 ? budget.titleWordTarget : index === project.slideCount - 1 ? budget.conclusionWordTarget : budget.contentWordTarget)
+      : 0;
+    if (words > (budget ? Math.ceil(roleTarget * 1.35) : 130)) reasons.add("section_above_maximum");
+  }
+
+  if (budget && sections.length === project.slideCount) {
+    const totalWords = sections.reduce((total, section) => total + section.text.split(/\s+/).filter(Boolean).length, 0);
+    if (totalWords < budget.minWords) reasons.add("whole_speech_below_minimum");
+    if (budget.maxWords !== undefined && totalWords > budget.maxWords) reasons.add("whole_speech_above_maximum");
+  }
+
+  return [...reasons];
 }
 
 /**

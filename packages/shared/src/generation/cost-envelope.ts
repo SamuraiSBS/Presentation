@@ -2,10 +2,10 @@ export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v
 export const COST_ENVELOPE_LIMIT_RUB = "10.00000000";
 export const COST_ENVELOPE_BUCKETS = {
   sources: "0.50000000",
-  narration_candidate: "4.00000000",
-  narration_fallback: "4.00000000",
+  narration_candidate: "1.50000000",
+  narration_fallback: "7.00000000",
   images: "0.50000000",
-  export_infra: "1.00000000",
+  export_infra: "0.50000000",
 } as const;
 
 export type CostEnvelopeBucket = keyof typeof COST_ENVELOPE_BUCKETS;

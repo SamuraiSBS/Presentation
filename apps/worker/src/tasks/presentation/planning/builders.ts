@@ -275,7 +275,7 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
     rhythm: {
       titleStyle: theme.fonts.tone === "bookish" ? "editorial" : theme.fonts.tone === "strict" ? "academic" : "bold",
       density: "low",
-      imageFrequency: "sparse",
+      imageFrequency: "rare",
       sectionBreaks: project.slideCount >= 6,
     },
     visualDirection: `${researchBrief.topic}: ${researchBrief.angle}`,

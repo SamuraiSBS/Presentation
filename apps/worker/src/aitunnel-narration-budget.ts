@@ -10,6 +10,7 @@ export const AITUNNEL_NARRATION_DEFAULT_BUDGET_RUB = 20;
 export const AITUNNEL_PROJECT_DEFAULT_BUDGET_RUB = 30;
 export const AITUNNEL_NARRATION_DEFAULT_MAX_OUTPUT_TOKENS = 2400;
 export const AITUNNEL_NARRATION_MIN_OUTPUT_TOKENS = 2400;
+export const AITUNNEL_NARRATION_FALLBACK_MIN_OUTPUT_TOKENS = 3000;
 export const AITUNNEL_NARRATION_DEFAULT_REASONING_EFFORT = "minimal";
 export const AITUNNEL_ECONOMY_MODEL = "gemini-3.5-flash-lite";
 export const AITUNNEL_PRIMARY_MODEL = "gemini-3.6-flash";
@@ -47,7 +48,8 @@ export function aitunnelEconomyModel(env: EnvLike = process.env) {
 export function aitunnelStagePolicy(stage: AitunnelStage, env: EnvLike = process.env) {
   const base = STAGE_POLICIES[stage];
   const narration = aitunnelNarrationBudgetConfig(env);
-  return { model: aitunnelModelForStage(stage, env), maxOutputTokens: stage === "narration_candidate" || stage === "narration_fallback" || stage === "narration" || stage === "narration_rewrite" ? narration.maxOutputTokens : base.maxOutputTokens, reasoningEffort: stage === "narration_candidate" || stage === "narration_fallback" || stage === "narration" || stage === "narration_rewrite" ? narration.reasoningEffort : base.reasoningEffort };
+  const narrationOutputTokens = stage === "narration_fallback" ? Math.max(narration.maxOutputTokens, AITUNNEL_NARRATION_FALLBACK_MIN_OUTPUT_TOKENS) : narration.maxOutputTokens;
+  return { model: aitunnelModelForStage(stage, env), maxOutputTokens: stage === "narration_candidate" || stage === "narration_fallback" || stage === "narration" || stage === "narration_rewrite" ? narrationOutputTokens : base.maxOutputTokens, reasoningEffort: stage === "narration_candidate" || stage === "narration_fallback" || stage === "narration" || stage === "narration_rewrite" ? narration.reasoningEffort : base.reasoningEffort };
 }
 export function aitunnelPriceForModel(model: string) {
   return aitunnelPriceForApprovedModel(model);
