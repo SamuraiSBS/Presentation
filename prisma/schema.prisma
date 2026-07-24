@@ -157,6 +157,22 @@ enum CostMeasurement {
   calculated
 }
 
+enum CostEnvelopeStatus {
+  active
+  completed
+  exhausted
+  cancelled
+}
+
+enum CostEnvelopeReservationStatus {
+  reserved
+  settled
+  released
+  provider_error
+  unknown_usage
+  overrun
+}
+
 enum PaymentTransactionType {
   payment
   refund
@@ -309,6 +325,7 @@ model Project {
   invitations          ProjectInvitation[]
   aiUsageEvents        AiUsageEvent[]
   costEvents           CostEvent[]
+  costEnvelopes        CostEnvelope[]
   operationalEvents    OperationalEvent[]
   activityEvents       UserActivityEvent[]
   defenseWorkspace     DefenseWorkspace?
@@ -556,6 +573,8 @@ model GenerationJob {
   project           Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
   aiUsageEvents     AiUsageEvent[]
   costEvents        CostEvent[]
+  narrationEnvelope CostEnvelope? @relation("CostEnvelopeNarrationJob")
+  presentationEnvelope CostEnvelope? @relation("CostEnvelopePresentationJob")
 
   @@unique([projectId, kind, requestKey])
   @@index([projectId, createdAt])
@@ -601,6 +620,7 @@ model AiUsageEvent {
   userId                   String?
   projectId                String?
   generationJobId          String?
+  costEnvelopeId           String?
   provider                 String
   model                    String
   operation                String
@@ -624,6 +644,7 @@ model AiUsageEvent {
   exchangeRateToRub        Decimal?       @db.Decimal(24, 10)
   rubCostAtEvent           Decimal?       @db.Decimal(24, 10)
   pricingVersion           String?
+  pricingSnapshot          Json?
   priceEffectiveFrom       DateTime?
   errorCode                String?
   errorClass               String?
@@ -633,11 +654,13 @@ model AiUsageEvent {
   user                     User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
   project                  Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
   generationJob            GenerationJob? @relation(fields: [generationJobId], references: [id], onDelete: SetNull)
+  costEnvelope             CostEnvelope?  @relation(fields: [costEnvelopeId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([userId, createdAt])
   @@index([projectId, createdAt])
   @@index([generationJobId, createdAt])
+  @@index([costEnvelopeId, createdAt])
   @@index([provider, model, createdAt])
   @@index([status, createdAt])
 }
@@ -650,6 +673,7 @@ model CostEvent {
   projectId         String?
   generationJobId   String?
   exportId          String?
+  costEnvelopeId    String?
   provider          String
   quantity          Decimal         @db.Decimal(24, 10)
   unit              String
@@ -660,17 +684,64 @@ model CostEvent {
   rubCostAtEvent    Decimal?        @db.Decimal(24, 10)
   measurement       CostMeasurement
   pricingVersion    String?
+  pricingSnapshot   Json?
   occurredAt        DateTime
   createdAt         DateTime        @default(now())
   user              User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
   project           Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
   generationJob     GenerationJob?  @relation(fields: [generationJobId], references: [id], onDelete: SetNull)
   export            Export?         @relation(fields: [exportId], references: [id], onDelete: SetNull)
+  costEnvelope      CostEnvelope?   @relation(fields: [costEnvelopeId], references: [id], onDelete: SetNull)
 
   @@index([occurredAt])
   @@index([category, occurredAt])
   @@index([userId, occurredAt])
   @@index([projectId, occurredAt])
+  @@index([costEnvelopeId, occurredAt])
+}
+
+model CostEnvelope {
+  id                String             @id @default(cuid())
+  projectId         String
+  policyVersion     String
+  limitRub          Decimal            @db.Decimal(24, 8)
+  policySnapshot    Json
+  catalogSnapshot   Json
+  reservedRub       Decimal            @default(0) @db.Decimal(24, 8)
+  settledRub        Decimal            @default(0) @db.Decimal(24, 8)
+  releasedRub       Decimal            @default(0) @db.Decimal(24, 8)
+  status            CostEnvelopeStatus @default(active)
+  narrationJobId    String?            @unique
+  presentationJobId String?            @unique
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  project           Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  narrationJob      GenerationJob?     @relation("CostEnvelopeNarrationJob", fields: [narrationJobId], references: [id], onDelete: SetNull)
+  presentationJob   GenerationJob?     @relation("CostEnvelopePresentationJob", fields: [presentationJobId], references: [id], onDelete: SetNull)
+  reservations      CostEnvelopeReservation[]
+  aiUsageEvents     AiUsageEvent[]
+  costEvents        CostEvent[]
+
+  @@index([projectId, status, createdAt])
+}
+
+model CostEnvelopeReservation {
+  id             String                        @id @default(cuid())
+  envelopeId     String
+  idempotencyKey String                        @unique
+  bucket         String
+  stage          String
+  status         CostEnvelopeReservationStatus @default(reserved)
+  reservedRub    Decimal                       @db.Decimal(24, 8)
+  settledRub     Decimal                       @default(0) @db.Decimal(24, 8)
+  releasedRub    Decimal                       @default(0) @db.Decimal(24, 8)
+  reason         String?
+  createdAt      DateTime                      @default(now())
+  settledAt      DateTime?
+  releasedAt     DateTime?
+  envelope       CostEnvelope                  @relation(fields: [envelopeId], references: [id], onDelete: Cascade)
+
+  @@index([envelopeId, bucket, status])
 }
 
 model ExchangeRate {

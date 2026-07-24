@@ -22,6 +22,8 @@ export { generationFailureCategoryValues, safeGenerationRecovery } from "./gener
 export type { GenerationFailureCategory, SafeGenerationRecovery } from "./generation/recovery.js";
 export { RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE, RUSSIAN_STUDENT_SPEECH_TIMING_PRESETS, getRussianStudentSpeechTimingBudget, russianSpeechMinutesFromWords } from "./generation/speech-timing.js";
 export type { SpeechTimingBudget, SpeechTimingProject } from "./generation/speech-timing.js";
+export { COST_ENVELOPE_POLICY_VERSION, COST_ENVELOPE_LIMIT_RUB, COST_ENVELOPE_BUCKETS, AITUNNEL_APPROVED_MODELS, AITUNNEL_PROVIDER_CATALOG_VERSION, AITUNNEL_PROVIDER_CATALOG, standardGenerationCostPolicy, costEnvelopePolicyIsValid, isApprovedAitunnelModel, aitunnelCatalogSnapshot, aitunnelPriceForApprovedModel } from "./generation/cost-envelope.js";
+export type { CostEnvelopeBucket, CostEnvelopePolicy, AitunnelApprovedModel, AitunnelCatalogPrice } from "./generation/cost-envelope.js";
 export { presentationSchema } from "./presentation/document.js";
 export type { PresentationDocument } from "./presentation/document.js";
 export { PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS, resolvePremiumPresentationTheme, resolveThemeFromDesignBrief, resolvePresentationTheme } from "./presentation/themes.js";

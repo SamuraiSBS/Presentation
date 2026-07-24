@@ -1,10 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
+import { AITUNNEL_PROVIDER_CATALOG, aitunnelPriceForApprovedModel } from "./aitunnel-provider-catalog.js";
 
 type EnvLike = Record<string, string | undefined>;
 
-export const AITUNNEL_NARRATION_PRICE = { inputRubPerMillion: "455", outputRubPerMillion: "2275", version: "aitunnel-gemini-3.6-flash-pricing-2026-07-24" } as const;
-export const AITUNNEL_ECONOMY_PRICE = { inputRubPerMillion: "60", outputRubPerMillion: "500", version: "aitunnel-gemini-3.5-flash-lite-model-page-2026-07-24" } as const;
+export const AITUNNEL_NARRATION_PRICE = AITUNNEL_PROVIDER_CATALOG["gemini-3.6-flash"];
+export const AITUNNEL_ECONOMY_PRICE = AITUNNEL_PROVIDER_CATALOG["gemini-3.5-flash-lite"];
 export const AITUNNEL_NARRATION_DEFAULT_BUDGET_RUB = 20;
 export const AITUNNEL_PROJECT_DEFAULT_BUDGET_RUB = 30;
 export const AITUNNEL_NARRATION_DEFAULT_MAX_OUTPUT_TOKENS = 2400;
@@ -47,10 +48,7 @@ export function aitunnelStagePolicy(stage: AitunnelStage, env: EnvLike = process
   return { model: aitunnelModelForStage(stage, env), maxOutputTokens: stage === "narration" || stage === "narration_rewrite" ? narration.maxOutputTokens : base.maxOutputTokens, reasoningEffort: stage === "narration" || stage === "narration_rewrite" ? narration.reasoningEffort : base.reasoningEffort };
 }
 export function aitunnelPriceForModel(model: string) {
-  const normalized = model.trim().toLowerCase();
-  if (normalized === AITUNNEL_PRIMARY_MODEL) return AITUNNEL_NARRATION_PRICE;
-  if (normalized === AITUNNEL_ECONOMY_MODEL) return AITUNNEL_ECONOMY_PRICE;
-  return undefined;
+  return aitunnelPriceForApprovedModel(model);
 }
 export function minimumOutputTokensForNarration(project?: { level: string; slideCount: number; scenario: string }) {
   const timing = project ? getRussianStudentSpeechTimingBudget(project) : undefined;

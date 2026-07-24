@@ -38,6 +38,7 @@ type GenerationJobData = {
   projectId: string;
   userId: string;
   generationJobId?: string;
+  costEnvelopeId?: string;
   traceContext?: TraceCarrier;
 };
 
@@ -62,11 +63,17 @@ export async function handleGenerationJob(job: Job<GenerationQueueJobData>) {
     where: jobWhere,
     select: { id: true },
   });
+  const envelope = generationJob.data.costEnvelopeId
+    ? await prisma.costEnvelope.findUnique({ where: { id: generationJob.data.costEnvelopeId }, select: { policyVersion: true, policySnapshot: true, catalogSnapshot: true } })
+    : null;
 
   return runWithUsageContext({
     userId: generationJob.data.userId,
     projectId,
     generationJobId: databaseJob?.id,
+    costEnvelopeId: generationJob.data.costEnvelopeId,
+    costEnvelopePolicyVersion: envelope?.policyVersion,
+    costEnvelopeSnapshot: envelope ? { policy: envelope.policySnapshot, catalog: envelope.catalogSnapshot } : undefined,
     queueJobId: generationJob.id ? String(generationJob.id) : undefined,
     stage: kind === "narration" ? "drafting_speech" : "building_slides",
   }, () => runGenerationJob(generationJob, kind, traceContext));

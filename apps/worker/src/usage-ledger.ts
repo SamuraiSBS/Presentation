@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import crypto from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { AITUNNEL_ECONOMY_PRICE, AITUNNEL_NARRATION_PRICE } from "./aitunnel-narration-budget.js";
 import { getPrisma } from "./prisma.js";
 import { errorLogFields, logger, redactLogString } from "./observability.js";
@@ -8,6 +9,9 @@ export type UsageContext = {
   userId: string;
   projectId: string;
   generationJobId?: string;
+  costEnvelopeId?: string;
+  costEnvelopePolicyVersion?: string;
+  costEnvelopeSnapshot?: Record<string, unknown>;
   queueJobId?: string;
   stage?: string;
 };
@@ -66,6 +70,7 @@ export async function recordAiUsage(input: {
         userId: store.userId,
         projectId: store.projectId,
         generationJobId: store.generationJobId,
+        costEnvelopeId: store.costEnvelopeId,
         provider: input.provider,
         model: input.model,
         operation: input.operation,
@@ -89,6 +94,7 @@ export async function recordAiUsage(input: {
         exchangeRateToRub: exchangeRate,
         rubCostAtEvent: sourceCost && exchangeRate ? multiply(sourceCost, exchangeRate) : null,
         pricingVersion: price?.version,
+        pricingSnapshot: store.costEnvelopeSnapshot as Prisma.InputJsonValue | undefined,
         priceEffectiveFrom: price?.effectiveFrom,
         errorClass: input.error instanceof Error ? input.error.name : input.error ? typeof input.error : undefined,
         startedAt: input.startedAt,
@@ -134,6 +140,7 @@ export async function recordCostEvent(input: {
         // search and image-search contexts, which do not have an export id.
         generationJobId: store.generationJobId ?? null,
         exportId: input.exportId ?? null,
+        costEnvelopeId: store.costEnvelopeId ?? null,
         provider: input.provider,
         quantity: input.quantity,
         unit: input.unit,
@@ -144,6 +151,7 @@ export async function recordCostEvent(input: {
         rubCostAtEvent: sourceCost && exchangeRate ? multiply(sourceCost, exchangeRate) : null,
         measurement: input.measurement,
         pricingVersion: "env-catalog-2026-07-11",
+        pricingSnapshot: store.costEnvelopeSnapshot as Prisma.InputJsonValue | undefined,
         occurredAt: input.occurredAt || new Date(),
       },
     });

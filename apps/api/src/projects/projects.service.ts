@@ -19,6 +19,8 @@ import {
   type UpdateSourceReviewInput,
   type UpdateSlideInput,
   buildSlideCanvas,
+  aitunnelCatalogSnapshot,
+  standardGenerationCostPolicy,
   hasCustomSlideCanvas,
   ensureEditableCanvas,
   defensePlanSchema,
@@ -433,12 +435,11 @@ export class ProjectsService {
         );
       }
       await this.prisma.project.update({ where: { id: project.id }, data: { status: "script_queued", error: null } });
-      const job = await this.prisma.generationJob.create({
-        data: { projectId: project.id, kind: "narration", status: "queued" },
-      });
+      const envelope = await this.createAitunnelEnvelope(project.id, "narration");
+      const job = envelope.job;
       const queueJob = await this.generationQueue.add(
         "generate-narration",
-        { projectId: project.id, userId: access.project.userId, generationJobId: job.id, traceContext: injectTraceContext() },
+        { projectId: project.id, userId: access.project.userId, generationJobId: job.id, costEnvelopeId: envelope.id, traceContext: injectTraceContext() },
         narrationJobOptions(),
       );
       await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
@@ -518,16 +519,47 @@ export class ProjectsService {
       }
 
       await this.prisma.project.update({ where: { id: project.id }, data: { status: "queued", error: null } });
-      const job = await this.prisma.generationJob.create({
-        data: { projectId: project.id, kind: "presentation", status: "queued" },
-      });
+      const envelope = await this.createAitunnelEnvelope(project.id, "presentation");
+      const job = envelope.job;
       const queueJob = await this.generationQueue.add(
         "generate-presentation",
-        { projectId: project.id, userId: access.project.userId, generationJobId: job.id, traceContext: injectTraceContext() },
+        { projectId: project.id, userId: access.project.userId, generationJobId: job.id, costEnvelopeId: envelope.id, traceContext: injectTraceContext() },
         generationJobOptions(),
       );
       await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
       return { projectId: project.id, jobId: job.id, queueJobId: queueJob.id, status: "queued" };
+    });
+  }
+
+  private async createAitunnelEnvelope(projectId: string, kind: "narration" | "presentation") {
+    if (process.env.AI_PROVIDER?.trim().toLowerCase() !== "aitunnel") {
+      const job = await this.prisma.generationJob.create({ data: { projectId, kind, status: "queued" } });
+      return { id: undefined, job };
+    }
+    const policy = standardGenerationCostPolicy();
+    return this.prisma.$transaction(async (tx) => {
+      const job = await tx.generationJob.create({ data: { projectId, kind, status: "queued" } });
+      const existing = kind === "presentation"
+        ? await tx.costEnvelope.findFirst({
+          where: { projectId, status: "active", narrationJob: { is: { status: "completed" } }, presentationJobId: null },
+          orderBy: { createdAt: "desc" },
+        })
+        : null;
+      if (existing) {
+        const envelope = await tx.costEnvelope.update({ where: { id: existing.id }, data: { presentationJobId: job.id } });
+        return { id: envelope.id, job };
+      }
+      const envelope = await tx.costEnvelope.create({
+        data: {
+          projectId,
+          policyVersion: policy.version,
+          limitRub: policy.limitRub,
+          policySnapshot: policy,
+          catalogSnapshot: aitunnelCatalogSnapshot(),
+          ...(kind === "narration" ? { narrationJobId: job.id } : { presentationJobId: job.id }),
+        },
+      });
+      return { id: envelope.id, job };
     });
   }
 
