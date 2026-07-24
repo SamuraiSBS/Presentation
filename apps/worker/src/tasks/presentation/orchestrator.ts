@@ -148,6 +148,7 @@ import { normalizeNarrationText, parseNarrationSections } from "./narration/proc
 import { normalizePresentation } from "./normalization/presentation.js";
 import { isDemoGenerationAllowed } from "./quality/orchestration.js";
 import { buildFallbackGeneratedText, demoPresentation } from "./utilities.js";
+import { AitunnelProjectBudget, runWithAitunnelProjectBudget } from "../../aitunnel-narration-budget.js";
 
 export async function generatePresentation(project: ProjectInput, sources: Source[]): Promise<PresentationDocument> {
   const providers = selectAiProviders();
@@ -199,14 +200,16 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
         const config = aitunnelConfig();
         if (!config) throw new Error("AITUNNEL_API_KEY and an explicit AITUNNEL_NARRATION_MODEL are required");
         const client = createAitunnelClient();
-        const researchBrief = buildResearchBrief(project, sources);
-        const narrativePlan = await generateNarrativePlanWithProvider(provider, project, sources, researchBrief, { openAIClient: client, openAIModel: config.narrationModel });
-        const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
-        const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
-        const text = await generateAitunnelNarration(client, config.narrationModel, project, sources, narrativePlan, researchBrief);
-        const slideTextPlans = buildSlideTextPlans(project, text, narrativePlan, deckStory, sources);
-        generationPipelineArtifactsSchema.parse({ researchBrief, narrativePlan, deckStory, designBrief, slideBlueprints: [], slideTextPlans });
-        return { text, narrativePlan, generationMode: provider };
+        return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), async () => {
+          const researchBrief = buildResearchBrief(project, sources);
+          const narrativePlan = await generateNarrativePlanWithProvider(provider, project, sources, researchBrief, { openAIClient: client, openAIModel: config.narrationModel });
+          const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
+          const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
+          const text = await generateAitunnelNarration(client, config.narrationModel, project, sources, narrativePlan, researchBrief);
+          const slideTextPlans = buildSlideTextPlans(project, text, narrativePlan, deckStory, sources);
+          generationPipelineArtifactsSchema.parse({ researchBrief, narrativePlan, deckStory, designBrief, slideBlueprints: [], slideTextPlans });
+          return { text, narrativePlan, generationMode: provider };
+        });
       }
 
       const apiKey = process.env.YANDEX_API_KEY?.trim();

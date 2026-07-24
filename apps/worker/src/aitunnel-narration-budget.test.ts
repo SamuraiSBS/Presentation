@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   AITUNNEL_NARRATION_DEFAULT_MAX_OUTPUT_TOKENS,
+  AitunnelProjectBudget,
+  aitunnelModelForStage,
   aitunnelNarrationBudgetConfig,
   canStartCall,
   estimateInputTokens,
@@ -10,6 +12,27 @@ import {
 } from "./aitunnel-narration-budget.js";
 
 describe("AITUNNEL narration budget", () => {
+  it("routes only the three compact structured stages to the exact Lite model", () => {
+    expect(aitunnelModelForStage("narrative_plan")).toBe("gemini-3.5-flash-lite");
+    expect(aitunnelModelForStage("design_brief")).toBe("gemini-3.5-flash-lite");
+    expect(aitunnelModelForStage("quality_critique")).toBe("gemini-3.5-flash-lite");
+    expect(aitunnelModelForStage("narration")).toBe("gemini-3.6-flash");
+    expect(aitunnelModelForStage("presentation")).toBe("gemini-3.6-flash");
+    expect(aitunnelModelForStage("quality_repair")).toBe("gemini-3.6-flash");
+    expect(aitunnelModelForStage("narrative_plan", { AITUNNEL_ECONOMY_MODEL: "auto" })).toBeUndefined();
+    expect(aitunnelModelForStage("narrative_plan", { AITUNNEL_ECONOMY_MODEL: "other" })).toBeUndefined();
+  });
+
+  it("applies project and narration caps independently and stops after unavailable usage", () => {
+    const budget = new AitunnelProjectBudget({ AITUNNEL_PROJECT_BUDGET_RUB: "30", AITUNNEL_NARRATION_JOB_BUDGET_RUB: "20" });
+    const reserved = budget.reserve("plan", "narrative_plan", { prompt: "small" });
+    expect(reserved.status).toBe("reserved");
+    expect(budget.settle("plan", { inputTokens: 100, outputTokens: 100 })).toMatchObject({ status: "settled" });
+    const narration = budget.reserve("narration", "narration", { prompt: "speech" });
+    expect(narration.status).toBe("reserved");
+    expect(budget.settle("narration", undefined)).toEqual({ status: "aitunnel_usage_unavailable" });
+    expect(budget.reserve("presentation", "presentation", { prompt: "later" })).toEqual({ status: "aitunnel_project_budget_overrun" });
+  });
   it("uses bounded defaults when environment values are absent or invalid", () => {
     expect(aitunnelNarrationBudgetConfig({})).toEqual({ budgetRub: "20", maxOutputTokens: 2400, reasoningEffort: "minimal" });
     expect(aitunnelNarrationBudgetConfig({

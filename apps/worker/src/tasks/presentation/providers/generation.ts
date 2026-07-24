@@ -7,11 +7,12 @@ import { normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
 import { aitunnelConfig, createAitunnelClient, createOpenAIClient, createOpenAIProvider } from "../../../openai-client.js";
 import {
   aitunnelNarrationBudgetConfig,
-  canStartCall,
-  estimateInputTokens,
-  remainingBudget,
-  reserveNarrationCall,
-  settleCall,
+  AitunnelProjectBudget,
+  aitunnelModelForStage,
+  aitunnelStagePolicy,
+  currentAitunnelProjectBudget,
+  runWithAitunnelProjectBudget,
+  type AitunnelStage,
 } from "../../../aitunnel-narration-budget.js";
 import {
   type DesignBrief,
@@ -117,6 +118,7 @@ type GenerateStructuredOptions<T> = {
   maxAttempts?: number;
   temperature?: number;
   yandexModelTier?: YandexModelTier;
+  aitunnelStage?: AitunnelStage;
 };
 
 type GenerateAndValidateOptions<T> = {
@@ -208,6 +210,7 @@ export async function generateWithAitunnel(project: ProjectInput, sources: Sourc
   const config = aitunnelConfig();
   if (!config) throw new Error("AITUNNEL_API_KEY and an explicit AITUNNEL_NARRATION_MODEL are required");
   const client = createAitunnelClient();
+  return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), async () => {
   const researchBrief = buildResearchBrief(project, sources);
   const narrativePlan = await generateNarrativePlanWithProvider("aitunnel", project, sources, researchBrief, { openAIClient: client, openAIModel: config.narrationModel });
   const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
@@ -223,6 +226,7 @@ export async function generateWithAitunnel(project: ProjectInput, sources: Sourc
       critique: (presentation, deterministic) => critiquePresentationQualityWithOpenAI(client, presentation, deterministic, { provider: "aitunnel", model: config.narrationModel }),
       repair: (presentation, issues, attempt) => repairPresentationQualityWithOpenAI(client, presentation, issues, attempt, { provider: "aitunnel", model: config.narrationModel }),
     }, designBrief);
+  });
 }
 
 export async function generateOpenAIPresentationFromNarration(project: ProjectInput, sources: Source[], narrationText: string) {
@@ -264,6 +268,7 @@ export async function generateAitunnelPresentationFromNarration(project: Project
   const config = aitunnelConfig();
   if (!config) throw new Error("AITUNNEL_API_KEY and an explicit AITUNNEL_NARRATION_MODEL are required");
   const client = createAitunnelClient();
+  return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), async () => {
   const researchBrief = buildResearchBrief(project, sources);
   const narrativePlan = await generateNarrativePlanWithProvider("aitunnel", project, sources, researchBrief, { openAIClient: client, openAIModel: config.narrationModel });
   const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
@@ -276,6 +281,7 @@ export async function generateAitunnelPresentationFromNarration(project: Project
       critique: (presentation, deterministic) => critiquePresentationQualityWithOpenAI(client, presentation, deterministic, { provider: "aitunnel", model: config.narrationModel }),
       repair: (presentation, issues, attempt) => repairPresentationQualityWithOpenAI(client, presentation, issues, attempt, { provider: "aitunnel", model: config.narrationModel }),
     }, designBrief);
+  });
 }
 
 export async function generateOpenAINarration(client: OpenAI, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief) {
@@ -315,11 +321,12 @@ export async function generateOpenAINarration(client: OpenAI, project: ProjectIn
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-export async function generateAitunnelNarration(client: OpenAI, model: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief) {
+export async function generateAitunnelNarration(client: OpenAI, model: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief): Promise<string> {
+  if (!currentAitunnelProjectBudget()) return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), () => generateAitunnelNarration(client, model, project, sources, narrativePlan, researchBrief));
   const policy = aitunnelNarrationBudgetConfig();
   const initial = await requestAitunnelNarrationCall({
     client, model, project, sources, narrativePlan, researchBrief, policy, narrationTextCall: 1, recovery: "none",
-    prompt: buildNarrationPrompt(project, sources, narrativePlan, researchBrief), remainingBudgetRub: policy.budgetRub,
+    prompt: buildNarrationPrompt(project, sources, narrativePlan, researchBrief),
   });
   let initialText = initial.text;
   try {
@@ -328,7 +335,7 @@ export async function generateAitunnelNarration(client: OpenAI, model: string, p
     const rewritePrompt = buildFullNarrationDurationRewritePrompt(project, sources, narrativePlan, initialText, error, researchBrief);
     const rewrite = await requestAitunnelNarrationCall({
       client, model, project, sources, narrativePlan, researchBrief, policy, narrationTextCall: 2, recovery: "full_narration_rewrite",
-      prompt: rewritePrompt, remainingBudgetRub: initial.remainingBudgetRub,
+      prompt: rewritePrompt,
     });
     try {
       return validateAitunnelNarration(rewrite.text, project, narrativePlan, model, 2, "full_narration_rewrite");
@@ -349,7 +356,6 @@ type AitunnelNarrationRequest = {
   narrationTextCall: 1 | 2;
   recovery: "none" | "full_narration_rewrite";
   prompt: string;
-  remainingBudgetRub: string;
 };
 
 async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
@@ -359,13 +365,11 @@ async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
     max_output_tokens: input.policy.maxOutputTokens,
     reasoning: { effort: input.policy.reasoningEffort, exclude: true },
   };
-  const reservation = reserveNarrationCall({
-    estimatedInputTokens: estimateInputTokens(request),
-    maxOutputTokens: input.policy.maxOutputTokens,
-  });
-  if (!canStartCall({ remainingBudgetRub: input.remainingBudgetRub, reservation })) {
+  const budget = currentAitunnelProjectBudget();
+  const reserved = budget?.reserve(`narration-${input.narrationTextCall}`, input.narrationTextCall === 1 ? "narration" : "narration_rewrite", request);
+  if (!reserved || reserved.status !== "reserved") {
     logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, {
-      failureCategory: "narration_budget_exhausted", budgetRub: input.policy.budgetRub, reservationRub: reservation.costRub, remainingRub: input.remainingBudgetRub,
+      failureCategory: "narration_budget_exhausted", budgetRub: input.policy.budgetRub,
     });
     throw narrationFailure("budget_exhausted");
   }
@@ -377,30 +381,29 @@ async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
     await recordOpenAIResponse(response, "narration", "studydeck_narration", startedAt, "aitunnel", input.model);
   } catch {
     logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, {
-      failureCategory: "provider_error", budgetRub: input.policy.budgetRub, reservationRub: reservation.costRub, remainingRub: input.remainingBudgetRub,
+      failureCategory: "provider_error", budgetRub: input.policy.budgetRub,
     });
     throw narrationFailure("provider");
   }
 
   const responseItem = response as { output_text?: string; usage?: unknown };
-  const settled = settleCall({ reservation, actualUsage: normalizeOpenAIUsage(responseItem.usage) });
-  if (settled.status === "usage_unavailable") {
+  const settled = budget!.settle(`narration-${input.narrationTextCall}`, normalizeOpenAIUsage(responseItem.usage));
+  if (settled.status === "aitunnel_usage_unavailable") {
     logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, {
-      failureCategory: "narration_usage_unavailable", budgetRub: input.policy.budgetRub, reservationRub: reservation.costRub, remainingRub: input.remainingBudgetRub,
+      failureCategory: "narration_usage_unavailable", budgetRub: input.policy.budgetRub,
     });
     throw narrationFailure("usage_unavailable");
   }
-  const nextBudget = remainingBudget(input.remainingBudgetRub, settled.actualCostRub);
-  if (settled.overrun) {
+  if (settled.status === "aitunnel_project_budget_overrun") {
     logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, {
-      failureCategory: "narration_budget_overrun", budgetRub: input.policy.budgetRub, reservationRub: reservation.costRub, actualCostRub: settled.actualCostRub, remainingRub: nextBudget,
+      failureCategory: "narration_budget_overrun", budgetRub: input.policy.budgetRub, actualCostRub: settled.actualCostRub,
     });
     throw narrationFailure("budget_overrun");
   }
   logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.recovery, {
-    budgetRub: input.policy.budgetRub, reservationRub: reservation.costRub, actualCostRub: settled.actualCostRub, remainingRub: nextBudget,
+    budgetRub: input.policy.budgetRub, reservationRub: settled.reservation.costRub, actualCostRub: settled.actualCostRub, remainingRub: settled.projectRemaining,
   });
-  return { text: responseItem.output_text || "", remainingBudgetRub: nextBudget };
+  return { text: responseItem.output_text || "" };
 }
 
 function validateAitunnelNarration(text: string, project: ProjectInput, narrativePlan: SlideNarrative[], model: string, narrationTextCall: 1 | 2, recovery: "none" | "full_narration_rewrite") {
@@ -684,6 +687,7 @@ export async function generateNarrativePlanWithProvider(
     parse: (value) => normalizeNarrativePlan(value, project),
     jsonSchema: narrativePlanJsonSchema,
     yandexModelTier: "economy",
+    aitunnelStage: "narrative_plan",
     ...options,
   });
 }
@@ -709,6 +713,7 @@ export async function generateDesignBriefWithProvider(
       jsonSchema: designBriefJsonSchema,
       maxAttempts: 1,
       yandexModelTier: "economy",
+      aitunnelStage: "design_brief",
       ...options,
     });
   } catch (error) {
@@ -737,6 +742,7 @@ export async function generatePresentationDocumentWithProvider(
     openAIClient: options.openAIClient,
     openAIModel: options.openAIModel,
     yandexApiKey: options.yandexApiKey,
+    aitunnelStage: "presentation",
   });
 }
 
@@ -756,6 +762,7 @@ export async function generateStructuredWithProvider<T>({
   maxAttempts = 2,
   temperature = 0.25,
   yandexModelTier = "primary",
+  aitunnelStage,
 }: GenerateStructuredOptions<T>): Promise<T> {
   if (provider === "openai" || provider === "aitunnel") {
     const sdkGenerateText = openAIGenerateText || generateText;
@@ -764,7 +771,7 @@ export async function generateStructuredWithProvider<T>({
       schema,
       schemaName,
       parse,
-      maxAttempts,
+      maxAttempts: provider === "aitunnel" ? 1 : maxAttempts,
       provider,
       call: async (attempt, repairPrompt) => {
         logStructuredGenerationAttempt(provider, schemaName, attempt);
@@ -778,7 +785,8 @@ export async function generateStructuredWithProvider<T>({
             schemaJson,
             strict,
             provider,
-            model: openAIModel || process.env.OPENAI_MODEL || "gpt-4.1-mini",
+            model: provider === "aitunnel" ? aitunnelModelForStage(aitunnelStage || "presentation") || "" : openAIModel || process.env.OPENAI_MODEL || "gpt-4.1-mini",
+            aitunnelStage,
           });
         }
         return requestOpenAIStructuredWithSdk({
@@ -872,6 +880,7 @@ export async function requestOpenAIStructuredLegacy({
   strict,
   provider = "openai",
   model = process.env.OPENAI_MODEL || "gpt-4.1-mini",
+  aitunnelStage,
 }: {
   client: OpenAI;
   system: string;
@@ -882,26 +891,40 @@ export async function requestOpenAIStructuredLegacy({
   strict: boolean;
   provider?: "openai" | "aitunnel";
   model?: string;
+  aitunnelStage?: AitunnelStage;
 }) {
   const startedAt = new Date();
   try {
-  const response = await client.responses.create({
-    model,
+  const aitunnelPolicy = provider === "aitunnel" ? aitunnelStagePolicy(aitunnelStage || "presentation") : undefined;
+  const request = {
+    model: aitunnelPolicy?.model || model,
     input: [
-      { role: "system", content: system },
-      { role: "user", content: repairPrompt || withJsonPromptRules(prompt) },
+      { role: "system" as const, content: system },
+      { role: "user" as const, content: repairPrompt || withJsonPromptRules(prompt) },
     ],
     text: schemaJson
       ? {
           format: {
-            type: "json_schema",
+            type: "json_schema" as const,
             name: schemaName,
             strict,
             schema: schemaJson,
           },
         }
       : undefined,
-  });
+    ...(aitunnelPolicy ? { max_output_tokens: aitunnelPolicy.maxOutputTokens, reasoning: { effort: aitunnelPolicy.reasoningEffort, exclude: true } } : {}),
+  };
+  const budget = provider === "aitunnel" ? currentAitunnelProjectBudget() : undefined;
+  const reservationKey = provider === "aitunnel" ? `${aitunnelStage || "presentation"}-${startedAt.getTime()}` : undefined;
+  const reserved = budget && reservationKey ? budget.reserve(reservationKey, aitunnelStage || "presentation", request) : undefined;
+  if (provider === "aitunnel" && (!reserved || reserved.status !== "reserved")) {
+    throw new Error(reserved?.status || "aitunnel_project_budget_exhausted_preflight");
+  }
+  const response = await client.responses.create(request);
+  if (budget && reservationKey) {
+    const settled = budget.settle(reservationKey, normalizeOpenAIUsage((response as { usage?: unknown }).usage));
+    if (settled.status !== "settled") throw new Error(settled.status);
+  }
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   await recordOpenAIResponse(response, "structured_generation_legacy", schemaName, startedAt, provider, model);
   return typedResponse.output_parsed || response.output_text || "";

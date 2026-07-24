@@ -41,7 +41,7 @@ export function createOpenAIProvider(env: EnvLike = process.env) {
 export function aitunnelConfig(env: EnvLike = process.env): AitunnelConfig | undefined {
   const apiKey = env.AITUNNEL_API_KEY?.trim();
   const narrationModel = (env.AITUNNEL_NARRATION_MODEL === undefined ? AITUNNEL_DEFAULT_NARRATION_MODEL : env.AITUNNEL_NARRATION_MODEL).trim();
-  if (!apiKey || !narrationModel || narrationModel.toLowerCase() === "auto") return undefined;
+  if (!apiKey || narrationModel !== AITUNNEL_DEFAULT_NARRATION_MODEL) return undefined;
   return {
     apiKey,
     baseURL: env.AITUNNEL_BASE_URL?.trim() || AITUNNEL_DEFAULT_BASE_URL,

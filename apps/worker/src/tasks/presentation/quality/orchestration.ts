@@ -5,6 +5,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import { captureGenerationError, errorLogFields, logger } from "../../../observability.js";
 import { normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
+import { aitunnelModelForStage, aitunnelStagePolicy, currentAitunnelProjectBudget, type AitunnelStage } from "../../../aitunnel-narration-budget.js";
 import {
   type DesignBrief,
   type DeckStory,
@@ -348,8 +349,8 @@ type OpenAICompatibleUsage = { provider: "openai" | "aitunnel"; model: string };
 
 export async function repairSlideTextWithOpenAI(client: OpenAI, presentation: PresentationDocument, issues: SlideTextIssue[], usage: OpenAICompatibleUsage = { provider: "openai", model: process.env.OPENAI_MODEL || "gpt-4.1-mini" }) {
   const startedAt = new Date();
-  const response = await client.responses.create({
-    model: usage.model,
+  const request: OpenAI.Responses.ResponseCreateParamsNonStreaming = {
+    model: usage.provider === "aitunnel" ? aitunnelModelForStage("slide_text_repair") || "" : usage.model,
     input: [
       {
         role: "system",
@@ -369,8 +370,9 @@ export async function repairSlideTextWithOpenAI(client: OpenAI, presentation: Pr
         schema: slideTextRepairSchema,
       },
     },
-  });
-  await recordOpenAIResponse(response, "slide_text_repair", "studydeck_slide_text_repair", startedAt, usage.provider, usage.model);
+  };
+  const response = await requestOpenAICompatibleResponse(client, usage, "slide_text_repair", request);
+  await recordOpenAIResponse(response, "slide_text_repair", "studydeck_slide_text_repair", startedAt, usage.provider, usage.provider === "aitunnel" ? aitunnelModelForStage("slide_text_repair") || usage.model : usage.model);
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   return typedResponse.output_parsed || parseJsonText(response.output_text || "");
 }
@@ -392,8 +394,8 @@ export async function critiquePresentationQualityWithOpenAI(
   usage: OpenAICompatibleUsage = { provider: "openai", model: process.env.OPENAI_MODEL || "gpt-4.1-mini" },
 ) {
   const startedAt = new Date();
-  const response = await client.responses.create({
-    model: usage.model,
+  const request: OpenAI.Responses.ResponseCreateParamsNonStreaming = {
+    model: usage.provider === "aitunnel" ? aitunnelModelForStage("quality_critique") || "" : usage.model,
     input: [
       { role: "system", content: QUALITY_CRITIC_SYSTEM_PROMPT },
       { role: "user", content: buildQualityCriticPrompt(presentation, deterministic) },
@@ -406,8 +408,9 @@ export async function critiquePresentationQualityWithOpenAI(
         schema: qualityCritiqueJsonSchema,
       },
     },
-  });
-  await recordOpenAIResponse(response, "quality_critique", "studydeck_quality_critique", startedAt, usage.provider, usage.model);
+  };
+  const response = await requestOpenAICompatibleResponse(client, usage, "quality_critique", request);
+  await recordOpenAIResponse(response, "quality_critique", "studydeck_quality_critique", startedAt, usage.provider, usage.provider === "aitunnel" ? aitunnelModelForStage("quality_critique") || usage.model : usage.model);
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   return typedResponse.output_parsed || parseJsonText(response.output_text || "");
 }
@@ -434,8 +437,8 @@ export async function repairPresentationQualityWithOpenAI(
   usage: OpenAICompatibleUsage = { provider: "openai", model: process.env.OPENAI_MODEL || "gpt-4.1-mini" },
 ): Promise<QualityRepairResponse> {
   const startedAt = new Date();
-  const response = await client.responses.create({
-    model: usage.model,
+  const request: OpenAI.Responses.ResponseCreateParamsNonStreaming = {
+    model: usage.provider === "aitunnel" ? aitunnelModelForStage("quality_repair") || "" : usage.model,
     input: [
       { role: "system", content: QUALITY_REPAIR_SYSTEM_PROMPT },
       { role: "user", content: buildQualityRepairPrompt(presentation, issues, attempt) },
@@ -448,10 +451,31 @@ export async function repairPresentationQualityWithOpenAI(
         schema: qualityRepairJsonSchema,
       },
     },
-  });
-  await recordOpenAIResponse(response, "quality_repair", "studydeck_quality_repair", startedAt, usage.provider, usage.model);
+  };
+  const response = await requestOpenAICompatibleResponse(client, usage, "quality_repair", request);
+  await recordOpenAIResponse(response, "quality_repair", "studydeck_quality_repair", startedAt, usage.provider, usage.provider === "aitunnel" ? aitunnelModelForStage("quality_repair") || usage.model : usage.model);
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   return (typedResponse.output_parsed || parseJsonText(response.output_text || "")) as QualityRepairResponse;
+}
+
+async function requestOpenAICompatibleResponse(client: OpenAI, usage: OpenAICompatibleUsage, stage: AitunnelStage, request: OpenAI.Responses.ResponseCreateParamsNonStreaming): Promise<OpenAI.Responses.Response> {
+  if (usage.provider !== "aitunnel") return client.responses.create(request);
+  const policy = aitunnelStagePolicy(stage);
+  if (!policy.model) throw new Error("aitunnel_price_unavailable");
+  const boundedRequest: OpenAI.Responses.ResponseCreateParamsNonStreaming = {
+    ...request,
+    model: policy.model,
+    max_output_tokens: policy.maxOutputTokens,
+    reasoning: { effort: policy.reasoningEffort },
+  };
+  const budget = currentAitunnelProjectBudget();
+  const key = `${stage}-${Date.now()}-${Math.random()}`;
+  const reserved = budget?.reserve(key, stage, boundedRequest);
+  if (!reserved || reserved.status !== "reserved") throw new Error(reserved?.status || "aitunnel_project_budget_exhausted_preflight");
+  const response = await client.responses.create(boundedRequest);
+  const settled = budget!.settle(key, normalizeOpenAIUsage((response as { usage?: unknown }).usage));
+  if (settled.status !== "settled") throw new Error(settled.status);
+  return response;
 }
 
 export async function repairPresentationQualityWithYandex(
