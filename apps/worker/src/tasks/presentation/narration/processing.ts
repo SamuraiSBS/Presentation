@@ -142,6 +142,8 @@ type YandexTextOptions = {
   temperature?: number;
   maxTokens?: number;
   modelTier?: YandexModelTier;
+  narrationTextCall?: 1 | 2;
+  maxNarrationTextCalls?: number;
 };
 
 type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief" | "deckStory" | "designBrief" | "slideBlueprints" | "slideTextPlans">>;
@@ -214,6 +216,16 @@ export async function requestYandexText(apiKey: string, systemText: string, user
 
   const payload = (await response.json()) as YandexCompletionResponse;
   const usage = payload.result?.usage || payload.usage;
+  if (options.narrationTextCall) {
+    logger.info({
+      provider: "yandex",
+      model: model.model,
+      modelVersion: payload.result?.modelVersion || null,
+      narrationTextCall: options.narrationTextCall,
+      maxNarrationTextCalls: options.maxNarrationTextCalls || null,
+      ...yandexNarrationCompletionTelemetry(payload, options.maxTokens ?? 8000),
+    }, "Yandex narration completion metadata");
+  }
   await recordAiUsage({
     provider: "yandex",
     model: model.model,
@@ -243,6 +255,38 @@ export async function requestYandexText(apiKey: string, systemText: string, user
 export function safeTokenCount(value: string | undefined) {
   const result = Number(value);
   return Number.isFinite(result) && result >= 0 ? Math.trunc(result) : undefined;
+}
+
+export function yandexNarrationCompletionTelemetry(payload: YandexCompletionResponse, maxTokens: number) {
+  const alternative = payload.result?.alternatives?.[0] || payload.alternatives?.[0];
+  const outputTokens = safeTokenCount((payload.result?.usage || payload.usage)?.completionTokens);
+  const finishReason = normalizeYandexTerminationValue(alternative?.finishReason);
+  const alternativeStatus = normalizeYandexTerminationValue(alternative?.status);
+  const terminationSignal = finishReason === "length"
+    ? "output_cap"
+    : finishReason === "content_filter"
+      ? "content_filter"
+      : finishReason === "stop"
+        ? "natural_stop"
+        : outputTokens !== undefined && outputTokens >= maxTokens
+          ? "output_cap_suspected"
+          : alternativeStatus === "alternative_status_final"
+            ? "final_without_finish_reason"
+            : "unknown";
+
+  return {
+    alternativeStatus,
+    finishReason,
+    terminationSignal,
+    outputTokens: outputTokens ?? null,
+    maxTokens,
+  };
+}
+
+function normalizeYandexTerminationValue(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
 }
 
 export function isYandexJsonSchemaCompatible(schema: unknown): boolean {

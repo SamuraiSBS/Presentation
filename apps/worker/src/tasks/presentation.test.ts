@@ -25,7 +25,7 @@ import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentat
 import { applyNarrationFallbacks } from "./presentation/quality/orchestration.js";
 import { looksLikeSentenceFragment } from "./presentation/quality/orchestration.js";
 import { normalizeLayout as normalizeLayoutFromLayer, normalizeVisual } from "./presentation/normalization/presentation.js";
-import { findSpokenNarrationIssues, normalizeNarrationText, parseNarrationSections, validateNarrationSections } from "./presentation/narration/processing.js";
+import { findSpokenNarrationIssues, normalizeNarrationText, parseNarrationSections, validateNarrationSections, yandexNarrationCompletionTelemetry } from "./presentation/narration/processing.js";
 import { shortenSentence } from "./presentation/utilities.js";
 
 const originalEnv = { ...process.env };
@@ -455,6 +455,24 @@ function yandexTextResponse(text: string) {
 }
 
 describe("Yandex narration full duration rewrite", () => {
+  it("classifies Yandex termination metadata without retaining narration text", () => {
+    expect(yandexNarrationCompletionTelemetry({
+      result: { alternatives: [{ status: "ALTERNATIVE_STATUS_FINAL" }], usage: { completionTokens: "710" } },
+    }, 8000)).toEqual({
+      alternativeStatus: "alternative_status_final",
+      finishReason: null,
+      terminationSignal: "final_without_finish_reason",
+      outputTokens: 710,
+      maxTokens: 8000,
+    });
+    expect(yandexNarrationCompletionTelemetry({
+      alternatives: [{ finishReason: "length" }], usage: { completionTokens: "8000" },
+    }, 8000).terminationSignal).toBe("output_cap");
+    expect(yandexNarrationCompletionTelemetry({
+      alternatives: [{ finishReason: "content_filter" }], usage: { completionTokens: "12" },
+    }, 8000).terminationSignal).toBe("content_filter");
+  });
+
   const project = {
     id: "saturn-duration-rewrite",
     title: "Saturn",

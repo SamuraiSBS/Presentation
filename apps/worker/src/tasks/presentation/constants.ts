@@ -506,6 +506,8 @@ export type YandexCompletionResponse = {
       message?: {
         text?: string;
       };
+      status?: string;
+      finishReason?: string;
     }>;
     usage?: {
       inputTextTokens?: string;
@@ -519,6 +521,8 @@ export type YandexCompletionResponse = {
     message?: {
       text?: string;
     };
+    status?: string;
+    finishReason?: string;
   }>;
   usage?: {
     inputTextTokens?: string;

@@ -430,7 +430,7 @@ async function generateYandexPresentationDocumentWithRecovery(
 export async function generateYandexNarration(apiKey: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief) {
   let initialText = "";
   try {
-    initialText = await requestYandexText(apiKey, NARRATION_SYSTEM_PROMPT, buildNarrationPrompt(project, sources, narrativePlan, researchBrief), { jsonObject: false, modelTier: "narration" });
+    initialText = await requestYandexText(apiKey, NARRATION_SYSTEM_PROMPT, buildNarrationPrompt(project, sources, narrativePlan, researchBrief), { jsonObject: false, modelTier: "narration", narrationTextCall: 1, maxNarrationTextCalls: MAX_YANDEX_NARRATION_TEXT_CALLS });
   } catch (error) {
     logNarrationCall(project.id, 1, "none", { failureCategory: "provider_error" });
     throw narrationFailure("provider");
@@ -458,7 +458,7 @@ async function rewriteInvalidYandexNarration(
       apiKey,
       NARRATION_SYSTEM_PROMPT,
       buildFullNarrationDurationRewritePrompt(project, sources, narrativePlan, previousText, error, researchBrief),
-      { jsonObject: false, modelTier: "narration" },
+      { jsonObject: false, modelTier: "narration", narrationTextCall: 2, maxNarrationTextCalls: MAX_YANDEX_NARRATION_TEXT_CALLS },
     );
   } catch (rewriteError) {
     logNarrationCall(project.id, 2, "full_narration_rewrite", { failureCategory: "provider_error" });
