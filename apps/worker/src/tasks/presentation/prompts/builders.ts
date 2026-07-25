@@ -337,6 +337,59 @@ export function buildNarrationPrompt(project: ProjectInput, sources: Source[], n
     .join("\n\n");
 }
 
+/** A deliberately bounded prompt for one independently accepted Lite section. */
+export function buildAitunnelNarrationSectionPrompt(
+  project: ProjectInput,
+  sources: Source[],
+  narrative: SlideNarrative,
+) {
+  const timing = getRussianStudentSpeechTimingBudget(project);
+  if (!timing) throw new Error("aitunnel_section_timing_unavailable");
+  const targetWords = narrative.slideOrder === 1
+    ? timing.titleWordTarget
+    : narrative.slideOrder === project.slideCount
+      ? timing.conclusionWordTarget
+      : timing.contentWordTarget;
+  const minWords = Math.floor(targetWords * 0.8);
+  const maxWords = Math.ceil(targetWords * 1.2);
+  const anchors = sources
+    .filter((source) => source.included !== false)
+    .slice(0, 2)
+    .map((source) => `${source.label}: ${cleanMultilineText(source.excerpt).slice(0, 280)}`)
+    .filter(Boolean);
+  return [
+    "Write one Russian university-student narration section, not a plan or commentary.",
+    `Topic: ${project.title}. Learning context: ${project.level}; ${project.scenario}.`,
+    `Current slide ${narrative.slideOrder}: ${cleanMultilineText(narrative.slideTitle).slice(0, 120)}.`,
+    `Key message: ${cleanMultilineText(narrative.keyMessage).slice(0, 220)}.`,
+    `Write ${minWords}-${maxWords} words (target ${targetWords}) in 2-7 complete sentences.`,
+    "Return exactly one section in this canonical format: `Слайд N: semantic title` followed by its prose.",
+    "Explain the topic itself. Do not mention the next slide, a plan, sources, citations, or this instruction. Do not use filler or a template formula.",
+    anchors.length ? `Bounded factual anchors (use only when relevant; do not cite them):\n${anchors.join("\n")}` : "Use only cautious, generally supported factual claims.",
+  ].join("\n\n");
+}
+
+/** A compact, clean replacement request that never exposes the rejected section. */
+export function buildAitunnelNarrationSectionReplacementPrompt(
+  project: ProjectInput,
+  sources: Source[],
+  narrative: SlideNarrative,
+  failureCategory: NarrationRewriteFailureCategory,
+) {
+  const timing = getRussianStudentSpeechTimingBudget(project);
+  if (!timing) throw new Error("aitunnel_section_timing_unavailable");
+  const targetWords = narrative.slideOrder === 1 ? timing.titleWordTarget : narrative.slideOrder === project.slideCount ? timing.conclusionWordTarget : timing.contentWordTarget;
+  const anchors = sources.filter((source) => source.included !== false).slice(0, 1).map((source) => `${source.label}: ${cleanMultilineText(source.excerpt).slice(0, 120)}`).filter(Boolean);
+  return [
+    "Write a fresh Russian university-student narration section, not a patch, diagnosis, or commentary.",
+    `Topic: ${cleanMultilineText(project.title).slice(0, 120)}. Current slide ${narrative.slideOrder}: ${cleanMultilineText(narrative.slideTitle).slice(0, 120)}.`,
+    `Key message: ${cleanMultilineText(narrative.keyMessage).slice(0, 180)}. Write ${Math.floor(targetWords * 0.8)}-${Math.ceil(targetWords * 1.2)} words (target ${targetWords}) in 2-7 complete sentences.`,
+    "Return exactly one section in the canonical format: `Слайд N: semantic title` followed by prose. Explain the topic itself; do not mention sources, validation, a rejected draft, a plan, or this instruction.",
+    `Safe quality focus: ${AITUNNEL_REWRITE_CATEGORY_GUIDANCE[failureCategory]}`,
+    anchors.length ? `Bounded factual anchors (use only when relevant; do not cite them):\n${anchors.join("\n")}` : "Use only cautious, generally supported factual claims.",
+  ].join("\n\n");
+}
+
 export function buildNarrationRepairPrompt(
   project: ProjectInput,
   sources: Source[],

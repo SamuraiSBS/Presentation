@@ -4,18 +4,25 @@ import { AITUNNEL_PROVIDER_CATALOG, aitunnelPriceForApprovedModel } from "./aitu
 
 type EnvLike = Record<string, string | undefined>;
 
-export const AITUNNEL_NARRATION_PRICE = AITUNNEL_PROVIDER_CATALOG["gemini-3.6-flash"];
 export const AITUNNEL_ECONOMY_PRICE = AITUNNEL_PROVIDER_CATALOG["gemini-3.5-flash-lite"];
-export const AITUNNEL_NARRATION_DEFAULT_BUDGET_RUB = 20;
-export const AITUNNEL_PROJECT_DEFAULT_BUDGET_RUB = 30;
-// Keep the worst-case Flash request (compact plan + fixed source snapshot)
-// below its immutable 4.25 RUB half-envelope reservation.
-export const AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS = 1350;
+export const AITUNNEL_PRIMARY_PRICE = AITUNNEL_PROVIDER_CATALOG["gemini-3.6-flash"];
+// Kept for compatibility with the Lite-only section route.
+export const AITUNNEL_NARRATION_PRICE = AITUNNEL_ECONOMY_PRICE;
+export const AITUNNEL_NARRATION_DEFAULT_BUDGET_RUB = 10;
+export const AITUNNEL_PROJECT_DEFAULT_BUDGET_RUB = 10;
+// 384 tokens covers the largest shared 140-word role target with room for
+// Russian punctuation and the required slide heading; it is not the old
+// 1350-token Flash ceiling.
+export const AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS = 384;
 export const AITUNNEL_NARRATION_DEFAULT_REASONING_EFFORT = "minimal";
 export const AITUNNEL_ECONOMY_MODEL = "gemini-3.5-flash-lite";
 export const AITUNNEL_PRIMARY_MODEL = "gemini-3.6-flash";
 
-export type AitunnelStage = "narrative_plan" | "design_brief" | "quality_critique" | "narration_part_1" | "narration_part_2" | "narration" | "narration_rewrite" | "presentation" | "slide_text_repair" | "quality_repair";
+type AitunnelNarrationSlideOrder = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+export type AitunnelNarrationCandidateStage = `narration_section_${AitunnelNarrationSlideOrder}_candidate`;
+export type AitunnelNarrationFallbackStage = `narration_section_${AitunnelNarrationSlideOrder}_fallback`;
+export type AitunnelNarrationSectionStage = AitunnelNarrationCandidateStage | AitunnelNarrationFallbackStage;
+export type AitunnelStage = "narrative_plan" | "design_brief" | "quality_critique" | AitunnelNarrationSectionStage | "narration" | "narration_rewrite" | "presentation" | "slide_text_repair" | "quality_repair";
 export type AitunnelNarrationReasoningEffort = "minimal" | "low" | "medium" | "high";
 export type AitunnelNarrationBudgetConfig = { budgetRub: string; maxOutputTokens: number; reasoningEffort: AitunnelNarrationReasoningEffort };
 export type AitunnelNarrationUsage = { inputTokens?: number; outputTokens?: number; reasoningTokens?: number };
@@ -25,8 +32,16 @@ const STAGE_POLICIES: Record<AitunnelStage, { model: "economy" | "primary"; maxO
   narrative_plan: { model: "economy", maxOutputTokens: 1200, reasoningEffort: "minimal" },
   design_brief: { model: "economy", maxOutputTokens: 1200, reasoningEffort: "minimal" },
   quality_critique: { model: "economy", maxOutputTokens: 800, reasoningEffort: "minimal" },
-  narration_part_1: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
-  narration_part_2: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_1_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_1_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_2_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_2_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_3_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_3_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_4_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_4_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_5_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_5_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_6_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_6_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_7_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_7_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_8_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_8_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_9_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_9_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_10_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_10_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
   narration: { model: "primary", maxOutputTokens: 2400, reasoningEffort: "minimal" },
   narration_rewrite: { model: "primary", maxOutputTokens: 2400, reasoningEffort: "minimal" },
   presentation: { model: "primary", maxOutputTokens: 6000, reasoningEffort: "minimal" },
@@ -48,8 +63,9 @@ export function aitunnelEconomyModel(env: EnvLike = process.env) {
 export function aitunnelStagePolicy(stage: AitunnelStage, env: EnvLike = process.env) {
   const base = STAGE_POLICIES[stage];
   const narration = aitunnelNarrationBudgetConfig(env);
-  const narrationOutputTokens = stage === "narration_part_1" || stage === "narration_part_2" ? AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS : narration.maxOutputTokens;
-  return { model: aitunnelModelForStage(stage, env), maxOutputTokens: stage === "narration_part_1" || stage === "narration_part_2" || stage === "narration" || stage === "narration_rewrite" ? narrationOutputTokens : base.maxOutputTokens, reasoningEffort: stage === "narration_part_1" || stage === "narration_part_2" || stage === "narration" || stage === "narration_rewrite" ? narration.reasoningEffort : base.reasoningEffort };
+  const isSection = stage.startsWith("narration_section_");
+  const narrationOutputTokens = isSection ? AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS : narration.maxOutputTokens;
+  return { model: aitunnelModelForStage(stage, env), maxOutputTokens: isSection || stage === "narration" || stage === "narration_rewrite" ? narrationOutputTokens : base.maxOutputTokens, reasoningEffort: isSection || stage === "narration" || stage === "narration_rewrite" ? narration.reasoningEffort : base.reasoningEffort };
 }
 export function aitunnelPriceForModel(model: string) {
   return aitunnelPriceForApprovedModel(model);
@@ -62,7 +78,12 @@ export function aitunnelNarrationBudgetConfig(env: EnvLike = process.env): Aitun
 }
 export function aitunnelProjectBudgetConfig(env: EnvLike = process.env) { return { projectBudgetRub: positiveDecimal(env.AITUNNEL_PROJECT_BUDGET_RUB) || String(AITUNNEL_PROJECT_DEFAULT_BUDGET_RUB), narrationBudgetRub: aitunnelNarrationBudgetConfig(env).budgetRub }; }
 export function estimateInputTokens(payload: unknown) { const bytes = Buffer.byteLength(JSON.stringify(payload), "utf8"); return Math.ceil(Math.ceil(bytes / INPUT_TOKEN_BYTES) * (100 + INPUT_TOKEN_SAFETY_PERCENT) / 100); }
-export function reserveNarrationCall(input: { estimatedInputTokens: number; maxOutputTokens: number }): NarrationReservation { const inputTokens = nonNegativeInteger(input.estimatedInputTokens); const outputTokens = nonNegativeInteger(input.maxOutputTokens); return { inputTokens, outputTokens, costRub: costRub(inputTokens, outputTokens, AITUNNEL_NARRATION_PRICE) }; }
+export function reserveNarrationCall(input: { estimatedInputTokens: number; maxOutputTokens: number }): NarrationReservation { const inputTokens = nonNegativeInteger(input.estimatedInputTokens); const outputTokens = nonNegativeInteger(input.maxOutputTokens); return { inputTokens, outputTokens, costRub: costRub(inputTokens, outputTokens, AITUNNEL_ECONOMY_PRICE) }; }
+export function reserveAitunnelStageCall(stage: AitunnelStage, request: unknown, env: EnvLike = process.env): NarrationReservation | undefined {
+  const policy = aitunnelStagePolicy(stage, env);
+  const price = policy.model && aitunnelPriceForModel(policy.model);
+  return price ? reserveForPrice(estimateInputTokens(request), policy.maxOutputTokens, price) : undefined;
+}
 export function canStartCall(input: { remainingBudgetRub: string; reservation: NarrationReservation }) { return decimalToScaled(input.remainingBudgetRub) >= decimalToScaled(input.reservation.costRub); }
 export function settleCall(input: { reservation: NarrationReservation; actualUsage?: AitunnelNarrationUsage }) { const usage = input.actualUsage; if (!usage || !isTokenCount(usage.inputTokens) || !isTokenCount(usage.outputTokens)) return { status: "usage_unavailable" as const }; const actualCostRub = costRub(usage.inputTokens, usage.outputTokens, AITUNNEL_NARRATION_PRICE); return { status: "settled" as const, actualCostRub, overrun: decimalToScaled(actualCostRub) > decimalToScaled(input.reservation.costRub) }; }
 export function remainingBudget(budgetRub: string, settledCostRub: string) { return scaledToDecimal(decimalToScaled(budgetRub) - decimalToScaled(settledCostRub)); }
@@ -81,7 +102,7 @@ export class AitunnelProjectBudget {
     const reservation = reserveForPrice(estimateInputTokens(request), policy.maxOutputTokens, aitunnelPriceForModel(policy.model)!);
     const projectRemaining = remainingBudget(this.config.projectBudgetRub, this.projectSettled);
     if (!canStartCall({ remainingBudgetRub: projectRemaining, reservation })) return { status: "aitunnel_project_budget_exhausted_preflight" as const, reservation, projectRemaining };
-    if (stage === "narration_part_1" || stage === "narration_part_2" || stage === "narration" || stage === "narration_rewrite") {
+    if (stage.startsWith("narration_section_") || stage === "narration" || stage === "narration_rewrite") {
       const narrationRemaining = remainingBudget(this.config.narrationBudgetRub, this.narrationSettled);
       if (!canStartCall({ remainingBudgetRub: narrationRemaining, reservation })) return { status: "aitunnel_narration_budget_exhausted_preflight" as const, reservation, projectRemaining, narrationRemaining };
     }
@@ -95,7 +116,7 @@ export class AitunnelProjectBudget {
     const model = STAGE_POLICIES[active.stage].model === "economy" ? AITUNNEL_ECONOMY_MODEL : AITUNNEL_PRIMARY_MODEL;
     const actualCostRub = costRub(usage.inputTokens, usage.outputTokens, aitunnelPriceForModel(model)!);
     this.projectSettled = add(this.projectSettled, actualCostRub);
-    if (active.stage === "narration_part_1" || active.stage === "narration_part_2" || active.stage === "narration" || active.stage === "narration_rewrite") this.narrationSettled = add(this.narrationSettled, actualCostRub);
+    if (active.stage.startsWith("narration_section_") || active.stage === "narration" || active.stage === "narration_rewrite") this.narrationSettled = add(this.narrationSettled, actualCostRub);
     const overrun = decimalToScaled(actualCostRub) > decimalToScaled(active.reservation.costRub) || decimalToScaled(this.projectSettled) > decimalToScaled(this.config.projectBudgetRub) || decimalToScaled(this.narrationSettled) > decimalToScaled(this.config.narrationBudgetRub);
     if (overrun) this.blocked = true;
     return { status: overrun ? "aitunnel_project_budget_overrun" as const : "settled" as const, actualCostRub, reservation: active.reservation, projectRemaining: remainingBudget(this.config.projectBudgetRub, this.projectSettled), narrationRemaining: remainingBudget(this.config.narrationBudgetRub, this.narrationSettled) };

@@ -171,6 +171,9 @@ export const NARRATION_SYSTEM_PROMPT = [
   "Do not write meta phrases about slides, screen text, source material, or internal instructions.",
 ].join(" ");
 
+/** Compact immutable contract for one AITUNNEL narration section. */
+export const AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT = "Write one complete Russian university-student narration section. Return only the canonical `Слайд N: title` heading and 2-7 substantive sentences; no JSON, citations, meta-commentary, or filler.";
+
 export const SYSTEM_PROMPT = [
   "You create structured study presentations for university students. Return only valid JSON.",
   "All user-visible slide text, speaker notes, and speech script must be in Russian.",

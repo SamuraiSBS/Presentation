@@ -8,6 +8,7 @@ import {
   estimateInputTokens,
   remainingBudget,
   reserveNarrationCall,
+  reserveAitunnelStageCall,
   settleCall,
 } from "./aitunnel-narration-budget.js";
 
@@ -16,6 +17,8 @@ describe("AITUNNEL narration budget", () => {
     expect(aitunnelModelForStage("narrative_plan")).toBe("gemini-3.5-flash-lite");
     expect(aitunnelModelForStage("design_brief")).toBe("gemini-3.5-flash-lite");
     expect(aitunnelModelForStage("quality_critique")).toBe("gemini-3.5-flash-lite");
+    expect(aitunnelModelForStage("narration_section_1_candidate")).toBe("gemini-3.5-flash-lite");
+    expect(aitunnelModelForStage("narration_section_1_fallback")).toBe("gemini-3.6-flash");
     expect(aitunnelModelForStage("narration")).toBe("gemini-3.6-flash");
     expect(aitunnelModelForStage("presentation")).toBe("gemini-3.6-flash");
     expect(aitunnelModelForStage("quality_repair")).toBe("gemini-3.6-flash");
@@ -34,29 +37,35 @@ describe("AITUNNEL narration budget", () => {
     expect(budget.reserve("presentation", "presentation", { prompt: "later" })).toEqual({ status: "aitunnel_project_budget_overrun" });
   });
   it("uses bounded defaults when environment values are absent or invalid", () => {
-    expect(aitunnelNarrationBudgetConfig({})).toEqual({ budgetRub: "20", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" });
+    expect(aitunnelNarrationBudgetConfig({})).toEqual({ budgetRub: "10", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" });
     expect(aitunnelNarrationBudgetConfig({
       AITUNNEL_NARRATION_JOB_BUDGET_RUB: "0",
       AITUNNEL_NARRATION_MAX_OUTPUT_TOKENS: "-1",
       AITUNNEL_NARRATION_REASONING_EFFORT: "unlimited",
-    })).toEqual({ budgetRub: "20", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" });
+    })).toEqual({ budgetRub: "10", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" });
   });
 
   it("reserves conservative serialized input plus the entire output cap without float drift", () => {
     const estimate = estimateInputTokens({ input: "Пример запроса" });
     expect(estimate).toBeGreaterThan(0);
     const reservation = reserveNarrationCall({ estimatedInputTokens: 932, maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS });
-    expect(reservation.costRub).toBe("3.49531000");
-    expect(canStartCall({ remainingBudgetRub: "4.25000000", reservation })).toBe(true);
-    expect(canStartCall({ remainingBudgetRub: "3.49530999", reservation })).toBe(false);
+    expect(reservation.costRub).toBe("0.24792000");
+    expect(canStartCall({ remainingBudgetRub: "0.75000000", reservation })).toBe(true);
+    expect(canStartCall({ remainingBudgetRub: "0.24791999", reservation })).toBe(false);
+  });
+
+  it("keeps worst-case compact candidate and fallback requests inside their buckets", () => {
+    const request = { input: [{ role: "system", content: "compact system" }, { role: "user", content: "compact Russian section prompt" }] };
+    expect(Number(reserveAitunnelStageCall("narration_section_1_candidate", request)!.costRub)).toBeLessThanOrEqual(0.25);
+    expect(Number(reserveAitunnelStageCall("narration_section_1_fallback", request)!.costRub)).toBeLessThanOrEqual(1.2);
   });
 
   it("settles actual usage, returns unused reservation, and detects provider overruns", () => {
     const reservation = reserveNarrationCall({ estimatedInputTokens: 1_000, maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS });
-    const settled = settleCall({ reservation, actualUsage: { inputTokens: 900, outputTokens: 1_250 } });
-    expect(settled).toMatchObject({ status: "settled", actualCostRub: "3.25325000", overrun: false });
-    if (settled.status === "settled") expect(remainingBudget("20", settled.actualCostRub)).toBe("16.74675000");
-    expect(settleCall({ reservation, actualUsage: { inputTokens: 1_000, outputTokens: 1_351 } })).toMatchObject({ status: "settled", overrun: true });
+    const settled = settleCall({ reservation, actualUsage: { inputTokens: 900, outputTokens: 350 } });
+    expect(settled).toMatchObject({ status: "settled", actualCostRub: "0.22900000", overrun: false });
+    if (settled.status === "settled") expect(remainingBudget("10", settled.actualCostRub)).toBe("9.77100000");
+    expect(settleCall({ reservation, actualUsage: { inputTokens: 1_000, outputTokens: 385 } })).toMatchObject({ status: "settled", overrun: true });
   });
 
   it("never treats missing usage as free", () => {

@@ -16,11 +16,11 @@ import {
 } from "./presentation.js";
 import { generatePresentation as generatePresentationFromOrchestrator, generatePresentationFromNarrationWithProviders } from "./presentation/orchestrator.js";
 import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./presentation/prompts/builders.js";
-import { buildAitunnelFullNarrationRewritePrompt, buildFullNarrationDurationRewritePrompt, buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
+import { buildAitunnelFullNarrationRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt, buildFullNarrationDurationRewritePrompt, buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
 import { buildFallbackNarrativeItem, normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
 import { classifyAitunnelNarrationRewriteFailure, generateAitunnelNarration, generateYandexNarration, MAX_AITUNNEL_NARRATION_TEXT_CALLS, MAX_YANDEX_NARRATION_TEXT_CALLS, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
-import { AitunnelProjectBudget, estimateInputTokens, runWithAitunnelProjectBudget } from "../aitunnel-narration-budget.js";
-import { NARRATION_SYSTEM_PROMPT } from "./presentation/constants.js";
+import { AitunnelProjectBudget, estimateInputTokens, reserveAitunnelStageCall, runWithAitunnelProjectBudget } from "../aitunnel-narration-budget.js";
+import { AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT, NARRATION_SYSTEM_PROMPT } from "./presentation/constants.js";
 import { sourceEvidenceForSlide } from "./presentation/planning/builders.js";
 import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
 import { logger } from "../observability.js";
@@ -677,17 +677,17 @@ describe("Yandex narration full duration rewrite", () => {
     }
   });
 
-  it("uses exactly two Gemini Flash calls for independently valid five-slide parts", async () => {
+  it("uses exactly ten ordered Gemini Lite calls for independently valid slide sections", async () => {
     let calls = 0;
     const models: string[] = [];
     const client = {
-      responses: { create: async (request: { model: string }) => { models.push(request.model); return { output_text: [narrationPart(1, 5), narrationPart(6, 10)][calls++], usage: { input_tokens: 100, output_tokens: 100 } }; } },
+      responses: { create: async (request: { model: string }) => { models.push(request.model); const order = ++calls; return { output_text: narrationSection(order, order === 1 ? 80 : order === 10 ? 100 : 140), usage: { input_tokens: 100, output_tokens: 100 } }; } },
     } as never;
 
-    const result = await generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan);
-    expect(MAX_AITUNNEL_NARRATION_TEXT_CALLS).toBe(2);
-    expect(calls).toBe(2);
-    expect(models).toEqual(["gemini-3.6-flash", "gemini-3.6-flash"]);
+    const result = await generateAitunnelNarration(client, "gemini-3.5-flash-lite", project, [], plan);
+    expect(MAX_AITUNNEL_NARRATION_TEXT_CALLS).toBe(20);
+    expect(calls).toBe(10);
+    expect(models).toEqual(Array(10).fill("gemini-3.5-flash-lite"));
     expect(() => normalizeNarrationText(result, project, plan)).not.toThrow();
   });
 
@@ -705,6 +705,27 @@ describe("Yandex narration full duration rewrite", () => {
     expect(rewritePrompt).not.toContain("Previous invalid answer");
     expect(estimateInputTokens({ input: rewritePrompt })).toBeLessThan(estimateInputTokens({ input: oldPrompt }));
     expect(estimateInputTokens({ input: rewritePrompt })).toBeLessThan(estimateInputTokens({ input: buildNarrationPrompt(project, [], plan) }));
+  });
+
+  it("builds a compact Flash replacement without rejected text, raw errors, or the full source corpus", () => {
+    const sentinel = "REJECTED_SECTION_SENTINEL_DO_NOT_SEND";
+    const rawError = "RAW_SECTION_ERROR_DO_NOT_SEND";
+    const sources = Array.from({ length: 8 }, (_, index) => ({ id: `source-${index}`, label: `Source ${index}`, type: "TXT", size: 0, excerpt: index < 2 ? `safe evidence ${index}` : `${sentinel} ${rawError} evidence ${index}`, text: "" }));
+    const prompt = buildAitunnelNarrationSectionReplacementPrompt(project, sources, plan[1]!, "narration_quality");
+    expect(prompt).toContain(`target ${getRussianStudentSpeechTimingBudget(project)!.contentWordTarget}`);
+    expect(prompt).toContain("Safe quality focus");
+    expect(prompt).not.toContain(sentinel);
+    expect(prompt).not.toContain(rawError);
+    expect(prompt).not.toContain("Source 2");
+  });
+
+  it("keeps actual candidate and fallback section requests inside their persisted buckets", () => {
+    const sources = Array.from({ length: 2 }, (_, index) => ({ id: `source-${index}`, label: `Source ${index}`, type: "TXT", size: 0, excerpt: `Grounded evidence ${index} `.repeat(28), text: "" }));
+    const candidate = buildAitunnelNarrationSectionPrompt(project, sources, plan[1]!);
+    const fallback = buildAitunnelNarrationSectionReplacementPrompt(project, sources, plan[1]!, "narration_quality");
+    const requestFor = (prompt: string) => ({ input: [{ role: "system", content: AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT }, { role: "user", content: prompt }] });
+    expect(Number(reserveAitunnelStageCall("narration_section_2_candidate", requestFor(candidate))!.costRub)).toBeLessThanOrEqual(0.25);
+    expect(Number(reserveAitunnelStageCall("narration_section_2_fallback", requestFor(fallback))!.costRub)).toBeLessThanOrEqual(1.2);
   });
 
   it("gives every safe AITUNNEL timing reason compact guidance from the shared speech budget", () => {
@@ -784,25 +805,31 @@ describe("Yandex narration full duration rewrite", () => {
     expect(budget.reserve("rewrite", "narration_rewrite", rewriteRequest)).toMatchObject({ status: "reserved" });
   });
 
-  it("does not accept the first part before the second valid part arrives", async () => {
+  it("does not accept any output until all ten valid sections arrive", async () => {
     let calls = 0;
     const models: string[] = [];
     const client = {
-      responses: { create: async (request: { model: string }) => { models.push(request.model); return { output_text: calls++ === 0 ? narrationPart(1, 5) : narrationPart(6, 10), usage: { input_tokens: 100, output_tokens: 100 }, id: `response-${calls}` }; } },
+      responses: { create: async (request: { model: string }) => { models.push(request.model); const order = ++calls; return { output_text: narrationSection(order, order === 1 ? 80 : order === 10 ? 100 : 140), usage: { input_tokens: 100, output_tokens: 100 }, id: `response-${calls}` }; } },
     } as never;
 
     await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).resolves.toContain("Слайд 1:");
-    expect(calls).toBe(2);
-    expect(models).toEqual(["gemini-3.6-flash", "gemini-3.6-flash"]);
+    expect(calls).toBe(10);
+    expect(models).toEqual(Array(10).fill("gemini-3.5-flash-lite"));
   });
 
-  it("stops after an invalid first part without a fallback or third call", async () => {
-    const short = narrationPart(1, 5, 60);
+  it("replaces an invalid Lite section once with Flash and then continues with Lite", async () => {
+    const short = narrationSection(1, 24);
     const models: string[] = [];
-    const client = { responses: { create: async (request: { model: string }) => { models.push(request.model); return { output_text: short, usage: { input_tokens: 100, output_tokens: 100 } }; } } } as never;
+    let calls = 0;
+    const client = { responses: { create: async (request: { model: string }) => {
+      models.push(request.model);
+      calls += 1;
+      const order = calls === 1 || calls === 2 ? 1 : calls - 1;
+      return { output_text: calls === 1 ? short : narrationSection(order, order === 1 ? 80 : order === 10 ? 100 : 140), usage: { input_tokens: 100, output_tokens: 100 } };
+    } } } as never;
 
-    await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).rejects.toThrow("narration_quality_failure");
-    expect(models).toEqual(["gemini-3.6-flash"]);
+    await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).resolves.toContain("Слайд 10:");
+    expect(models).toEqual(["gemini-3.5-flash-lite", "gemini-3.6-flash", ...Array(9).fill("gemini-3.5-flash-lite")]);
   });
 
   it("keeps rejected narration details out of AITUNNEL logs and the public failure", async () => {
@@ -820,7 +847,7 @@ describe("Yandex narration full duration rewrite", () => {
     try {
       await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).rejects.not.toThrow(sentinel);
       expect(JSON.stringify(logged)).not.toContain(sentinel);
-      expect(logged).toHaveLength(2);
+      expect(logged.length).toBeGreaterThanOrEqual(2);
     } finally {
       info.mockRestore();
     }
@@ -851,8 +878,8 @@ describe("Yandex narration full duration rewrite", () => {
       responses: { create: async (request: Record<string, unknown>) => {
         calls += 1;
         expect(request).toMatchObject({
-          model: "gemini-3.6-flash",
-          max_output_tokens: 1350,
+          model: "gemini-3.5-flash-lite",
+          max_output_tokens: 384,
           reasoning: { effort: "minimal", exclude: true },
         });
         return { output_text: completeNarration() };

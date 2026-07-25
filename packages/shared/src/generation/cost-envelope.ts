@@ -1,11 +1,30 @@
-export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v2";
-export const COST_ENVELOPE_LIMIT_RUB = "10.00000000";
+export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v4";
+export const COST_ENVELOPE_LIMIT_RUB = "17.00000000";
 export const COST_ENVELOPE_BUCKETS = {
   sources: "0.50000000",
-  narration_part_1: "4.25000000",
-  narration_part_2: "4.25000000",
+  narrative_plan: "0.75000000",
+  narration_section_1_candidate: "0.25000000",
+  narration_section_1_fallback: "1.20000000",
+  narration_section_2_candidate: "0.25000000",
+  narration_section_2_fallback: "1.20000000",
+  narration_section_3_candidate: "0.25000000",
+  narration_section_3_fallback: "1.20000000",
+  narration_section_4_candidate: "0.25000000",
+  narration_section_4_fallback: "1.20000000",
+  narration_section_5_candidate: "0.25000000",
+  narration_section_5_fallback: "1.20000000",
+  narration_section_6_candidate: "0.25000000",
+  narration_section_6_fallback: "1.20000000",
+  narration_section_7_candidate: "0.25000000",
+  narration_section_7_fallback: "1.20000000",
+  narration_section_8_candidate: "0.25000000",
+  narration_section_8_fallback: "1.20000000",
+  narration_section_9_candidate: "0.25000000",
+  narration_section_9_fallback: "1.20000000",
+  narration_section_10_candidate: "0.25000000",
+  narration_section_10_fallback: "1.20000000",
   images: "0.50000000",
-  export_infra: "0.50000000",
+  export_infra: "0.75000000",
 } as const;
 
 export type CostEnvelopeBucket = keyof typeof COST_ENVELOPE_BUCKETS;

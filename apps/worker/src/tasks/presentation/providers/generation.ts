@@ -4,18 +4,18 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import { captureGenerationError, errorLogFields, logger } from "../../../observability.js";
 import { calculateProviderCost, currentUsageContext, normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
-import { failCostEnvelope, reserveCostEnvelopeBatch, settleCostEnvelope } from "../../../cost-envelope.js";
+import { failCostEnvelope, releaseCostEnvelope, reserveCostEnvelopeBatch, settleCostEnvelope } from "../../../cost-envelope.js";
 import { getPrisma } from "../../../prisma.js";
 import { aitunnelConfig, createAitunnelClient, createOpenAIClient, createOpenAIProvider } from "../../../openai-client.js";
 import {
   aitunnelNarrationBudgetConfig,
-  estimateInputTokens,
-  reserveNarrationCall,
+  reserveAitunnelStageCall,
   AitunnelProjectBudget,
   aitunnelModelForStage,
   aitunnelStagePolicy,
   currentAitunnelProjectBudget,
   runWithAitunnelProjectBudget,
+  type AitunnelNarrationSectionStage,
   type AitunnelStage,
 } from "../../../aitunnel-narration-budget.js";
 import {
@@ -159,16 +159,16 @@ type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief"
 // Narration has one initial text call and, after any validation failure, one
 // complete replacement. This is deliberately separate from BullMQ transport retries.
 export const MAX_YANDEX_NARRATION_TEXT_CALLS = 2;
-export const MAX_AITUNNEL_NARRATION_TEXT_CALLS = 2;
+export const MAX_AITUNNEL_NARRATION_TEXT_CALLS = 20;
 const OPENAI_NARRATION_MAX_PROVIDER_ATTEMPTS = 4;
 export const PRESENTATION_RECOVERY_CHUNK_COUNT = 3;
 
 import type { YandexCompletionResponse } from "../constants.js";
-import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
+import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
 import { buildResearchBrief, buildDesignBrief, logStructuredGenerationValidationFailure, buildDeckStory, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "../planning/builders.js";
 import { shouldRetryNarration, requestYandexText, normalizeNarrationText, parseNarrationSections, findSpokenNarrationIssues } from "../narration/processing.js";
 import { speechSentences } from "../normalization/presentation.js";
-import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildFullNarrationDurationRewritePrompt, buildAitunnelFullNarrationRewritePrompt, buildAitunnelBatchedNarrationPrompt, buildGenerationPrompt, buildYandexPresentationRecoveryPrompt, getYandexModelConfig } from "../prompts/builders.js";
+import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildFullNarrationDurationRewritePrompt, buildAitunnelFullNarrationRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt, buildGenerationPrompt, buildYandexPresentationRecoveryPrompt, getYandexModelConfig } from "../prompts/builders.js";
 import type { NarrationRewriteFailureCategory, YandexModelTier } from "../prompts/builders.js";
 import { ensureDesignBriefDirections } from "../normalization/presentation.js";
 import { finalizeGeneratedPresentation, repairSlideTextWithOpenAI, repairSlideTextWithYandex, critiquePresentationQualityWithOpenAI, critiquePresentationQualityWithYandex, repairPresentationQualityWithOpenAI, repairPresentationQualityWithYandex } from "../quality/orchestration.js";
@@ -329,55 +329,65 @@ export async function generateOpenAINarration(client: OpenAI, project: ProjectIn
 export async function generateAitunnelNarration(client: OpenAI, model: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief): Promise<string> {
   if (!currentAitunnelProjectBudget()) return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), () => generateAitunnelNarration(client, model, project, sources, narrativePlan, researchBrief));
   const policy = aitunnelNarrationBudgetConfig();
-  const parts = buildAitunnelNarrationParts(project, sources, narrativePlan);
+  const parts = buildAitunnelNarrationSections(project, sources, narrativePlan);
   const reservationKeys = await reservePersistedBatchedNarrationEnvelope(parts);
   const accepted: string[] = [];
-  for (const part of parts) {
-    const response = await requestAitunnelNarrationCall({
-      client, model: "gemini-3.6-flash", project, narrativePlan, policy,
-      narrationTextCall: part.call, stage: part.stage, prompt: part.prompt,
-      reservationKey: reservationKeys?.[part.stage], section: part,
-    });
-    try {
-      accepted.push(validateAitunnelNarrationPart(response.text, project, narrativePlan, part));
-    } catch {
-      throw narrationFailure("quality");
-    }
-  }
-  // Both independently validated halves are required before the canonical
-  // ten-slide validation/normalization can accept anything.
   try {
+    for (const part of parts) {
+      const candidate = await requestAitunnelNarrationCall({
+        client, project, narrativePlan, policy, narrationTextCall: part.call,
+        stage: part.candidateStage, prompt: part.candidatePrompt,
+        reservationKey: reservationKeys?.[part.candidateStage], section: part,
+      });
+      try {
+        accepted.push(validateAitunnelNarrationSection(candidate.text, project, narrativePlan, part, "gemini-3.5-flash-lite", part.candidateStage));
+        await releaseNarrationReservation(reservationKeys, part.fallbackStage, "fallback_not_needed");
+      } catch {
+        const fallback = await requestAitunnelNarrationCall({
+          client, project, narrativePlan, policy, narrationTextCall: part.call,
+          stage: part.fallbackStage, prompt: part.fallbackPrompt,
+          reservationKey: reservationKeys?.[part.fallbackStage], section: part,
+        });
+        accepted.push(validateAitunnelNarrationSection(fallback.text, project, narrativePlan, part, "gemini-3.6-flash", part.fallbackStage));
+      }
+    }
+    // The canonical full-document checks run only after all ten sections pass.
     return normalizeNarrationText(accepted.join("\n\n"), project, narrativePlan);
-  } catch {
+  } catch (error) {
+    await releaseUnusedNarrationReservations(reservationKeys, parts);
+    if (error instanceof Error && /^narration_[a-z_]+_failure$/.test(error.message)) throw error;
     throw narrationFailure("quality");
   }
 }
 
 type AitunnelNarrationRequest = {
   client: OpenAI;
-  model: string;
   project: ProjectInput;
   narrativePlan: SlideNarrative[];
   policy: ReturnType<typeof aitunnelNarrationBudgetConfig>;
-  narrationTextCall: 1 | 2;
+  narrationTextCall: number;
   prompt: string;
-  stage: "narration_part_1" | "narration_part_2";
+  stage: AitunnelNarrationSectionStage;
   reservationKey?: string;
-  section: AitunnelNarrationPart;
+  section: AitunnelNarrationSection;
 };
 
-type AitunnelNarrationPart = {
-  stage: "narration_part_1" | "narration_part_2";
-  call: 1 | 2;
-  slideOrders: number[];
-  budget: { minWords: number; targetWords: number; maxWords?: number };
-  prompt: string;
+type AitunnelNarrationSection = {
+  call: number;
+  slideOrder: number;
+  targetWords: number;
+  candidateStage: AitunnelNarrationSectionStage;
+  fallbackStage: AitunnelNarrationSectionStage;
+  candidatePrompt: string;
+  fallbackPrompt: string;
 };
 
 async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
+  const model = aitunnelModelForStage(input.stage);
+  if (!model) throw narrationFailure("budget_exhausted");
   const request = {
-    model: input.model,
-    input: [{ role: "system" as const, content: NARRATION_SYSTEM_PROMPT }, { role: "user" as const, content: input.prompt }],
+    model,
+    input: [{ role: "system" as const, content: AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT }, { role: "user" as const, content: input.prompt }],
     max_output_tokens: input.policy.maxOutputTokens,
     reasoning: { effort: input.policy.reasoningEffort, exclude: true },
   };
@@ -385,7 +395,7 @@ async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
   const reservationKey = input.reservationKey;
   const reserved = reservationKey ? { status: "reserved" as const } : budget?.reserve(`narration-${input.narrationTextCall}`, input.stage, request);
   if (!reserved || reserved.status !== "reserved") {
-    logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.stage, {
+    logAitunnelNarrationCall(input.project.id, model, input.narrationTextCall, input.stage, {
       failureCategory: "narration_budget_exhausted", budgetRub: input.policy.budgetRub,
     });
     throw narrationFailure("budget_exhausted");
@@ -395,11 +405,11 @@ async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
   const startedAt = new Date();
   try {
     response = await input.client.responses.create(request);
-    await recordOpenAIResponse(response, input.stage, "studydeck_narration", startedAt, "aitunnel", input.model, input.narrationTextCall, input.stage);
+    await recordOpenAIResponse(response, input.stage, "studydeck_narration", startedAt, "aitunnel", model, input.narrationTextCall, input.stage);
   } catch {
     if (reservationKey) await failCostEnvelope({ envelopeId: currentUsageContext()!.costEnvelopeId!, idempotencyKey: reservationKey, reason: "narration_provider_error" }).catch(() => undefined);
-    await recordAiUsage({ provider: "aitunnel", model: input.model, operation: input.stage, schemaName: "studydeck_narration", attempt: input.narrationTextCall, stage: input.stage, startedAt, error: new Error("narration_provider_error") });
-    logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.stage, {
+    await recordAiUsage({ provider: "aitunnel", model, operation: input.stage, schemaName: "studydeck_narration", attempt: input.narrationTextCall, stage: input.stage, startedAt, error: new Error("narration_provider_error") });
+    logAitunnelNarrationCall(input.project.id, model, input.narrationTextCall, input.stage, {
       failureCategory: "provider_error", budgetRub: input.policy.budgetRub,
     });
     throw narrationFailure("provider");
@@ -413,10 +423,10 @@ async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
     // have token usage here, so use the same catalog arithmetic as telemetry.
     if (!usage || usage.inputTokens === undefined || usage.outputTokens === undefined) {
       await settleCostEnvelope({ envelopeId, idempotencyKey: reservationKey, reason: "usage_unavailable" });
-      logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.stage, { failureCategory: "narration_usage_unavailable", budgetRub: input.policy.budgetRub });
+      logAitunnelNarrationCall(input.project.id, model, input.narrationTextCall, input.stage, { failureCategory: "narration_usage_unavailable", budgetRub: input.policy.budgetRub });
       throw narrationFailure("usage_unavailable");
     }
-    const priced = calculateProviderCost("aitunnel", input.model, startedAt, usage);
+    const priced = calculateProviderCost("aitunnel", model, startedAt, usage);
     if (priced.status !== "priced" || !priced.sourceCost) {
       await settleCostEnvelope({ envelopeId, idempotencyKey: reservationKey, reason: "price_unavailable" });
       throw narrationFailure("usage_unavailable");
@@ -428,84 +438,72 @@ async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
   }
   const settled = budget!.settle(`narration-${input.narrationTextCall}`, usage);
   if (settled.status === "aitunnel_usage_unavailable") {
-    logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.stage, {
+    logAitunnelNarrationCall(input.project.id, model, input.narrationTextCall, input.stage, {
       failureCategory: "narration_usage_unavailable", budgetRub: input.policy.budgetRub,
     });
     throw narrationFailure("usage_unavailable");
   }
   if (settled.status === "aitunnel_project_budget_overrun") {
-    logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.stage, {
+    logAitunnelNarrationCall(input.project.id, model, input.narrationTextCall, input.stage, {
       failureCategory: "narration_budget_overrun", budgetRub: input.policy.budgetRub, actualCostRub: settled.actualCostRub,
     });
     throw narrationFailure("budget_overrun");
   }
-  logAitunnelNarrationCall(input.project.id, input.model, input.narrationTextCall, input.stage, {
+  logAitunnelNarrationCall(input.project.id, model, input.narrationTextCall, input.stage, {
     budgetRub: input.policy.budgetRub, reservationRub: settled.reservation.costRub, actualCostRub: settled.actualCostRub, remainingRub: settled.projectRemaining,
   });
   return { text: responseItem.output_text || "" };
 }
 
-async function reservePersistedBatchedNarrationEnvelope(parts: readonly AitunnelNarrationPart[]) {
+async function reservePersistedBatchedNarrationEnvelope(parts: readonly AitunnelNarrationSection[]) {
   const envelopeId = currentUsageContext()?.costEnvelopeId;
-  if (!envelopeId) return undefined as Record<AitunnelNarrationPart["stage"], string> | undefined;
+  if (!envelopeId) return undefined as Record<AitunnelNarrationSectionStage, string> | undefined;
   const envelope = await getPrisma().costEnvelope.findUniqueOrThrow({ where: { id: envelopeId }, select: { policySnapshot: true } });
   const buckets = (envelope.policySnapshot as { buckets?: Record<string, string> }).buckets || {};
-  const inputs = parts.map((part) => {
-    const amountRub = String(buckets[part.stage] || "");
+  const inputs = parts.flatMap((part) => [part.candidateStage, part.fallbackStage].map((stage) => {
+    const amountRub = String(buckets[stage] || "");
     if (!/^\d+(?:\.\d+)?$/.test(amountRub) || amountRub === "0") throw narrationFailure("budget_exhausted");
-    const worstCase = reserveNarrationCall({
-      estimatedInputTokens: estimateInputTokens({ input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: part.prompt }] }),
-      maxOutputTokens: policyOutputTokens(part),
-    });
+    const prompt = stage === part.candidateStage ? part.candidatePrompt : part.fallbackPrompt;
+    const worstCase = reserveAitunnelStageCall(stage, { input: [{ role: "system", content: AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT }, { role: "user", content: prompt }] });
+    if (!worstCase) throw narrationFailure("budget_exhausted");
     if (Number(worstCase.costRub) > Number(amountRub)) throw narrationFailure("budget_exhausted");
-    return { envelopeId, idempotencyKey: `${envelopeId}:${part.stage}`, bucket: part.stage, stage: part.stage, amountRub };
-  });
+    return { envelopeId, idempotencyKey: `${envelopeId}:${stage}`, bucket: stage, stage, amountRub };
+  }));
   const result = await reserveCostEnvelopeBatch(inputs);
   if (result.status !== "reserved") throw narrationFailure("budget_exhausted");
-  return Object.fromEntries(inputs.map((input) => [input.stage, input.idempotencyKey])) as Record<AitunnelNarrationPart["stage"], string>;
+  return Object.fromEntries(inputs.map((input) => [input.stage, input.idempotencyKey])) as Record<AitunnelNarrationSectionStage, string>;
 }
 
-function policyOutputTokens(_part: AitunnelNarrationPart) {
-  return aitunnelNarrationBudgetConfig().maxOutputTokens;
-}
-
-function buildAitunnelNarrationParts(project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[]): AitunnelNarrationPart[] {
+function buildAitunnelNarrationSections(project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[]): AitunnelNarrationSection[] {
   const timing = getRussianStudentSpeechTimingBudget(project);
-  if (!timing || project.slideCount !== 10) throw narrationFailure("quality");
-  const ranges = [[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]];
-  return ranges.map((slideOrders, index) => {
-    const targetWords = slideOrders.reduce((sum, order) => sum + (order === 1 ? timing.titleWordTarget : order === project.slideCount ? timing.conclusionWordTarget : timing.contentWordTarget), 0);
-    const budget = {
-      minWords: Math.round(timing.minWords * targetWords / timing.targetWords),
-      targetWords,
-      ...(timing.maxWords === undefined ? {} : { maxWords: Math.round(timing.maxWords * targetWords / timing.targetWords) }),
-    };
+  if (!timing || project.slideCount !== 10 || narrativePlan.length !== 10) throw narrationFailure("quality");
+  return narrativePlan.map((narrative, index) => {
+    const slideOrder = index + 1;
+    if (narrative.slideOrder !== slideOrder) throw narrationFailure("quality");
+    const targetWords = slideOrder === 1 ? timing.titleWordTarget : slideOrder === project.slideCount ? timing.conclusionWordTarget : timing.contentWordTarget;
     return {
-      stage: index === 0 ? "narration_part_1" : "narration_part_2",
-      call: index === 0 ? 1 : 2,
-      slideOrders,
-      budget,
-      prompt: buildAitunnelBatchedNarrationPrompt(project, sources, narrativePlan, slideOrders, budget),
+      call: slideOrder,
+      slideOrder,
+      targetWords,
+      candidateStage: `narration_section_${slideOrder}_candidate` as AitunnelNarrationSectionStage,
+      fallbackStage: `narration_section_${slideOrder}_fallback` as AitunnelNarrationSectionStage,
+      candidatePrompt: buildAitunnelNarrationSectionPrompt(project, sources, narrative),
+      fallbackPrompt: buildAitunnelNarrationSectionReplacementPrompt(project, sources, narrative, "narration_quality"),
     };
   });
 }
 
-function validateAitunnelNarrationPart(text: string, project: ProjectInput, narrativePlan: SlideNarrative[], part: AitunnelNarrationPart) {
+function validateAitunnelNarrationSection(text: string, project: ProjectInput, narrativePlan: SlideNarrative[], part: AitunnelNarrationSection, model: string, stage: AitunnelNarrationSectionStage) {
   const sections = parseNarrationSections(text);
-  const plan = narrativePlan.filter((item) => part.slideOrders.includes(item.slideOrder));
-  const invalid = sections.length !== part.slideOrders.length || sections.some((section, index) => {
-    const words = section.text.split(/\s+/).filter(Boolean).length;
-    const sentences = speechSentences(section.text).length;
-    const order = part.slideOrders[index];
-    const roleTarget = order === 1 ? getRussianStudentSpeechTimingBudget(project)!.titleWordTarget : order === project.slideCount ? getRussianStudentSpeechTimingBudget(project)!.conclusionWordTarget : getRussianStudentSpeechTimingBudget(project)!.contentWordTarget;
-    return section.order !== order || !section.title || words < 25 || words > Math.ceil(roleTarget * 1.35) || sentences < 2 || sentences > 7;
-  });
-  const words = sections.reduce((sum, section) => sum + section.text.split(/\s+/).filter(Boolean).length, 0);
-  if (invalid || words < part.budget.minWords || (part.budget.maxWords !== undefined && words > part.budget.maxWords) || findSpokenNarrationIssues(sections, plan).length) {
-    logAitunnelNarrationCall(project.id, "gemini-3.6-flash", part.call, part.stage, { failureCategory: "quality", qualityReason: "section_validation" });
-    throw new Error("aitunnel_narration_part_invalid");
+  const section = sections[0];
+  const words = section?.text.split(/\s+/).filter(Boolean).length || 0;
+  const sentences = section ? speechSentences(section.text).length : 0;
+  const plan = narrativePlan.filter((item) => item.slideOrder === part.slideOrder);
+  if (sections.length !== 1 || !section || section.order !== part.slideOrder || !section.title || words < Math.floor(part.targetWords * 0.8) || words > Math.ceil(part.targetWords * 1.2) || sentences < 2 || sentences > 7 || findSpokenNarrationIssues(sections, plan).length) {
+    logAitunnelNarrationCall(project.id, model, part.call, stage, { failureCategory: "quality", qualityReason: "section_validation" });
+    throw new Error("aitunnel_narration_section_invalid");
   }
-  logAitunnelNarrationCall(project.id, "gemini-3.6-flash", part.call, part.stage, { words });
+  logAitunnelNarrationCall(project.id, model, part.call, stage, { words });
   return sections.map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n");
 }
 
@@ -518,7 +516,17 @@ export function classifyAitunnelNarrationRewriteFailure(error: unknown): Narrati
   return "narration_quality";
 }
 
-function logAitunnelNarrationCall(projectId: string, model: string, narrationTextCall: 1 | 2, narrationStage: "narration_part_1" | "narration_part_2", extra: {
+async function releaseNarrationReservation(keys: Record<AitunnelNarrationSectionStage, string> | undefined, stage: AitunnelNarrationSectionStage, reason: string) {
+  const envelopeId = currentUsageContext()?.costEnvelopeId;
+  if (!keys || !envelopeId) return;
+  await releaseCostEnvelope({ envelopeId, idempotencyKey: keys[stage], reason }).catch(() => undefined);
+}
+
+async function releaseUnusedNarrationReservations(keys: Record<AitunnelNarrationSectionStage, string> | undefined, parts: readonly AitunnelNarrationSection[]) {
+  await Promise.all(parts.flatMap((part) => [part.candidateStage, part.fallbackStage]).map((stage) => releaseNarrationReservation(keys, stage, "narration_stopped_before_call")));
+}
+
+function logAitunnelNarrationCall(projectId: string, model: string, narrationTextCall: number, narrationStage: AitunnelNarrationSectionStage, extra: {
   words?: number;
   failureCategory?: "provider_error" | "quality" | "narration_budget_exhausted" | "narration_budget_overrun" | "narration_usage_unavailable";
   budgetRub?: string;

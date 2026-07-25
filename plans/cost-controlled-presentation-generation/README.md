@@ -17,6 +17,7 @@
 5. [05-bounded-visuals-and-local-diagrams.md](./05-bounded-visuals-and-local-diagrams.md)
 6. [06-release-gate-observability-and-runtime-proof.md](./06-release-gate-observability-and-runtime-proof.md)
 7. [07-aitunnel-narration-timing-recovery-handoff.md](./07-aitunnel-narration-timing-recovery-handoff.md) — follow-up after the live `duration` rejection; run its four prompts one per new chat.
+8. [08-gemini-lite-per-slide-narration.md](./08-gemini-lite-per-slide-narration.md) — replaces the unreleasable Flash 5+5 route with an atomically reserved Lite-per-slide experiment.
 
 Не объединяйте эти задачи в один diff и не начинайте следующий файл, пока не выполнены его тесты и acceptance criteria.
 
