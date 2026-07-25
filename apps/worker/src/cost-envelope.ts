@@ -53,6 +53,30 @@ export async function reserveCostEnvelope(input: ReserveInput) {
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
+/** Reserve both fixed narration parts in one lock before either paid call. */
+export async function reserveCostEnvelopeBatch(inputs: readonly ReserveInput[]) {
+  if (!inputs.length) throw new Error("cost_envelope_batch_empty");
+  const envelopeId = inputs[0]!.envelopeId;
+  if (inputs.some((input) => input.envelopeId !== envelopeId)) throw new Error("cost_envelope_batch_mixed_envelope");
+  return getPrisma().$transaction(async (tx) => {
+    const envelope = await lockEnvelope(tx, envelopeId);
+    const policy = parsePolicy(envelope.policySnapshot);
+    if (envelope.status !== "active") return { status: "blocked" as const, reason: `envelope_${envelope.status}` };
+    const existing = await Promise.all(inputs.map((input) => tx.costEnvelopeReservation.findUnique({ where: { idempotencyKey: input.idempotencyKey } })));
+    if (existing.some(Boolean)) return { status: "blocked" as const, reason: "reservation_replay" };
+    const amounts = inputs.map((input) => positiveAmount(input.amountRub));
+    for (let index = 0; index < inputs.length; index += 1) {
+      const input = inputs[index]!;
+      if (toScaled(amounts[index]!) > toScaled(policy.buckets[input.bucket])) return { status: "blocked" as const, reason: "bucket_exhausted" };
+    }
+    const total = amounts.reduce((sum, amount) => sum + toScaled(amount), 0n);
+    if (toScaled(envelope.reservedRub.toString()) + toScaled(envelope.settledRub.toString()) + total > toScaled(envelope.limitRub.toString())) return { status: "blocked" as const, reason: "envelope_exhausted" };
+    const reservations = await Promise.all(inputs.map((input, index) => tx.costEnvelopeReservation.create({ data: { envelopeId, idempotencyKey: input.idempotencyKey, bucket: input.bucket, stage: input.stage, reservedRub: amounts[index]! } })));
+    await tx.costEnvelope.update({ where: { id: envelopeId }, data: { reservedRub: { increment: fromScaled(total) } } });
+    return { status: "reserved" as const, reservations };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
 export async function settleCostEnvelope(input: SettleInput) {
   return getPrisma().$transaction(async (tx) => {
     const envelope = await lockEnvelope(tx, input.envelopeId);

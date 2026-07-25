@@ -508,6 +508,13 @@ describe("Yandex narration full duration rewrite", () => {
     return Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, index === 0 ? 105 : index === 9 ? 130 : contentWords)).join("\n\n");
   }
 
+  function narrationPart(start: number, end: number, contentWords = 155) {
+    return Array.from({ length: end - start + 1 }, (_, index) => {
+      const order = start + index;
+      return narrationSection(order, order === 1 ? 105 : order === 10 ? 130 : contentWords);
+    }).join("\n\n");
+  }
+
   it("builds a release-ready ten-slide local document from accepted narration without provider calls", async () => {
     const accepted = completeNarration();
     const originalFetch = global.fetch;
@@ -670,18 +677,17 @@ describe("Yandex narration full duration rewrite", () => {
     }
   });
 
-  it("caps AITUNNEL narration at one initial call and one complete rewrite", async () => {
-    const short = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 60)).join("\n\n");
+  it("uses exactly two Gemini Flash calls for independently valid five-slide parts", async () => {
     let calls = 0;
     const models: string[] = [];
     const client = {
-      responses: { create: async (request: { model: string }) => { models.push(request.model); return { output_text: [short, completeNarration()][calls++], usage: { input_tokens: 100, output_tokens: 100 } }; } },
+      responses: { create: async (request: { model: string }) => { models.push(request.model); return { output_text: [narrationPart(1, 5), narrationPart(6, 10)][calls++], usage: { input_tokens: 100, output_tokens: 100 } }; } },
     } as never;
 
     const result = await generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan);
     expect(MAX_AITUNNEL_NARRATION_TEXT_CALLS).toBe(2);
     expect(calls).toBe(2);
-    expect(models).toEqual(["gemini-3.5-flash-lite", "gemini-3.6-flash"]);
+    expect(models).toEqual(["gemini-3.6-flash", "gemini-3.6-flash"]);
     expect(() => normalizeNarrationText(result, project, plan)).not.toThrow();
   });
 
@@ -778,25 +784,25 @@ describe("Yandex narration full duration rewrite", () => {
     expect(budget.reserve("rewrite", "narration_rewrite", rewriteRequest)).toMatchObject({ status: "reserved" });
   });
 
-  it("accepts a valid initial AITUNNEL narration without a rewrite", async () => {
+  it("does not accept the first part before the second valid part arrives", async () => {
     let calls = 0;
     const models: string[] = [];
     const client = {
-      responses: { create: async (request: { model: string }) => { models.push(request.model); return { output_text: completeNarration(), usage: { input_tokens: 100, output_tokens: 100 }, id: `response-${++calls}` }; } },
+      responses: { create: async (request: { model: string }) => { models.push(request.model); return { output_text: calls++ === 0 ? narrationPart(1, 5) : narrationPart(6, 10), usage: { input_tokens: 100, output_tokens: 100 }, id: `response-${calls}` }; } },
     } as never;
 
     await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).resolves.toContain("Слайд 1:");
-    expect(calls).toBe(1);
-    expect(models).toEqual(["gemini-3.5-flash-lite"]);
+    expect(calls).toBe(2);
+    expect(models).toEqual(["gemini-3.6-flash", "gemini-3.6-flash"]);
   });
 
-  it("stops after an invalid Lite candidate and invalid single Flash fallback", async () => {
-    const short = Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, 60)).join("\n\n");
+  it("stops after an invalid first part without a fallback or third call", async () => {
+    const short = narrationPart(1, 5, 60);
     const models: string[] = [];
     const client = { responses: { create: async (request: { model: string }) => { models.push(request.model); return { output_text: short, usage: { input_tokens: 100, output_tokens: 100 } }; } } } as never;
 
     await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).rejects.toThrow("narration_quality_failure");
-    expect(models).toEqual(["gemini-3.5-flash-lite", "gemini-3.6-flash"]);
+    expect(models).toEqual(["gemini-3.6-flash"]);
   });
 
   it("keeps rejected narration details out of AITUNNEL logs and the public failure", async () => {
@@ -814,7 +820,7 @@ describe("Yandex narration full duration rewrite", () => {
     try {
       await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).rejects.not.toThrow(sentinel);
       expect(JSON.stringify(logged)).not.toContain(sentinel);
-      expect(logged).toHaveLength(4);
+      expect(logged).toHaveLength(2);
     } finally {
       info.mockRestore();
     }
@@ -845,8 +851,8 @@ describe("Yandex narration full duration rewrite", () => {
       responses: { create: async (request: Record<string, unknown>) => {
         calls += 1;
         expect(request).toMatchObject({
-          model: "gemini-3.5-flash-lite",
-          max_output_tokens: 2400,
+          model: "gemini-3.6-flash",
+          max_output_tokens: 1350,
           reasoning: { effort: "minimal", exclude: true },
         });
         return { output_text: completeNarration() };

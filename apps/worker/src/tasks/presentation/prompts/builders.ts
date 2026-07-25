@@ -467,6 +467,37 @@ export function buildAitunnelFullNarrationRewritePrompt(
 }
 
 /**
+ * Compact, immutable input for one half of a Gemini narration. It deliberately
+ * contains neither a rejected response nor the full research/source corpus.
+ */
+export function buildAitunnelBatchedNarrationPrompt(
+  project: ProjectInput,
+  sources: Source[],
+  narrativePlan: SlideNarrative[],
+  slideOrders: readonly number[],
+  sectionBudget: { minWords: number; targetWords: number; maxWords?: number },
+) {
+  const plan = narrativePlan
+    .filter((item) => slideOrders.includes(item.slideOrder))
+    .map((item) => ({ slideOrder: item.slideOrder, slideTitle: item.slideTitle, keyMessage: item.keyMessage }));
+  const snapshot = sources.slice(0, 4).map((source) => ({
+    sourceId: source.id,
+    title: source.label,
+    evidence: source.excerpt.replace(/\s+/g, " ").trim().slice(0, 220),
+  }));
+  return [
+    "Write one self-contained part of a Russian university speech for StudyDeck.",
+    `Topic and request: ${project.prompt}`,
+    `Return exactly the headed sections for slides ${slideOrders.join(", ")} in this order; each starts with \`Слайд N: semantic title\`.`,
+    `This part must contain ${sectionBudget.minWords}${sectionBudget.maxWords === undefined ? "+" : `-${sectionBudget.maxWords}`} words total; target ${sectionBudget.targetWords} substantive words.`,
+    "Each section needs 2-7 complete, natural sentences. Explain the topic, not the slide or planning process; do not use filler, citations, source names, JSON, markdown, or transition commentary.",
+    plan.length ? `Fixed slide plan:\n${JSON.stringify(plan)}` : "",
+    snapshot.length ? `Fixed grounding source snapshot; use facts only when supported:\n${JSON.stringify(snapshot)}` : "",
+    "Before returning, verify that every requested heading appears exactly once and that this part meets its word range without template padding.",
+  ].filter(Boolean).join("\n\n");
+}
+
+/**
  * Gives the sole duration-rewrite path a checkable per-section editorial
  * structure while keeping every number tied to the shared timing preset.
  */

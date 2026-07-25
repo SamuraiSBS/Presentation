@@ -1,9 +1,9 @@
-export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v1";
+export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v2";
 export const COST_ENVELOPE_LIMIT_RUB = "10.00000000";
 export const COST_ENVELOPE_BUCKETS = {
   sources: "0.50000000",
-  narration_candidate: "1.50000000",
-  narration_fallback: "7.00000000",
+  narration_part_1: "4.25000000",
+  narration_part_2: "4.25000000",
   images: "0.50000000",
   export_infra: "0.50000000",
 } as const;
