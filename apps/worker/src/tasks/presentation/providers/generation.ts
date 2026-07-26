@@ -49,7 +49,7 @@ import {
   presentationSchema,
   russianSpeechMinutesFromWords,
   getRussianStudentSpeechTimingBudget,
-  getRussianStudentSpeechSectionBounds,
+  getFloorAwareSpeechTimingSectionBounds,
   qualityCritiqueSchema,
   researchBriefSchema,
   resolvePresentationTheme,
@@ -549,7 +549,7 @@ function validateAitunnelNarrationSection(text: string, project: ProjectInput, n
   const spokenIssues = findSpokenNarrationIssues(sections, plan);
   const qualityReason = sections.length !== 1 || !section || section.order !== part.slideOrder || !section.title
     ? "headers_or_sections"
-    : (() => { const bounds = getRussianStudentSpeechSectionBounds(project, part.slideOrder); return !bounds || words < bounds.minWords || words > bounds.maxWords; })()
+    : (() => { const budget = getRussianStudentSpeechTimingBudget(project); const bounds = budget && getFloorAwareSpeechTimingSectionBounds(budget, part.slideOrder); return !bounds || words < bounds.minWords || words > bounds.maxWords; })()
       ? "word_range"
       : sentences < 2 || sentences > 7
         ? "sentence_count"

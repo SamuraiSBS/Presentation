@@ -24,7 +24,8 @@ import { logger } from "../../../observability.js";
 import { runWithUsageContext } from "../../../usage-ledger.js";
 import { AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT } from "../constants.js";
 import { buildAitunnelNarrationGlobalRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt } from "../prompts/builders.js";
-import { generateAitunnelNarration } from "./generation.js";
+import { generateAitunnelNarration, MAX_AITUNNEL_NARRATION_TEXT_CALLS } from "./generation.js";
+import { getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
 
 const project = {
   id: "persisted-envelope-project",
@@ -109,6 +110,12 @@ it("keeps every grounded runtime section prompt within its persisted candidate a
     const candidate = buildAitunnelNarrationSectionPrompt(project, groundedSources, narrative);
     const fallback = buildAitunnelNarrationSectionReplacementPrompt(project, groundedSources, narrative, "narration_quality");
     const global = buildAitunnelNarrationGlobalRewritePrompt(project, groundedSources, narrative, "narration_quality");
+    const bounds = getFloorAwareSpeechTimingSectionBounds(getRussianStudentSpeechTimingBudget(project)!, slideOrder)!;
+
+    for (const prompt of [candidate, fallback, global]) {
+      expect(prompt).toContain(`${bounds.minWords}-${bounds.maxWords}`);
+      expect(prompt).toContain(`${bounds.targetWords}`);
+    }
 
     expect(Number(reserveAitunnelStageCall(candidateStage, { input: [{ role: "system", content: AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT }, { role: "user", content: candidate }] })!.costRub))
       .toBeLessThanOrEqual(Number(policy.buckets[candidateStage as keyof typeof policy.buckets]));
@@ -154,7 +161,7 @@ it("serially releases every unused reservation after a section quality terminal 
     logged.push(payload);
     return logger;
   });
-  const acceptedText = `1. Verified section\n${Array.from({ length: 32 }, (_, index) => `evidence${index + 1}`).join(" ")}. ${Array.from({ length: 32 }, (_, index) => `context${index + 1}`).join(" ")}.`;
+  const acceptedText = `1. Verified section\n${Array.from({ length: 36 }, (_, index) => `evidence${index + 1}`).join(" ")}. ${Array.from({ length: 36 }, (_, index) => `context${index + 1}`).join(" ")}.`;
   const invalidText = "2. Incomplete section\nToo short.";
   const create = vi.fn()
     .mockResolvedValueOnce({ output_text: acceptedText, usage: { input_tokens: 1, output_tokens: 1 } })
@@ -225,7 +232,7 @@ it("logs no quality reason and makes no fallback call when every Lite section is
   });
   const create = vi.fn().mockImplementation(async (request: { model: string }) => {
     const call = create.mock.calls.length;
-    const words = call === 1 ? 80 : call === 10 ? 100 : 140;
+    const words = call === 1 ? 72 : call === 10 ? 90 : 126;
     const firstSentenceWords = Math.floor(words / 2);
     return { output_text: `${call}. Verified section\n${Array.from({ length: firstSentenceWords }, (_, index) => `topic${call}_${index}`).join(" ")}. ${Array.from({ length: words - firstSentenceWords }, (_, index) => `detail${call}_${index}`).join(" ")}.`, usage: { input_tokens: 1, output_tokens: 1 } };
   });
@@ -242,6 +249,28 @@ it("logs no quality reason and makes no fallback call when every Lite section is
   } finally {
     info.mockRestore();
   }
+});
+
+it("rejects the observed 1034-word shape locally and uses only the existing fallback/global path", async () => {
+  const statuses = setPersistedReservationMocks();
+  const create = vi.fn().mockImplementation(async () => {
+    const call = create.mock.calls.length;
+    const order = call === 1 ? 1 : call === 2 || call === 3 || call === 4 ? 2 : call - 2;
+    const words = order === 1 ? 72 : order === 2 && call < 4 ? 118 : order === 2 ? 126 : order === 10 ? 90 : 126;
+    return { output_text: sectionText(order, words), usage: { input_tokens: 1, output_tokens: 1 } };
+  });
+  const client = { responses: { create } } as never;
+
+  await runWithUsageContext(
+    { userId: "user-1", projectId: project.id, costEnvelopeId: "envelope-1" },
+    () => runWithAitunnelProjectBudget(new AitunnelProjectBudget(), () => generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)),
+  );
+
+  expect(create).toHaveBeenCalledTimes(12);
+  expect(create.mock.calls.slice(0, 4).map(([request]) => request.model)).toEqual(["gemini-3.5-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.6-flash"]);
+  expect(statuses.get("envelope-1:narration_section_2_fallback")).toBe("settled");
+  expect(statuses.get("envelope-1:narration_global_rewrite")).toBe("settled");
+  expect(MAX_AITUNNEL_NARRATION_TEXT_CALLS).toBe(21);
 });
 
 function sectionText(order: number, words: number) {
@@ -315,19 +344,19 @@ it("uses the global Flash replacement once, then stops after a later dual qualit
   }
 });
 
-it("does not make a twenty-second call when individually valid sections fail the final duration gate", async () => {
+it("does not add a twenty-second call after ten sections meet the new floors", async () => {
   const statuses = setPersistedReservationMocks();
   const create = vi.fn().mockImplementation(async () => {
     const order = create.mock.calls.length;
-    const words = order === 1 ? 56 : order === 10 ? 70 : 98;
+    const words = order === 1 ? 72 : order === 10 ? 90 : 126;
     return { output_text: sectionText(order, words), usage: { input_tokens: 1, output_tokens: 1 } };
   });
   const client = { responses: { create } } as never;
 
-  await expect(runWithUsageContext(
+  await runWithUsageContext(
     { userId: "user-1", projectId: project.id, costEnvelopeId: "envelope-1" },
     () => runWithAitunnelProjectBudget(new AitunnelProjectBudget(), () => generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)),
-  )).rejects.toThrow("narration_quality_failure");
+  );
 
   expect(create).toHaveBeenCalledTimes(10);
   expect(statuses.get("envelope-1:narration_global_rewrite")).toBe("released");

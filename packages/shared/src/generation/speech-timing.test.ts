@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getRussianStudentSpeechSectionBounds, getRussianStudentSpeechTimingBudget, RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE } from "./speech-timing.js";
+import { getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechSectionBounds, getRussianStudentSpeechTimingBudget, RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE } from "./speech-timing.js";
 
 const project = (slideCount: number, overrides: Record<string, string> = {}) => ({
   slideCount,
@@ -52,5 +52,14 @@ describe("Russian student speech section bounds", () => {
     expect(getRussianStudentSpeechSectionBounds(project, 2)).toEqual({ targetWords: 140, minWords: 98, maxWords: 182 });
     expect(getRussianStudentSpeechSectionBounds(project, 10)).toEqual({ targetWords: 100, minWords: 70, maxWords: 130 });
     expect(getRussianStudentSpeechTimingBudget(project)).toMatchObject({ minWords: 1170, maxWords: 1560, targetWords: 1300 });
+  });
+
+  it("raises independent section floors from the shared whole-speech budget", () => {
+    const budget = getRussianStudentSpeechTimingBudget(project)!;
+    expect(getFloorAwareSpeechTimingSectionBounds(budget, 1)).toEqual({ targetWords: 80, minWords: 72, maxWords: 104 });
+    expect(getFloorAwareSpeechTimingSectionBounds(budget, 2)).toEqual({ targetWords: 140, minWords: 126, maxWords: 182 });
+    expect(getFloorAwareSpeechTimingSectionBounds(budget, 10)).toEqual({ targetWords: 100, minWords: 90, maxWords: 130 });
+    expect(Array.from({ length: 10 }, (_, index) => getFloorAwareSpeechTimingSectionBounds(budget, index + 1)!.minWords).reduce((sum, words) => sum + words, 0)).toBe(1170);
+    expect(budget).toMatchObject({ minWords: 1170, targetWords: 1300, maxWords: 1560 });
   });
 });

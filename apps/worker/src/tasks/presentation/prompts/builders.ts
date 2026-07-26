@@ -141,7 +141,7 @@ type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief"
 import type { YandexCompletionResponse } from "../constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
 import { cleanMultilineText } from "../utilities.js";
-import { getRussianStudentSpeechSectionBounds, getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
+import { getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
 import type { AitunnelNarrationTimingReason } from "../narration/processing.js";
 
 export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[], _researchBrief?: ResearchBrief) {
@@ -343,7 +343,8 @@ export function buildAitunnelNarrationSectionPrompt(
   sources: Source[],
   narrative: SlideNarrative,
 ) {
-  const bounds = getRussianStudentSpeechSectionBounds(project, narrative.slideOrder);
+  const budget = getRussianStudentSpeechTimingBudget(project);
+  const bounds = budget && getFloorAwareSpeechTimingSectionBounds(budget, narrative.slideOrder);
   if (!bounds) throw new Error("aitunnel_section_timing_unavailable");
   const { targetWords, minWords, maxWords } = bounds;
   const anchors = sources
@@ -359,7 +360,7 @@ export function buildAitunnelNarrationSectionPrompt(
     `Topic: ${cleanMultilineText(project.title).slice(0, 96)}.`,
     `Current slide ${narrative.slideOrder}: ${cleanMultilineText(narrative.slideTitle).slice(0, 80)}.`,
     `Key message: ${cleanMultilineText(narrative.keyMessage).slice(0, 120)}.`,
-    `Write ${minWords}-${maxWords} words, aiming for ${targetWords}, in 2-7 complete sentences. Check the word count before returning; do not aim for a boundary.`,
+    `Write ${minWords}-${maxWords} words; target ${targetWords}; 2-7 complete sentences. Check count; do not aim for a boundary; never return under ${minWords} words.`,
     "Return exactly one section in this canonical format: `Слайд N: semantic title` followed by its prose.",
     "Explain the topic itself. Do not mention the next slide, a plan, sources, citations, or this instruction. Do not use filler or a template formula.",
     anchors.length ? `Bounded factual anchors (use only when relevant; do not cite them):\n${anchors.join("\n")}` : "Use only cautious, generally supported factual claims.",
@@ -373,7 +374,8 @@ export function buildAitunnelNarrationSectionReplacementPrompt(
   narrative: SlideNarrative,
   failureCategory: NarrationRewriteFailureCategory,
 ) {
-  const bounds = getRussianStudentSpeechSectionBounds(project, narrative.slideOrder);
+  const budget = getRussianStudentSpeechTimingBudget(project);
+  const bounds = budget && getFloorAwareSpeechTimingSectionBounds(budget, narrative.slideOrder);
   if (!bounds) throw new Error("aitunnel_section_timing_unavailable");
   const { targetWords, minWords, maxWords } = bounds;
   // Flash has a fixed 1.20 ₽ reservation, so bound every runtime-derived
@@ -386,7 +388,7 @@ export function buildAitunnelNarrationSectionReplacementPrompt(
   return [
     "Write a fresh Russian university-student narration section, not a patch, diagnosis, or commentary.",
     `Topic: ${cleanMultilineText(project.title).slice(0, 64)}. Slide ${narrative.slideOrder}: ${cleanMultilineText(narrative.slideTitle).slice(0, 48)}.`,
-    `Key point: ${cleanMultilineText(narrative.keyMessage).slice(0, 40)}. Write ${minWords}-${maxWords} words; target ${targetWords}, in 2-7 sentences; check count.`,
+    `Key point: ${cleanMultilineText(narrative.keyMessage).slice(0, 40)}. Write ${minWords}-${maxWords} words; target ${targetWords}; 2-7 sentences. Check count; avoid a boundary; never return under ${minWords} words.`,
     "Return exactly one section in the canonical format: `Слайд N: semantic title` followed by prose. Explain the topic itself; do not mention sources, validation, a rejected draft, a plan, or this instruction.",
     `Safe quality focus: ${AITUNNEL_REWRITE_CATEGORY_GUIDANCE[failureCategory]}`,
     anchors.length ? `Bounded factual anchors (use only when relevant; do not cite them):\n${anchors.join("\n")}` : "Use only cautious, generally supported factual claims.",
@@ -395,14 +397,15 @@ export function buildAitunnelNarrationSectionReplacementPrompt(
 
 /** One-use global Flash replacement; rejected narration and raw validation details are never inputs. */
 export function buildAitunnelNarrationGlobalRewritePrompt(project: ProjectInput, sources: Source[], narrative: SlideNarrative, failureCategory: NarrationRewriteFailureCategory) {
-  const bounds = getRussianStudentSpeechSectionBounds(project, narrative.slideOrder);
+  const budget = getRussianStudentSpeechTimingBudget(project);
+  const bounds = budget && getFloorAwareSpeechTimingSectionBounds(budget, narrative.slideOrder);
   if (!bounds) throw new Error("aitunnel_section_timing_unavailable");
   const anchors = sources.filter((source) => source.included !== false).slice(0, 2)
     .map((source) => `${cleanMultilineText(source.label).slice(0, 24)}: ${cleanMultilineText(source.excerpt).slice(0, 32)}`).filter(Boolean);
   return [
     "Write one fresh Russian university narration section.",
     `Topic: ${cleanMultilineText(project.title).slice(0, 48)}. Slide ${narrative.slideOrder}: ${cleanMultilineText(narrative.slideTitle).slice(0, 36)}.`,
-    `Key point: ${cleanMultilineText(narrative.keyMessage).slice(0, 40)}. Write ${bounds.minWords}-${bounds.maxWords} words (target ${bounds.targetWords}) in 2-7 sentences; check count.`,
+    `Key point: ${cleanMultilineText(narrative.keyMessage).slice(0, 40)}. Write ${bounds.minWords}-${bounds.maxWords} words; target ${bounds.targetWords}; 2-7 sentences. Check count; do not aim for a boundary; never return under ${bounds.minWords} words.`,
     "Return exactly `Слайд N: title` plus prose. Explain the topic; never mention sources, validation, drafts, plans, or instructions.",
     `Safe quality focus: ${AITUNNEL_REWRITE_CATEGORY_GUIDANCE[failureCategory]}`,
     anchors.length ? `Facts if relevant; do not cite:\n${anchors.join("\n")}` : "Use cautious supported facts.",

@@ -75,3 +75,19 @@ export function getRussianStudentSpeechSectionBounds(project: SpeechTimingProjec
   const targetWords = slideOrder === 1 ? budget.titleWordTarget : slideOrder === project.slideCount ? budget.conclusionWordTarget : budget.contentWordTarget;
   return { targetWords, minWords: Math.floor(targetWords * 0.7), maxWords: Math.ceil(targetWords * 1.3) };
 }
+
+/**
+ * Acceptance bounds for independently generated sections. The raised floor
+ * ensures that a sequence accepted section-by-section can still satisfy the
+ * timing budget's whole-speech minimum.
+ */
+export function getFloorAwareSpeechTimingSectionBounds(budget: SpeechTimingBudget, slideOrder: number): SpeechTimingSectionBounds | null {
+  if (!Number.isInteger(slideOrder) || slideOrder < 1 || slideOrder > budget.slideCount) return null;
+  const targetWords = slideOrder === 1 ? budget.titleWordTarget : slideOrder === budget.slideCount ? budget.conclusionWordTarget : budget.contentWordTarget;
+  const toleranceMin = Math.floor(targetWords * 0.7);
+  return {
+    targetWords,
+    minWords: Math.max(toleranceMin, Math.ceil(targetWords * budget.minWords / budget.targetWords)),
+    maxWords: Math.ceil(targetWords * 1.3),
+  };
+}
