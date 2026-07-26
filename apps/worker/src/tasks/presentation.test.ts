@@ -685,7 +685,7 @@ describe("Yandex narration full duration rewrite", () => {
     } as never;
 
     const result = await generateAitunnelNarration(client, "gemini-3.5-flash-lite", project, [], plan);
-    expect(MAX_AITUNNEL_NARRATION_TEXT_CALLS).toBe(20);
+    expect(MAX_AITUNNEL_NARRATION_TEXT_CALLS).toBe(21);
     expect(calls).toBe(10);
     expect(models).toEqual(Array(10).fill("gemini-3.5-flash-lite"));
     expect(() => normalizeNarrationText(result, project, plan)).not.toThrow();

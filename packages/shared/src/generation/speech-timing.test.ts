@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getRussianStudentSpeechTimingBudget, RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE } from "./speech-timing.js";
+import { getRussianStudentSpeechSectionBounds, getRussianStudentSpeechTimingBudget, RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE } from "./speech-timing.js";
 
 const project = (slideCount: number, overrides: Record<string, string> = {}) => ({
   slideCount,
@@ -42,5 +42,15 @@ describe("Russian student speech timing", () => {
     expect(getRussianStudentSpeechTimingBudget(project(10, { mode: "import" }))).toBeNull();
     expect(getRussianStudentSpeechTimingBudget(project(10, { mode: "defense" }))).toBeNull();
     expect(getRussianStudentSpeechTimingBudget(project(10, { level: "school" }))).toBeNull();
+  });
+});
+describe("Russian student speech section bounds", () => {
+  const project = { slideCount: 10, level: "university_student", scenario: "report", mode: "create" };
+
+  it("uses shared inclusive 30 percent bounds without changing the full-document gate", () => {
+    expect(getRussianStudentSpeechSectionBounds(project, 1)).toEqual({ targetWords: 80, minWords: 56, maxWords: 104 });
+    expect(getRussianStudentSpeechSectionBounds(project, 2)).toEqual({ targetWords: 140, minWords: 98, maxWords: 182 });
+    expect(getRussianStudentSpeechSectionBounds(project, 10)).toEqual({ targetWords: 100, minWords: 70, maxWords: 130 });
+    expect(getRussianStudentSpeechTimingBudget(project)).toMatchObject({ minWords: 1170, maxWords: 1560, targetWords: 1300 });
   });
 });

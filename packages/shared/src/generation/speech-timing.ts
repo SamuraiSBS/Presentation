@@ -26,6 +26,7 @@ export type SpeechTimingBudget = {
   contentWordTarget: number;
   conclusionWordTarget: number;
 };
+export type SpeechTimingSectionBounds = { targetWords: number; minWords: number; maxWords: number };
 
 type SpeechTimingPreset = Omit<SpeechTimingBudget, "minWords" | "targetWords" | "maxWords" | "wordsPerMinute">;
 
@@ -65,4 +66,12 @@ export function getRussianStudentSpeechTimingBudget(project: SpeechTimingProject
 
 export function russianSpeechMinutesFromWords(words: number, wordsPerMinute = RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE) {
   return words / wordsPerMinute;
+}
+
+/** Inclusive local tolerance for independently generated narration sections. */
+export function getRussianStudentSpeechSectionBounds(project: SpeechTimingProject, slideOrder: number): SpeechTimingSectionBounds | null {
+  const budget = getRussianStudentSpeechTimingBudget(project);
+  if (!budget || !Number.isInteger(slideOrder) || slideOrder < 1 || slideOrder > project.slideCount) return null;
+  const targetWords = slideOrder === 1 ? budget.titleWordTarget : slideOrder === project.slideCount ? budget.conclusionWordTarget : budget.contentWordTarget;
+  return { targetWords, minWords: Math.floor(targetWords * 0.7), maxWords: Math.ceil(targetWords * 1.3) };
 }

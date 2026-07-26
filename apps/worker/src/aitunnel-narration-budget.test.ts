@@ -19,6 +19,7 @@ describe("AITUNNEL narration budget", () => {
     expect(aitunnelModelForStage("quality_critique")).toBe("gemini-3.5-flash-lite");
     expect(aitunnelModelForStage("narration_section_1_candidate")).toBe("gemini-3.5-flash-lite");
     expect(aitunnelModelForStage("narration_section_1_fallback")).toBe("gemini-3.6-flash");
+    expect(aitunnelModelForStage("narration_global_rewrite")).toBe("gemini-3.6-flash");
     expect(aitunnelModelForStage("narration")).toBe("gemini-3.6-flash");
     expect(aitunnelModelForStage("presentation")).toBe("gemini-3.6-flash");
     expect(aitunnelModelForStage("quality_repair")).toBe("gemini-3.6-flash");
@@ -58,6 +59,7 @@ describe("AITUNNEL narration budget", () => {
     const request = { input: [{ role: "system", content: "compact system" }, { role: "user", content: "compact Russian section prompt" }] };
     expect(Number(reserveAitunnelStageCall("narration_section_1_candidate", request)!.costRub)).toBeLessThanOrEqual(0.25);
     expect(Number(reserveAitunnelStageCall("narration_section_1_fallback", request)!.costRub)).toBeLessThanOrEqual(1.2);
+    expect(Number(reserveAitunnelStageCall("narration_global_rewrite", request)!.costRub)).toBeLessThanOrEqual(1.2);
   });
 
   it("settles actual usage, returns unused reservation, and detects provider overruns", () => {

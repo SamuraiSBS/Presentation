@@ -1,5 +1,5 @@
-export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v4";
-export const COST_ENVELOPE_LIMIT_RUB = "17.00000000";
+export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v5";
+export const COST_ENVELOPE_LIMIT_RUB = "18.20000000";
 export const COST_ENVELOPE_BUCKETS = {
   sources: "0.50000000",
   narrative_plan: "0.75000000",
@@ -23,6 +23,7 @@ export const COST_ENVELOPE_BUCKETS = {
   narration_section_9_fallback: "1.20000000",
   narration_section_10_candidate: "0.25000000",
   narration_section_10_fallback: "1.20000000",
+  narration_global_rewrite: "1.20000000",
   images: "0.50000000",
   export_infra: "0.75000000",
 } as const;

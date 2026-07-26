@@ -49,6 +49,7 @@ import {
   presentationSchema,
   russianSpeechMinutesFromWords,
   getRussianStudentSpeechTimingBudget,
+  getRussianStudentSpeechSectionBounds,
   qualityCritiqueSchema,
   researchBriefSchema,
   resolvePresentationTheme,
@@ -159,7 +160,7 @@ type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief"
 // Narration has one initial text call and, after any validation failure, one
 // complete replacement. This is deliberately separate from BullMQ transport retries.
 export const MAX_YANDEX_NARRATION_TEXT_CALLS = 2;
-export const MAX_AITUNNEL_NARRATION_TEXT_CALLS = 20;
+export const MAX_AITUNNEL_NARRATION_TEXT_CALLS = 21;
 const OPENAI_NARRATION_MAX_PROVIDER_ATTEMPTS = 4;
 export const PRESENTATION_RECOVERY_CHUNK_COUNT = 3;
 
@@ -168,7 +169,7 @@ import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, AITUNNEL_NARRATI
 import { buildResearchBrief, buildDesignBrief, logStructuredGenerationValidationFailure, buildDeckStory, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "../planning/builders.js";
 import { shouldRetryNarration, requestYandexText, normalizeNarrationText, parseNarrationSections, findSpokenNarrationIssues } from "../narration/processing.js";
 import { speechSentences } from "../normalization/presentation.js";
-import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildFullNarrationDurationRewritePrompt, buildAitunnelFullNarrationRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt, buildGenerationPrompt, buildYandexPresentationRecoveryPrompt, getYandexModelConfig } from "../prompts/builders.js";
+import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildFullNarrationDurationRewritePrompt, buildAitunnelFullNarrationRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt, buildAitunnelNarrationGlobalRewritePrompt, buildGenerationPrompt, buildYandexPresentationRecoveryPrompt, getYandexModelConfig } from "../prompts/builders.js";
 import type { NarrationRewriteFailureCategory, YandexModelTier } from "../prompts/builders.js";
 import { ensureDesignBriefDirections } from "../normalization/presentation.js";
 import { finalizeGeneratedPresentation, repairSlideTextWithOpenAI, repairSlideTextWithYandex, critiquePresentationQualityWithOpenAI, critiquePresentationQualityWithYandex, repairPresentationQualityWithOpenAI, repairPresentationQualityWithYandex } from "../quality/orchestration.js";
@@ -332,6 +333,7 @@ export async function generateAitunnelNarration(client: OpenAI, model: string, p
   const parts = buildAitunnelNarrationSections(project, sources, narrativePlan);
   const reservationKeys = await reservePersistedBatchedNarrationEnvelope(project.id, parts);
   const accepted: string[] = [];
+  let globalRewriteUsed = false;
   try {
     for (const part of parts) {
       const candidate = await requestAitunnelNarrationCall({
@@ -351,13 +353,26 @@ export async function generateAitunnelNarration(client: OpenAI, model: string, p
           stage: part.fallbackStage, prompt: part.fallbackPrompt,
           reservationKey: reservationKeys?.[part.fallbackStage], section: part,
         });
-        section = validateAitunnelNarrationSection(fallback.text, project, narrativePlan, part, "gemini-3.6-flash", part.fallbackStage);
+        try {
+          section = validateAitunnelNarrationSection(fallback.text, project, narrativePlan, part, "gemini-3.6-flash", part.fallbackStage);
+        } catch (fallbackError) {
+          if (!(fallbackError instanceof AitunnelNarrationSectionQualityError) || globalRewriteUsed) throw fallbackError;
+          globalRewriteUsed = true;
+          const global = await requestAitunnelNarrationCall({
+            client, project, narrativePlan, policy, narrationTextCall: part.call,
+            stage: "narration_global_rewrite", prompt: part.globalRewritePrompt(fallbackError.reason),
+            reservationKey: reservationKeys?.narration_global_rewrite, section: part,
+          });
+          section = validateAitunnelNarrationSection(global.text, project, narrativePlan, part, "gemini-3.6-flash", "narration_global_rewrite");
+        }
       }
       accepted.push(section);
       if (candidateAccepted) await releaseNarrationReservation(reservationKeys, part.fallbackStage, "fallback_not_needed");
     }
     // The canonical full-document checks run only after all ten sections pass.
-    return normalizeNarrationText(accepted.join("\n\n"), project, narrativePlan);
+    const narration = normalizeNarrationText(accepted.join("\n\n"), project, narrativePlan);
+    if (!globalRewriteUsed) await releaseNarrationReservation(reservationKeys, "narration_global_rewrite", "global_rewrite_not_needed");
+    return narration;
   } catch (error) {
     const releaseFailed = await releaseUnusedNarrationReservations(reservationKeys, parts, project.id);
     if (releaseFailed) throw narrationFailure("quality");
@@ -386,6 +401,7 @@ type AitunnelNarrationSection = {
   fallbackStage: AitunnelNarrationSectionStage;
   candidatePrompt: string;
   fallbackPrompt: string;
+  globalRewritePrompt: (reason: AitunnelNarrationSectionQualityReason) => string;
 };
 
 type AitunnelNarrationSectionQualityReason = "headers_or_sections" | "word_range" | "sentence_count" | "spoken_quality" | "template_or_repetition";
@@ -474,24 +490,28 @@ async function reservePersistedBatchedNarrationEnvelope(projectId: string, parts
   if (!envelopeId) return undefined as Record<AitunnelNarrationSectionStage, string> | undefined;
   const envelope = await getPrisma().costEnvelope.findUniqueOrThrow({ where: { id: envelopeId }, select: { policySnapshot: true } });
   const buckets = (envelope.policySnapshot as { buckets?: Record<string, string> }).buckets || {};
-  const inputs = parts.flatMap((part) => [part.candidateStage, part.fallbackStage].map((stage) => {
+  const stagePrompts: Array<readonly [AitunnelNarrationSectionStage, string, number]> = [...parts.flatMap((part) => [
+    [part.candidateStage, part.candidatePrompt, part.call] as const,
+    [part.fallbackStage, part.fallbackPrompt, part.call] as const,
+  ]), ...parts.map((part) => ["narration_global_rewrite" as const, part.globalRewritePrompt("spoken_quality"), part.call] as const)];
+  for (const [stage, prompt, call] of stagePrompts) {
     const amountRub = String(buckets[stage] || "");
     if (!/^\d+(?:\.\d+)?$/.test(amountRub) || amountRub === "0") {
-      logPersistedNarrationPreflightFailure(projectId, part.call, stage, "missing_policy_bucket");
+      logPersistedNarrationPreflightFailure(projectId, call, stage, "missing_policy_bucket");
       throw narrationFailure("budget_exhausted");
     }
-    const prompt = stage === part.candidateStage ? part.candidatePrompt : part.fallbackPrompt;
     const worstCase = reserveAitunnelStageCall(stage, { input: [{ role: "system", content: AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT }, { role: "user", content: prompt }] });
     if (!worstCase) {
-      logPersistedNarrationPreflightFailure(projectId, part.call, stage, "stage_budget_unavailable", amountRub);
+      logPersistedNarrationPreflightFailure(projectId, call, stage, "stage_budget_unavailable", amountRub);
       throw narrationFailure("budget_exhausted");
     }
     if (Number(worstCase.costRub) > Number(amountRub)) {
-      logPersistedNarrationPreflightFailure(projectId, part.call, stage, "prompt_above_bucket", amountRub, worstCase.costRub);
+      logPersistedNarrationPreflightFailure(projectId, call, stage, "prompt_above_bucket", amountRub, worstCase.costRub);
       throw narrationFailure("budget_exhausted");
     }
-    return { envelopeId, idempotencyKey: `${envelopeId}:${stage}`, bucket: stage, stage, amountRub };
-  }));
+  }
+  const reservationStages = [...parts.flatMap((part) => [part.candidateStage, part.fallbackStage]), "narration_global_rewrite" as const];
+  const inputs = reservationStages.map((stage) => ({ envelopeId, idempotencyKey: `${envelopeId}:${stage}`, bucket: stage, stage, amountRub: String(buckets[stage]) }));
   const result = await reserveCostEnvelopeBatch(inputs);
   if (result.status !== "reserved") {
     logPersistedNarrationPreflightFailure(projectId, 0, parts[0]!.candidateStage, "batch_blocked", undefined, undefined, result.reason);
@@ -515,6 +535,7 @@ function buildAitunnelNarrationSections(project: ProjectInput, sources: Source[]
       fallbackStage: `narration_section_${slideOrder}_fallback` as AitunnelNarrationSectionStage,
       candidatePrompt: buildAitunnelNarrationSectionPrompt(project, sources, narrative),
       fallbackPrompt: buildAitunnelNarrationSectionReplacementPrompt(project, sources, narrative, "narration_quality"),
+      globalRewritePrompt: (reason) => buildAitunnelNarrationGlobalRewritePrompt(project, sources, narrative, reason === "word_range" ? "duration" : "narration_quality"),
     };
   });
 }
@@ -528,7 +549,7 @@ function validateAitunnelNarrationSection(text: string, project: ProjectInput, n
   const spokenIssues = findSpokenNarrationIssues(sections, plan);
   const qualityReason = sections.length !== 1 || !section || section.order !== part.slideOrder || !section.title
     ? "headers_or_sections"
-    : words < Math.floor(part.targetWords * 0.8) || words > Math.ceil(part.targetWords * 1.2)
+    : (() => { const bounds = getRussianStudentSpeechSectionBounds(project, part.slideOrder); return !bounds || words < bounds.minWords || words > bounds.maxWords; })()
       ? "word_range"
       : sentences < 2 || sentences > 7
         ? "sentence_count"
@@ -573,6 +594,12 @@ async function releaseUnusedNarrationReservations(keys: Record<AitunnelNarration
         logger.warn({ projectId, stage: "drafting_speech", narrationStage: stage, failureCategory: "reservation_release_failure", releaseReason: "narration_stopped_before_call" }, "AITUNNEL narration reservation release failed");
       }
     }
+  }
+  try {
+    await releaseNarrationReservation(keys, "narration_global_rewrite", "narration_stopped_before_call");
+  } catch {
+    releaseFailed = true;
+    logger.warn({ projectId, stage: "drafting_speech", narrationStage: "narration_global_rewrite", failureCategory: "reservation_release_failure", releaseReason: "narration_stopped_before_call" }, "AITUNNEL narration reservation release failed");
   }
   return releaseFailed;
 }
