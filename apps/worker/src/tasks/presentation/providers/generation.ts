@@ -4,7 +4,7 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import { captureGenerationError, errorLogFields, logger } from "../../../observability.js";
 import { calculateProviderCost, currentUsageContext, normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
-import { failCostEnvelope, releaseCostEnvelope, reserveCostEnvelopeBatch, settleCostEnvelope } from "../../../cost-envelope.js";
+import { failCostEnvelope, releaseCostEnvelope, reserveCostEnvelope, reserveCostEnvelopeBatch, settleCostEnvelope } from "../../../cost-envelope.js";
 import { getPrisma } from "../../../prisma.js";
 import { aitunnelConfig, createAitunnelClient, createOpenAIClient, createOpenAIProvider } from "../../../openai-client.js";
 import {
@@ -547,9 +547,10 @@ function validateAitunnelNarrationSection(text: string, project: ProjectInput, n
   const sentences = section ? speechSentences(section.text).length : 0;
   const plan = narrativePlan.filter((item) => item.slideOrder === part.slideOrder);
   const spokenIssues = findSpokenNarrationIssues(sections, plan);
+  const bounds = getRussianStudentSpeechTimingBudget(project) && getFloorAwareSpeechTimingSectionBounds(getRussianStudentSpeechTimingBudget(project)!, part.slideOrder);
   const qualityReason = sections.length !== 1 || !section || section.order !== part.slideOrder || !section.title
     ? "headers_or_sections"
-    : (() => { const budget = getRussianStudentSpeechTimingBudget(project); const bounds = budget && getFloorAwareSpeechTimingSectionBounds(budget, part.slideOrder); return !bounds || words < bounds.minWords || words > bounds.maxWords; })()
+    : !bounds || words < bounds.minWords || words > bounds.maxWords
       ? "word_range"
       : sentences < 2 || sentences > 7
         ? "sentence_count"
@@ -559,7 +560,15 @@ function validateAitunnelNarrationSection(text: string, project: ProjectInput, n
             : "spoken_quality"
           : undefined;
   if (qualityReason) {
-    logAitunnelNarrationCall(project.id, model, part.call, stage, { failureCategory: "quality", qualityReason });
+    logAitunnelNarrationCall(project.id, model, part.call, stage, {
+      failureCategory: "quality",
+      qualityReason,
+      ...(qualityReason === "word_range" && bounds ? {
+        wordCount: words,
+        effectiveMinWords: bounds.minWords,
+        effectiveMaxWords: bounds.maxWords,
+      } : {}),
+    });
     throw new AitunnelNarrationSectionQualityError(qualityReason);
   }
   logAitunnelNarrationCall(project.id, model, part.call, stage, { words });
@@ -606,6 +615,9 @@ async function releaseUnusedNarrationReservations(keys: Record<AitunnelNarration
 
 function logAitunnelNarrationCall(projectId: string, model: string, narrationTextCall: number, narrationStage: AitunnelNarrationSectionStage, extra: {
   words?: number;
+  wordCount?: number;
+  effectiveMinWords?: number;
+  effectiveMaxWords?: number;
   failureCategory?: "provider_error" | "quality" | "narration_budget_exhausted" | "narration_budget_overrun" | "narration_usage_unavailable";
   budgetRub?: string;
   reservationRub?: string;
@@ -1098,6 +1110,8 @@ export async function requestOpenAIStructuredLegacy({
   aitunnelStage?: AitunnelStage;
 }) {
   const startedAt = new Date();
+  let persistedReservation: { envelopeId: string; idempotencyKey: string } | undefined;
+  let responseUsageRecorded = false;
   try {
   const aitunnelPolicy = provider === "aitunnel" ? aitunnelStagePolicy(aitunnelStage || "presentation") : undefined;
   const request = {
@@ -1118,24 +1132,65 @@ export async function requestOpenAIStructuredLegacy({
       : undefined,
     ...(aitunnelPolicy ? { max_output_tokens: aitunnelPolicy.maxOutputTokens, reasoning: { effort: aitunnelPolicy.reasoningEffort, exclude: true } } : {}),
   };
-  const budget = provider === "aitunnel" ? currentAitunnelProjectBudget() : undefined;
-  const reservationKey = provider === "aitunnel" ? `${aitunnelStage || "presentation"}-${startedAt.getTime()}` : undefined;
-  const reserved = budget && reservationKey ? budget.reserve(reservationKey, aitunnelStage || "presentation", request) : undefined;
-  if (provider === "aitunnel" && (!reserved || reserved.status !== "reserved")) {
-    throw new Error(reserved?.status || "aitunnel_project_budget_exhausted_preflight");
-  }
-  const response = await client.responses.create(request);
-  if (budget && reservationKey) {
-    const settled = budget.settle(reservationKey, normalizeOpenAIUsage((response as { usage?: unknown }).usage));
-    if (settled.status !== "settled") throw new Error(settled.status);
-  }
-  const typedResponse = response as typeof response & { output_parsed?: unknown };
-  await recordOpenAIResponse(response, "structured_generation_legacy", schemaName, startedAt, provider, model);
-  return typedResponse.output_parsed || response.output_text || "";
+    const budget = provider === "aitunnel" ? currentAitunnelProjectBudget() : undefined;
+    const reservationKey = provider === "aitunnel" ? `${aitunnelStage || "presentation"}-${startedAt.getTime()}` : undefined;
+    const reserved = budget && reservationKey ? budget.reserve(reservationKey, aitunnelStage || "presentation", request) : undefined;
+    if (provider === "aitunnel" && (!reserved || reserved.status !== "reserved")) {
+      throw new Error(reserved?.status || "aitunnel_project_budget_exhausted_preflight");
+    }
+    persistedReservation = await reservePersistedNarrativePlanEnvelope(provider, aitunnelStage);
+    let response: Awaited<ReturnType<typeof client.responses.create>>;
+    try {
+      response = await client.responses.create(request);
+    } catch (error) {
+      if (persistedReservation) {
+        await failCostEnvelope({ ...persistedReservation, reason: "narrative_plan_provider_error" }).catch(() => undefined);
+      }
+      throw error;
+    }
+    const usage = normalizeOpenAIUsage((response as { usage?: unknown }).usage);
+    await recordOpenAIResponse(response, "structured_generation_legacy", schemaName, startedAt, provider, model, undefined, aitunnelStage);
+    responseUsageRecorded = true;
+    if (persistedReservation) {
+      if (!usage || usage.inputTokens === undefined || usage.outputTokens === undefined) {
+        await settleCostEnvelope({ ...persistedReservation, reason: "narrative_plan_usage_unavailable" });
+        throw new Error("aitunnel_narrative_plan_usage_unavailable");
+      }
+      const priced = calculateProviderCost("aitunnel", model, startedAt, usage);
+      if (priced.status !== "priced" || !priced.sourceCost) {
+        await settleCostEnvelope({ ...persistedReservation, reason: "narrative_plan_price_unavailable" });
+        throw new Error("aitunnel_narrative_plan_price_unavailable");
+      }
+      const settledEnvelope = await settleCostEnvelope({ ...persistedReservation, actualRub: priced.sourceCost, reason: "usage_reported" });
+      if (settledEnvelope.status !== "settled") throw new Error(`aitunnel_narrative_plan_${settledEnvelope.status}`);
+    }
+    if (budget && reservationKey) {
+      const settled = budget.settle(reservationKey, usage);
+      if (settled.status !== "settled") throw new Error(settled.status);
+    }
+    const typedResponse = response as typeof response & { output_parsed?: unknown };
+    return typedResponse.output_parsed || response.output_text || "";
   } catch (error) {
-    await recordAiUsage({ provider, model, operation: "structured_generation_legacy", schemaName, startedAt, error });
+    if (persistedReservation) {
+      await failCostEnvelope({ ...persistedReservation, reason: "narrative_plan_provider_error" }).catch(() => undefined);
+    }
+    if (!responseUsageRecorded) {
+      await recordAiUsage({ provider, model, operation: "structured_generation_legacy", schemaName, startedAt, error });
+    }
     throw error;
   }
+}
+
+async function reservePersistedNarrativePlanEnvelope(provider: "openai" | "aitunnel", stage: AitunnelStage | undefined) {
+  const envelopeId = provider === "aitunnel" && stage === "narrative_plan" ? currentUsageContext()?.costEnvelopeId : undefined;
+  if (!envelopeId) return undefined;
+  const envelope = await getPrisma().costEnvelope.findUniqueOrThrow({ where: { id: envelopeId }, select: { policySnapshot: true } });
+  const amountRub = String((envelope.policySnapshot as { buckets?: Record<string, string> }).buckets?.narrative_plan || "");
+  if (!/^\d+(?:\.\d+)?$/.test(amountRub) || amountRub === "0") throw new Error("aitunnel_narrative_plan_missing_policy_bucket");
+  const idempotencyKey = `${envelopeId}:narrative_plan`;
+  const reservation = await reserveCostEnvelope({ envelopeId, idempotencyKey, bucket: "narrative_plan", stage: "narrative_plan", amountRub });
+  if (reservation.status !== "reserved") throw new Error(`aitunnel_narrative_plan_${reservation.reason || "reservation_blocked"}`);
+  return { envelopeId, idempotencyKey };
 }
 
 export function isUnknownSchema(schema: z.ZodType<unknown, z.ZodTypeDef, unknown>) {

@@ -3,17 +3,23 @@ import { standardGenerationCostPolicy, type Source } from "@studydeck/shared";
 
 const mocks = vi.hoisted(() => ({
   findUniqueOrThrow: vi.fn(),
+  reserveCostEnvelope: vi.fn(),
   reserveCostEnvelopeBatch: vi.fn(),
   releaseCostEnvelope: vi.fn(),
   settleCostEnvelope: vi.fn(),
+  aiUsageEventUpsert: vi.fn(),
 }));
 
 vi.mock("../../../prisma.js", () => ({
-  getPrisma: () => ({ costEnvelope: { findUniqueOrThrow: mocks.findUniqueOrThrow } }),
+  getPrisma: () => ({
+    costEnvelope: { findUniqueOrThrow: mocks.findUniqueOrThrow },
+    aiUsageEvent: { upsert: mocks.aiUsageEventUpsert },
+  }),
 }));
 
 vi.mock("../../../cost-envelope.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../cost-envelope.js")>()),
+  reserveCostEnvelope: mocks.reserveCostEnvelope,
   reserveCostEnvelopeBatch: mocks.reserveCostEnvelopeBatch,
   releaseCostEnvelope: mocks.releaseCostEnvelope,
   settleCostEnvelope: mocks.settleCostEnvelope,
@@ -24,7 +30,7 @@ import { logger } from "../../../observability.js";
 import { runWithUsageContext } from "../../../usage-ledger.js";
 import { AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT } from "../constants.js";
 import { buildAitunnelNarrationGlobalRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt } from "../prompts/builders.js";
-import { generateAitunnelNarration, MAX_AITUNNEL_NARRATION_TEXT_CALLS } from "./generation.js";
+import { generateAitunnelNarration, generateNarrativePlanWithProvider, MAX_AITUNNEL_NARRATION_TEXT_CALLS } from "./generation.js";
 import { getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
 
 const project = {
@@ -65,9 +71,11 @@ const groundedSources = [
 
 afterEach(() => {
   mocks.findUniqueOrThrow.mockReset();
+  mocks.reserveCostEnvelope.mockReset();
   mocks.reserveCostEnvelopeBatch.mockReset();
   mocks.releaseCostEnvelope.mockReset();
   mocks.settleCostEnvelope.mockReset();
+  mocks.aiUsageEventUpsert.mockReset();
 });
 
 it("logs a safe persisted-envelope reason when a narration bucket is missing", async () => {
@@ -150,6 +158,59 @@ it("submits twenty unique narration reservations to one persisted envelope befor
     "narration_global_rewrite",
   ]));
   expect(create).not.toHaveBeenCalled();
+});
+
+it("settles one persisted narrative-plan reservation with the matching envelope-scoped AI usage", async () => {
+  const policy = standardGenerationCostPolicy();
+  const create = vi.fn().mockResolvedValue({
+    output_parsed: plan,
+    usage: { input_tokens: 100, output_tokens: 100 },
+    id: "narrative-plan-response",
+  });
+  const client = { responses: { create } } as never;
+  mocks.findUniqueOrThrow.mockResolvedValue({ policySnapshot: policy });
+  mocks.reserveCostEnvelope.mockResolvedValue({ status: "reserved" });
+  mocks.settleCostEnvelope.mockResolvedValue({ status: "settled" });
+  mocks.aiUsageEventUpsert.mockResolvedValue({});
+
+  await runWithUsageContext(
+    { userId: "user-1", projectId: project.id, generationJobId: "job-1", costEnvelopeId: "envelope-1" },
+    () => runWithAitunnelProjectBudget(new AitunnelProjectBudget(), () => generateNarrativePlanWithProvider(
+      "aitunnel",
+      project,
+      [],
+      {} as never,
+      { openAIClient: client, openAIModel: "gemini-3.6-flash" },
+    )),
+  );
+
+  expect(create).toHaveBeenCalledTimes(1);
+  expect(mocks.reserveCostEnvelope).toHaveBeenCalledWith(expect.objectContaining({
+    envelopeId: "envelope-1",
+    idempotencyKey: "envelope-1:narrative_plan",
+    bucket: "narrative_plan",
+    stage: "narrative_plan",
+    amountRub: policy.buckets.narrative_plan,
+  }));
+  expect(mocks.settleCostEnvelope).toHaveBeenCalledWith(expect.objectContaining({
+    envelopeId: "envelope-1",
+    idempotencyKey: "envelope-1:narrative_plan",
+    actualRub: expect.any(String),
+  }));
+  expect(mocks.aiUsageEventUpsert).toHaveBeenCalledWith(expect.objectContaining({
+    create: expect.objectContaining({ costEnvelopeId: "envelope-1", stage: "narrative_plan" }),
+  }));
+});
+
+it("reconciles narration AI, narrative-plan AI, and the separate source-search CostEvent", () => {
+  const narrationAiRub = "4.09326000";
+  const narrativePlanAiRub = "0.65246000";
+  const sourceSearchCostEventRub = "0.50000000";
+  const aiUsageTotal = addRub(narrationAiRub, narrativePlanAiRub);
+
+  expect(aiUsageTotal).toBe("4.74572000");
+  expect(addRub(aiUsageTotal, sourceSearchCostEventRub)).toBe("5.24572000");
+  expect(sourceSearchCostEventRub).toBe("0.50000000");
 });
 
 it("serially releases every unused reservation after a section quality terminal failure", async () => {
@@ -278,6 +339,15 @@ function sectionText(order: number, words: number) {
   return `${order}. Verified section\n${Array.from({ length: firstSentenceWords }, (_, index) => `topic${order}_${index}`).join(" ")}. ${Array.from({ length: words - firstSentenceWords }, (_, index) => `detail${order}_${index}`).join(" ")}.`;
 }
 
+function addRub(left: string, right: string) {
+  const toUnits = (value: string) => {
+    const [whole, fraction = ""] = value.split(".");
+    return BigInt(whole) * 100_000_000n + BigInt(`${fraction}00000000`.slice(0, 8));
+  };
+  const units = toUnits(left) + toUnits(right);
+  return `${units / 100_000_000n}.${(units % 100_000_000n).toString().padStart(8, "0")}`;
+}
+
 function setPersistedReservationMocks(policy = standardGenerationCostPolicy()) {
   const statuses = new Map<string, "reserved" | "settled" | "released">();
   mocks.findUniqueOrThrow.mockResolvedValue({ policySnapshot: policy });
@@ -341,6 +411,49 @@ it("uses the global Flash replacement once, then stops after a later dual qualit
   for (let slideOrder = 4; slideOrder <= 10; slideOrder += 1) {
     expect(statuses.get(`envelope-1:narration_section_${slideOrder}_candidate`)).toBe("released");
     expect(statuses.get(`envelope-1:narration_section_${slideOrder}_fallback`)).toBe("released");
+  }
+});
+
+it("logs floor-aware word bounds and does not request a second global rewrite after slide 3", async () => {
+  const statuses = setPersistedReservationMocks();
+  const logged: unknown[] = [];
+  const info = vi.spyOn(logger, "info").mockImplementation((payload: unknown) => {
+    logged.push(payload);
+    return logger;
+  });
+  const create = vi.fn().mockImplementation(async () => {
+    const call = create.mock.calls.length;
+    if ([3, 4, 8, 9].includes(call)) {
+      const slideOrder = call <= 4 ? 3 : 6;
+      return { output_text: `${slideOrder}. Too short\nNo.`, usage: { input_tokens: 1, output_tokens: 1 } };
+    }
+    const slideOrder = call === 5 ? 3 : call < 3 ? call : call - 2;
+    const words = slideOrder === 1 ? 72 : slideOrder === 10 ? 90 : 126;
+    return { output_text: sectionText(slideOrder, words), usage: { input_tokens: 1, output_tokens: 1 } };
+  });
+  const client = { responses: { create } } as never;
+
+  try {
+    await expect(runWithUsageContext(
+      { userId: "user-1", projectId: project.id, costEnvelopeId: "envelope-1" },
+      () => runWithAitunnelProjectBudget(new AitunnelProjectBudget(), () => generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)),
+    )).rejects.toThrow("narration_quality_failure");
+
+    expect(create).toHaveBeenCalledTimes(9);
+    expect(create.mock.calls.filter(([request]) => request.model === "gemini-3.6-flash")).toHaveLength(3);
+    expect(statuses.get("envelope-1:narration_global_rewrite")).toBe("settled");
+    expect(logged).toContainEqual(expect.objectContaining({
+      narrationTextCall: 6,
+      narrationStage: "narration_section_6_candidate",
+      qualityReason: "word_range",
+      wordCount: 1,
+      effectiveMinWords: 126,
+      effectiveMaxWords: 182,
+    }));
+    expect(JSON.stringify(logged)).not.toContain("Too short");
+    expect(JSON.stringify(logged)).not.toContain(project.prompt);
+  } finally {
+    info.mockRestore();
   }
 });
 
