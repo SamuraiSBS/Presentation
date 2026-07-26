@@ -339,22 +339,28 @@ export async function generateAitunnelNarration(client: OpenAI, model: string, p
         stage: part.candidateStage, prompt: part.candidatePrompt,
         reservationKey: reservationKeys?.[part.candidateStage], section: part,
       });
+      let section: string;
+      let candidateAccepted = false;
       try {
-        accepted.push(validateAitunnelNarrationSection(candidate.text, project, narrativePlan, part, "gemini-3.5-flash-lite", part.candidateStage));
-        await releaseNarrationReservation(reservationKeys, part.fallbackStage, "fallback_not_needed");
-      } catch {
+        section = validateAitunnelNarrationSection(candidate.text, project, narrativePlan, part, "gemini-3.5-flash-lite", part.candidateStage);
+        candidateAccepted = true;
+      } catch (error) {
+        if (!(error instanceof AitunnelNarrationSectionQualityError)) throw error;
         const fallback = await requestAitunnelNarrationCall({
           client, project, narrativePlan, policy, narrationTextCall: part.call,
           stage: part.fallbackStage, prompt: part.fallbackPrompt,
           reservationKey: reservationKeys?.[part.fallbackStage], section: part,
         });
-        accepted.push(validateAitunnelNarrationSection(fallback.text, project, narrativePlan, part, "gemini-3.6-flash", part.fallbackStage));
+        section = validateAitunnelNarrationSection(fallback.text, project, narrativePlan, part, "gemini-3.6-flash", part.fallbackStage);
       }
+      accepted.push(section);
+      if (candidateAccepted) await releaseNarrationReservation(reservationKeys, part.fallbackStage, "fallback_not_needed");
     }
     // The canonical full-document checks run only after all ten sections pass.
     return normalizeNarrationText(accepted.join("\n\n"), project, narrativePlan);
   } catch (error) {
-    await releaseUnusedNarrationReservations(reservationKeys, parts);
+    const releaseFailed = await releaseUnusedNarrationReservations(reservationKeys, parts, project.id);
+    if (releaseFailed) throw narrationFailure("quality");
     if (error instanceof Error && /^narration_[a-z_]+_failure$/.test(error.message)) throw error;
     throw narrationFailure("quality");
   }
@@ -381,6 +387,14 @@ type AitunnelNarrationSection = {
   candidatePrompt: string;
   fallbackPrompt: string;
 };
+
+type AitunnelNarrationSectionQualityReason = "headers_or_sections" | "word_range" | "sentence_count" | "spoken_quality" | "template_or_repetition";
+
+class AitunnelNarrationSectionQualityError extends Error {
+  constructor(readonly reason: AitunnelNarrationSectionQualityReason) {
+    super("aitunnel_narration_section_invalid");
+  }
+}
 
 async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
   const model = aitunnelModelForStage(input.stage);
@@ -511,9 +525,21 @@ function validateAitunnelNarrationSection(text: string, project: ProjectInput, n
   const words = section?.text.split(/\s+/).filter(Boolean).length || 0;
   const sentences = section ? speechSentences(section.text).length : 0;
   const plan = narrativePlan.filter((item) => item.slideOrder === part.slideOrder);
-  if (sections.length !== 1 || !section || section.order !== part.slideOrder || !section.title || words < Math.floor(part.targetWords * 0.8) || words > Math.ceil(part.targetWords * 1.2) || sentences < 2 || sentences > 7 || findSpokenNarrationIssues(sections, plan).length) {
-    logAitunnelNarrationCall(project.id, model, part.call, stage, { failureCategory: "quality", qualityReason: "section_validation" });
-    throw new Error("aitunnel_narration_section_invalid");
+  const spokenIssues = findSpokenNarrationIssues(sections, plan);
+  const qualityReason = sections.length !== 1 || !section || section.order !== part.slideOrder || !section.title
+    ? "headers_or_sections"
+    : words < Math.floor(part.targetWords * 0.8) || words > Math.ceil(part.targetWords * 1.2)
+      ? "word_range"
+      : sentences < 2 || sentences > 7
+        ? "sentence_count"
+        : spokenIssues.length
+          ? spokenIssues.some((issue) => issue.code === "repeated_sentence" || issue.code === "repeated_fact")
+            ? "template_or_repetition"
+            : "spoken_quality"
+          : undefined;
+  if (qualityReason) {
+    logAitunnelNarrationCall(project.id, model, part.call, stage, { failureCategory: "quality", qualityReason });
+    throw new AitunnelNarrationSectionQualityError(qualityReason);
   }
   logAitunnelNarrationCall(project.id, model, part.call, stage, { words });
   return sections.map((section) => `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n");
@@ -531,11 +557,24 @@ export function classifyAitunnelNarrationRewriteFailure(error: unknown): Narrati
 async function releaseNarrationReservation(keys: Record<AitunnelNarrationSectionStage, string> | undefined, stage: AitunnelNarrationSectionStage, reason: string) {
   const envelopeId = currentUsageContext()?.costEnvelopeId;
   if (!keys || !envelopeId) return;
-  await releaseCostEnvelope({ envelopeId, idempotencyKey: keys[stage], reason }).catch(() => undefined);
+  await releaseCostEnvelope({ envelopeId, idempotencyKey: keys[stage], reason });
 }
 
-async function releaseUnusedNarrationReservations(keys: Record<AitunnelNarrationSectionStage, string> | undefined, parts: readonly AitunnelNarrationSection[]) {
-  await Promise.all(parts.flatMap((part) => [part.candidateStage, part.fallbackStage]).map((stage) => releaseNarrationReservation(keys, stage, "narration_stopped_before_call")));
+async function releaseUnusedNarrationReservations(keys: Record<AitunnelNarrationSectionStage, string> | undefined, parts: readonly AitunnelNarrationSection[], projectId: string) {
+  let releaseFailed = false;
+  // Each release locks the same persisted envelope. Run them in order so a
+  // terminal narration failure does not create competing serializable writes.
+  for (const part of parts) {
+    for (const stage of [part.candidateStage, part.fallbackStage]) {
+      try {
+        await releaseNarrationReservation(keys, stage, "narration_stopped_before_call");
+      } catch {
+        releaseFailed = true;
+        logger.warn({ projectId, stage: "drafting_speech", narrationStage: stage, failureCategory: "reservation_release_failure", releaseReason: "narration_stopped_before_call" }, "AITUNNEL narration reservation release failed");
+      }
+    }
+  }
+  return releaseFailed;
 }
 
 function logAitunnelNarrationCall(projectId: string, model: string, narrationTextCall: number, narrationStage: AitunnelNarrationSectionStage, extra: {
@@ -546,7 +585,7 @@ function logAitunnelNarrationCall(projectId: string, model: string, narrationTex
   estimatedRub?: string;
   actualCostRub?: string;
   remainingRub?: string;
-  qualityReason?: "section_validation";
+  qualityReason?: AitunnelNarrationSectionQualityReason;
   preflightReason?: "missing_policy_bucket" | "stage_budget_unavailable" | "prompt_above_bucket" | "batch_blocked";
   batchReason?: string;
 }) {

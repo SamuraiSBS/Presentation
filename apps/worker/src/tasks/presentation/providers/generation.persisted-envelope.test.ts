@@ -4,6 +4,8 @@ import { standardGenerationCostPolicy, type Source } from "@studydeck/shared";
 const mocks = vi.hoisted(() => ({
   findUniqueOrThrow: vi.fn(),
   reserveCostEnvelopeBatch: vi.fn(),
+  releaseCostEnvelope: vi.fn(),
+  settleCostEnvelope: vi.fn(),
 }));
 
 vi.mock("../../../prisma.js", () => ({
@@ -13,6 +15,8 @@ vi.mock("../../../prisma.js", () => ({
 vi.mock("../../../cost-envelope.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../cost-envelope.js")>()),
   reserveCostEnvelopeBatch: mocks.reserveCostEnvelopeBatch,
+  releaseCostEnvelope: mocks.releaseCostEnvelope,
+  settleCostEnvelope: mocks.settleCostEnvelope,
 }));
 
 import { AitunnelProjectBudget, reserveAitunnelStageCall, runWithAitunnelProjectBudget, type AitunnelNarrationSectionStage } from "../../../aitunnel-narration-budget.js";
@@ -61,6 +65,8 @@ const groundedSources = [
 afterEach(() => {
   mocks.findUniqueOrThrow.mockReset();
   mocks.reserveCostEnvelopeBatch.mockReset();
+  mocks.releaseCostEnvelope.mockReset();
+  mocks.settleCostEnvelope.mockReset();
 });
 
 it("logs a safe persisted-envelope reason when a narration bucket is missing", async () => {
@@ -133,4 +139,101 @@ it("submits twenty unique narration reservations to one persisted envelope befor
     "narration_section_10_fallback",
   ]));
   expect(create).not.toHaveBeenCalled();
+});
+
+it("serially releases every unused reservation after a section quality terminal failure", async () => {
+  const policy = standardGenerationCostPolicy();
+  const statuses = new Map<string, "reserved" | "settled" | "released">();
+  const releaseOrder: string[] = [];
+  const logged: unknown[] = [];
+  const info = vi.spyOn(logger, "info").mockImplementation((payload: unknown) => {
+    logged.push(payload);
+    return logger;
+  });
+  const acceptedText = `1. Verified section\n${Array.from({ length: 32 }, (_, index) => `evidence${index + 1}`).join(" ")}. ${Array.from({ length: 32 }, (_, index) => `context${index + 1}`).join(" ")}.`;
+  const invalidText = "2. Incomplete section\nToo short.";
+  const create = vi.fn()
+    .mockResolvedValueOnce({ output_text: acceptedText, usage: { input_tokens: 1, output_tokens: 1 } })
+    .mockResolvedValueOnce({ output_text: invalidText, usage: { input_tokens: 1, output_tokens: 1 } })
+    .mockResolvedValueOnce({ output_text: invalidText, usage: { input_tokens: 1, output_tokens: 1 } });
+  const client = { responses: { create } } as never;
+  mocks.findUniqueOrThrow.mockResolvedValue({ policySnapshot: policy });
+  mocks.reserveCostEnvelopeBatch.mockImplementation(async (inputs: Array<{ idempotencyKey: string }>) => {
+    for (const input of inputs) statuses.set(input.idempotencyKey, "reserved");
+    return { status: "reserved" };
+  });
+  mocks.settleCostEnvelope.mockImplementation(async ({ idempotencyKey }: { idempotencyKey: string }) => {
+    statuses.set(idempotencyKey, "settled");
+    return { status: "settled" };
+  });
+  mocks.releaseCostEnvelope.mockImplementation(async ({ idempotencyKey, reason }: { idempotencyKey: string; reason: string }) => {
+    releaseOrder.push(idempotencyKey);
+    if (statuses.get(idempotencyKey) === "reserved") statuses.set(idempotencyKey, "released");
+    return { status: statuses.get(idempotencyKey), reason };
+  });
+
+  try {
+    await expect(runWithUsageContext(
+      { userId: "user-1", projectId: project.id, costEnvelopeId: "envelope-1" },
+      () => runWithAitunnelProjectBudget(new AitunnelProjectBudget(), () => generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)),
+    )).rejects.toThrow("narration_quality_failure");
+
+    const stageKey = (stage: string) => `envelope-1:${stage}`;
+    const laterStages = Array.from({ length: 8 }, (_, index) => index + 3).flatMap((slideOrder) => [
+      `narration_section_${slideOrder}_candidate`,
+      `narration_section_${slideOrder}_fallback`,
+    ]);
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(statuses.get(stageKey("narration_section_1_candidate"))).toBe("settled");
+    expect(statuses.get(stageKey("narration_section_1_fallback"))).toBe("released");
+    expect(statuses.get(stageKey("narration_section_2_candidate"))).toBe("settled");
+    expect(statuses.get(stageKey("narration_section_2_fallback"))).toBe("settled");
+    expect(logged).toContainEqual(expect.objectContaining({
+      narrationStage: "narration_section_2_candidate", model: "gemini-3.5-flash-lite", failureCategory: "quality", qualityReason: "word_range",
+    }));
+    expect(logged).toContainEqual(expect.objectContaining({
+      narrationStage: "narration_section_2_fallback", model: "gemini-3.6-flash", failureCategory: "quality", qualityReason: "word_range",
+    }));
+    expect(JSON.stringify(logged)).not.toContain(invalidText);
+    for (const stage of laterStages) {
+      expect(statuses.get(stageKey(stage))).toBe("released");
+      expect(releaseOrder.filter((key) => key === stageKey(stage))).toHaveLength(1);
+    }
+    expect(releaseOrder).toEqual([
+      stageKey("narration_section_1_fallback"),
+      ...Array.from({ length: 10 }, (_, index) => index + 1).flatMap((slideOrder) => [
+        stageKey(`narration_section_${slideOrder}_candidate`),
+        stageKey(`narration_section_${slideOrder}_fallback`),
+      ]),
+    ]);
+  } finally {
+    info.mockRestore();
+  }
+});
+
+it("logs no quality reason and makes no fallback call when every Lite section is accepted", async () => {
+  const logged: unknown[] = [];
+  const info = vi.spyOn(logger, "info").mockImplementation((payload: unknown) => {
+    logged.push(payload);
+    return logger;
+  });
+  const create = vi.fn().mockImplementation(async (request: { model: string }) => {
+    const call = create.mock.calls.length;
+    const words = call === 1 ? 80 : call === 10 ? 100 : 140;
+    const firstSentenceWords = Math.floor(words / 2);
+    return { output_text: `${call}. Verified section\n${Array.from({ length: firstSentenceWords }, (_, index) => `topic${call}_${index}`).join(" ")}. ${Array.from({ length: words - firstSentenceWords }, (_, index) => `detail${call}_${index}`).join(" ")}.`, usage: { input_tokens: 1, output_tokens: 1 } };
+  });
+  const client = { responses: { create } } as never;
+
+  try {
+    await runWithAitunnelProjectBudget(new AitunnelProjectBudget(), () => generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan));
+
+    expect(create).toHaveBeenCalledTimes(10);
+    expect(create.mock.calls.every(([request]) => request.model === "gemini-3.5-flash-lite")).toBe(true);
+    expect(logged.filter((entry) => (entry as { failureCategory?: string }).failureCategory === "quality")).toHaveLength(0);
+    expect(logged.every((entry) => (entry as { narrationStage?: string }).narrationStage?.endsWith("_candidate"))).toBe(true);
+    expect(new Set(logged.map((entry) => (entry as { narrationStage: string }).narrationStage)).size).toBe(10);
+  } finally {
+    info.mockRestore();
+  }
 });
