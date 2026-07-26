@@ -354,14 +354,17 @@ export function buildAitunnelNarrationSectionPrompt(
   const maxWords = Math.ceil(targetWords * 1.2);
   const anchors = sources
     .filter((source) => source.included !== false)
-    .slice(0, 2)
-    .map((source) => `${source.label}: ${cleanMultilineText(source.excerpt).slice(0, 280)}`)
+    // The Lite candidate has a fixed 0.25 ₽ persisted reservation. One short
+    // source anchor is sufficient factual grounding for a single section and
+    // keeps the real request inside that hard preflight bucket.
+    .slice(0, 1)
+    .map((source) => `${cleanMultilineText(source.label).slice(0, 40)}: ${cleanMultilineText(source.excerpt).slice(0, 120)}`)
     .filter(Boolean);
   return [
     "Write one Russian university-student narration section, not a plan or commentary.",
-    `Topic: ${project.title}. Learning context: ${project.level}; ${project.scenario}.`,
-    `Current slide ${narrative.slideOrder}: ${cleanMultilineText(narrative.slideTitle).slice(0, 120)}.`,
-    `Key message: ${cleanMultilineText(narrative.keyMessage).slice(0, 220)}.`,
+    `Topic: ${cleanMultilineText(project.title).slice(0, 96)}.`,
+    `Current slide ${narrative.slideOrder}: ${cleanMultilineText(narrative.slideTitle).slice(0, 80)}.`,
+    `Key message: ${cleanMultilineText(narrative.keyMessage).slice(0, 120)}.`,
     `Write ${minWords}-${maxWords} words (target ${targetWords}) in 2-7 complete sentences.`,
     "Return exactly one section in this canonical format: `Слайд N: semantic title` followed by its prose.",
     "Explain the topic itself. Do not mention the next slide, a plan, sources, citations, or this instruction. Do not use filler or a template formula.",
@@ -379,11 +382,17 @@ export function buildAitunnelNarrationSectionReplacementPrompt(
   const timing = getRussianStudentSpeechTimingBudget(project);
   if (!timing) throw new Error("aitunnel_section_timing_unavailable");
   const targetWords = narrative.slideOrder === 1 ? timing.titleWordTarget : narrative.slideOrder === project.slideCount ? timing.conclusionWordTarget : timing.contentWordTarget;
-  const anchors = sources.filter((source) => source.included !== false).slice(0, 1).map((source) => `${source.label}: ${cleanMultilineText(source.excerpt).slice(0, 120)}`).filter(Boolean);
+  // Flash has a fixed 1.20 ₽ reservation, so bound every runtime-derived
+  // field even for byte-heavy Russian input.
+  const anchors = sources
+    .filter((source) => source.included !== false)
+    .slice(0, 1)
+    .map((source) => `${cleanMultilineText(source.label).slice(0, 28)}: ${cleanMultilineText(source.excerpt).slice(0, 40)}`)
+    .filter(Boolean);
   return [
     "Write a fresh Russian university-student narration section, not a patch, diagnosis, or commentary.",
-    `Topic: ${cleanMultilineText(project.title).slice(0, 120)}. Current slide ${narrative.slideOrder}: ${cleanMultilineText(narrative.slideTitle).slice(0, 120)}.`,
-    `Key message: ${cleanMultilineText(narrative.keyMessage).slice(0, 180)}. Write ${Math.floor(targetWords * 0.8)}-${Math.ceil(targetWords * 1.2)} words (target ${targetWords}) in 2-7 complete sentences.`,
+    `Topic: ${cleanMultilineText(project.title).slice(0, 64)}. Slide ${narrative.slideOrder}: ${cleanMultilineText(narrative.slideTitle).slice(0, 48)}.`,
+    `Key point: ${cleanMultilineText(narrative.keyMessage).slice(0, 64)}. Write ${Math.floor(targetWords * 0.8)}-${Math.ceil(targetWords * 1.2)} words (target ${targetWords}) in 2-7 sentences.`,
     "Return exactly one section in the canonical format: `Слайд N: semantic title` followed by prose. Explain the topic itself; do not mention sources, validation, a rejected draft, a plan, or this instruction.",
     `Safe quality focus: ${AITUNNEL_REWRITE_CATEGORY_GUIDANCE[failureCategory]}`,
     anchors.length ? `Bounded factual anchors (use only when relevant; do not cite them):\n${anchors.join("\n")}` : "Use only cautious, generally supported factual claims.",

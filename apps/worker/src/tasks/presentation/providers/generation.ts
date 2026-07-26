@@ -330,7 +330,7 @@ export async function generateAitunnelNarration(client: OpenAI, model: string, p
   if (!currentAitunnelProjectBudget()) return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), () => generateAitunnelNarration(client, model, project, sources, narrativePlan, researchBrief));
   const policy = aitunnelNarrationBudgetConfig();
   const parts = buildAitunnelNarrationSections(project, sources, narrativePlan);
-  const reservationKeys = await reservePersistedBatchedNarrationEnvelope(parts);
+  const reservationKeys = await reservePersistedBatchedNarrationEnvelope(project.id, parts);
   const accepted: string[] = [];
   try {
     for (const part of parts) {
@@ -455,22 +455,34 @@ async function requestAitunnelNarrationCall(input: AitunnelNarrationRequest) {
   return { text: responseItem.output_text || "" };
 }
 
-async function reservePersistedBatchedNarrationEnvelope(parts: readonly AitunnelNarrationSection[]) {
+async function reservePersistedBatchedNarrationEnvelope(projectId: string, parts: readonly AitunnelNarrationSection[]) {
   const envelopeId = currentUsageContext()?.costEnvelopeId;
   if (!envelopeId) return undefined as Record<AitunnelNarrationSectionStage, string> | undefined;
   const envelope = await getPrisma().costEnvelope.findUniqueOrThrow({ where: { id: envelopeId }, select: { policySnapshot: true } });
   const buckets = (envelope.policySnapshot as { buckets?: Record<string, string> }).buckets || {};
   const inputs = parts.flatMap((part) => [part.candidateStage, part.fallbackStage].map((stage) => {
     const amountRub = String(buckets[stage] || "");
-    if (!/^\d+(?:\.\d+)?$/.test(amountRub) || amountRub === "0") throw narrationFailure("budget_exhausted");
+    if (!/^\d+(?:\.\d+)?$/.test(amountRub) || amountRub === "0") {
+      logPersistedNarrationPreflightFailure(projectId, part.call, stage, "missing_policy_bucket");
+      throw narrationFailure("budget_exhausted");
+    }
     const prompt = stage === part.candidateStage ? part.candidatePrompt : part.fallbackPrompt;
     const worstCase = reserveAitunnelStageCall(stage, { input: [{ role: "system", content: AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT }, { role: "user", content: prompt }] });
-    if (!worstCase) throw narrationFailure("budget_exhausted");
-    if (Number(worstCase.costRub) > Number(amountRub)) throw narrationFailure("budget_exhausted");
+    if (!worstCase) {
+      logPersistedNarrationPreflightFailure(projectId, part.call, stage, "stage_budget_unavailable", amountRub);
+      throw narrationFailure("budget_exhausted");
+    }
+    if (Number(worstCase.costRub) > Number(amountRub)) {
+      logPersistedNarrationPreflightFailure(projectId, part.call, stage, "prompt_above_bucket", amountRub, worstCase.costRub);
+      throw narrationFailure("budget_exhausted");
+    }
     return { envelopeId, idempotencyKey: `${envelopeId}:${stage}`, bucket: stage, stage, amountRub };
   }));
   const result = await reserveCostEnvelopeBatch(inputs);
-  if (result.status !== "reserved") throw narrationFailure("budget_exhausted");
+  if (result.status !== "reserved") {
+    logPersistedNarrationPreflightFailure(projectId, 0, parts[0]!.candidateStage, "batch_blocked", undefined, undefined, result.reason);
+    throw narrationFailure("budget_exhausted");
+  }
   return Object.fromEntries(inputs.map((input) => [input.stage, input.idempotencyKey])) as Record<AitunnelNarrationSectionStage, string>;
 }
 
@@ -531,12 +543,33 @@ function logAitunnelNarrationCall(projectId: string, model: string, narrationTex
   failureCategory?: "provider_error" | "quality" | "narration_budget_exhausted" | "narration_budget_overrun" | "narration_usage_unavailable";
   budgetRub?: string;
   reservationRub?: string;
+  estimatedRub?: string;
   actualCostRub?: string;
   remainingRub?: string;
   qualityReason?: "section_validation";
+  preflightReason?: "missing_policy_bucket" | "stage_budget_unavailable" | "prompt_above_bucket" | "batch_blocked";
+  batchReason?: string;
 }) {
   const durationMinutes = extra.words === undefined ? undefined : Number(russianSpeechMinutesFromWords(extra.words).toFixed(1));
   logger.info({ projectId, stage: "drafting_speech", narrationStage, provider: "aitunnel", model, narrationTextCall, maxNarrationTextCalls: MAX_AITUNNEL_NARRATION_TEXT_CALLS, ...extra, durationMinutes }, "AITUNNEL narration text call completed");
+}
+
+function logPersistedNarrationPreflightFailure(
+  projectId: string,
+  narrationTextCall: number,
+  narrationStage: AitunnelNarrationSectionStage,
+  preflightReason: "missing_policy_bucket" | "stage_budget_unavailable" | "prompt_above_bucket" | "batch_blocked",
+  reservationRub?: string,
+  estimatedRub?: string,
+  batchReason?: string,
+) {
+  logAitunnelNarrationCall(projectId, aitunnelModelForStage(narrationStage) || "unavailable", narrationTextCall, narrationStage, {
+    failureCategory: "narration_budget_exhausted",
+    preflightReason,
+    reservationRub,
+    estimatedRub,
+    batchReason,
+  });
 }
 
 export async function generateWithYandex(project: ProjectInput, sources: Source[]) {
