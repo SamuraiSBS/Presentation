@@ -114,6 +114,8 @@ export async function recordCostEvent(input: {
   quantity: string;
   unit: string;
   unitPrice?: string;
+  /** A run-scoped envelope settlement may be the authoritative RUB amount. */
+  rubCostAtEvent?: string;
   currency: string;
   measurement: "provider_reported" | "calculated";
   occurredAt?: Date;
@@ -127,6 +129,8 @@ export async function recordCostEvent(input: {
   const unitPrice = optionalDecimal(input.unitPrice);
   const sourceCost = unitPrice ? multiply(input.quantity, unitPrice) : null;
   const exchangeRate = sourceCost ? await latestExchangeRate(input.currency) : null;
+  const rubCostAtEvent = optionalDecimal(input.rubCostAtEvent)
+    ?? (sourceCost && exchangeRate ? multiply(sourceCost, exchangeRate) : null);
   try {
     await getPrisma().costEvent.upsert({
       where: { idempotencyKey: input.idempotencyKey },
@@ -149,7 +153,7 @@ export async function recordCostEvent(input: {
         sourceCurrency: input.currency,
         sourceCost,
         exchangeRateToRub: exchangeRate,
-        rubCostAtEvent: sourceCost && exchangeRate ? multiply(sourceCost, exchangeRate) : null,
+        rubCostAtEvent,
         measurement: input.measurement,
         pricingVersion: "env-catalog-2026-07-11",
         pricingSnapshot: store.costEnvelopeSnapshot as Prisma.InputJsonValue | undefined,

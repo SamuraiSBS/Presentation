@@ -24,6 +24,12 @@ export type SourceResearchBrief = {
 export type WebSearchRequest = {
   prompt: string;
   title?: string | null;
+  /**
+   * The already-settled envelope amount for mandatory source research.
+   * It keeps the non-AI CostEvent on the same immutable RUB basis as the
+   * corresponding CostEnvelopeReservation when provider pricing is unset.
+   */
+  costEnvelopeRub?: string;
 };
 
 const TAVILY_QUERY_SAFE_LENGTH = 380;
@@ -72,6 +78,7 @@ export async function searchWebSources(request: string | WebSearchRequest): Prom
     unitPrice: process.env.TAVILY_CREDIT_PRICE_USD,
     currency: "USD",
     measurement: "calculated",
+    rubCostAtEvent: typeof request === "string" ? undefined : request.costEnvelopeRub,
   });
 
   return tavilyResultsToSources((await response.json()) as TavilySearchResponse, request);
@@ -163,7 +170,7 @@ export function extractSearchTopic(request: string | WebSearchRequest) {
   return ranked[0]?.sentence || removeInstructionWords(withoutBrief);
 }
 
-function normalizeWebSearchRequest(request: string | WebSearchRequest): Required<WebSearchRequest> {
+function normalizeWebSearchRequest(request: string | WebSearchRequest): { prompt: string; title: string } {
   return typeof request === "string"
     ? { prompt: request, title: "" }
     : { prompt: request.prompt || "", title: request.title || "" };

@@ -50,6 +50,20 @@ describe("searchWebSources telemetry", () => {
       expect.objectContaining({ type: "WEB", url: "https://nasa.gov/saturn" }),
     ]);
   });
+
+  it("uses the mandatory source envelope amount for the matching CostEvent", async () => {
+    vi.stubEnv("WEB_SEARCH_PROVIDER", "tavily");
+    vi.stubEnv("TAVILY_API_KEY", "test-key");
+    currentUsageContext.mockReturnValue({ userId: "user-1", projectId: "project-1", generationJobId: "generation-1" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [] }), { status: 200 })));
+
+    await searchWebSources({ title: "Saturn", prompt: "Topic: Saturn", costEnvelopeRub: "0.50000000" });
+
+    expect(recordCostEvent).toHaveBeenCalledWith(expect.objectContaining({
+      category: "web_search",
+      rubCostAtEvent: "0.50000000",
+    }));
+  });
 });
 
 describe("buildTavilyWebSearchQuery", () => {

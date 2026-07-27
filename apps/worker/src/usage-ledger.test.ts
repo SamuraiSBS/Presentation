@@ -105,6 +105,28 @@ describe("usage ledger pricing", () => {
     }));
   });
 
+  it("persists the authoritative envelope RUB amount when provider pricing is unset", async () => {
+    await runWithUsageContext({ userId: "user-1", projectId: "project-1", generationJobId: "generation-1" }, () => recordCostEvent({
+      idempotencyKey: "tavily-web-envelope-priced",
+      category: "web_search",
+      provider: "tavily",
+      quantity: "1",
+      unit: "api_credit",
+      currency: "USD",
+      measurement: "calculated",
+      rubCostAtEvent: "0.50000000",
+    }));
+
+    expect(costEventUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
+        unitPrice: null,
+        sourceCost: null,
+        exchangeRateToRub: null,
+        rubCostAtEvent: "0.50000000",
+      }),
+    }));
+  });
+
   it("uses the same upsert key without changing already-recorded monetary values", async () => {
     const record = () => recordCostEvent({
       idempotencyKey: "tavily-web-job-1",

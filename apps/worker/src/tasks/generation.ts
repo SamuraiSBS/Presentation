@@ -584,7 +584,11 @@ export async function prepareGenerationSources(project: {
     // issuing a second paid Tavily request with the same reservation key.
     if (reservation.idempotent) throw new Error("Mandatory source research is already in progress for this generation run");
     try {
-      webSources = await searchWebSources({ prompt: project.prompt, title: project.title });
+      webSources = await searchWebSources({
+        prompt: project.prompt,
+        title: project.title,
+        costEnvelopeRub: amountRub,
+      });
     } catch (error) {
       captureGenerationError(error, {
         projectId: project.id,
