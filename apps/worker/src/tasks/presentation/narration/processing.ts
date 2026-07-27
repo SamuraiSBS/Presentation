@@ -84,6 +84,45 @@ export type AitunnelNarrationTimingReason =
   | "section_above_maximum"
   | "section_sentence_count";
 
+export type NarrationRecoveryStage = "narration_full_candidate" | "narration_full_rewrite" | "narration_targeted_repair";
+export type FullNarrationIssueCode =
+  | "section_count"
+  | "section_order"
+  | "noncanonical_header"
+  | "empty_section"
+  | "fragmentary_section"
+  | "pathologically_unbalanced_section"
+  | "whole_speech_below_minimum"
+  | "whole_speech_above_maximum"
+  | "template_or_repetition"
+  | "provider_commentary"
+  | "prompt_echo"
+  | "planning_formula";
+
+/** Safe to place in a provider rewrite request or private telemetry: no draft text or raw validator prose. */
+export type FullNarrationSafeDiagnostics = {
+  totalWords: number;
+  sectionWordCounts: number[];
+  issueCodes: FullNarrationIssueCode[];
+  affectedSlideOrders: number[];
+  isStructurallyUsable: boolean;
+  isAccepted: boolean;
+  severeIssueCount: number;
+  structuralIssueCount: number;
+  hasCanonicalSectionCoverage: boolean;
+  isWithinMaximum: boolean;
+};
+
+export type NarrationGenerationOutcome =
+  | { kind: "accepted"; text: string; stage: NarrationRecoveryStage }
+  | { kind: "editable_draft"; text: string; stage: NarrationRecoveryStage };
+
+export type FullNarrationAttempt = {
+  stage: NarrationRecoveryStage;
+  text: string;
+  diagnostics: FullNarrationSafeDiagnostics;
+};
+
 type SlideTextIssue = {
   slideOrder: number;
   fields: string[];
@@ -486,6 +525,149 @@ export function validateNarrationSections(sections: NarrationSection[], project:
   ));
 
   return issues;
+}
+
+/**
+ * v6 full-document gate. It deliberately does not reuse the independent
+ * section floors: the 10-slide total is authoritative and role targets are
+ * soft guidance. Diagnostics are typed so raw validator prose never has to
+ * leave this module.
+ */
+export function assessFullNarrationDocument(value: unknown, project: ProjectInput, narrativePlan: SlideNarrative[] = []): FullNarrationSafeDiagnostics {
+  const text = cleanMultilineText(value);
+  const sections = parseNarrationSections(text);
+  const expectedOrders = Array.from({ length: 10 }, (_, index) => index + 1);
+  const issueCodes = new Set<FullNarrationIssueCode>();
+  const affectedOrders = new Set<number>();
+  const timing = getRussianStudentSpeechTimingBudget(project);
+  const sectionWordCounts = sections.map((section) => wordCount(section.text));
+  const headerLines = text.split("\n").filter((line) => parseNarrationHeader(line));
+
+  if (project.slideCount !== 10 || sections.length !== 10) {
+    issueCodes.add("section_count");
+    expectedOrders.forEach((order) => affectedOrders.add(order));
+  }
+  if (sections.some((section, index) => section.order !== expectedOrders[index])) {
+    issueCodes.add("section_order");
+    sections.forEach((section, index) => { if (section.order !== expectedOrders[index]) affectedOrders.add(index + 1); });
+  }
+  if (headerLines.length !== sections.length || headerLines.some((line) => !/^\s*\u0421\u043b\u0430\u0439\u0434\s*\d{1,2}\s*:/iu.test(line))) {
+    issueCodes.add("noncanonical_header");
+    expectedOrders.forEach((order) => affectedOrders.add(order));
+  }
+
+  const sectionTargets = timing ? expectedOrders.map((order) => order === 1 ? timing.titleWordTarget : order === 10 ? timing.conclusionWordTarget : timing.contentWordTarget) : expectedOrders.map(() => 140);
+  for (const [index, section] of sections.entries()) {
+    const order = index + 1;
+    const words = sectionWordCounts[index] || 0;
+    const sentences = speechSentences(section.text);
+    if (!section.title || !section.text.trim()) {
+      issueCodes.add("empty_section");
+      affectedOrders.add(order);
+      continue;
+    }
+    if (words < 25 || sentences.length < 2) {
+      issueCodes.add("fragmentary_section");
+      affectedOrders.add(order);
+    }
+    // A generous ceiling catches a pathological text dump without turning the
+    // 80/140/100 distribution targets back into hidden hard acceptance rules.
+    if (words > Math.max(sectionTargets[index]! * 2.5, 300) || sentences.length > 15) {
+      issueCodes.add("pathologically_unbalanced_section");
+      affectedOrders.add(order);
+    }
+    if (sentences.some(isGenericNarrationSentence)) {
+      issueCodes.add("template_or_repetition");
+      affectedOrders.add(order);
+    }
+    if (sentences.some((sentence) => isPromptEchoSentence(sentence, project))) {
+      issueCodes.add("prompt_echo");
+      affectedOrders.add(order);
+    }
+    if (hasProviderCommentary(section.text)) {
+      issueCodes.add("provider_commentary");
+      affectedOrders.add(order);
+    }
+  }
+
+  for (const issue of findSpokenNarrationIssues(sections, narrativePlan)) {
+    affectedOrders.add(issue.order);
+    issueCodes.add(issue.code === "planning_formula" ? "planning_formula" : "template_or_repetition");
+  }
+
+  const totalWords = sectionWordCounts.reduce((total, words) => total + words, 0);
+  if (timing && totalWords < timing.minWords) issueCodes.add("whole_speech_below_minimum");
+  if (timing?.maxWords !== undefined && totalWords > timing.maxWords) issueCodes.add("whole_speech_above_maximum");
+
+  const structuralCodes: readonly FullNarrationIssueCode[] = ["section_count", "section_order", "noncanonical_header", "empty_section"];
+  const severeCodes: readonly FullNarrationIssueCode[] = ["template_or_repetition", "provider_commentary", "prompt_echo", "planning_formula"];
+  const structuralIssueCount = [...issueCodes].filter((code) => structuralCodes.includes(code)).length;
+  const severeIssueCount = [...issueCodes].filter((code) => severeCodes.includes(code)).length;
+  const hasCanonicalSectionCoverage = structuralIssueCount === 0;
+  const isStructurallyUsable = hasCanonicalSectionCoverage && severeIssueCount === 0;
+  const isWithinMaximum = timing?.maxWords === undefined || totalWords <= timing.maxWords;
+  return {
+    totalWords,
+    sectionWordCounts,
+    issueCodes: [...issueCodes].sort(),
+    affectedSlideOrders: [...affectedOrders].filter((order) => Number.isInteger(order) && order >= 1 && order <= 10).sort((a, b) => a - b),
+    isStructurallyUsable,
+    isAccepted: isStructurallyUsable && issueCodes.size === 0,
+    severeIssueCount,
+    structuralIssueCount,
+    hasCanonicalSectionCoverage,
+    isWithinMaximum,
+  };
+}
+
+/** A bounded batch repair is meaningful only for localised section defects. */
+export function isFullNarrationTargetedRepairEligible(diagnostics: FullNarrationSafeDiagnostics) {
+  const targetedCodes: readonly FullNarrationIssueCode[] = ["fragmentary_section", "pathologically_unbalanced_section"];
+  return diagnostics.isStructurallyUsable
+    && diagnostics.issueCodes.length > 0
+    // A local fragment normally also makes the whole document short.  That
+    // aggregate symptom must not block the one bounded local repair.
+    && diagnostics.issueCodes.every((code) => targetedCodes.includes(code) || code === "whole_speech_below_minimum")
+    && diagnostics.affectedSlideOrders.length > 0
+    && diagnostics.affectedSlideOrders.length <= 3;
+}
+
+/**
+ * Selects an accepted result immediately, otherwise ranks only in-memory,
+ * structurally usable attempts for the editable-draft recovery path.
+ */
+export function selectBestFullNarrationAttempt(attempts: readonly FullNarrationAttempt[]): NarrationGenerationOutcome | null {
+  const accepted = attempts.find((attempt) => attempt.diagnostics.isAccepted);
+  if (accepted) return { kind: "accepted", text: accepted.text, stage: accepted.stage };
+  const eligible = attempts.filter((attempt) => attempt.diagnostics.isStructurallyUsable);
+  if (!eligible.length) return null;
+  const stageRank: Record<NarrationRecoveryStage, number> = {
+    narration_full_candidate: 0,
+    narration_full_rewrite: 1,
+    narration_targeted_repair: 2,
+  };
+  const targetWords = 1300;
+  const best = [...eligible].sort((left, right) => {
+    const leftIssues = left.diagnostics.severeIssueCount + left.diagnostics.structuralIssueCount;
+    const rightIssues = right.diagnostics.severeIssueCount + right.diagnostics.structuralIssueCount;
+    if (leftIssues !== rightIssues) return leftIssues - rightIssues;
+    if (left.diagnostics.hasCanonicalSectionCoverage !== right.diagnostics.hasCanonicalSectionCoverage) return left.diagnostics.hasCanonicalSectionCoverage ? -1 : 1;
+    if (left.diagnostics.isWithinMaximum !== right.diagnostics.isWithinMaximum) return left.diagnostics.isWithinMaximum ? -1 : 1;
+    const leftDistance = Math.abs(left.diagnostics.totalWords - targetWords);
+    const rightDistance = Math.abs(right.diagnostics.totalWords - targetWords);
+    if (leftDistance !== rightDistance) return leftDistance - rightDistance;
+    if (left.diagnostics.totalWords < targetWords && right.diagnostics.totalWords < targetWords && left.diagnostics.totalWords !== right.diagnostics.totalWords) return right.diagnostics.totalWords - left.diagnostics.totalWords;
+    return stageRank[left.stage] - stageRank[right.stage];
+  })[0]!;
+  return { kind: "editable_draft", text: best.text, stage: best.stage };
+}
+
+function hasProviderCommentary(value: string) {
+  return /(?:\bas an ai\b|\bi cannot\b|\bhere is (?:the )?(?:rewritten|requested)\b|\bvalidation\b|\bword count\b|\bprovider\b|\bprompt\b|\binstruction(?:s)?\b)/iu.test(value);
+}
+
+function wordCount(value: string) {
+  return value.split(/\s+/).filter(Boolean).length;
 }
 
 /**

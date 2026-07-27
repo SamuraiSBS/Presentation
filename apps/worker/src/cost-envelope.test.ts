@@ -1,29 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { AITUNNEL_APPROVED_MODELS, AITUNNEL_PROVIDER_CATALOG, COST_ENVELOPE_BUCKETS, COST_ENVELOPE_LIMIT_RUB, aitunnelCatalogSnapshot, costEnvelopePolicyIsValid, standardGenerationCostPolicy } from "@studydeck/shared";
+import { AITUNNEL_APPROVED_MODELS, AITUNNEL_PROVIDER_CATALOG, COST_ENVELOPE_BUCKETS, COST_ENVELOPE_LIMIT_RUB, aitunnelCatalogSnapshot, costEnvelopePolicyIsValid, historicalStandardGenerationCostPolicyV5, standardGenerationCostPolicy } from "@studydeck/shared";
 
 describe("standard generation cost envelope policy", () => {
-  it("has a fixed 18.20 RUB cap split across every paid path", () => {
+  it("has the exact v6 20.00 RUB cap split across the bounded future paths", () => {
     const policy = standardGenerationCostPolicy();
     expect(policy.limitRub).toBe(COST_ENVELOPE_LIMIT_RUB);
     expect(policy.buckets).toEqual(COST_ENVELOPE_BUCKETS);
     expect(policy.buckets.narrative_plan).toBe("0.75000000");
-    expect(policy.buckets.narration_section_1_candidate).toBe("0.25000000");
-    expect(policy.buckets.narration_section_1_fallback).toBe("1.20000000");
-    expect(policy.buckets.narration_section_10_candidate).toBe("0.25000000");
-    expect(policy.buckets.narration_section_10_fallback).toBe("1.20000000");
-    expect(policy.buckets.narration_global_rewrite).toBe("1.20000000");
+    expect(policy.buckets.narration_full_candidate).toBe("2.50000000");
+    expect(policy.buckets.narration_full_rewrite).toBe("14.10000000");
+    expect(policy.buckets.narration_targeted_repair).toBe("0.90000000");
     expect(costEnvelopePolicyIsValid(policy)).toBe(true);
   });
 
-  it("reserves all candidate and fallback section calls inside the fixed envelope", () => {
+  it("keeps v6 narration reservations at exactly 17.50 RUB within the 20.00 RUB hard cap", () => {
     const policy = standardGenerationCostPolicy();
-    const candidates = Array.from({ length: 10 }, (_, index) => Number(policy.buckets[`narration_section_${index + 1}_candidate` as keyof typeof policy.buckets]));
-    const fallbacks = Array.from({ length: 10 }, (_, index) => Number(policy.buckets[`narration_section_${index + 1}_fallback` as keyof typeof policy.buckets]));
-    expect(candidates).toHaveLength(10);
-    expect(fallbacks).toHaveLength(10);
-    expect(candidates.reduce((sum, amount) => sum + amount, 0)).toBe(2.5);
-    expect(fallbacks.reduce((sum, amount) => sum + amount, 0)).toBeCloseTo(12, 8);
-    expect(Object.values(policy.buckets).reduce((sum, amount) => sum + Number(amount), 0)).toBeCloseTo(18.2, 8);
+    expect(Number(policy.buckets.narration_full_candidate) + Number(policy.buckets.narration_full_rewrite) + Number(policy.buckets.narration_targeted_repair)).toBeCloseTo(17.5, 8);
+    expect(Object.values(policy.buckets).reduce((sum, amount) => sum + Number(amount), 0)).toBeCloseTo(20, 8);
+  });
+
+  it("continues to validate persisted v5 snapshots without treating them as v6", () => {
+    const v5 = historicalStandardGenerationCostPolicyV5();
+    expect(v5.version).toBe("standard-generation-cost-envelope-v5");
+    expect(v5.limitRub).toBe("18.20000000");
+    expect(v5.buckets.narration_global_rewrite).toBe("1.20000000");
+    expect(costEnvelopePolicyIsValid(v5)).toBe(true);
   });
 
   it("stores only approved models in a deterministic provider snapshot", () => {

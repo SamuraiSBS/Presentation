@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { standardGenerationCostPolicy, type Source } from "@studydeck/shared";
+import { COST_ENVELOPE_POLICY_VERSION, historicalStandardGenerationCostPolicyV5, standardGenerationCostPolicy, type Source } from "@studydeck/shared";
 
 const mocks = vi.hoisted(() => ({
   findUniqueOrThrow: vi.fn(),
@@ -28,8 +28,9 @@ vi.mock("../../../cost-envelope.js", async (importOriginal) => ({
 import { AitunnelProjectBudget, reserveAitunnelStageCall, runWithAitunnelProjectBudget, type AitunnelNarrationSectionStage } from "../../../aitunnel-narration-budget.js";
 import { logger } from "../../../observability.js";
 import { runWithUsageContext } from "../../../usage-ledger.js";
-import { AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT } from "../constants.js";
-import { buildAitunnelNarrationGlobalRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt } from "../prompts/builders.js";
+import { AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT, NARRATION_SYSTEM_PROMPT } from "../constants.js";
+import { buildAitunnelFullNarrationRewriteWithDraftPrompt, buildAitunnelNarrationGlobalRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt } from "../prompts/builders.js";
+import { assessFullNarrationDocument } from "../narration/processing.js";
 import { generateAitunnelNarration, generateNarrativePlanWithProvider, MAX_AITUNNEL_NARRATION_TEXT_CALLS } from "./generation.js";
 import { getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
 
@@ -108,8 +109,48 @@ it("logs a safe persisted-envelope reason when a narration bucket is missing", a
   }
 });
 
-it("keeps every grounded runtime section prompt within its persisted candidate and fallback buckets", () => {
+it("accepts the bounded maximal v6 reservation batch before its first provider call", async () => {
+  const create = vi.fn().mockResolvedValue({ output_text: fullV6Speech(), usage: { input_tokens: 1, output_tokens: 1 } });
+  const client = { responses: { create } } as never;
+  mocks.findUniqueOrThrow.mockResolvedValue({ policySnapshot: standardGenerationCostPolicy() });
+  mocks.reserveCostEnvelopeBatch.mockResolvedValue({ status: "reserved" });
+  mocks.settleCostEnvelope.mockResolvedValue({ status: "settled" });
+  mocks.aiUsageEventUpsert.mockResolvedValue({});
+
+  await expect(runWithUsageContext(
+    { userId: "user-1", projectId: project.id, costEnvelopeId: "envelope-1", costEnvelopePolicyVersion: COST_ENVELOPE_POLICY_VERSION },
+    () => runWithAitunnelProjectBudget(new AitunnelProjectBudget({ AITUNNEL_PROJECT_BUDGET_RUB: "40", AITUNNEL_NARRATION_JOB_BUDGET_RUB: "40" }), () => generateAitunnelNarration(client, "gemini-3.6-flash", project, groundedSources, plan)),
+  )).resolves.toBeTruthy();
+
+  expect(create).toHaveBeenCalled();
+  const [inputs] = mocks.reserveCostEnvelopeBatch.mock.calls[0]!;
+  expect(inputs.map((input: { stage: string }) => input.stage)).toEqual(["narration_full_candidate", "narration_full_rewrite", "narration_targeted_repair"]);
+});
+
+it("measures the persisted maximum rewrite payload without emitting its text", () => {
+  const draft = fullV6Speech(156);
+  const prompt = buildAitunnelFullNarrationRewriteWithDraftPrompt(project, groundedSources, plan, draft, assessFullNarrationDocument(draft, project, plan));
+  expect(reserveAitunnelStageCall("narration_full_rewrite", { input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: prompt }] })!).toMatchObject({ inputTokens: 8398, outputTokens: 4500, costRub: "14.05859000" });
+});
+
+it("still fail-closes v6 before a provider call when a maximum rewrite no longer fits its bucket", async () => {
+  const create = vi.fn();
+  const client = { responses: { create } } as never;
   const policy = standardGenerationCostPolicy();
+  policy.buckets.narration_full_rewrite = "14.05858999";
+  mocks.findUniqueOrThrow.mockResolvedValue({ policySnapshot: policy });
+
+  await expect(runWithUsageContext(
+    { userId: "user-1", projectId: project.id, costEnvelopeId: "envelope-1", costEnvelopePolicyVersion: COST_ENVELOPE_POLICY_VERSION },
+    () => runWithAitunnelProjectBudget(new AitunnelProjectBudget({ AITUNNEL_PROJECT_BUDGET_RUB: "40", AITUNNEL_NARRATION_JOB_BUDGET_RUB: "40" }), () => generateAitunnelNarration(client, "gemini-3.6-flash", project, groundedSources, plan)),
+  )).rejects.toThrow("narration_budget_exhausted_failure");
+
+  expect(create).not.toHaveBeenCalled();
+  expect(mocks.reserveCostEnvelopeBatch).not.toHaveBeenCalled();
+});
+
+it("keeps every grounded runtime section prompt within its persisted candidate and fallback buckets", () => {
+  const policy = historicalStandardGenerationCostPolicyV5();
 
   for (const slideOrder of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const) {
     const narrative = plan[slideOrder - 1]!;
@@ -135,7 +176,7 @@ it("keeps every grounded runtime section prompt within its persisted candidate a
 });
 
 it("submits twenty unique narration reservations to one persisted envelope before provider calls", async () => {
-  const policy = standardGenerationCostPolicy();
+  const policy = historicalStandardGenerationCostPolicyV5();
   const create = vi.fn();
   const client = { responses: { create } } as never;
   mocks.findUniqueOrThrow.mockResolvedValue({ policySnapshot: policy });
@@ -161,7 +202,7 @@ it("submits twenty unique narration reservations to one persisted envelope befor
 });
 
 it("settles one persisted narrative-plan reservation with the matching envelope-scoped AI usage", async () => {
-  const policy = standardGenerationCostPolicy();
+  const policy = historicalStandardGenerationCostPolicyV5();
   const create = vi.fn().mockResolvedValue({
     output_parsed: plan,
     usage: { input_tokens: 100, output_tokens: 100 },
@@ -214,7 +255,7 @@ it("reconciles narration AI, narrative-plan AI, and the separate source-search C
 });
 
 it("serially releases every unused reservation after a section quality terminal failure", async () => {
-  const policy = standardGenerationCostPolicy();
+  const policy = historicalStandardGenerationCostPolicyV5();
   const statuses = new Map<string, "reserved" | "settled" | "released">();
   const releaseOrder: string[] = [];
   const logged: unknown[] = [];
@@ -331,7 +372,7 @@ it("rejects the observed 1034-word shape locally and uses only the existing fall
   expect(create.mock.calls.slice(0, 4).map(([request]) => request.model)).toEqual(["gemini-3.5-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.6-flash"]);
   expect(statuses.get("envelope-1:narration_section_2_fallback")).toBe("settled");
   expect(statuses.get("envelope-1:narration_global_rewrite")).toBe("settled");
-  expect(MAX_AITUNNEL_NARRATION_TEXT_CALLS).toBe(21);
+  expect(MAX_AITUNNEL_NARRATION_TEXT_CALLS).toBe(3);
 });
 
 function sectionText(order: number, words: number) {
@@ -348,7 +389,14 @@ function addRub(left: string, right: string) {
   return `${units / 100_000_000n}.${(units % 100_000_000n).toString().padStart(8, "0")}`;
 }
 
-function setPersistedReservationMocks(policy = standardGenerationCostPolicy()) {
+function fullV6Speech(wordsPerSection = 117) {
+  return Array.from({ length: 10 }, (_, index) => {
+    const words = Array.from({ length: wordsPerSection }, (_unused, word) => `слово${index + 1}_${word + 1}`).join(" ");
+    return `Слайд ${index + 1}: Раздел ${index + 1}\n${words}.`;
+  }).join("\n\n");
+}
+
+function setPersistedReservationMocks(policy = historicalStandardGenerationCostPolicyV5()) {
   const statuses = new Map<string, "reserved" | "settled" | "released">();
   mocks.findUniqueOrThrow.mockResolvedValue({ policySnapshot: policy });
   mocks.reserveCostEnvelopeBatch.mockImplementation(async (inputs: Array<{ idempotencyKey: string }>) => {

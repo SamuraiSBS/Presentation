@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { WorkflowProgress } from "@/components/workflow-progress";
 import { parseSpeechDraft, serializeSpeechSections, type SpeechSection } from "@/lib/speech-review";
+import { RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE } from "@studydeck/shared";
 
 export function ProjectScriptReviewQuery({ initialProject }: { initialProject: ProjectPayload }) {
   const projectQuery = useGenerationJob(initialProject.id, initialProject);
@@ -45,7 +46,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
   const sources = project.sources || [];
   const includedSources = sources.filter((source) => source.included !== false);
   const totalWords = useMemo(() => sections.reduce((sum, section) => sum + wordCount(section.text), 0), [sections]);
-  const totalMinutes = Math.max(1, Math.round(totalWords / 120));
+  const totalMinutes = Math.max(1, Math.round(totalWords / RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE));
   const busy = startNarration.isPending || saveSpeechDraft.isPending || acceptSpeech.isPending || updateSource.isPending;
 
   useEffect(() => {
@@ -206,7 +207,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
 }
 
 function AiConfirmation({ title, description, confirmLabel, pending, onConfirm }: { title: string; description: string; confirmLabel: string; pending: boolean; onConfirm: () => void | Promise<void> }) {
-  return <Dialog><DialogTrigger asChild><Button type="button" disabled={pending}>{pending ? <LoaderCircle className="spin" size={18} /> : <Rocket size={18} />}{confirmLabel}</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader><div className="ai-cost-warning"><ShieldCheck aria-hidden="true" /><div><strong>Перед запуском</strong><span>Проверьте доступный баланс Yandex/OpenAI. После подтверждения запрос нельзя отменить из интерфейса.</span></div></div><div className="ui-dialog-actions"><DialogClose asChild><Button variant="secondary" type="button">Вернуться без запуска</Button></DialogClose><DialogClose asChild><Button type="button" onClick={onConfirm}>{confirmLabel}</Button></DialogClose></div></DialogContent></Dialog>;
+  return <Dialog><DialogTrigger asChild><Button type="button" disabled={pending}>{pending ? <LoaderCircle className="spin" size={18} /> : <Rocket size={18} />}{confirmLabel}</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader><div className="ai-cost-warning"><ShieldCheck aria-hidden="true" /><div><strong>Перед запуском</strong><span>После подтверждения запрос нельзя отменить из интерфейса.</span></div></div><div className="ui-dialog-actions"><DialogClose asChild><Button variant="secondary" type="button">Вернуться без запуска</Button></DialogClose><DialogClose asChild><Button type="button" onClick={onConfirm}>{confirmLabel}</Button></DialogClose></div></DialogContent></Dialog>;
 }
 
 function JobStatusPanel({ title, detail }: { title: string; detail: string }) {

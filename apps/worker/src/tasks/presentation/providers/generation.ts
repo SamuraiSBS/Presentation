@@ -160,16 +160,18 @@ type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief"
 // Narration has one initial text call and, after any validation failure, one
 // complete replacement. This is deliberately separate from BullMQ transport retries.
 export const MAX_YANDEX_NARRATION_TEXT_CALLS = 2;
-export const MAX_AITUNNEL_NARRATION_TEXT_CALLS = 21;
+// v6 has one complete draft, one complete rewrite, and one bounded repair.
+// Historical v5 envelope snapshots retain their old section route below.
+export const MAX_AITUNNEL_NARRATION_TEXT_CALLS = 3;
 const OPENAI_NARRATION_MAX_PROVIDER_ATTEMPTS = 4;
 export const PRESENTATION_RECOVERY_CHUNK_COUNT = 3;
 
 import type { YandexCompletionResponse } from "../constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
 import { buildResearchBrief, buildDesignBrief, logStructuredGenerationValidationFailure, buildDeckStory, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "../planning/builders.js";
-import { shouldRetryNarration, requestYandexText, normalizeNarrationText, parseNarrationSections, findSpokenNarrationIssues } from "../narration/processing.js";
+import { shouldRetryNarration, requestYandexText, normalizeNarrationText, parseNarrationSections, findSpokenNarrationIssues, assessFullNarrationDocument, isFullNarrationTargetedRepairEligible, selectBestFullNarrationAttempt, type FullNarrationAttempt, type FullNarrationSafeDiagnostics, type NarrationGenerationOutcome, type NarrationRecoveryStage } from "../narration/processing.js";
 import { speechSentences } from "../normalization/presentation.js";
-import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildFullNarrationDurationRewritePrompt, buildAitunnelFullNarrationRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt, buildAitunnelNarrationGlobalRewritePrompt, buildGenerationPrompt, buildYandexPresentationRecoveryPrompt, getYandexModelConfig } from "../prompts/builders.js";
+import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildFullNarrationDurationRewritePrompt, buildAitunnelFullNarrationRewritePrompt, buildAitunnelFullNarrationCandidatePrompt, buildAitunnelFullNarrationRewriteWithDraftPrompt, buildAitunnelTargetedNarrationRepairPrompt, aitunnelTargetedNarrationRepairResponseSchema, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt, buildAitunnelNarrationGlobalRewritePrompt, buildGenerationPrompt, buildYandexPresentationRecoveryPrompt, getYandexModelConfig } from "../prompts/builders.js";
 import type { NarrationRewriteFailureCategory, YandexModelTier } from "../prompts/builders.js";
 import { ensureDesignBriefDirections } from "../normalization/presentation.js";
 import { finalizeGeneratedPresentation, repairSlideTextWithOpenAI, repairSlideTextWithYandex, critiquePresentationQualityWithOpenAI, critiquePresentationQualityWithYandex, repairPresentationQualityWithOpenAI, repairPresentationQualityWithYandex } from "../quality/orchestration.js";
@@ -328,6 +330,73 @@ export async function generateOpenAINarration(client: OpenAI, project: ProjectIn
 }
 
 export async function generateAitunnelNarration(client: OpenAI, model: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief): Promise<string> {
+  if (currentUsageContext()?.costEnvelopePolicyVersion === "standard-generation-cost-envelope-v6") {
+    return (await generateAitunnelFullNarrationOutcome(client, project, sources, narrativePlan)).text;
+  }
+  return generateLegacyAitunnelNarration(client, model, project, sources, narrativePlan, researchBrief);
+}
+
+/**
+ * The v6 path deliberately keeps drafts only in memory until the terminal
+ * decision.  Its caller is responsible for persisting the selected outcome.
+ */
+export async function generateAitunnelFullNarrationOutcome(client: OpenAI, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[]): Promise<NarrationGenerationOutcome> {
+  if (!currentAitunnelProjectBudget()) return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), () => generateAitunnelFullNarrationOutcome(client, project, sources, narrativePlan));
+  const candidatePrompt = buildAitunnelFullNarrationCandidatePrompt(project, sources, narrativePlan);
+  const maximumDraft = maximumFullNarrationDraft(project);
+  const maximumDiagnostics = assessFullNarrationDocument(maximumDraft, project, narrativePlan);
+  const rewritePrompt = buildAitunnelFullNarrationRewriteWithDraftPrompt(project, sources, narrativePlan, maximumDraft, maximumDiagnostics);
+  const repairPrompt = buildAitunnelTargetedNarrationRepairPrompt(project, sources, narrativePlan, maximumDraft, targetedRepairDiagnostics(maximumDiagnostics));
+  const reservations = await reserveV6NarrationEnvelope(project.id, [
+    ["narration_full_candidate", candidatePrompt],
+    ["narration_full_rewrite", rewritePrompt],
+    ["narration_targeted_repair", repairPrompt],
+  ]);
+  const attempts: FullNarrationAttempt[] = [];
+  try {
+    const candidate = await requestV6NarrationCall(client, project, "narration_full_candidate", candidatePrompt, reservations);
+    attempts.push({ stage: "narration_full_candidate", text: candidate, diagnostics: assessFullNarrationDocument(candidate, project, narrativePlan) });
+    let selected = selectBestFullNarrationAttempt(attempts);
+    if (selected?.kind === "accepted") {
+      await releaseV6UnusedReservations(reservations, ["narration_full_rewrite", "narration_targeted_repair"], "accepted_candidate");
+      return selected;
+    }
+
+    // A rewrite only receives a complete, locally usable candidate.  A broken
+    // response is neither made editable nor sent back to the provider.
+    if (!attempts[0]!.diagnostics.isStructurallyUsable) return finishV6Recovery(attempts, reservations, "candidate_not_usable");
+    let rewritten: string;
+    try {
+      rewritten = await requestV6NarrationCall(client, project, "narration_full_rewrite", buildAitunnelFullNarrationRewriteWithDraftPrompt(project, sources, narrativePlan, candidate, attempts[0]!.diagnostics), reservations);
+    } catch (error) {
+      return finishV6RecoveryOrThrow(attempts, reservations, error);
+    }
+    attempts.push({ stage: "narration_full_rewrite", text: rewritten, diagnostics: assessFullNarrationDocument(rewritten, project, narrativePlan) });
+    selected = selectBestFullNarrationAttempt(attempts);
+    if (selected?.kind === "accepted") {
+      await releaseV6UnusedReservations(reservations, ["narration_targeted_repair"], "accepted_rewrite");
+      return selected;
+    }
+
+    const rewriteAttempt = attempts[1]!;
+    if (!isFullNarrationTargetedRepairEligible(rewriteAttempt.diagnostics)) return finishV6Recovery(attempts, reservations, "repair_not_eligible");
+    try {
+      const repairRaw = await requestV6NarrationCall(client, project, "narration_targeted_repair", buildAitunnelTargetedNarrationRepairPrompt(project, sources, narrativePlan, rewritten, rewriteAttempt.diagnostics), reservations, true);
+      const repaired = mergeV6TargetedRepair(rewritten, repairRaw, rewriteAttempt.diagnostics.affectedSlideOrders);
+      attempts.push({ stage: "narration_targeted_repair", text: repaired, diagnostics: assessFullNarrationDocument(repaired, project, narrativePlan) });
+    } catch (error) {
+      return finishV6RecoveryOrThrow(attempts, reservations, error);
+    }
+    return finishV6Recovery(attempts, reservations, "recovery_exhausted");
+  } catch (error) {
+    return finishV6RecoveryOrThrow(attempts, reservations, error);
+  }
+}
+
+type V6NarrationStage = "narration_full_candidate" | "narration_full_rewrite" | "narration_targeted_repair";
+type V6ReservationKeys = Partial<Record<V6NarrationStage, string>> | undefined;
+
+async function generateLegacyAitunnelNarration(client: OpenAI, model: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief): Promise<string> {
   if (!currentAitunnelProjectBudget()) return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), () => generateAitunnelNarration(client, model, project, sources, narrativePlan, researchBrief));
   const policy = aitunnelNarrationBudgetConfig();
   const parts = buildAitunnelNarrationSections(project, sources, narrativePlan);
@@ -379,6 +448,133 @@ export async function generateAitunnelNarration(client: OpenAI, model: string, p
     if (error instanceof Error && /^narration_[a-z_]+_failure$/.test(error.message)) throw error;
     throw narrationFailure("quality");
   }
+}
+
+function maximumFullNarrationDraft(project: ProjectInput) {
+  return Array.from({ length: 10 }, (_, index) => {
+    // `слово` is a representative Russian spoken-word fixture, not user text.
+    // The envelope additionally budgets a 15% token safety margin.
+    const words = Array.from({ length: 156 }, (_unused, word) => `слово${index + 1}_${word + 1}`).join(" ");
+    return `Слайд ${index + 1}: Раздел ${index + 1}\n${words}.`;
+  }).join("\n\n");
+}
+
+function targetedRepairDiagnostics(diagnostics: FullNarrationSafeDiagnostics): FullNarrationSafeDiagnostics {
+  // The runtime route permits up to three sections. Preflight must reserve
+  // that real maximum rather than a one-section fixture.
+  return { ...diagnostics, issueCodes: ["fragmentary_section"], affectedSlideOrders: [1, 2, 3], isAccepted: false };
+}
+
+async function reserveV6NarrationEnvelope(projectId: string, requests: ReadonlyArray<readonly [V6NarrationStage, string]>): Promise<V6ReservationKeys> {
+  const context = currentUsageContext();
+  const envelopeId = context?.costEnvelopeId;
+  if (!envelopeId) return undefined;
+  const policySnapshot = context.costEnvelopeSnapshot?.policy
+    || (await getPrisma().costEnvelope.findUniqueOrThrow({ where: { id: envelopeId }, select: { policySnapshot: true } })).policySnapshot;
+  const bucketMap = (policySnapshot as { buckets?: Record<string, string> }).buckets || {};
+  const inputs = requests.map(([stage, prompt]) => {
+    const amountRub = String(bucketMap[stage] || "");
+    const estimate = reserveAitunnelStageCall(stage, buildV6NarrationRequest(stage, prompt, stage === "narration_targeted_repair"));
+    if (!/^\d+(?:\.\d+)?$/.test(amountRub) || !estimate || Number(estimate.costRub) > Number(amountRub)) {
+      logV6NarrationTelemetry(projectId, stage, { failureCategory: "narration_budget_exhausted", preflightReason: "prompt_above_bucket" });
+      throw narrationFailure("budget_exhausted");
+    }
+    return { envelopeId, idempotencyKey: `${envelopeId}:${stage}`, bucket: stage, stage, amountRub };
+  });
+  const result = await reserveCostEnvelopeBatch(inputs);
+  if (result.status !== "reserved") {
+    logV6NarrationTelemetry(projectId, "narration_full_candidate", { failureCategory: "narration_budget_exhausted", preflightReason: "batch_blocked" });
+    throw narrationFailure("budget_exhausted");
+  }
+  return Object.fromEntries(inputs.map((input) => [input.stage, input.idempotencyKey])) as Record<V6NarrationStage, string>;
+}
+
+async function requestV6NarrationCall(client: OpenAI, project: ProjectInput, stage: V6NarrationStage, prompt: string, keys: V6ReservationKeys, json = false): Promise<string> {
+  const policy = aitunnelStagePolicy(stage);
+  if (!policy.model) throw narrationFailure("budget_exhausted");
+  const request = buildV6NarrationRequest(stage, prompt, json);
+  const key = keys?.[stage];
+  const budget = currentAitunnelProjectBudget();
+  if (!key && (!budget || budget.reserve(`v6-${stage}`, stage, request).status !== "reserved")) throw narrationFailure("budget_exhausted");
+  const startedAt = new Date();
+  let response: { output_text?: string; usage?: unknown };
+  try {
+    response = await client.responses.create(request) as typeof response;
+    await recordOpenAIResponse(response, stage, "studydeck_narration", startedAt, "aitunnel", policy.model, stage === "narration_full_candidate" ? 1 : stage === "narration_full_rewrite" ? 2 : 3, stage);
+  } catch {
+    if (key) await failCostEnvelope({ envelopeId: currentUsageContext()!.costEnvelopeId!, idempotencyKey: key, reason: "narration_provider_error" }).catch(() => undefined);
+    await recordAiUsage({ provider: "aitunnel", model: policy.model, operation: stage, schemaName: "studydeck_narration", attempt: stage === "narration_full_candidate" ? 1 : stage === "narration_full_rewrite" ? 2 : 3, stage, startedAt, error: new Error("narration_provider_error") });
+    logV6NarrationTelemetry(project.id, stage, { failureCategory: "provider_error" });
+    throw narrationFailure("provider");
+  }
+  const usage = normalizeOpenAIUsage(response.usage);
+  if (key) {
+    if (!usage || usage.inputTokens === undefined || usage.outputTokens === undefined) {
+      await settleCostEnvelope({ envelopeId: currentUsageContext()!.costEnvelopeId!, idempotencyKey: key, reason: "usage_unavailable" });
+      throw narrationFailure("usage_unavailable");
+    }
+    const priced = calculateProviderCost("aitunnel", policy.model, startedAt, usage);
+    if (priced.status !== "priced" || !priced.sourceCost || (await settleCostEnvelope({ envelopeId: currentUsageContext()!.costEnvelopeId!, idempotencyKey: key, actualRub: priced.sourceCost, reason: "usage_reported" })).status !== "settled") throw narrationFailure("budget_overrun");
+  } else if (budget!.settle(`v6-${stage}`, usage).status !== "settled") {
+    throw narrationFailure("usage_unavailable");
+  }
+  logV6NarrationTelemetry(project.id, stage, { outcome: "completed" });
+  return response.output_text || "";
+}
+
+/** Keep persisted-envelope estimation byte-for-byte aligned with the provider request. */
+function buildV6NarrationRequest(stage: V6NarrationStage, prompt: string, json: boolean) {
+  const policy = aitunnelStagePolicy(stage);
+  if (!policy.model) throw narrationFailure("budget_exhausted");
+  return {
+    model: policy.model,
+    input: [{ role: "system" as const, content: NARRATION_SYSTEM_PROMPT }, { role: "user" as const, content: prompt }],
+    max_output_tokens: policy.maxOutputTokens,
+    reasoning: { effort: policy.reasoningEffort, exclude: true },
+    ...(json ? { text: { format: { type: "json_object" as const } } } : {}),
+  };
+}
+
+function mergeV6TargetedRepair(currentDraft: string, raw: string, requestedOrders: readonly number[]) {
+  const parsed = aitunnelTargetedNarrationRepairResponseSchema.safeParse(parseJsonText(raw));
+  if (!parsed.success) throw narrationFailure("quality");
+  const received = Object.keys(parsed.data.replacements).map(Number).sort((left, right) => left - right);
+  const expected = [...new Set(requestedOrders)].sort((left, right) => left - right);
+  if (received.length !== expected.length || received.some((order, index) => order !== expected[index])) throw narrationFailure("quality");
+  const sections = parseNarrationSections(currentDraft);
+  if (sections.length !== 10 || sections.some((section, index) => section.order !== index + 1)) throw narrationFailure("quality");
+  const replacements = new Map<number, string>();
+  for (const [orderText, replacement] of Object.entries(parsed.data.replacements)) {
+    const replacementSections = parseNarrationSections(replacement);
+    const order = Number(orderText);
+    if (replacementSections.length !== 1 || replacementSections[0]!.order !== order) throw narrationFailure("quality");
+    replacements.set(order, replacement);
+  }
+  return sections.map((section) => replacements.get(section.order) || `Слайд ${section.order}: ${section.title}\n${section.text}`).join("\n\n");
+}
+
+async function finishV6Recovery(attempts: readonly FullNarrationAttempt[], keys: V6ReservationKeys, reason: string): Promise<NarrationGenerationOutcome> {
+  await releaseV6UnusedReservations(keys, ["narration_full_candidate", "narration_full_rewrite", "narration_targeted_repair"], reason);
+  const outcome = selectBestFullNarrationAttempt(attempts);
+  if (outcome) return outcome;
+  throw narrationFailure("quality");
+}
+
+async function finishV6RecoveryOrThrow(attempts: readonly FullNarrationAttempt[], keys: V6ReservationKeys, error: unknown): Promise<NarrationGenerationOutcome> {
+  const outcome = selectBestFullNarrationAttempt(attempts);
+  await releaseV6UnusedReservations(keys, ["narration_full_candidate", "narration_full_rewrite", "narration_targeted_repair"], "terminal_narration_failure");
+  if (outcome) return outcome;
+  throw error;
+}
+
+async function releaseV6UnusedReservations(keys: V6ReservationKeys, stages: readonly V6NarrationStage[], reason: string) {
+  const envelopeId = currentUsageContext()?.costEnvelopeId;
+  if (!keys || !envelopeId) return;
+  for (const stage of stages) await releaseCostEnvelope({ envelopeId, idempotencyKey: keys[stage]!, reason });
+}
+
+function logV6NarrationTelemetry(projectId: string, narrationStage: V6NarrationStage, extra: { outcome?: "completed"; failureCategory?: "provider_error" | "narration_budget_exhausted"; preflightReason?: "prompt_above_bucket" | "batch_blocked" }) {
+  logger.info({ projectId, stage: "drafting_speech", narrationStage, narrationTextCall: narrationStage === "narration_full_candidate" ? 1 : narrationStage === "narration_full_rewrite" ? 2 : 3, maxNarrationTextCalls: MAX_AITUNNEL_NARRATION_TEXT_CALLS, provider: "aitunnel", ...extra }, "AITUNNEL narration state transition");
 }
 
 type AitunnelNarrationRequest = {

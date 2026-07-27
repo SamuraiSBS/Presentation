@@ -20,6 +20,7 @@ import {
   type UpdateSlideInput,
   buildSlideCanvas,
   aitunnelCatalogSnapshot,
+  assessFullSpeechContract,
   standardGenerationCostPolicy,
   hasCustomSlideCanvas,
   ensureEditableCanvas,
@@ -504,6 +505,13 @@ export class ProjectsService {
           await this.prisma.project.update({ where: { id: project.id }, data: { status: "ready", error: null } });
         }
         return { projectId: project.id, status: "ready" };
+      }
+      const narrationAssessment = assessFullSpeechContract(project.speechDraft, project);
+      if (narrationAssessment.applicable && !narrationAssessment.isAccepted) {
+        throw badRequest(
+          "NARRATION_DRAFT_REVIEW_REQUIRED",
+          "Проверьте и сохраните текст выступления перед сборкой слайдов.",
+        );
       }
 
       const activeJob = await this.prisma.generationJob.findFirst({

@@ -9,6 +9,14 @@ import { ProjectsService } from "./projects.service.js";
 
 const speechDraft = "Слайд 1: Введение\nЭто достаточно длинный текст выступления для проверки запуска презентации.";
 
+function acceptedTenSlideSpeech(wordsPerSection = 117) {
+  return Array.from({ length: 10 }, (_, index) => {
+    const words = Array.from({ length: wordsPerSection }, (_, word) => `fact${index + 1}_${word + 1}`);
+    const split = Math.floor(words.length / 2);
+    return `Слайд ${index + 1}: Тема ${index + 1}\n${words.slice(0, split).join(" ")}. ${words.slice(split).join(" ")}.`;
+  }).join("\n\n");
+}
+
 function project(overrides: Record<string, unknown> = {}) {
   return {
     id: "project-1",
@@ -184,6 +192,41 @@ describe("ProjectsService generation", () => {
     expect(result).toEqual({ projectId: "project-1", status: "ready" });
     expect(prisma.generationJob.findFirst).not.toHaveBeenCalled();
     expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it("does not queue an invalid ten-slide editable draft and keeps the response neutral", async () => {
+    const { prisma, queue, service } = createHarness();
+    prisma.project.findUnique.mockResolvedValue(project({
+      slideCount: 10,
+      level: "university_student",
+      mode: "with_sources",
+      speechDraft: acceptedTenSlideSpeech(116),
+    }));
+
+    await expect(service.enqueueGeneration("user-1", "project-1")).rejects.toThrow(/Проверьте и сохраните текст выступления/u);
+    expect(queue.add).not.toHaveBeenCalled();
+    expect(prisma.generationJob.create).not.toHaveBeenCalled();
+  });
+
+  it("queues a manually corrected ten-slide draft without a narration call", async () => {
+    const { prisma, queue, service } = createHarness();
+    prisma.project.findUnique.mockResolvedValue(project({
+      slideCount: 10,
+      level: "university_student",
+      mode: "with_sources",
+      speechDraft: acceptedTenSlideSpeech(),
+    }));
+    prisma.generationJob.findFirst.mockResolvedValueOnce(null);
+    prisma.generationJob.create.mockResolvedValueOnce({ id: "job-10" });
+
+    const result = await service.enqueueGeneration("user-1", "project-1");
+
+    expect(result.status).toBe("queued");
+    expect(queue.add).toHaveBeenCalledWith(
+      "generate-presentation",
+      expect.objectContaining({ projectId: "project-1" }),
+      expect.any(Object),
+    );
   });
 });
 

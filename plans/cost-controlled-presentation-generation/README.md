@@ -20,6 +20,17 @@
 8. [08-gemini-lite-per-slide-narration.md](./08-gemini-lite-per-slide-narration.md) — replaces the unreleasable Flash 5+5 route with an atomically reserved Lite-per-slide experiment.
 9. [09-gemini-section-fallbacks-17-rub.md](./09-gemini-section-fallbacks-17-rub.md) — approved 17 ₽ hard-cap path: Lite candidate plus one Flash replacement per slide.
 
+Plans 10–17 document the subsequent envelope, section-quality, floor-aware,
+worker-readiness, source-search and live-validation recovery chain. Its final
+result is summarized in
+[17-plan-14-16-execution-summary.md](./17-plan-14-16-execution-summary.md).
+
+The current replacement design for future narration work is:
+
+18. [18-full-speech-recovery-and-editable-best-draft-20-rub.md](./18-full-speech-recovery-and-editable-best-draft-20-rub.md) — replace the per-slide route with one full Lite draft, one true full Flash rewrite, one bounded Lite repair, and silent preservation of the best editable draft within 20 ₽.
+
+19. [19-utf8-smoke-source-accounting-and-ui-error-routing.md](./19-utf8-smoke-source-accounting-and-ui-error-routing.md) — repair the UTF-8 narration-only smoke seam, reconcile charged-but-insufficient Tavily searches, route honest public failure states, and gate one later paid E2E.
+
 Не объединяйте эти задачи в один diff и не начинайте следующий файл, пока не выполнены его тесты и acceptance criteria.
 
 ## Неподлежащие изменению правила

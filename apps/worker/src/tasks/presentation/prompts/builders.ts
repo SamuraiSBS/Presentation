@@ -142,7 +142,7 @@ import type { YandexCompletionResponse } from "../constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
 import { cleanMultilineText } from "../utilities.js";
 import { getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
-import type { AitunnelNarrationTimingReason } from "../narration/processing.js";
+import type { AitunnelNarrationTimingReason, FullNarrationSafeDiagnostics } from "../narration/processing.js";
 
 export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[], _researchBrief?: ResearchBrief) {
   const timingBudget = getRussianStudentSpeechTimingBudget(project);
@@ -335,6 +335,131 @@ export function buildNarrationPrompt(project: ProjectInput, sources: Source[], n
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/**
+ * v6 candidate: one complete speech, grounded by a deliberately small but
+ * complete plan/snapshot. Its size is bounded for deterministic catalog
+ * preflight; it never emits user text to logs.
+ */
+export function buildAitunnelFullNarrationCandidatePrompt(project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[]) {
+  const timing = getRussianStudentSpeechTimingBudget(project);
+  const plan = compactFullNarrationPlan(narrativePlan);
+  const snapshot = compactFullNarrationSourceSnapshot(sources);
+  return [
+    "Write one complete Russian university speech for a StudyDeck presentation, not a plan or commentary.",
+    `Topic and user request: ${cleanMultilineText(project.prompt).slice(0, 240)}.`,
+    `Project title: ${cleanMultilineText(project.title).slice(0, 120)}. Exact slide count: ${project.slideCount}.`,
+    "Return exactly ten ordered sections. Each section must start with `\u0421\u043b\u0430\u0439\u0434 N: semantic title`, followed by natural spoken prose.",
+    timing ? `The whole speech must contain ${timing.minWords}-${timing.maxWords} words; target ${timing.targetWords}. The shared ${timing.titleWordTarget}/${timing.contentWordTarget}/${timing.conclusionWordTarget} slide targets are soft distribution guidance, not independent hard gates.` : "Write a complete, naturally paced speech.",
+    "Develop the argument as one coherent report before returning it. Explain definitions, mechanisms, causes, consequences, examples, limitations, and conclusions where useful.",
+    "When the snapshot lacks a precise anchor, cautious general educational explanation is allowed. Do not invent exact names, dates, statistics, quotations, citations, or source labels.",
+    "Use natural Russian that can be read aloud. Do not use markdown, JSON, provider commentary, planning formulas, prompt echoes, filler, or references to slides as objects.",
+    "Before returning, count and review the whole response: include every heading exactly once, preserve the complete argument, and keep the total within the requested range.",
+    plan.length ? `Fixed compact narrative plan:\n${JSON.stringify(plan)}` : "",
+    snapshot.length ? `Bounded factual source snapshot (internal grounding only; never cite it):\n${JSON.stringify(snapshot)}` : "Use cautious general educational explanation only.",
+  ].filter(Boolean).join("\n\n");
+}
+
+/** The v6 Flash loop receives the prior complete draft and only safe local diagnostics. */
+export function buildAitunnelFullNarrationRewriteWithDraftPrompt(
+  project: ProjectInput,
+  _sources: Source[],
+  narrativePlan: SlideNarrative[],
+  previousDraft: string,
+  diagnostics: FullNarrationSafeDiagnostics,
+) {
+  const timing = getRussianStudentSpeechTimingBudget(project);
+  const plan = compactFullNarrationRewritePlan(narrativePlan);
+  return [
+    "Rewrite the complete Russian university speech below. Return only a fresh complete speech, never commentary.",
+    `Return all ${project.slideCount} sections in order, each headed \`\u0421\u043b\u0430\u0439\u0434 N: semantic title\`. ${timing ? `Whole-speech contract: ${timing.minWords}-${timing.maxWords} words; target ${timing.targetWords}.` : ""}`,
+    "Keep useful content, correct the listed defects, and redistribute detail across the whole argument. Cautious general educational explanation is allowed; do not invent precise facts or citations.",
+    `Private diagnostics:\n${JSON.stringify(compactFullNarrationDiagnostics(diagnostics, diagnostics.sectionWordCounts.map((_count, index) => index + 1)))}`,
+    plan.length ? `Compact slide plan:\n${JSON.stringify(plan)}` : "",
+    `Previous complete draft to rewrite:\n${cleanMultilineText(previousDraft)}`,
+  ].filter(Boolean).join("\n\n");
+}
+
+export const aitunnelTargetedNarrationRepairResponseSchema = z.object({
+  replacements: z.record(z.string().regex(/^(?:[1-9]|10)$/), z.string().min(1)),
+}).strict();
+export type AitunnelTargetedNarrationRepairResponse = z.infer<typeof aitunnelTargetedNarrationRepairResponseSchema>;
+
+/**
+ * v6 has exactly one batch repair. The provider returns only requested,
+ * complete headed sections, so Prompt 18.2 can merge by exact slide order.
+ */
+export function buildAitunnelTargetedNarrationRepairPrompt(
+  project: ProjectInput,
+  _sources: Source[],
+  narrativePlan: SlideNarrative[],
+  currentDraft: string,
+  diagnostics: FullNarrationSafeDiagnostics,
+) {
+  const orders = [...new Set(diagnostics.affectedSlideOrders)].sort((a, b) => a - b);
+  if (!orders.length) throw new Error("aitunnel_targeted_repair_requires_affected_slides");
+  const plan = compactFullNarrationRewritePlan(narrativePlan).filter((item) => orders.includes(item.slideOrder));
+  const problemSections = extractRequestedNarrationSections(currentDraft, orders);
+  return [
+    "Repair only the requested sections of this Russian university speech. Do not add commentary or return any unrequested slide.",
+    `Requested slide orders: ${orders.join(", ")}.`,
+    "Return JSON only in this exact shape: {\"replacements\":{\"N\":\"\u0421\u043b\u0430\u0439\u0434 N: semantic title\\ncomplete replacement prose\"}}. Return each requested order exactly once as a key and no other order.",
+    "Every replacement must be complete, natural spoken Russian. Cautious general educational explanation is allowed; never invent precise facts or citations.",
+    `Private diagnostics:\n${JSON.stringify(compactFullNarrationDiagnostics(diagnostics, orders))}`,
+    plan.length ? `Requested plan entries:\n${JSON.stringify(plan)}` : "",
+    `Requested current sections only:\n${problemSections}`,
+  ].filter(Boolean).join("\n\n");
+}
+
+function compactFullNarrationPlan(narrativePlan: SlideNarrative[]) {
+  return narrativePlan.slice(0, 10).map((item) => ({
+    slideOrder: item.slideOrder,
+    slideTitle: cleanMultilineText(item.slideTitle).slice(0, 25),
+    slidePurpose: cleanMultilineText(item.slidePurpose).slice(0, 35),
+    keyMessage: cleanMultilineText(item.keyMessage).slice(0, 45),
+    evidenceOrExplanation: cleanMultilineText(item.evidenceOrExplanation).slice(0, 45),
+    whyItMatters: cleanMultilineText(item.whyItMatters).slice(0, 35),
+  }));
+}
+
+/** Rewrite and repair need direction, not the complete research plan or citations. */
+function compactFullNarrationRewritePlan(narrativePlan: SlideNarrative[]) {
+  return narrativePlan.slice(0, 10).map((item) => ({
+    slideOrder: item.slideOrder,
+    title: cleanMultilineText(item.slideTitle).slice(0, 24),
+    keyMessage: cleanMultilineText(item.keyMessage).slice(0, 42),
+  }));
+}
+
+function compactFullNarrationDiagnostics(diagnostics: FullNarrationSafeDiagnostics, requestedOrders = diagnostics.affectedSlideOrders) {
+  const selectedOrders = [...new Set(requestedOrders)].sort((left, right) => left - right);
+  return {
+    totalWords: diagnostics.totalWords,
+    issues: diagnostics.issueCodes,
+    affectedSlides: selectedOrders,
+    sectionWords: selectedOrders.map((order) => ({ order, words: diagnostics.sectionWordCounts[order - 1] || 0 })),
+  };
+}
+
+function extractRequestedNarrationSections(draft: string, orders: readonly number[]) {
+  const requested = new Set(orders);
+  return cleanMultilineText(draft)
+    .split(/(?=^\u0421\u043b\u0430\u0439\u0434\s+\d+\s*:)/gim)
+    .map((section) => section.trim())
+    .filter((section) => {
+      const match = /^\u0421\u043b\u0430\u0439\u0434\s+(\d+)\s*:/i.exec(section);
+      return Boolean(match && requested.has(Number(match[1])));
+    })
+    .join("\n\n");
+}
+
+function compactFullNarrationSourceSnapshot(sources: Source[]) {
+  return sources
+    .filter((source) => source.included !== false)
+    .slice(0, 4)
+    .map((source) => ({ title: cleanMultilineText(source.label).slice(0, 40), evidence: cleanMultilineText(source.excerpt).slice(0, 60) }))
+    .filter((source) => source.title || source.evidence);
 }
 
 /** A deliberately bounded prompt for one independently accepted Lite section. */

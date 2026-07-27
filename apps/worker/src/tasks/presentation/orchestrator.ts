@@ -3,7 +3,7 @@ import OpenAI from "openai";
 import { generateText, Output } from "ai";
 import { z } from "zod";
 import { captureGenerationError, errorLogFields, logger } from "../../observability.js";
-import { normalizeOpenAIUsage, recordAiUsage } from "../../usage-ledger.js";
+import { currentUsageContext, normalizeOpenAIUsage, recordAiUsage } from "../../usage-ledger.js";
 import { aitunnelConfig, createAitunnelClient, createOpenAIClient } from "../../openai-client.js";
 import {
   type DesignBrief,
@@ -143,7 +143,7 @@ type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief"
 import type { YandexCompletionResponse } from "./constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "./constants.js";
 import { selectAiProviders } from "./providers/provider-selection.js";
-import { generateWithAitunnel, generateWithOpenAI, generateAitunnelPresentationFromNarration, generateOpenAIPresentationFromNarration, generateAitunnelNarration, generateOpenAINarration, generateWithYandex, generateYandexPresentationFromNarration, generateYandexNarration, generateNarrativePlanWithProvider } from "./providers/generation.js";
+import { generateWithAitunnel, generateWithOpenAI, generateAitunnelPresentationFromNarration, generateOpenAIPresentationFromNarration, generateAitunnelNarration, generateAitunnelFullNarrationOutcome, generateOpenAINarration, generateWithYandex, generateYandexPresentationFromNarration, generateYandexNarration, generateNarrativePlanWithProvider } from "./providers/generation.js";
 import { buildResearchBrief, buildDesignBrief, buildDeckStory, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "./planning/builders.js";
 import { normalizeNarrationText, parseNarrationSections } from "./narration/processing.js";
 import { normalizePresentation } from "./normalization/presentation.js";
@@ -206,10 +206,13 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
           const narrativePlan = await generateNarrativePlanWithProvider(provider, project, sources, researchBrief, { openAIClient: client, openAIModel: config.narrationModel });
           const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
           const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
-          const text = await generateAitunnelNarration(client, config.narrationModel, project, sources, narrativePlan, researchBrief);
+          const narrationOutcome = currentUsageContext()?.costEnvelopePolicyVersion === "standard-generation-cost-envelope-v6"
+            ? await generateAitunnelFullNarrationOutcome(client, project, sources, narrativePlan)
+            : undefined;
+          const text = narrationOutcome?.text || await generateAitunnelNarration(client, config.narrationModel, project, sources, narrativePlan, researchBrief);
           const slideTextPlans = buildSlideTextPlans(project, text, narrativePlan, deckStory, sources);
           generationPipelineArtifactsSchema.parse({ researchBrief, narrativePlan, deckStory, designBrief, slideBlueprints: [], slideTextPlans });
-          return { text, narrativePlan, generationMode: provider };
+          return { text, narrativePlan, generationMode: provider, ...(narrationOutcome ? { narrationOutcome } : {}) };
         });
       }
 

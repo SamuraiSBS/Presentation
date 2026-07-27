@@ -172,7 +172,15 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
         where: jobWhere,
         data: { status: "completed", progressStage: "completed", progressLabel: "Готово", progressPercent: 100 },
       });
-      await prisma.userActivityEvent.create({ data: { userId: job.data.userId, projectId, type: "generation.completed", metadata: { kind } } });
+      const narrationOutcome = "narrationOutcome" in draft ? draft.narrationOutcome : undefined;
+      await prisma.userActivityEvent.create({ data: {
+        userId: job.data.userId,
+        projectId,
+        type: "generation.completed",
+        // Keep recovery telemetry text-free: speech drafts, prompts and model
+        // responses never leave the narration state machine.
+        metadata: { kind, narrationOutcome: narrationOutcome?.kind, narrationStage: narrationOutcome?.stage },
+      } });
       return;
     }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechSectionBounds, getRussianStudentSpeechTimingBudget, RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE } from "./speech-timing.js";
+import { assessFullSpeechContract } from "./narration-contract.js";
 
 const project = (slideCount: number, overrides: Record<string, string> = {}) => ({
   slideCount,
@@ -61,5 +62,31 @@ describe("Russian student speech section bounds", () => {
     expect(getFloorAwareSpeechTimingSectionBounds(budget, 10)).toEqual({ targetWords: 100, minWords: 90, maxWords: 130 });
     expect(Array.from({ length: 10 }, (_, index) => getFloorAwareSpeechTimingSectionBounds(budget, index + 1)!.minWords).reduce((sum, words) => sum + words, 0)).toBe(1170);
     expect(budget).toMatchObject({ minWords: 1170, targetWords: 1300, maxWords: 1560 });
+  });
+});
+
+describe("full ten-slide speech contract", () => {
+  const fullSpeech = (wordsPerSection: number) => Array.from({ length: 10 }, (_, index) => {
+    const words = Array.from({ length: wordsPerSection }, (_, word) => `fact${index + 1}_${word + 1}`);
+    const split = Math.floor(words.length / 2);
+    return `Слайд ${index + 1}: Тема ${index + 1}\n${words.slice(0, split).join(" ")}. ${words.slice(split).join(" ")}.`;
+  }).join("\n\n");
+
+  it("uses the canonical ten-section timing and quality gate for manual acceptance", () => {
+    const contractProject = project(10);
+    expect(assessFullSpeechContract(fullSpeech(117), contractProject)).toMatchObject({ applicable: true, isAccepted: true, totalWords: 1170, issueCodes: [] });
+    expect(assessFullSpeechContract(fullSpeech(110), contractProject)).toMatchObject({ applicable: true, isAccepted: false, totalWords: 1100, issueCodes: ["whole_speech_below_minimum"] });
+  });
+
+  it("rejects a severe repeated sentence without exposing its diagnostics to the caller", () => {
+    const repeated = Array.from({ length: 10 }, (_, index) => {
+      const uniqueWords = Array.from({ length: 110 }, (_, word) => `detail${index + 1}_${word + 1}`);
+      return `Слайд ${index + 1}: Тема ${index + 1}\nПовторяемая фраза содержит достаточно слов для проверки качества. ${uniqueWords.join(" ")}.`;
+    }).join("\n\n");
+    expect(assessFullSpeechContract(repeated, project(10))).toMatchObject({ applicable: true, isAccepted: false, issueCodes: expect.arrayContaining(["template_or_repetition"]) });
+  });
+
+  it("does not apply the v6 ten-slide contract to historical shapes", () => {
+    expect(assessFullSpeechContract("Слайд 1: Кратко\nТекст.", project(6))).toMatchObject({ applicable: false, isAccepted: true });
   });
 });
