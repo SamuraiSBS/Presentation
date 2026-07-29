@@ -24,6 +24,7 @@ import {
 import { WorkflowProgress } from "@/components/workflow-progress";
 import { parseSpeechDraft, serializeSpeechSections, type SpeechSection } from "@/lib/speech-review";
 import { RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE } from "@studydeck/shared";
+import { narrationFailureUi, narrationReviewMode } from "@/lib/narration-failure-ui";
 
 export function ProjectScriptReviewQuery({ initialProject }: { initialProject: ProjectPayload }) {
   const projectQuery = useGenerationJob(initialProject.id, initialProject);
@@ -39,7 +40,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
   const canEdit = project.accessRole !== "viewer";
   const draft = useMemo(() => serializeSpeechSections(sections), [sections]);
   const hasSavedSpeechDraft = Boolean(project.speechDraft?.trim());
-  const isTextReady = project.status === "script_ready" || project.status === "ready" || Boolean(project.speechDraft);
+  const isTextReady = narrationReviewMode(project) === "editor";
   const isWaitingForText = project.status === "script_queued" || project.status === "script_generating";
   const isFinalGeneration = project.status === "queued" || project.status === "generating";
   const draftIsLongEnough = draft.trim().length >= 50 && sections.every((section) => section.text.trim().length >= 10);
@@ -48,6 +49,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
   const totalWords = useMemo(() => sections.reduce((sum, section) => sum + wordCount(section.text), 0), [sections]);
   const totalMinutes = Math.max(1, Math.round(totalWords / RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE));
   const busy = startNarration.isPending || saveSpeechDraft.isPending || acceptSpeech.isPending || updateSource.isPending;
+  const terminalFailure = narrationFailureUi(project.narrationState);
 
   useEffect(() => {
     if (!dirty) setSections(parseSpeechDraft(project.speechDraft || "", project.slideCount));
@@ -200,7 +202,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
         </>
       ) : null}
 
-      {project.status === "failed" ? <section className="panel script-error-panel" role="alert"><h2>Автовосстановление не завершилось</h2><p className="muted">{project.error ? userError(new Error(project.error), "Материалы сохранены. Запустите подготовку ещё раз, когда будете готовы.") : "Материалы сохранены. Запустите подготовку ещё раз, когда будете готовы."}</p>{canEdit ? (project.workflow === "requirements_driven" ? <Button asChild><Link href={`/projects/${project.id}/defense/plan`}><ShieldCheck size={18} />Открыть подтверждённый план защиты</Link></Button> : hasSavedSpeechDraft ? <AiConfirmation title="Запустить сборку слайдов ещё раз?" description="Будет создан новый платный запрос к AI-провайдеру." confirmLabel="Запустить снова" pending={acceptSpeech.isPending} onConfirm={acceptAndGenerate} /> : <AiConfirmation title="Запустить подготовку текста ещё раз?" description="Будет создан новый платный запрос к AI-провайдеру. Система снова автоматически исправит неподходящие варианты." confirmLabel="Запустить снова" pending={startNarration.isPending} onConfirm={startText} />) : null}</section> : null}
+      {project.status === "failed" ? <section className="panel script-error-panel" role="alert"><h2>{terminalFailure.title}</h2><p className="muted">{terminalFailure.message}</p>{canEdit ? (project.workflow === "requirements_driven" ? <Button asChild><Link href={`/projects/${project.id}/defense/plan`}><ShieldCheck size={18} />Открыть подтверждённый план защиты</Link></Button> : hasSavedSpeechDraft ? <AiConfirmation title="Запустить сборку слайдов ещё раз?" description="Будет создан новый платный запрос к AI-провайдеру." confirmLabel="Запустить снова" pending={acceptSpeech.isPending} onConfirm={acceptAndGenerate} /> : <AiConfirmation title="Запустить подготовку текста ещё раз?" description="Будет создан новый платный запрос к AI-провайдеру." confirmLabel="Запустить снова" pending={startNarration.isPending} onConfirm={startText} />) : null}</section> : null}
       {actionError ? <p className="form-error" role="alert">{actionError}</p> : null}
     </section>
   );
@@ -237,12 +239,6 @@ function statusLabel(status: string, canEdit: boolean) {
 function userError(error: unknown, fallback: string) {
   if (error instanceof Error && /Presentation layout check failed/i.test(error.message)) {
     return "Не удалось автоматически подстроить вёрстку. Текст выступления и источники сохранены; повторная сборка слайдов не требует заново готовить речь.";
-  }
-  if (error instanceof Error && /AI narration quality check failed/i.test(error.message)) {
-    return "AI подготовил текст, который не прошёл проверку. Система уже выполнила автоматические попытки исправления; материалы сохранены.";
-  }
-  if (error instanceof Error && /Не удалось завершить подготовку презентации/i.test(error.message)) {
-    return "Автоматическая подготовка не прошла проверку качества после всех попыток. Материалы сохранены — запустите подготовку ещё раз.";
   }
   if (error instanceof Error && /[А-Яа-яЁё]/.test(error.message) && !/<[^>]+>|\b(?:error|failed|invalid|internal)\b/i.test(error.message)) return error.message;
   return fallback;

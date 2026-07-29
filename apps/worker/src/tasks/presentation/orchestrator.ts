@@ -209,6 +209,13 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
           const narrationOutcome = currentUsageContext()?.costEnvelopePolicyVersion === "standard-generation-cost-envelope-v6"
             ? await generateAitunnelFullNarrationOutcome(client, project, sources, narrativePlan)
             : undefined;
+          // An editable v6 draft is a narration-only recovery result.  It is
+          // intentionally persisted before any presentation-oriented artifact
+          // construction: malformed slide text plans must not discard a
+          // structurally usable speech that the user can edit.
+          if (narrationOutcome?.kind === "editable_draft") {
+            return { text: narrationOutcome.text, narrativePlan, generationMode: provider, narrationOutcome };
+          }
           const text = narrationOutcome?.text || await generateAitunnelNarration(client, config.narrationModel, project, sources, narrativePlan, researchBrief);
           const slideTextPlans = buildSlideTextPlans(project, text, narrativePlan, deckStory, sources);
           generationPipelineArtifactsSchema.parse({ researchBrief, narrativePlan, deckStory, designBrief, slideBlueprints: [], slideTextPlans });

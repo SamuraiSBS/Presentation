@@ -19,6 +19,12 @@ export type { LayoutCapacity } from "./presentation/layouts.js";
 export { generationProgressStageSchema, generationJobKindSchema, entityAssertionSchema, factualTopicProfileSchema, slideNarrativeSchema, deckStorySchema, slideTextPlanSchema, researchBriefSchema, sceneTextModeSchema, designBriefSlideDirectionSchema, designBriefSchema, slideBlueprintSchema, visualStrategySchema, diagramSpecSchema, qualityIssueSchema, qualityDimensionScoreSchema, qualityDimensionsSchema, qualityCritiqueSchema, generationPipelineArtifactsSchema, generationBriefSchema } from "./generation/schemas.js";
 export type { GenerationProgressStage, GenerationJobKind, EntityAssertion, FactualTopicProfile, SlideNarrative, DeckStory, SlideTextPlan, ResearchBrief, SceneTextMode, DesignBriefSlideDirection, DesignBrief, SlideBlueprint, VisualStrategy, DiagramSpec, QualityIssue, QualityDimensionScore, QualityDimensions, QualityCritique, GenerationPipelineArtifacts, GenerationBrief } from "./generation/schemas.js";
 export { generationFailureCategoryValues, safeGenerationRecovery } from "./generation/recovery.js";
+export {
+  publicNarrationStateValues,
+  isPublicNarrationState,
+  publicNarrationFailureMessage,
+  type PublicNarrationState,
+} from "./generation/public-narration-state.js";
 export type { GenerationFailureCategory, SafeGenerationRecovery } from "./generation/recovery.js";
 export { RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE, RUSSIAN_STUDENT_SPEECH_TIMING_PRESETS, getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechTimingBudget, getRussianStudentSpeechSectionBounds, russianSpeechMinutesFromWords } from "./generation/speech-timing.js";
 export type { SpeechTimingBudget, SpeechTimingProject, SpeechTimingSectionBounds } from "./generation/speech-timing.js";

@@ -1,5 +1,5 @@
 import type { Job } from "bullmq";
-import { safeGenerationRecovery, type GenerationFailureCategory } from "@studydeck/shared";
+import { safeGenerationRecovery, type GenerationFailureCategory, type PublicNarrationState } from "@studydeck/shared";
 import { errorLogFields, logger } from "../observability.js";
 
 export const GENERATION_PROGRESS_STAGES = [
@@ -69,6 +69,15 @@ export function narrationJobOptions() {
 
 export function shouldRetryGenerationJob(kind: "narration" | "presentation", error: unknown, attemptsMade: number, attempts: number) {
   return kind !== "narration" && classifyGenerationError(error) === "transient" && attemptsMade + 1 < attempts;
+}
+
+/** `researching` is the only narration stage before the first text call. */
+export function publicNarrationFailureState(
+  kind: "narration" | "presentation",
+  stage: GenerationProgressStage,
+): Extract<PublicNarrationState, "source_preparation_failed" | "narration_failed"> | null {
+  if (kind !== "narration") return null;
+  return stage === "researching" ? "source_preparation_failed" : "narration_failed";
 }
 
 export async function updateGenerationProgress(

@@ -1,6 +1,13 @@
 import type { Job } from "bullmq";
 import type { Prisma } from "@prisma/client";
-import { auditSlideCanvas, ensureEditableCanvas, PREMIUM_PRESENTATION_THEMES, type PresentationDocument, type Source } from "@studydeck/shared";
+import {
+  auditSlideCanvas,
+  ensureEditableCanvas,
+  PREMIUM_PRESENTATION_THEMES,
+  publicNarrationFailureMessage,
+  type PresentationDocument,
+  type Source,
+} from "@studydeck/shared";
 import { productionQualityReleaseResult } from "./presentation-quality.js";
 import { captureGenerationError, errorLogFields, logger, type TraceCarrier, withTraceSpan } from "../observability.js";
 import { getPrisma } from "../prisma.js";
@@ -12,12 +19,13 @@ import {
   safeGenerationError,
   shouldRetryGenerationJob,
   updateGenerationProgress,
+  publicNarrationFailureState,
   type GenerationProgressStage,
 } from "./job-progress.js";
 import { generateNarrationDraft, generatePresentationFromNarration } from "./presentation.js";
 import { searchWebSources } from "./web-search.js";
 import { runWithUsageContext } from "../usage-ledger.js";
-import { failCostEnvelope, reserveCostEnvelope, settleCostEnvelope } from "../cost-envelope.js";
+import { failCostEnvelope, finalizeFailedCostEnvelope, reserveCostEnvelope, settleCostEnvelope } from "../cost-envelope.js";
 import { EconomicReleaseGateError, evaluateEconomicReleaseGate } from "../economic-release-gate.js";
 import { createMandatorySourceSnapshot, parseMandatorySourceSnapshot, snapshotSources } from "../source-snapshot.js";
 import {
@@ -96,9 +104,11 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
   });
 
   const stageStartedAt = new Map<GenerationProgressStage, number>();
+  let currentStage: GenerationProgressStage = "queued";
   const setStage = async (stage: GenerationProgressStage) => {
     const cancellation = await prisma.generationJob.findFirst({ where: jobWhere, select: { cancelRequestedAt: true } });
     if (cancellation?.cancelRequestedAt) throw new Error("Generation cancelled by administrator");
+    currentStage = stage;
     stageStartedAt.set(stage, Date.now());
     await updateGenerationProgress(job, stage, (data) =>
       prisma.generationJob.updateMany({ where: jobWhere, data }),
@@ -152,6 +162,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
         "studydeck.provider": process.env.AI_PROVIDER || "demo",
       }, () => generateNarrationDraft(generationProject, sources), traceContext);
       finishStage("drafting_speech");
+      const narrationOutcome = "narrationOutcome" in draft ? draft.narrationOutcome : undefined;
       await setStage("saving");
       await prisma.project.update({
         where: { id: projectId },
@@ -170,9 +181,16 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       await setStage("completed");
       await prisma.generationJob.updateMany({
         where: jobWhere,
-        data: { status: "completed", progressStage: "completed", progressLabel: "Готово", progressPercent: 100 },
+        data: {
+          status: "completed",
+          progressStage: "completed",
+          progressLabel: "Готово",
+          progressPercent: 100,
+          // This is a public-safe terminal routing state, not an operational
+          // error. API serializers deliberately omit it from job.error.
+          error: narrationOutcome?.kind === "editable_draft" ? "editable_draft" : "accepted_speech",
+        },
       });
-      const narrationOutcome = "narrationOutcome" in draft ? draft.narrationOutcome : undefined;
       await prisma.userActivityEvent.create({ data: {
         userId: job.data.userId,
         projectId,
@@ -296,6 +314,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
   } catch (error) {
     const recovery = safeGenerationError(error);
     const failureCategory = generationFailureCategory(error);
+    const narrationState = publicNarrationFailureState(kind, currentStage);
     const internalError = error instanceof EconomicReleaseGateError
       ? `economic_release_gate:${error.categories.join(",")}`
       : recovery.message;
@@ -315,7 +334,10 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       const existing = await prisma.presentation.findUnique({ where: { projectId }, select: { id: true } });
       await prisma.project.update({
         where: { id: projectId },
-        data: { status: existing ? "ready" : "failed", error: recovery.message },
+        data: {
+          status: existing ? "ready" : "failed",
+          error: narrationState && !existing ? publicNarrationFailureMessage(narrationState) : recovery.message,
+        },
       });
     }
     await prisma.generationJob.updateMany({
@@ -325,13 +347,41 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
           // Project responses are sanitized by the API.  GenerationJob keeps a
           // compact operational category for admins without persisting provider
           // messages, tokens, or stack traces.
-          error: internalError,
+          error: narrationState || internalError,
         progressStage: willRetry ? "queued" : "failed",
         progressLabel: willRetry ? "Временная ошибка, попробуем ещё раз" : "Не получилось",
         progressPercent: willRetry ? 5 : 100,
         stageStartedAt: new Date(),
       },
     });
+    if (kind === "narration" && !willRetry && job.data.costEnvelopeId) {
+      try {
+        // The in-memory project that began this job may be stale. Only close
+        // an envelope when the current persisted project still has no draft.
+        const currentProject = await prisma.project.findUnique({
+          where: { id: projectId },
+          select: { speechDraft: true },
+        });
+        if (!currentProject?.speechDraft?.trim()) {
+          await finalizeFailedCostEnvelope({ envelopeId: job.data.costEnvelopeId });
+        }
+      } catch (finalizationError) {
+        // Preserve the original generation error and its public-safe routing,
+        // but make an operational finalization failure observable.
+        logger.error({
+          projectId,
+          jobId: job.id,
+          costEnvelopeId: job.data.costEnvelopeId,
+          ...errorLogFields(finalizationError),
+        }, "terminal failed narration envelope finalization failed");
+        captureGenerationError(finalizationError, {
+          projectId,
+          jobId: job.id,
+          stage: "failed_envelope_finalization",
+          provider: process.env.AI_PROVIDER,
+        });
+      }
+    }
     throw error;
   }
 }
@@ -597,14 +647,17 @@ export async function prepareGenerationSources(project: {
         title: project.title,
         costEnvelopeRub: amountRub,
       });
-    } catch (error) {
-      captureGenerationError(error, {
+    } catch {
+      // Provider response bodies can contain query/result material. Keep
+      // mandatory-source telemetry to a stable classification only.
+      const safeFailure = new Error("mandatory_source_search_provider_failure");
+      captureGenerationError(safeFailure, {
         projectId: project.id,
         stage: "researching",
         provider: process.env.WEB_SEARCH_PROVIDER || "tavily",
       });
       await failCostEnvelope({ envelopeId: options.costEnvelopeId, idempotencyKey: reservationKey, reason: "mandatory_source_search_failed" }).catch(() => undefined);
-      throw error;
+      throw safeFailure;
     }
     const snapshotCandidates: Source[] = [];
     for (const source of webSources.slice(0, 4)) {
@@ -633,7 +686,17 @@ export async function prepareGenerationSources(project: {
     }
     const snapshot = createMandatorySourceSnapshot(snapshotCandidates);
     if (!snapshot) {
-      await failCostEnvelope({ envelopeId: options.costEnvelopeId, idempotencyKey: reservationKey, reason: "mandatory_source_search_insufficient" });
+      // Tavily already returned a successful, chargeable response and
+      // recordCostEvent has recorded the same policy amount.  Relevance
+      // filtering is a local mandatory-gate outcome, not a transport failure:
+      // settle the source reservation exactly once, then exhaust this run.
+      await settleCostEnvelope({
+        envelopeId: options.costEnvelopeId,
+        idempotencyKey: reservationKey,
+        actualRub: amountRub,
+        reason: "mandatory_source_search_insufficient",
+        exhaustEnvelope: true,
+      });
       throw new Error("Mandatory source research did not return enough relevant sources");
     }
     await prisma.costEnvelope.update({ where: { id: options.costEnvelopeId }, data: { sourceSnapshot: snapshot } });

@@ -1,19 +1,38 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { auditSlideCanvas, presentationSchema, PREMIUM_PRESENTATION_THEMES } from "@studydeck/shared";
-import { prepareGenerationSources, repairPresentationLayout } from "./generation.js";
+import { handleGenerationJob, prepareGenerationSources, repairPresentationLayout } from "./generation.js";
 import { searchWebSources } from "./web-search.js";
 import { readObjectBuffer } from "../storage.js";
 import { extractTextFromSource } from "./extract.js";
 
-const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, costEnvelope, prismaMock } = vi.hoisted(() => ({
+const mandatorySourceSnapshot = {
+  version: 1,
+  capturedAt: "2026-07-29T12:00:00.000Z",
+  provenance: { provider: "tavily" as const, queryAt: "2026-07-29T12:00:00.000Z" },
+  sources: [
+    { sourceId: "snapshot-1", title: "Source one", url: "https://example.edu/one", evidenceExcerpt: "Grounded evidence one." },
+    { sourceId: "snapshot-2", title: "Source two", url: "https://example.edu/two", evidenceExcerpt: "Grounded evidence two." },
+    { sourceId: "snapshot-3", title: "Source three", url: "https://example.edu/three", evidenceExcerpt: "Grounded evidence three." },
+  ],
+};
+
+const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, finalizeFailedCostEnvelope, captureGenerationError, generateNarrationDraft, generatePresentationFromNarration, costEnvelope, prismaMock } = vi.hoisted(() => ({
   reserveCostEnvelope: vi.fn(),
   settleCostEnvelope: vi.fn(),
   failCostEnvelope: vi.fn(),
+  finalizeFailedCostEnvelope: vi.fn(),
+  captureGenerationError: vi.fn(),
+  generateNarrationDraft: vi.fn(),
+  generatePresentationFromNarration: vi.fn(),
   costEnvelope: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
   prismaMock: {
     source: { create: vi.fn(), deleteMany: vi.fn(), update: vi.fn() },
     costEnvelope: undefined as unknown,
     operationalEvent: { create: vi.fn().mockResolvedValue({}) },
+    project: { update: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn() },
+    generationJob: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
+    presentation: { findUnique: vi.fn(), upsert: vi.fn() },
+    userActivityEvent: { create: vi.fn() },
   },
 }));
 
@@ -39,10 +58,23 @@ vi.mock("./web-search.js", () => ({
   searchWebSources: vi.fn(),
 }));
 
+vi.mock("./presentation.js", () => ({
+  generateNarrationDraft,
+  generatePresentationFromNarration,
+}));
+
 vi.mock("../cost-envelope.js", () => ({
   reserveCostEnvelope,
   settleCostEnvelope,
   failCostEnvelope,
+  finalizeFailedCostEnvelope,
+}));
+
+vi.mock("../observability.js", () => ({
+  captureGenerationError,
+  errorLogFields: () => ({}),
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  withTraceSpan: async (_name: string, _context: unknown, callback: () => Promise<unknown>) => callback(),
 }));
 
 describe("prepareGenerationSources", () => {
@@ -53,9 +85,14 @@ describe("prepareGenerationSources", () => {
     reserveCostEnvelope.mockReset();
     settleCostEnvelope.mockReset();
     failCostEnvelope.mockReset();
+    finalizeFailedCostEnvelope.mockReset();
+    captureGenerationError.mockReset();
+    generateNarrationDraft.mockReset();
+    generatePresentationFromNarration.mockReset();
     costEnvelope.findUnique.mockReset();
     costEnvelope.findUniqueOrThrow.mockReset();
     costEnvelope.update.mockReset();
+    prismaMock.source.create.mockReset();
   });
 
   it("uses existing extracted sources without network search", async () => {
@@ -266,11 +303,90 @@ describe("prepareGenerationSources", () => {
     expect(first.map((source) => source.id)).toEqual(["saved-1", "saved-2", "saved-3"]);
     expect(searchWebSources).toHaveBeenCalledTimes(1);
     expect(reserveCostEnvelope).toHaveBeenCalledWith(expect.objectContaining({ bucket: "sources", idempotencyKey: "envelope-1:mandatory-source-search" }));
+    expect(settleCostEnvelope).toHaveBeenCalledWith({
+      envelopeId: "envelope-1",
+      idempotencyKey: "envelope-1:mandatory-source-search",
+      actualRub: "0.50000000",
+    });
+    expect(failCostEnvelope).not.toHaveBeenCalled();
 
     costEnvelope.findUnique.mockResolvedValueOnce({ sourceSnapshot: snapshot, policySnapshot });
     const replay = await prepareGenerationSources(project, { refreshWeb: true, costEnvelopeId: "envelope-1" });
     expect(replay.map((source) => source.id)).toEqual(["saved-1", "saved-2", "saved-3"]);
     expect(searchWebSources).toHaveBeenCalledTimes(1);
+    expect(settleCostEnvelope).toHaveBeenCalledTimes(1);
+  });
+
+  it("settles one chargeable but insufficient mandatory search, exhausts the envelope, and never starts narration", async () => {
+    const policySnapshot = { buckets: { sources: "0.50000000" } };
+    costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: null, policySnapshot });
+    costEnvelope.findUniqueOrThrow.mockResolvedValue({ policySnapshot });
+    reserveCostEnvelope
+      .mockResolvedValueOnce({ status: "reserved", idempotent: false })
+      .mockResolvedValueOnce({ status: "reserved", idempotent: true });
+    settleCostEnvelope.mockResolvedValue({ status: "settled" });
+    prismaMock.source.create
+      .mockResolvedValueOnce({ id: "saved-1", label: "One", type: "WEB", size: 0, objectKey: null, excerpt: "Evidence one", url: "https://nasa.gov/one" })
+      .mockResolvedValueOnce({ id: "saved-2", label: "Two", type: "WEB", size: 0, objectKey: null, excerpt: "Evidence two", url: "https://esa.int/two" });
+    vi.mocked(searchWebSources).mockResolvedValue([
+      { id: "web-1", label: "One", type: "WEB", size: 0, excerpt: "Evidence one", url: "https://nasa.gov/one" },
+      { id: "web-2", label: "Two", type: "WEB", size: 0, excerpt: "Evidence two", url: "https://esa.int/two" },
+    ]);
+
+    const project = { id: "project-insufficient", prompt: "private project prompt", mode: "with_sources", speechDraft: null, sources: [] };
+    await expect(prepareGenerationSources(project, { refreshWeb: true, costEnvelopeId: "envelope-insufficient" }))
+      .rejects.toThrow("Mandatory source research did not return enough relevant sources");
+
+    expect(settleCostEnvelope).toHaveBeenCalledTimes(1);
+    expect(settleCostEnvelope).toHaveBeenCalledWith({
+      envelopeId: "envelope-insufficient",
+      idempotencyKey: "envelope-insufficient:mandatory-source-search",
+      actualRub: "0.50000000",
+      reason: "mandatory_source_search_insufficient",
+      exhaustEnvelope: true,
+    });
+    expect(failCostEnvelope).not.toHaveBeenCalled();
+    expect(captureGenerationError).not.toHaveBeenCalled();
+    expect(generateNarrationDraft).not.toHaveBeenCalled();
+
+    await expect(prepareGenerationSources(project, { refreshWeb: true, costEnvelopeId: "envelope-insufficient" }))
+      .rejects.toThrow("already in progress");
+    expect(searchWebSources).toHaveBeenCalledTimes(1);
+    expect(settleCostEnvelope).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a pre-success HTTP failure as provider_error without settlement or raw provider telemetry", async () => {
+    const policySnapshot = { buckets: { sources: "0.50000000" } };
+    const rawProviderDetail = "Tavily 503: private project prompt; raw source excerpt";
+    costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: null, policySnapshot });
+    costEnvelope.findUniqueOrThrow.mockResolvedValue({ policySnapshot });
+    reserveCostEnvelope
+      .mockResolvedValueOnce({ status: "reserved", idempotent: false })
+      .mockResolvedValueOnce({ status: "reserved", idempotent: true });
+    failCostEnvelope.mockResolvedValue({ status: "provider_error" });
+    vi.mocked(searchWebSources).mockRejectedValue(new Error(rawProviderDetail));
+
+    const project = { id: "project-provider-failure", prompt: "private project prompt", mode: "with_sources", speechDraft: null, sources: [] };
+    await expect(prepareGenerationSources(project, { refreshWeb: true, costEnvelopeId: "envelope-provider-failure" }))
+      .rejects.toThrow("mandatory_source_search_provider_failure");
+
+    expect(settleCostEnvelope).not.toHaveBeenCalled();
+    expect(failCostEnvelope).toHaveBeenCalledWith({
+      envelopeId: "envelope-provider-failure",
+      idempotencyKey: "envelope-provider-failure:mandatory-source-search",
+      reason: "mandatory_source_search_failed",
+    });
+    expect(captureGenerationError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "mandatory_source_search_provider_failure" }),
+      expect.objectContaining({ projectId: "project-provider-failure", stage: "researching", provider: expect.any(String) }),
+    );
+    expect(JSON.stringify(captureGenerationError.mock.calls)).not.toContain(rawProviderDetail);
+    expect(JSON.stringify(captureGenerationError.mock.calls)).not.toContain(project.prompt);
+
+    await expect(prepareGenerationSources(project, { refreshWeb: true, costEnvelopeId: "envelope-provider-failure" }))
+      .rejects.toThrow("already in progress");
+    expect(searchWebSources).toHaveBeenCalledTimes(1);
+    expect(failCostEnvelope).toHaveBeenCalledTimes(1);
   });
 
   it("does not duplicate Tavily work when a concurrent retry owns the source reservation", async () => {
@@ -354,5 +470,283 @@ describe("prepareGenerationSources", () => {
     expect(repaired.presentationTheme?.themeId).toBe("academicClean");
     expect(repaired.designBrief).toBeUndefined();
     expect(repaired.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!))).toEqual([]);
+  });
+});
+
+describe("handleGenerationJob editable-draft persistence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    finalizeFailedCostEnvelope.mockReset();
+    prismaMock.project.update.mockResolvedValue({});
+    prismaMock.project.findUnique.mockResolvedValue({ speechDraft: null });
+    prismaMock.project.findUniqueOrThrow.mockResolvedValue({
+      id: "editable-draft-project",
+      title: "Editable draft",
+      prompt: "Prepare an editable speech draft",
+      scenario: "report",
+      level: "university_student",
+      mode: "standard",
+      slideCount: 10,
+      workflow: "standard",
+      speechDraft: null,
+      defenseWorkspace: null,
+      sources: [{
+        id: "source-1",
+        label: "Saved source",
+        type: "TXT",
+        size: 0,
+        objectKey: null,
+        url: null,
+        excerpt: "Grounded source excerpt.",
+        text: "Grounded source excerpt.",
+        included: true,
+      }],
+    });
+    prismaMock.generationJob.findFirst.mockResolvedValue({ id: "database-narration-job" });
+    prismaMock.generationJob.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.presentation.findUnique.mockResolvedValue(null);
+    prismaMock.userActivityEvent.create.mockResolvedValue({});
+    costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: mandatorySourceSnapshot });
+  });
+
+  it("persists an editable v6 draft at the real job boundary without presentation, accept, or retry work", async () => {
+    const editableText = "PRIVATE_EDITABLE_DRAFT_CONTENT";
+    generateNarrationDraft.mockResolvedValue({
+      text: editableText,
+      narrativePlan: [],
+      generationMode: "aitunnel",
+      narrationOutcome: {
+        kind: "editable_draft",
+        text: editableText,
+        stage: "narration_full_candidate",
+      },
+    });
+    const job = {
+      id: "queue-editable-draft",
+      name: "generate-narration",
+      data: { projectId: "editable-draft-project", userId: "user-1", generationJobId: "database-narration-job", costEnvelopeId: "envelope-editable" },
+      opts: { attempts: 1 },
+      attemptsMade: 0,
+      updateProgress: vi.fn().mockResolvedValue(undefined),
+      discard: vi.fn(),
+      retry: vi.fn(),
+    } as never;
+
+    await expect(handleGenerationJob(job)).resolves.toBeUndefined();
+
+    expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "editable-draft-project" },
+      data: expect.objectContaining({
+        speechDraft: editableText,
+        status: "script_ready",
+        error: null,
+      }),
+    }));
+    expect(prismaMock.generationJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: "completed",
+        progressStage: "completed",
+        error: "editable_draft",
+      }),
+    }));
+    expect(prismaMock.userActivityEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: "generation.completed",
+        metadata: {
+          kind: "narration",
+          narrationOutcome: "editable_draft",
+          narrationStage: "narration_full_candidate",
+        },
+      }),
+    });
+    expect(JSON.stringify(prismaMock.userActivityEvent.create.mock.calls)).not.toContain(editableText);
+
+    expect(generatePresentationFromNarration).not.toHaveBeenCalled();
+    expect(prismaMock.presentation.upsert).not.toHaveBeenCalled();
+    expect(prismaMock.generationJob.create).not.toHaveBeenCalled();
+    expect(finalizeFailedCostEnvelope).not.toHaveBeenCalled();
+    expect((job as { retry: ReturnType<typeof vi.fn> }).retry).not.toHaveBeenCalled();
+    expect((job as { discard: ReturnType<typeof vi.fn> }).discard).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleGenerationJob failed narration envelope finalization", () => {
+  const narrationProject = (speechDraft: string | null = null) => ({
+    id: "terminal-narration-project",
+    title: "Terminal narration",
+    prompt: "Prepare a safe speech",
+    scenario: "report",
+    level: "university_student",
+    mode: "standard",
+    slideCount: 10,
+    workflow: "standard",
+    speechDraft,
+    defenseWorkspace: null,
+    sources: [{
+      id: "source-1",
+      label: "Saved source",
+      type: "TXT",
+      size: 0,
+      objectKey: null,
+      url: null,
+      excerpt: "Grounded source excerpt.",
+      text: "Grounded source excerpt.",
+      included: true,
+    }],
+  });
+
+  const queueJob = (input: {
+    name?: "generate-narration" | "generate-presentation";
+    costEnvelopeId?: string;
+    attempts?: number;
+    attemptsMade?: number;
+  } = {}) => ({
+    id: "queue-terminal-job",
+    name: input.name || "generate-narration",
+    data: {
+      projectId: "terminal-narration-project",
+      userId: "user-1",
+      generationJobId: "database-terminal-job",
+      ...(input.costEnvelopeId ? { costEnvelopeId: input.costEnvelopeId } : {}),
+    },
+    opts: { attempts: input.attempts ?? 1 },
+    attemptsMade: input.attemptsMade ?? 0,
+    updateProgress: vi.fn().mockResolvedValue(undefined),
+    discard: vi.fn(),
+  } as never);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    finalizeFailedCostEnvelope.mockReset();
+    generateNarrationDraft.mockReset();
+    generatePresentationFromNarration.mockReset();
+    prismaMock.project.update.mockResolvedValue({});
+    prismaMock.project.findUnique.mockResolvedValue({ speechDraft: null });
+    prismaMock.project.findUniqueOrThrow.mockResolvedValue(narrationProject());
+    prismaMock.generationJob.findFirst.mockResolvedValue({ id: "database-terminal-job" });
+    prismaMock.generationJob.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.presentation.findUnique.mockResolvedValue(null);
+    prismaMock.userActivityEvent.create.mockResolvedValue({});
+    costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: mandatorySourceSnapshot });
+  });
+
+  it("finalizes exactly one terminal failed narration envelope without a draft, then rethrows the generation error", async () => {
+    const generationError = new Error("narration generation failed");
+    generateNarrationDraft.mockRejectedValue(generationError);
+    finalizeFailedCostEnvelope.mockResolvedValue({ status: "exhausted", idempotent: false });
+    const job = queueJob({ costEnvelopeId: "envelope-terminal" });
+
+    await expect(handleGenerationJob(job)).rejects.toBe(generationError);
+
+    expect(finalizeFailedCostEnvelope).toHaveBeenCalledTimes(1);
+    expect(finalizeFailedCostEnvelope).toHaveBeenCalledWith({ envelopeId: "envelope-terminal" });
+    expect(prismaMock.project.findUnique).toHaveBeenCalledWith({
+      where: { id: "terminal-narration-project" },
+      select: { speechDraft: true },
+    });
+    expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "failed" }),
+    }));
+    expect(prismaMock.generationJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "failed", error: "narration_failed" }),
+    }));
+    expect(generateNarrationDraft).toHaveBeenCalledTimes(1);
+    expect(generatePresentationFromNarration).not.toHaveBeenCalled();
+    expect(prismaMock.generationJob.create).not.toHaveBeenCalled();
+  });
+
+  it("does not finalize a failed narration when the current project already has a saved draft", async () => {
+    generateNarrationDraft.mockRejectedValue(new Error("narration generation failed"));
+    prismaMock.project.findUnique.mockResolvedValue({ speechDraft: "Saved manual draft" });
+
+    await expect(handleGenerationJob(queueJob({ costEnvelopeId: "envelope-saved-draft" }))).rejects.toThrow("narration generation failed");
+
+    expect(finalizeFailedCostEnvelope).not.toHaveBeenCalled();
+  });
+
+  it("persists terminal narration states and rethrows the generation error when the fresh draft lookup fails", async () => {
+    const generationError = new Error("narration generation failed");
+    const lookupError = new Error("database draft lookup unavailable");
+    generateNarrationDraft.mockRejectedValue(generationError);
+    prismaMock.project.findUnique.mockRejectedValue(lookupError);
+
+    await expect(handleGenerationJob(queueJob({ costEnvelopeId: "envelope-lookup-error" }))).rejects.toBe(generationError);
+
+    expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "failed" }),
+    }));
+    expect(prismaMock.generationJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "failed", error: "narration_failed" }),
+    }));
+    const projectUpdateCalls = prismaMock.project.update.mock.invocationCallOrder;
+    const generationJobUpdateCalls = prismaMock.generationJob.updateMany.mock.invocationCallOrder;
+    const draftLookupCall = prismaMock.project.findUnique.mock.invocationCallOrder[0]!;
+    expect(projectUpdateCalls[projectUpdateCalls.length - 1]!).toBeLessThan(draftLookupCall);
+    expect(generationJobUpdateCalls[generationJobUpdateCalls.length - 1]!).toBeLessThan(draftLookupCall);
+    expect(finalizeFailedCostEnvelope).not.toHaveBeenCalled();
+    expect(captureGenerationError).toHaveBeenLastCalledWith(lookupError, expect.objectContaining({
+      stage: "failed_envelope_finalization",
+      projectId: "terminal-narration-project",
+    }));
+  });
+
+  it("keeps an accepted narration envelope active by never invoking terminal finalization", async () => {
+    generateNarrationDraft.mockResolvedValue({
+      text: "Accepted narration text",
+      narrativePlan: [],
+      generationMode: "aitunnel",
+    });
+
+    await expect(handleGenerationJob(queueJob({ costEnvelopeId: "envelope-accepted" }))).resolves.toBeUndefined();
+
+    expect(finalizeFailedCostEnvelope).not.toHaveBeenCalled();
+  });
+
+  it("does not finalize a terminal presentation failure through the narration helper", async () => {
+    prismaMock.project.findUniqueOrThrow.mockResolvedValue(narrationProject("Accepted narration text"));
+    generatePresentationFromNarration.mockRejectedValue(new Error("presentation schema failure"));
+
+    await expect(handleGenerationJob(queueJob({ name: "generate-presentation", costEnvelopeId: "envelope-presentation" })))
+      .rejects.toThrow("presentation schema failure");
+
+    expect(finalizeFailedCostEnvelope).not.toHaveBeenCalled();
+  });
+
+  it("does not finalize while a presentation failure is scheduled for retry", async () => {
+    prismaMock.project.findUniqueOrThrow.mockResolvedValue(narrationProject("Accepted narration text"));
+    generatePresentationFromNarration.mockRejectedValue(new Error("presentation request timeout"));
+
+    await expect(handleGenerationJob(queueJob({
+      name: "generate-presentation",
+      costEnvelopeId: "envelope-retry",
+      attempts: 3,
+    }))).rejects.toThrow("presentation request timeout");
+
+    expect(finalizeFailedCostEnvelope).not.toHaveBeenCalled();
+  });
+
+  it("does not finalize a terminal narration job without a cost envelope", async () => {
+    generateNarrationDraft.mockRejectedValue(new Error("narration generation failed"));
+
+    await expect(handleGenerationJob(queueJob())).rejects.toThrow("narration generation failed");
+
+    expect(finalizeFailedCostEnvelope).not.toHaveBeenCalled();
+  });
+
+  it("keeps the original generation error and public failure classification when envelope finalization fails", async () => {
+    const generationError = new Error("narration generation failed");
+    const finalizationError = new Error("database finalization unavailable");
+    generateNarrationDraft.mockRejectedValue(generationError);
+    finalizeFailedCostEnvelope.mockRejectedValue(finalizationError);
+
+    await expect(handleGenerationJob(queueJob({ costEnvelopeId: "envelope-finalization-error" }))).rejects.toBe(generationError);
+
+    expect(prismaMock.generationJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "failed", error: "narration_failed" }),
+    }));
+    expect(captureGenerationError).toHaveBeenLastCalledWith(finalizationError, expect.objectContaining({
+      stage: "failed_envelope_finalization",
+      projectId: "terminal-narration-project",
+    }));
   });
 });

@@ -106,7 +106,7 @@ describe("usage ledger pricing", () => {
   });
 
   it("persists the authoritative envelope RUB amount when provider pricing is unset", async () => {
-    await runWithUsageContext({ userId: "user-1", projectId: "project-1", generationJobId: "generation-1" }, () => recordCostEvent({
+    await runWithUsageContext({ userId: "user-1", projectId: "project-1", generationJobId: "generation-1", costEnvelopeId: "envelope-1" }, () => recordCostEvent({
       idempotencyKey: "tavily-web-envelope-priced",
       category: "web_search",
       provider: "tavily",
@@ -119,6 +119,9 @@ describe("usage ledger pricing", () => {
 
     expect(costEventUpsert).toHaveBeenCalledWith(expect.objectContaining({
       create: expect.objectContaining({
+        projectId: "project-1",
+        generationJobId: "generation-1",
+        costEnvelopeId: "envelope-1",
         unitPrice: null,
         sourceCost: null,
         exchangeRateToRub: null,

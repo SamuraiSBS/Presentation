@@ -29,6 +29,9 @@ import {
   presentationSchema,
   resolvePresentationTheme,
   safeGenerationRecovery,
+  isPublicNarrationState,
+  publicNarrationFailureMessage,
+  type PublicNarrationState,
   slideCanvasSchema,
 } from "@studydeck/shared";
 import { ProjectAccessService } from "../access/project-access.service.js";
@@ -134,10 +137,12 @@ export class ProjectsService {
   async getAccessible(userId: string, id: string) {
     const access = await this.access.requireViewer(userId, id);
     const project = await this.getProjectDetail(id);
+    const narrationState = publicNarrationState(project);
     return {
       ...project,
-      error: publicProjectError(project.error, project.status),
+      error: publicProjectError(project.error, project.status, narrationState),
       jobs: project.jobs.map((job) => ({ ...job, error: publicJobError(job.error, job.status) })),
+      narrationState,
       accessRole: access.role,
       presentationRevision: project.presentation?.revision ?? 0,
       owner: project.user,
@@ -769,14 +774,35 @@ export class ProjectsService {
   }
 }
 
-function publicProjectError(value: string | null, status: string) {
+function publicProjectError(value: string | null, status: string, narrationState: PublicNarrationState | null) {
   if (!value) return null;
+  if (narrationState === "source_preparation_failed" || narrationState === "narration_failed") {
+    return publicNarrationFailureMessage(narrationState);
+  }
   return safeGenerationRecovery(status === "failed" ? "unknown" : "transient").message;
 }
 
 function publicJobError(value: string | null, status: string) {
   if (!value) return null;
+  if (isPublicNarrationState(value)) return null;
   return safeGenerationRecovery(status === "failed" ? "unknown" : "transient").message;
+}
+
+function publicNarrationState(project: {
+  status: string;
+  speechDraft: string | null;
+  jobs: Array<{ kind: string; error: string | null }>;
+}): PublicNarrationState | null {
+  const latestNarrationJob = project.jobs.find((job) => job.kind === "narration");
+  const persistedState = latestNarrationJob?.error;
+  if (project.speechDraft?.trim()) {
+    if (persistedState === "accepted_speech" || ["queued", "generating", "ready"].includes(project.status)) {
+      return "accepted_speech";
+    }
+    return "editable_draft";
+  }
+  if (isPublicNarrationState(persistedState)) return persistedState;
+  return project.status === "failed" ? "narration_failed" : null;
 }
 
 function revisionConflict(currentRevision: number) {

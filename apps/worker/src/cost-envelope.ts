@@ -22,7 +22,18 @@ export async function createCostEnvelope(projectId: string) {
 }
 
 type ReserveInput = { envelopeId: string; idempotencyKey: string; bucket: CostEnvelopeBucket; stage: string; amountRub: string };
-type SettleInput = { envelopeId: string; idempotencyKey: string; actualRub?: string; reason?: string };
+type SettleInput = {
+  envelopeId: string;
+  idempotencyKey: string;
+  actualRub?: string;
+  reason?: string;
+  /**
+   * A completed, chargeable operation can still be terminal for the run.
+   * Settle its immutable cost before exhausting the envelope; do not recast
+   * the post-provider business outcome as a provider transport failure.
+   */
+  exhaustEnvelope?: boolean;
+};
 
 /**
  * Locks a single envelope row. The reservation key makes BullMQ retries
@@ -96,7 +107,7 @@ export async function settleCostEnvelope(input: SettleInput) {
       data: {
         reservedRub: { decrement: reservation.reservedRub },
         settledRub: { increment: actual },
-        ...(overrun ? { status: "exhausted" } : {}),
+        ...(overrun || input.exhaustEnvelope ? { status: "exhausted" } : {}),
       },
     });
     return { status: overrun ? "overrun" as const : "settled" as const, actualRub: actual, idempotent: false };
@@ -125,6 +136,23 @@ export async function failCostEnvelope(input: { envelopeId: string; idempotencyK
     await tx.costEnvelopeReservation.update({ where: { id: reservation.id }, data: { status: "provider_error", reason: input.reason || "provider_error", settledAt: new Date() } });
     await tx.costEnvelope.update({ where: { id: envelope.id }, data: { status: "exhausted" } });
     return { status: "provider_error" as const };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+/**
+ * Closes an otherwise reusable envelope after its narration job has reached a
+ * terminal failure without a saved draft. This is deliberately distinct from
+ * provider failure: it never changes a reservation or records a synthetic
+ * usage event.
+ */
+export async function finalizeFailedCostEnvelope(input: { envelopeId: string }) {
+  return getPrisma().$transaction(async (tx) => {
+    const envelope = await lockEnvelope(tx, input.envelopeId);
+    if (envelope.status !== "active") {
+      return { status: envelope.status as "completed" | "cancelled" | "exhausted", idempotent: true };
+    }
+    await tx.costEnvelope.update({ where: { id: envelope.id }, data: { status: "exhausted" } });
+    return { status: "exhausted" as const, idempotent: false };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 

@@ -7,6 +7,7 @@ import {
   safeErrorSummary,
   generationFailureCategory,
   safeGenerationError,
+  publicNarrationFailureState,
   shouldRetryGenerationJob,
   updateGenerationProgress,
 } from "./job-progress.js";
@@ -59,6 +60,12 @@ describe("generation retry classification", () => {
     expect(narrationJobOptions()).not.toHaveProperty("backoff");
     expect(shouldRetryGenerationJob("narration", error, 0, 1)).toBe(false);
     expect(shouldRetryGenerationJob("presentation", error, 0, 3)).toBe(true);
+  });
+
+  it("persists a source-safe terminal reason before narration starts", () => {
+    expect(publicNarrationFailureState("narration", "researching")).toBe("source_preparation_failed");
+    expect(publicNarrationFailureState("narration", "drafting_speech")).toBe("narration_failed");
+    expect(publicNarrationFailureState("presentation", "researching")).toBeNull();
   });
 
   it("does not retry fatal configuration or accepted narration errors", () => {

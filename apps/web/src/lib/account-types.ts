@@ -10,6 +10,7 @@ import type {
   ProjectStatus,
   ProjectSummary,
   ProjectWorkflow,
+  PublicNarrationState,
   Source,
   UsageSummary as SharedUsageSummary,
   UserIdentitySummary,
@@ -44,6 +45,7 @@ export type ProjectDetail = {
   title: string;
   status: ProjectStatus;
   error?: string | null;
+  narrationState?: PublicNarrationState | null;
   speechDraft?: string | null;
   prompt?: string;
   mode?: string;

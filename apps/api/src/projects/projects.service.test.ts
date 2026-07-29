@@ -260,6 +260,69 @@ describe("ProjectsService public generation errors", () => {
     expect(result.error).toMatch(/[А-Яа-яЁё]/);
     expect(result.error).not.toMatch(/yandex|schema|secret/i);
   });
+
+  it("routes a pre-narration source failure without provider detail or a quality-exhaustion claim", async () => {
+    const { service } = createHarness();
+    vi.spyOn(service as any, "getProjectDetail").mockResolvedValue(project({
+      status: "failed",
+      error: "Tavily returned 2 results after private query",
+      speechDraft: null,
+      jobs: [{ kind: "narration", status: "failed", error: "source_preparation_failed" }],
+    }) as never);
+
+    const result = await service.getAccessible("user-1", "project-1");
+
+    expect(result.narrationState).toBe("source_preparation_failed");
+    expect(result.error).toBe("Не удалось подготовить текст выступления. Проект сохранён — запустите подготовку ещё раз, когда будете готовы.");
+    expect(result.error).not.toMatch(/tavily|provider|quality|проверку качества|попыток/i);
+    expect(result.jobs[0]?.error).toBeNull();
+  });
+
+  it("uses the neutral narration fallback for malformed terminal data without exposing the raw error or a numeric deficit", async () => {
+    const { service } = createHarness();
+    vi.spyOn(service as any, "getProjectDetail").mockResolvedValue(project({
+      status: "failed",
+      error: "provider malformed response: missing 136 words",
+      speechDraft: null,
+      jobs: [{ kind: "narration", status: "failed", error: "provider malformed response: missing 136 words" }],
+    }) as never);
+
+    const result = await service.getAccessible("user-1", "project-1");
+
+    expect(result.narrationState).toBe("narration_failed");
+    expect(result.error).toBe("Не удалось завершить подготовку текста выступления. Проект сохранён — запустите подготовку ещё раз, когда будете готовы.");
+    expect(result.error).not.toMatch(/provider|136|quality|проверку качества/i);
+  });
+
+  it("marks a saved editable draft without turning it into accepted speech or a public error", async () => {
+    const { service } = createHarness();
+    vi.spyOn(service as any, "getProjectDetail").mockResolvedValue(project({
+      status: "script_ready",
+      error: null,
+      jobs: [{ kind: "narration", status: "completed", error: "editable_draft" }],
+    }) as never);
+
+    const result = await service.getAccessible("user-1", "project-1");
+
+    expect(result.narrationState).toBe("editable_draft");
+    expect(result.error).toBeNull();
+    expect(result.jobs[0]?.error).toBeNull();
+  });
+
+  it("preserves the accepted-speech flow without exposing a terminal job marker as an error", async () => {
+    const { service } = createHarness();
+    vi.spyOn(service as any, "getProjectDetail").mockResolvedValue(project({
+      status: "script_ready",
+      error: null,
+      jobs: [{ kind: "narration", status: "completed", error: "accepted_speech" }],
+    }) as never);
+
+    const result = await service.getAccessible("user-1", "project-1");
+
+    expect(result.narrationState).toBe("accepted_speech");
+    expect(result.error).toBeNull();
+    expect(result.jobs[0]?.error).toBeNull();
+  });
 });
 
 describe("ProjectsService defense lifecycle", () => {

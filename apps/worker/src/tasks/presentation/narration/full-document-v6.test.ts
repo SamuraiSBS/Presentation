@@ -12,8 +12,9 @@ import {
   AitunnelProjectBudget,
   runWithAitunnelProjectBudget,
 } from "../../../aitunnel-narration-budget.js";
+import { logger } from "../../../observability.js";
 import { NARRATION_SYSTEM_PROMPT } from "../constants.js";
-import { generateAitunnelFullNarrationOutcome } from "../providers/generation.js";
+import { generateAitunnelFullNarrationOutcome, normalizeV6ProviderTerminationMetadata } from "../providers/generation.js";
 import {
   buildAitunnelFullNarrationCandidatePrompt,
   buildAitunnelFullNarrationRewriteWithDraftPrompt,
@@ -298,6 +299,271 @@ describe("Plan 18 v6 full-document narration foundation", () => {
     expect(failedRewriteClient.responses.create).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("Prompt 19.6B v6 text-free narration telemetry", () => {
+  it("records one safe candidate assessment and accepted-candidate decision", async () => {
+    const telemetry = captureV6Telemetry();
+    const accepted = fullSpeech(Array(10).fill(117));
+    const client = { responses: { create: vi.fn().mockResolvedValue({ output_text: accepted, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" }) } };
+
+    try {
+      await expect(runV6Narration(client)).resolves.toMatchObject({ kind: "accepted", stage: "narration_full_candidate" });
+      const assessments = telemetry.events.filter((event) => event.telemetryEvent === "narration_v6_attempt_assessment");
+      const decision = expectOneRecoveryDecision(telemetry.events, "accepted_candidate");
+
+      expect(assessments).toHaveLength(1);
+      expect(assessments[0]).toMatchObject({
+        projectId: project.id,
+        stage: "drafting_speech",
+        narrationStage: "narration_full_candidate",
+        narrationTextCall: 1,
+        sectionCount: 10,
+        totalWords: 1170,
+        isStructurallyUsable: true,
+        isAccepted: true,
+      });
+      expect(decision).toMatchObject({
+        telemetryEvent: "narration_v6_recovery_decision",
+        selectedOutcome: "accepted",
+        selectedNarrationStage: "narration_full_candidate",
+        attemptStages: ["narration_full_candidate"],
+        narrationCallCount: 1,
+        maxNarrationCalls: 3,
+      });
+    } finally {
+      telemetry.restore();
+    }
+  });
+
+  it("records candidate and rewrite assessments before accepted rewrite", async () => {
+    const telemetry = captureV6Telemetry();
+    const short = fullSpeech(Array(10).fill(110));
+    const accepted = fullSpeech(Array(10).fill(117));
+    const client = { responses: { create: vi.fn()
+      .mockResolvedValueOnce({ output_text: short, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" })
+      .mockResolvedValueOnce({ output_text: accepted, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" }) } };
+
+    try {
+      await expect(runV6Narration(client)).resolves.toMatchObject({ kind: "accepted", stage: "narration_full_rewrite" });
+      expect(telemetry.events.filter((event) => event.telemetryEvent === "narration_v6_attempt_assessment").map((event) => event.narrationStage))
+        .toEqual(["narration_full_candidate", "narration_full_rewrite"]);
+      expect(expectOneRecoveryDecision(telemetry.events, "accepted_rewrite")).toMatchObject({
+        selectedOutcome: "accepted",
+        selectedNarrationStage: "narration_full_rewrite",
+        narrationCallCount: 2,
+      });
+    } finally {
+      telemetry.restore();
+    }
+  });
+
+  it("records repair_not_eligible with the selected editable draft and no repair call", async () => {
+    const telemetry = captureV6Telemetry();
+    const short = fullSpeech(Array(10).fill(110));
+    const client = { responses: { create: vi.fn()
+      .mockResolvedValueOnce({ output_text: short, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" })
+      .mockResolvedValueOnce({ output_text: short, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" }) } };
+
+    try {
+      await expect(runV6Narration(client)).resolves.toMatchObject({ kind: "editable_draft", stage: "narration_full_candidate" });
+      expect(client.responses.create).toHaveBeenCalledTimes(2);
+      expect(expectOneRecoveryDecision(telemetry.events, "repair_not_eligible")).toMatchObject({
+        selectedOutcome: "editable_draft",
+        selectedNarrationStage: "narration_full_candidate",
+        repairEligible: false,
+      });
+      expect(expectOneRecoveryDecision(telemetry.events, "editable_draft_selected")).toMatchObject({
+        selectedOutcome: "editable_draft",
+        selectedNarrationStage: "narration_full_candidate",
+      });
+      expect(telemetry.events.some((event) => event.narrationStage === "narration_targeted_repair")).toBe(false);
+    } finally {
+      telemetry.restore();
+    }
+  });
+
+  it("records repair eligibility, the third assessment, and terminal accepted repair without exceeding three calls", async () => {
+    const telemetry = captureV6Telemetry();
+    const short = fullSpeech([20, ...Array(9).fill(117)]);
+    const repairedFirstSection = fullSpeech([117]);
+    const client = { responses: { create: vi.fn()
+      .mockResolvedValueOnce({ output_text: short, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" })
+      .mockResolvedValueOnce({ output_text: short, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" })
+      .mockResolvedValueOnce({ output_text: JSON.stringify({ replacements: { "1": repairedFirstSection } }), usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" }) } };
+
+    try {
+      await expect(runV6Narration(client)).resolves.toMatchObject({ kind: "accepted", stage: "narration_targeted_repair" });
+      expect(client.responses.create).toHaveBeenCalledTimes(3);
+      expect(expectOneRecoveryDecision(telemetry.events, "repair_eligible")).toMatchObject({ repairEligible: true, narrationCallCount: 2 });
+      expect(telemetry.events.filter((event) => event.telemetryEvent === "narration_v6_attempt_assessment").map((event) => event.narrationStage))
+        .toEqual(["narration_full_candidate", "narration_full_rewrite", "narration_targeted_repair"]);
+      expect(expectOneRecoveryDecision(telemetry.events, "accepted_repair")).toMatchObject({
+        selectedOutcome: "accepted",
+        selectedNarrationStage: "narration_targeted_repair",
+        narrationCallCount: 3,
+      });
+    } finally {
+      telemetry.restore();
+    }
+  });
+
+  it("classifies a structurally unusable candidate exactly once without retaining draft text", async () => {
+    const telemetry = captureV6Telemetry();
+    const unusableDraft = "DRAFT_SENTINEL_NO_USABLE";
+    const client = { responses: { create: vi.fn().mockResolvedValue({ output_text: unusableDraft, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" }) } };
+
+    try {
+      await expect(runV6Narration(client)).rejects.toThrow("narration_quality_failure");
+      expect(client.responses.create).toHaveBeenCalledTimes(1);
+      expect(telemetry.events.filter((event) => event.telemetryEvent === "narration_v6_attempt_assessment")).toHaveLength(1);
+      expect(expectOneRecoveryDecision(telemetry.events, "candidate_not_usable")).toMatchObject({ selectedOutcome: "none", narrationCallCount: 1 });
+      expect(expectOneRecoveryDecision(telemetry.events, "no_usable_draft")).toMatchObject({ selectedOutcome: "none", narrationCallCount: 1 });
+      expect(recoveryDecisionEvents(telemetry.events, "terminal_recovery_failure_without_draft")).toHaveLength(0);
+      expect(JSON.stringify(telemetry.events)).not.toContain(unusableDraft);
+    } finally {
+      telemetry.restore();
+    }
+  });
+
+  it("records a safe provider-failure decision after a usable draft without an extra call or sensitive values", async () => {
+    const telemetry = captureV6Telemetry();
+    const sentinels = {
+      title: "TITLE_SENTINEL_PRIVATE",
+      prompt: "PROMPT_SENTINEL_PRIVATE",
+      source: "SOURCE_SENTINEL_PRIVATE",
+      draft: "DRAFT_SENTINEL_PRIVATE",
+      providerError: "RAW_PROVIDER_DETAIL_SENTINEL",
+    };
+    const sensitiveProject = { ...project, title: sentinels.title, prompt: sentinels.prompt };
+    const sensitiveSources = [{ ...sources[0]!, label: sentinels.source }, ...sources.slice(1)];
+    const usableDraft = fullSpeech(Array(10).fill(110)).replace("Topic 1", `Topic 1 ${sentinels.draft}`);
+    const client = { responses: { create: vi.fn()
+      .mockResolvedValueOnce({ output_text: usableDraft, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" })
+      .mockRejectedValueOnce(new Error(sentinels.providerError)) } };
+
+    try {
+      await expect(runV6Narration(client, sensitiveProject, sensitiveSources)).resolves.toMatchObject({ kind: "editable_draft", stage: "narration_full_candidate" });
+      expect(client.responses.create).toHaveBeenCalledTimes(2);
+      expect(expectOneRecoveryDecision(telemetry.events, "terminal_provider_or_usage_failure_with_editable_draft")).toMatchObject({
+        selectedOutcome: "editable_draft",
+        selectedNarrationStage: "narration_full_candidate",
+        narrationCallCount: 2,
+      });
+      expect(expectOneRecoveryDecision(telemetry.events, "editable_draft_selected")).toMatchObject({ selectedOutcome: "editable_draft" });
+      const serialized = JSON.stringify(telemetry.events);
+      Object.values(sentinels).forEach((sentinel) => expect(serialized).not.toContain(sentinel));
+    } finally {
+      telemetry.restore();
+    }
+  });
+
+  it("normalizes known and unknown provider completion metadata without logging raw strings", async () => {
+    expect(normalizeV6ProviderTerminationMetadata({
+      output_text: "answer",
+      usage: {},
+      status: "incomplete",
+      incomplete_details: { reason: "max_output_tokens" },
+    })).toEqual({
+      hasOutputText: true,
+      hasUsage: true,
+      providerResponseStatus: "incomplete",
+      providerTerminationReason: "max_output_tokens",
+    });
+    expect(normalizeV6ProviderTerminationMetadata({ output_text: "", status: "RAW_STATUS_SENTINEL", incomplete_details: { reason: "RAW_REASON_SENTINEL" } }))
+      .toEqual({ hasOutputText: false, hasUsage: false, providerResponseStatus: "unknown", providerTerminationReason: "unknown" });
+
+    const telemetry = captureV6Telemetry();
+    const accepted = fullSpeech(Array(10).fill(117));
+    const client = { responses: { create: vi.fn().mockResolvedValue({
+      output_text: accepted,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      status: "RAW_STATUS_SENTINEL",
+      incomplete_details: { reason: "RAW_REASON_SENTINEL" },
+    }) } };
+
+    try {
+      await expect(runV6Narration(client)).resolves.toMatchObject({ kind: "accepted" });
+      expect(expectOneRecoveryDecision(telemetry.events, "accepted_candidate")).toMatchObject({ narrationCallCount: 1 });
+      expect(telemetry.events.find((event) => event.telemetryEvent === "narration_v6_provider_termination")).toMatchObject({
+        providerResponseStatus: "unknown",
+        providerTerminationReason: "unknown",
+        hasOutputText: true,
+        hasUsage: true,
+      });
+      expect(JSON.stringify(telemetry.events)).not.toContain("RAW_STATUS_SENTINEL");
+      expect(JSON.stringify(telemetry.events)).not.toContain("RAW_REASON_SENTINEL");
+    } finally {
+      telemetry.restore();
+    }
+  });
+
+  it("classifies a first-call provider failure without a usable attempt exactly once", async () => {
+    const telemetry = captureV6Telemetry();
+    const rawProviderError = "RAW_PROVIDER_FIRST_CALL_SENTINEL";
+    const client = { responses: { create: vi.fn().mockRejectedValue(new Error(rawProviderError)) } };
+
+    try {
+      await expect(runV6Narration(client)).rejects.toThrow("narration_provider_failure");
+      expect(client.responses.create).toHaveBeenCalledTimes(1);
+      expect(telemetry.events.filter((event) => event.telemetryEvent === "narration_v6_attempt_assessment")).toHaveLength(0);
+      expect(expectOneRecoveryDecision(telemetry.events, "terminal_provider_or_usage_failure_without_draft")).toMatchObject({
+        selectedOutcome: "none",
+        selectedNarrationStage: null,
+        narrationCallCount: 1,
+        maxNarrationCalls: 3,
+        attemptStages: [],
+      });
+      expect(expectOneRecoveryDecision(telemetry.events, "no_usable_draft")).toMatchObject({
+        selectedOutcome: "none",
+        narrationCallCount: 1,
+      });
+      expect(JSON.stringify(telemetry.events)).not.toContain(rawProviderError);
+    } finally {
+      telemetry.restore();
+    }
+  });
+
+  it("continues the existing bounded path when private telemetry logging throws", async () => {
+    const accepted = fullSpeech(Array(10).fill(117));
+    const client = { responses: { create: vi.fn().mockResolvedValue({ output_text: accepted, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" }) } };
+    const info = vi.spyOn(logger, "info").mockImplementation(() => {
+      throw new Error("telemetry sink unavailable");
+    });
+
+    try {
+      await expect(runV6Narration(client)).resolves.toMatchObject({ kind: "accepted", stage: "narration_full_candidate" });
+      expect(client.responses.create).toHaveBeenCalledTimes(1);
+    } finally {
+      info.mockRestore();
+    }
+  });
+});
+
+function captureV6Telemetry() {
+  const events: Array<Record<string, unknown>> = [];
+  const info = vi.spyOn(logger, "info").mockImplementation((payload: unknown) => {
+    if (payload && typeof payload === "object") events.push(payload as Record<string, unknown>);
+    return logger;
+  });
+  return { events, restore: () => info.mockRestore() };
+}
+
+function recoveryDecisionEvents(events: readonly Record<string, unknown>[], decision: string) {
+  return events.filter((event) => event.telemetryEvent === "narration_v6_recovery_decision" && event.decision === decision);
+}
+
+function expectOneRecoveryDecision(events: readonly Record<string, unknown>[], decision: string) {
+  const matching = recoveryDecisionEvents(events, decision);
+  expect(matching).toHaveLength(1);
+  return matching[0]!;
+}
+
+function runV6Narration(client: unknown, narrationProject = project, narrationSources = sources) {
+  return runWithAitunnelProjectBudget(
+    new AitunnelProjectBudget({ AITUNNEL_PROJECT_BUDGET_RUB: "40", AITUNNEL_NARRATION_JOB_BUDGET_RUB: "40" }),
+    () => generateAitunnelFullNarrationOutcome(client as never, narrationProject, narrationSources, plan),
+  );
+}
 
 function requestFor(prompt: string) {
   return { input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: prompt }] };
