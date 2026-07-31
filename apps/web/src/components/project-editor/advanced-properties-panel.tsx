@@ -201,17 +201,29 @@ export function PropertiesPanel({
             description="Перемести объект выше или ниже, либо заблокируй его."
           >
             <div className="property-actions">
-              <button type="button" onClick={onDuplicate}>
+              <button
+                type="button"
+                onClick={onDuplicate}
+                aria-label="Дублировать объект"
+                title="Дублировать объект"
+              >
                 <Icon name="copy" />
-                Дублировать
               </button>
-              <button type="button" onClick={onLayerDown}>
+              <button
+                type="button"
+                onClick={onLayerDown}
+                aria-label="Переместить объект назад"
+                title="Переместить объект назад"
+              >
                 <Icon name="back" />
-                Назад
               </button>
-              <button type="button" onClick={onLayerUp}>
+              <button
+                type="button"
+                onClick={onLayerUp}
+                aria-label="Переместить объект вперёд"
+                title="Переместить объект вперёд"
+              >
                 <Icon name="front" />
-                Вперёд
               </button>
             </div>
             <label className="field property-check">

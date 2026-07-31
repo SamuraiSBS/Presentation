@@ -14,6 +14,27 @@
 .object-floating-menu { border: 0; border-radius: var(--radius-editor); background: #432b18; }
 .property-section { border: 0; border-radius: var(--radius-editor); background: #54371f; }
 .property-actions button, .property-danger { border-color: #7a5433; background: #352214; }
+.property-actions {
+  gap: 8px;
+}
+.property-actions button {
+  min-width: 0;
+  min-height: 38px;
+  padding: 0;
+}
+.property-actions button .tool-icon {
+  width: 17px;
+  height: 17px;
+}
+.property-actions button:hover:not(:disabled) {
+  border-color: #c98548;
+  background: #432b18;
+  color: #fff9f1;
+}
+.property-actions button:focus-visible {
+  outline: 3px solid rgba(255, 177, 74, .72);
+  outline-offset: 2px;
+}
 
 .mobile-bottom-nav { display: none; }
 
