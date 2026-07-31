@@ -153,7 +153,6 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
                   value={topic}
                   onChange={(event) => setTopic(event.target.value)}
                   placeholder="Например: как AI меняет высшее образование"
-                  autoFocus
                   onKeyDown={(event) => {
                     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") nextFromTopic();
                   }}

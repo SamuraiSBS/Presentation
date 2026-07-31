@@ -19,6 +19,9 @@
   --radius: 18px;
   --radius-major: 24px;
   --radius-editor: 12px;
+  --control-size: 44px;
+  --control-size-compact: 40px;
+  --control-hit-size: 44px;
   --focus-ring: 0 0 0 4px rgba(255, 138, 0, 0.24);
   --shadow-raised: 0 12px 30px rgba(111, 61, 14, 0.11);
   --motion-fast: 160ms;

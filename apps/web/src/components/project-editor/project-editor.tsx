@@ -536,6 +536,46 @@ export function ProjectEditor({
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
+  function selectElement(element: CanvasElement) {
+    setSelectedId(element.id);
+    setEditingTextId("");
+  }
+
+  function resizeWithKeyboard(
+    event: KeyboardEvent<HTMLButtonElement>,
+    element: CanvasElement,
+  ) {
+    if (!canvas || element.locked) return;
+    const key = event.key;
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(key)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const step = event.shiftKey ? 20 : 8;
+    const widthDelta = key === "ArrowLeft" ? -step : key === "ArrowRight" ? step : 0;
+    const heightDelta = key === "ArrowUp" ? -step : key === "ArrowDown" ? step : 0;
+    const width = clamp(element.w + widthDelta, 24, canvasWidth - element.x);
+    const height = clamp(element.h + heightDelta, 20, canvasHeight - element.y);
+    const fontSize =
+      element.type === "text" ? fittedTextSize(element, width, height) : null;
+
+    if (element.type === "text" && fontSize === null) return;
+
+    const resized = {
+      ...element,
+      w: width,
+      h: height,
+      ...(element.type === "text" ? { fontSize } : {}),
+    } as CanvasElement;
+    commitCanvas({
+      ...canvas,
+      elements: canvas.elements.map((item) =>
+        item.id === element.id ? resized : item,
+      ),
+    });
+  }
+
   function onPointerMove(event: PointerEvent<HTMLElement>) {
     if (!canvas || !dragRef.current) return;
     const drag = dragRef.current;
@@ -609,10 +649,10 @@ export function ProjectEditor({
     if (
       !showObjectCanvas ||
       !selected ||
-      !canvas ||
-      isTypingTarget(event.target)
+      !canvas
     )
       return;
+    if (event.defaultPrevented || isTypingTarget(event.target)) return;
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
       deleteSelected();
@@ -762,7 +802,7 @@ export function ProjectEditor({
         {project.workflow === "requirements_driven" ? <DefenseCompliancePanel projectId={project.id} presentationRevision={project.presentationRevision || 0} slides={presentation.slides} canEdit={false} onSelectSlide={setActive} /> : null}
         <section className="viewer-editor">
           <aside className="slide-rail"><strong>Слайды</strong><div className="slide-rail-list">{presentation.slides.map((item, index) => <button className={`slide-thumb ${index === active ? "slide-thumb-active" : ""}`} key={item.id} type="button" onClick={() => setActive(index)}><span>{String(index + 1).padStart(2, "0")}</span><strong>{item.title}</strong></button>)}</div></aside>
-          <main className="canvas-shell viewer-canvas-shell"><div className="viewer-toolbar"><span>Редактирование доступно владельцу и редакторам</span><Link href={`/projects/${project.id}/export`}>PDF и PPTX</Link></div><TemplatePreviewFrame slide={slide} theme={theme} scale={canvasScale} frameRef={frameRef} onSelectElement={() => undefined} /></main>
+          <section className="canvas-shell viewer-canvas-shell" aria-label="Предпросмотр слайда"><div className="viewer-toolbar"><span>Редактирование доступно владельцу и редакторам</span><Link href={`/projects/${project.id}/export`}>PDF и PPTX</Link></div><TemplatePreviewFrame slide={slide} theme={theme} scale={canvasScale} frameRef={frameRef} onSelectElement={() => undefined} /></section>
         </section>
       </section>
     );
@@ -813,7 +853,7 @@ export function ProjectEditor({
           </div>
         </aside>
 
-        <main className="canvas-shell">
+        <section className="canvas-shell" aria-label="Редактор слайда">
           <EditorTopToolbar
             projectId={project.id}
             tool={tool}
@@ -893,15 +933,21 @@ export function ProjectEditor({
                       onPointerUp={onPointerUp}
                       onPointerCancel={onPointerUp}
                     >
-                      {sortCanvasElements(canvas.elements).map((element) => (
+                      {sortCanvasElements(canvas.elements).map((element, index) => (
                         <CanvasElementView
                           element={element}
                           key={element.id}
+                          position={index + 1}
+                          scale={canvasScale}
                           selected={element.id === selectedId}
                           editing={editingTextId === element.id}
                           onPointerDown={(event) => startMove(event, element)}
+                          onSelect={() => selectElement(element)}
                           onResizePointerDown={(event) =>
                             startResize(event, element)
+                          }
+                          onResizeKeyDown={(event) =>
+                            resizeWithKeyboard(event, element)
                           }
                           onEditText={() => setEditingTextId(element.id)}
                           onStopEditText={() => setEditingTextId("")}
@@ -962,7 +1008,7 @@ export function ProjectEditor({
             />
           )}
 
-        </main>
+        </section>
 
         <aside className="properties-panel">
           {advancedMode ? (

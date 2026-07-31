@@ -298,7 +298,7 @@ body:has(.editor-page) {
 .simple-tab {
   display: inline-flex;
   min-width: 0;
-  min-height: 38px;
+  min-height: var(--control-size-compact);
   align-items: center;
   justify-content: center;
   gap: 6px;
@@ -513,41 +513,13 @@ body:has(.editor-page) {
   outline-offset: 4px;
 }
 
-.mobile-editor-nav {
-  display: none;
+.canvas-element:focus-visible {
+  outline: 3px solid var(--orange);
+  outline-offset: 4px;
 }
 
-@media (min-width: 901px) and (min-height: 721px) {
-  body:has(.new-page) {
-    height: 100dvh;
-    overflow: hidden;
-    overscroll-behavior: none;
-  }
-
-  .app-content:has(.new-page) {
-    height: calc(100dvh - 72px);
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .new-page {
-    height: 100%;
-    min-height: 0;
-    overflow: hidden;
-    padding-block: clamp(14px, 2.5vh, 28px);
-  }
-
-  .new-page .new-workspace {
-    min-height: 0;
-    flex: 1 1 auto;
-  }
-
-  .new-page .wizard-main,
-  .new-page .wizard-summary {
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
+.mobile-editor-nav {
+  display: none;
 }
 
 @media (max-width: 1100px) {
@@ -805,5 +777,19 @@ body:has(.editor-page) {
 
   .slide-thumb {
     min-height: 48px;
+  }
+
+  .simple-tab,
+  .rich-text-toolbar button,
+  .property-add-button {
+    min-width: var(--control-hit-size);
+    min-height: var(--control-hit-size);
+  }
+
+  .resize-handle {
+    width: var(--control-hit-size);
+    height: var(--control-hit-size);
+    right: -22px;
+    bottom: -22px;
   }
 }

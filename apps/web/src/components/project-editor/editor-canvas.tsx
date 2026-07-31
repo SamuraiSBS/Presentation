@@ -1,4 +1,4 @@
-import type { KeyboardEvent, PointerEvent, RefObject } from "react";
+import type { CSSProperties, KeyboardEvent, PointerEvent, RefObject } from "react";
 import NextImage from "next/image";
 import type { CanvasElement, PresentationTheme, Slide } from "@studydeck/shared";
 import { buildSlideCanvas, canvasBackgroundCss, sortCanvasElements } from "@studydeck/shared";
@@ -136,106 +136,176 @@ export function ReadonlyCanvasElement({
 
 export function CanvasElementView({
   element,
+  position,
+  scale,
   selected,
   editing,
   onPointerDown,
+  onSelect,
   onResizePointerDown,
+  onResizeKeyDown,
   onEditText,
   onStopEditText,
   onTextChange,
 }: {
   element: CanvasElement;
+  position: number;
+  scale: number;
   selected: boolean;
   editing: boolean;
   onPointerDown: (event: PointerEvent<HTMLDivElement>) => void;
+  onSelect: () => void;
   onResizePointerDown: (event: PointerEvent<HTMLButtonElement>) => void;
+  onResizeKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
   onEditText: () => void;
   onStopEditText: () => void;
   onTextChange: (text: string) => void;
 }) {
   const style = elementStyle(element);
+  const elementLabel = canvasElementLabel(element, position);
+  const elementStateLabel = element.locked
+    ? "заблокирован"
+    : selected
+      ? element.type === "text"
+        ? "выбран. Нажмите Enter, чтобы редактировать текст или используйте клавиши со стрелками для перемещения."
+        : "выбран. Используйте клавиши со стрелками для перемещения."
+      : "нажмите Enter или пробел, чтобы выбрать.";
+
+  const selectWithKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    if (element.type === "text" && selected && !element.locked) {
+      onEditText();
+      return;
+    }
+    onSelect();
+  };
+
+  const selectWithPointer = (event: PointerEvent<HTMLDivElement>) => {
+    event.currentTarget.focus();
+    onPointerDown(event);
+  };
+
+  const elementProps = {
+    "aria-label": `${elementLabel} — ${elementStateLabel}`,
+    "aria-pressed": selected,
+    className: `canvas-element${element.type === "text" ? " canvas-text-element" : ""} ${selected ? "canvas-element-selected" : ""}`,
+    "data-canvas-element-id": element.id,
+    "data-canvas-element-type": element.type,
+    onKeyDown: selectWithKeyboard,
+    onPointerDown: selectWithPointer,
+    role: "button" as const,
+    tabIndex: 0,
+  };
+
+  const resizeHandle = selected && !element.locked ? (
+    <button
+      aria-label={`Изменить размер: ${elementLabel}`}
+      className="resize-handle"
+      data-resize-element-id={element.id}
+      onKeyDown={onResizeKeyDown}
+      onPointerDown={onResizePointerDown}
+      style={{
+        "--canvas-inverse-scale": 1 / Math.max(scale, 0.01),
+      } as CSSProperties}
+      type="button"
+    />
+  ) : null;
 
   if (element.type === "shape") {
     return (
-      <div
-        className={`canvas-element ${selected ? "canvas-element-selected" : ""}`}
-        style={style}
-        onPointerDown={onPointerDown}
-      >
-        <div
-          className={`canvas-shape canvas-shape-${element.shape}`}
-          style={shapeStyle(element)}
-        />
-        {selected && !element.locked ? (
-          <button
-            className="resize-handle"
-            type="button"
-            onPointerDown={onResizePointerDown}
+      <div className="canvas-element-shell" style={style}>
+        <div {...elementProps}>
+          <div
+            className={`canvas-shape canvas-shape-${element.shape}`}
+            style={shapeStyle(element)}
           />
-        ) : null}
+        </div>
+        {resizeHandle}
       </div>
     );
   }
 
   if (element.type === "image") {
     return (
-      <div
-        className={`canvas-element ${selected ? "canvas-element-selected" : ""}`}
-        style={{ ...style, borderRadius: element.id.includes("-editorial-") ? 0 : 18, overflow: "hidden" }}
-        onPointerDown={onPointerDown}
-      >
-        {element.url ? (
-          <NextImage
-            src={element.url}
-            alt={element.alt}
-            fill
-            sizes="100vw"
-            unoptimized
-            draggable={false}
-            style={{ objectFit: element.fit }}
-          />
-        ) : null}
-        {selected && !element.locked ? (
-          <button
-            className="resize-handle"
-            type="button"
-            onPointerDown={onResizePointerDown}
-          />
-        ) : null}
+      <div className="canvas-element-shell" style={style}>
+        <div
+          {...elementProps}
+          style={{ borderRadius: element.id.includes("-editorial-") ? 0 : 18, overflow: "hidden" }}
+        >
+          {element.url ? (
+            <NextImage
+              src={element.url}
+              alt={element.alt}
+              fill
+              sizes="100vw"
+              unoptimized
+              draggable={false}
+              style={{ objectFit: element.fit }}
+            />
+          ) : null}
+        </div>
+        {resizeHandle}
       </div>
     );
   }
 
   return (
-    <div
-      className={`canvas-element canvas-text-element ${selected ? "canvas-element-selected" : ""}`}
-      style={style}
-      onPointerDown={onPointerDown}
-    >
-      <div
-        contentEditable={selected && editing && !element.locked}
-        data-element-editor={element.id}
-        suppressContentEditableWarning
-        spellCheck={false}
-        onDoubleClick={onEditText}
-        onPointerDown={(event) => {
-          if (editing) event.stopPropagation();
-        }}
-        onBlur={(event) => {
-          onTextChange(event.currentTarget.innerText);
-          onStopEditText();
-        }}
-        style={textStyle(element)}
-      >
-        {element.text}
+    <div className="canvas-element-shell" style={style}>
+      <div {...elementProps}>
+        <div
+          contentEditable={selected && editing && !element.locked}
+          data-element-editor={element.id}
+          suppressContentEditableWarning
+          spellCheck={false}
+          onDoubleClick={onEditText}
+          onPointerDown={(event) => {
+            if (editing) event.stopPropagation();
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.currentTarget.parentElement?.focus();
+            onStopEditText();
+          }}
+          onBlur={(event) => {
+            onTextChange(event.currentTarget.innerText);
+            onStopEditText();
+          }}
+          style={textStyle(element)}
+        >
+          {element.text}
+        </div>
       </div>
-      {selected && !element.locked ? (
-        <button
-          className="resize-handle"
-          type="button"
-          onPointerDown={onResizePointerDown}
-        />
-      ) : null}
+      {resizeHandle}
     </div>
   );
+}
+
+function canvasElementLabel(element: CanvasElement, position: number) {
+  if (element.type === "text") {
+    const preview = accessiblePreview(element.text);
+    return preview
+      ? `Текстовый элемент ${position}: ${preview}`
+      : `Пустой текстовый элемент ${position}`;
+  }
+  if (element.type === "image") {
+    const preview = accessiblePreview(element.alt);
+    return preview
+      ? `Изображение ${position}: ${preview}`
+      : `Изображение ${position} без описания`;
+  }
+  const shapeNames: Record<typeof element.shape, string> = {
+    ellipse: "эллипс",
+    line: "линия",
+    rect: "прямоугольник",
+    roundRect: "скруглённый прямоугольник",
+  };
+  return `Фигура ${position}: ${shapeNames[element.shape]}`;
+}
+
+function accessiblePreview(value: string) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > 72 ? `${normalized.slice(0, 69)}…` : normalized;
 }

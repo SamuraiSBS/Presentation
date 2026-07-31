@@ -160,20 +160,20 @@
 }
 
 .ui-button-size-default {
-  min-height: 40px;
+  min-height: var(--control-size);
   padding: 0 14px;
 }
 
 .ui-button-size-sm {
-  min-height: 34px;
+  min-height: var(--control-size-compact);
   padding: 0 11px;
   font-size: 13px;
 }
 
 .ui-button-size-icon {
-  width: 40px;
-  min-width: 40px;
-  min-height: 40px;
+  width: var(--control-size);
+  min-width: var(--control-size);
+  min-height: var(--control-size);
   padding: 0;
 }
 

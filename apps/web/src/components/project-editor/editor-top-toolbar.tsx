@@ -41,6 +41,7 @@ export function EditorTopToolbar({
     <div className="editor-toolbar editor-toolbar-primary">
       <div className="toolbar-group mode-group" aria-label="Режим просмотра">
         <button
+          aria-label="Просмотр слайда"
           className={viewMode === "preview" ? "tool-active" : ""}
           type="button"
           onClick={onPreview}
@@ -51,6 +52,7 @@ export function EditorTopToolbar({
           <span>Просмотр</span>
         </button>
         <button
+          aria-label={advancedMode ? "Простой режим" : "Точная правка"}
           className={advancedMode ? "tool-active" : ""}
           type="button"
           onClick={advancedMode ? onCloseAdvanced : onOpenAdvanced}
@@ -63,6 +65,7 @@ export function EditorTopToolbar({
       {advancedMode ? (
         <div className="toolbar-group" aria-label="Инструменты">
           <button
+            aria-label="Выбрать объект"
             className={
               tool === "select" && viewMode === "edit" ? "tool-active" : ""
             }
@@ -74,6 +77,7 @@ export function EditorTopToolbar({
             <span>Выбрать</span>
           </button>
           <button
+            aria-label="Добавить текст"
             className={
               tool === "text" && viewMode === "edit" ? "tool-active" : ""
             }
@@ -85,6 +89,7 @@ export function EditorTopToolbar({
             <span>Текст</span>
           </button>
           <button
+            aria-label="Добавить фигуру"
             className={
               tool === "shape" && viewMode === "edit" ? "tool-active" : ""
             }
@@ -96,6 +101,7 @@ export function EditorTopToolbar({
             <span>Фигура</span>
           </button>
           <button
+            aria-label="Загрузить изображение"
             type="button"
             onClick={onUploadClick}
             disabled={!canUpload || busy}

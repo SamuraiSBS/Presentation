@@ -38,7 +38,9 @@
 
 .wizard-progress-step {
   display: inline-flex;
+  min-height: var(--control-size);
   align-items: center;
+  justify-content: center;
   gap: 7px;
   border: 0;
   border-radius: 999px;
@@ -47,6 +49,7 @@
   color: var(--muted);
   font-size: 13px;
   font-weight: 850;
+  line-height: 1.2;
   cursor: pointer;
 }
 
@@ -68,7 +71,7 @@
 
 .wizard-progress-step-active > span:first-child {
   background: var(--orange);
-  color: #fff;
+  color: var(--ink);
 }
 
 .wizard-progress-step-complete > span:first-child {
@@ -83,10 +86,9 @@
 
 .wizard-main {
   width: 100%;
-  height: 460px;
   min-height: 460px;
   padding: clamp(20px, 3vw, 28px);
-  overflow-y: auto;
+  overflow: visible;
 }
 
 .wizard-pane {
@@ -340,26 +342,6 @@
 
   .choice-button:nth-child(4) {
     grid-column: auto;
-  }
-}
-
-@media (max-height: 720px), (max-width: 900px) {
-  body:has(.new-page) {
-    height: auto;
-    overflow-y: auto;
-    overscroll-behavior-y: auto;
-  }
-
-  .app-content:has(.new-page) {
-    height: auto;
-    min-height: calc(100dvh - 72px);
-    overflow: visible;
-  }
-
-  .new-page {
-    height: auto;
-    min-height: calc(100dvh - 72px);
-    overflow: visible;
   }
 }
 

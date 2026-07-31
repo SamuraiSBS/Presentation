@@ -85,12 +85,16 @@
 
 .public-header-nav-link,
 .public-header-account {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 2.75rem;
   padding-inline: 0.75rem;
   border-radius: 0.875rem;
   color: #5d3f21;
   font-size: 0.875rem;
   font-weight: 800;
+  line-height: 1.2;
   transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out);
 }
 
@@ -98,6 +102,17 @@
 .public-header-account:hover {
   background: var(--orange-soft);
   color: var(--orange-deep);
+}
+
+.public-header-nav-link:active,
+.public-header-account:active {
+  transform: translateY(1px);
+}
+
+.public-header-nav-link:focus-visible,
+.public-header-account:focus-visible {
+  outline: 0.1875rem solid var(--orange-deep);
+  outline-offset: 0.1875rem;
 }
 
 .public-header-actions {
@@ -169,13 +184,23 @@
 
 .landing-hero-kicker,
 .landing-section-label,
-.landing-final-cta-status,
-.new-page-kicker {
+.landing-final-cta-status {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
   margin: 0 0 1rem;
   color: #f6be79;
+  font-size: 0.875rem;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.new-page-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+  color: var(--orange-deep);
   font-size: 0.875rem;
   font-weight: 900;
   line-height: 1.2;
