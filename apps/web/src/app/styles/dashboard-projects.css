@@ -213,7 +213,8 @@
 @media (max-width: 360px) {
   .mobile-bottom-nav { padding-inline: 4px; }
   .mobile-bottom-nav-inner { gap: 0; }
-  .mobile-nav-item { font-size: 8.5px; letter-spacing: -0.02em; }
+  .mobile-nav-item { min-height: 58px; font-size: 11px; letter-spacing: 0; line-height: 1.1; }
+  .mobile-nav-item span { max-width: 100%; overflow-wrap: anywhere; text-align: center; }
   .account-page .page-title { font-size: 35px; }
   .projects-row { padding-inline: 10px; }
   .project-icon { width: 40px; height: 40px; }

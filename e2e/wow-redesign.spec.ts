@@ -51,3 +51,39 @@ test("hero demo becomes static when reduced motion is requested", async ({ page 
 
   expect(unsafeRequests).toEqual([]);
 });
+
+test("final landing artifact stays inside compact phone viewports", async ({ page }) => {
+  for (const viewport of [
+    { width: 320, height: 844 },
+    { width: 390, height: 844 },
+    { width: 412, height: 844 },
+    { width: 1280, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/", { waitUntil: "networkidle" });
+    await waitForLandingHydration(page);
+
+    const artifact = page.locator(".landing-final-cta-artifact");
+    await artifact.scrollIntoViewIfNeeded();
+    const bounds = await page.locator(".landing-final-cta-card-stack, .landing-final-cta-card, .landing-final-cta-card-hint").evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right };
+      }),
+    );
+
+    for (const rect of bounds) {
+      expect(rect.left).toBeGreaterThanOrEqual(0);
+      expect(rect.right).toBeLessThanOrEqual(viewport.width);
+    }
+    const action = page.locator(".landing-final-cta-action");
+    await action.scrollIntoViewIfNeeded();
+    const actionBox = await action.boundingBox();
+    expect(actionBox).not.toBeNull();
+    expect(actionBox!.x).toBeGreaterThanOrEqual(0);
+    expect(actionBox!.y).toBeGreaterThanOrEqual(0);
+    expect(actionBox!.x + actionBox!.width).toBeLessThanOrEqual(viewport.width);
+    expect(actionBox!.y + actionBox!.height).toBeLessThanOrEqual(viewport.height);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  }
+});

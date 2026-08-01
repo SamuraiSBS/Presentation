@@ -604,12 +604,20 @@ body:has(.editor-page) {
   }
 
   .editor-workspace .editor-top {
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     gap: 8px;
   }
 
   .editor-workspace .editor-top > div:first-child {
+    grid-column: auto;
     min-width: 0;
+    text-align: left;
+  }
+
+  .editor-workspace .editor-top > :last-child {
+    grid-column: auto;
+    justify-self: end;
   }
 
   .editor-workspace .editor-top .status {
@@ -618,11 +626,10 @@ body:has(.editor-page) {
 
   .editor-workspace .editor-top h1 {
     margin-top: 4px;
-    overflow: hidden;
     font-size: 24px;
     line-height: 1.1;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    text-wrap: pretty;
   }
 
   .editor-workspace .editor-top .actions {
@@ -639,7 +646,6 @@ body:has(.editor-page) {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(360px, 1fr) auto;
     overflow-y: auto;
-    overflow-x: hidden;
     overscroll-behavior: contain;
   }
 
@@ -743,6 +749,122 @@ body:has(.editor-page) {
   .mobile-editor-nav .mobile-editor-nav-active {
     background: #fff9f1;
     color: #3a2109;
+  }
+}
+
+/* The desktop three-column header becomes a two-row tool header before its
+   brand, journey, and account actions would collide at tablet widths. */
+@media (min-width: 761px) and (max-width: 900px) {
+  body:has(.editor-page) {
+    --editor-header-height: 116px;
+  }
+
+  body:has(.editor-page) .topbar-main {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    min-height: 62px;
+    padding-block: 8px;
+  }
+
+  body:has(.editor-page) .topbar-navigation {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+  }
+
+  body:has(.editor-page) .topbar-navigation .journey-progress {
+    width: 100%;
+  }
+}
+
+/* In landscape the preview remains the priority.  The compact app header and
+   one visible canvas section leave a real editing area above mobile browser
+   chrome instead of an empty, nested scroller. */
+@media (max-width: 760px) and (orientation: landscape) and (max-height: 500px) {
+  body:has(.editor-page) {
+    --editor-header-height: 62px;
+  }
+
+  body:has(.editor-page) .topbar-navigation {
+    display: none;
+  }
+
+  .editor-page {
+    padding-block: 6px;
+  }
+
+  .editor-workspace {
+    gap: 6px;
+  }
+
+  .editor-workspace .editor-top h1 {
+    font-size: 20px;
+  }
+
+  .editor-workspace .power-editor[data-mobile-section="preview"] .canvas-shell {
+    min-height: 0;
+  }
+
+  .mobile-editor-nav {
+    padding: 3px;
+  }
+
+  .mobile-editor-nav button {
+    min-height: 44px;
+  }
+}
+
+/* 844x390 is wide enough to miss the phone-width breakpoint but too short
+   for the tablet's stacked property panel. Keep all three editor regions in
+   one compact row so the 16:9 canvas remains usable. */
+@media (min-width: 761px) and (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
+  body:has(.editor-page) {
+    --editor-header-height: 62px;
+  }
+
+  body:has(.editor-page) .topbar-navigation {
+    display: none;
+  }
+
+  .app-content:has(.editor-page) {
+    height: calc(100dvh - var(--editor-header-height));
+  }
+
+  .editor-page {
+    padding-block: 6px;
+  }
+
+  .editor-workspace {
+    gap: 6px;
+  }
+
+  .editor-workspace .editor-top {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  .editor-workspace .editor-top > div:first-child,
+  .editor-workspace .editor-top > :last-child {
+    grid-column: auto;
+  }
+
+  .editor-workspace .editor-top > div:first-child {
+    text-align: left;
+  }
+
+  .editor-workspace .editor-top h1 {
+    font-size: 20px;
+    overflow-wrap: anywhere;
+  }
+
+  .editor-workspace .power-editor {
+    grid-template-columns: 120px minmax(0, 1fr) 200px;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .editor-workspace .properties-panel {
+    grid-column: auto;
   }
 }
 

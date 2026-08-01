@@ -114,7 +114,7 @@
 
 @media (max-width: 760px) {
   .admin-layout { display: block; padding-bottom: 70px; }
-  .admin-mobile-menu { display: inline-flex; align-items: center; gap: 7px; margin: 12px 16px 0; min-height: 40px; border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; background: var(--surface); color: var(--ink); font-weight: 850; }
+  .admin-mobile-menu { display: inline-flex; align-items: center; gap: 7px; margin: 12px 16px 0; min-height: 44px; border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; background: var(--surface); color: var(--ink); font-weight: 850; }
   .admin-sidebar { position: fixed; inset: 0 auto 0 0; z-index: var(--z-dialog); width: min(86vw, 300px); height: 100dvh; transform: translateX(-105%); transition: transform var(--motion-base) var(--ease-out); }
   .admin-sidebar-open { transform: translateX(0); }
   .admin-sidebar-heading button { display: inline-flex; }
@@ -135,4 +135,56 @@
   .admin-inline-summary { display: block; }
   .admin-inline-summary > div { border-right: 0; border-bottom: 1px solid var(--line); }
   .admin-inline-summary > div:last-child { border-bottom: 0; }
+
+  .admin-nav-link,
+  .admin-sidebar-heading button,
+  .admin-period-select.ui-select-trigger,
+  .admin-tabs button,
+  .admin-profile-identity a,
+  .admin-danger-button,
+  .export-tabs .ui-tabs-trigger,
+  .ui-dialog-close.ui-dialog-close { min-height: 44px; }
+  .admin-sidebar-heading button,
+  .ui-dialog-close.ui-dialog-close { display: inline-grid; width: 44px; min-width: 44px; place-items: center; }
+  .admin-profile-identity a { display: inline-flex; align-items: center; }
+
+  .admin-table-wrap { overflow: visible; border: 0; border-radius: 0; background: transparent; }
+  .admin-table { display: block; width: 100%; min-width: 0; font-size: 14px; }
+  .admin-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+  .admin-table tbody { display: grid; gap: 12px; }
+  .admin-table tr { display: grid; gap: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+  .admin-table td { display: grid; grid-template-columns: minmax(7.5rem, .8fr) minmax(0, 1.2fr); gap: 12px; min-width: 0; padding: 10px 12px; border-bottom: 1px solid #f2dfca; overflow-wrap: anywhere; }
+  .admin-table td:last-child { border-bottom: 0; }
+  .admin-table td::before { content: attr(data-label); color: var(--muted); font-size: 12px; font-weight: 850; line-height: 1.35; }
+  .admin-table td > :is(small, strong) { max-width: none; overflow-wrap: anywhere; white-space: normal; }
+  .admin-table tbody tr:hover { background: var(--surface); }
+  .admin-user-link { min-width: 0; }
+  .admin-user-link small { max-width: none; white-space: normal; }
+}
+
+@media (pointer: coarse) {
+  .admin-mobile-menu,
+  .admin-nav-link,
+  .admin-sidebar-heading button,
+  .admin-period-select.ui-select-trigger,
+  .admin-tabs button,
+  .admin-profile-identity a,
+  .admin-danger-button,
+  .export-tabs .ui-tabs-trigger,
+  .ui-dialog-close.ui-dialog-close {
+    min-height: 44px;
+  }
+
+  .admin-sidebar-heading button,
+  .ui-dialog-close.ui-dialog-close {
+    display: inline-grid;
+    width: 44px;
+    min-width: 44px;
+    place-items: center;
+  }
+
+  .admin-profile-identity a {
+    display: inline-flex;
+    align-items: center;
+  }
 }

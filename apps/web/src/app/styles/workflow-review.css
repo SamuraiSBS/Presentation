@@ -1,13 +1,41 @@
 /* Guided creation, speech review, and revision-safe export. */
 .journey-progress {
+  position: relative;
   display: flex;
   gap: 8px;
   width: 100%;
   margin: 0 0 18px;
   overflow-x: auto;
-  padding: 2px 0 8px;
+  padding: 2px 1rem 8px;
+  scroll-padding-inline: 1rem;
   list-style: none;
   scrollbar-width: thin;
+}
+
+.journey-progress[data-overflow-start]::before,
+.journey-progress[data-overflow-end]::after {
+  position: absolute;
+  inset-block: 2px 8px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  color: var(--orange-deep);
+  font-size: 16px;
+  font-weight: 900;
+  pointer-events: none;
+}
+
+.journey-progress[data-overflow-start]::before {
+  content: "‹";
+  left: 0;
+  background: var(--surface);
+}
+
+.journey-progress[data-overflow-end]::after {
+  content: "›";
+  right: 0;
+  background: var(--surface);
 }
 
 .journey-progress li {
@@ -101,26 +129,38 @@
 .source-review-list { display: grid; gap: 10px; }
 .source-review-item {
   display: grid;
-  gap: 9px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 9px 12px;
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 14px;
   background: var(--surface-input);
 }
 .source-review-item-disabled { opacity: .62; }
-.source-review-item label { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.source-review-item label { display: flex; grid-column: 1; align-items: flex-start; min-height: 44px; gap: 10px; cursor: pointer; }
 .source-review-item input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--orange-deep); }
 .source-review-item label span { display: grid; gap: 2px; }
 .source-review-item small, .source-review-item p { color: var(--muted); font-size: 13px; }
 .source-review-item p { margin: 0; line-height: 1.45; }
 .source-review-item a { display: inline-flex; align-items: center; gap: 5px; justify-self: start; color: var(--orange-deep); font-size: 13px; font-weight: 850; }
+.source-detail-toggle { align-self: start; min-height: 40px; border: 0; border-radius: 10px; padding: 0 10px; background: var(--orange-soft); color: var(--orange-deep); font: inherit; font-size: 13px; font-weight: 850; cursor: pointer; }
+.source-detail-toggle:hover { background: var(--orange); color: var(--ink); }
+.source-detail-toggle:focus-visible { outline: 2px solid var(--orange-deep); outline-offset: 2px; }
+.source-review-detail { display: grid; grid-column: 1 / -1; gap: 9px; padding-top: 2px; }
 .source-empty { display: flex; align-items: center; gap: 10px; border-radius: 14px; padding: 14px; background: #eef4ea; color: var(--green); }
 
 .speech-section-list { display: grid; gap: 12px; }
-.speech-section-card { display: grid; gap: 12px; border-top: 1px solid var(--line); padding-top: 18px; }
+.speech-jump-nav { position: sticky; top: 82px; z-index: var(--z-sticky); display: flex; gap: 8px; overflow-x: auto; padding: 8px 0; scroll-padding-inline: 8px; background: var(--surface); scrollbar-width: thin; }
+.speech-jump-button { min-height: 40px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; background: var(--surface-input); color: var(--muted); font: inherit; font-size: 13px; font-weight: 850; cursor: pointer; }
+.speech-jump-button:hover, .speech-jump-button-active { border-color: var(--orange); background: var(--orange-soft); color: var(--ink); }
+.speech-jump-button:focus-visible { outline: 2px solid var(--orange-deep); outline-offset: 2px; }
+.speech-section-card { display: grid; gap: 14px; min-width: 0; scroll-margin-top: 142px; }
 .speech-section-card:first-child { border-top: 0; padding-top: 0; }
 .speech-section-card header { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: end; gap: 12px; }
 .speech-section-card header > span { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 11px; background: var(--orange-soft); color: var(--orange-deep); font-weight: 900; }
+.speech-section-card header h3, .speech-section-card header p { margin: 0; }
+.speech-section-card header h3 { font-size: 18px; line-height: 1.2; }
+.speech-section-card header p { margin-top: 3px; color: var(--muted); font-size: 13px; font-weight: 750; }
 .speech-section-card label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 850; }
 .speech-section-card input, .speech-section-card textarea {
   width: 100%;
@@ -134,9 +174,14 @@
 .speech-section-card textarea { min-height: 130px; resize: vertical; line-height: 1.55; }
 .speech-section-card input:focus-visible, .speech-section-card textarea:focus-visible { outline: 2px solid var(--orange-deep); outline-offset: 2px; }
 .speech-section-card header small { padding-bottom: 11px; color: var(--muted); white-space: nowrap; }
+.speech-section-controls { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
 .speech-raw-editor { border-radius: 14px; padding: 12px 14px; background: #f7efe6; }
 .speech-raw-editor summary { cursor: pointer; font-weight: 850; }
 .speech-raw-editor .script-textarea { margin-top: 12px; }
+.script-shell { --script-keyboard-inset: 0px; }
+.script-toolbar { position: sticky; z-index: var(--z-sticky); bottom: 18px; margin-top: 4px; border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: var(--surface); box-shadow: 0 5px 12px rgba(111, 61, 14, 0.07); }
+.script-save-status { display: grid; gap: 8px; min-width: 0; }
+.script-save-status .form-error { margin: 0; }
 
 .export-warning {
   display: flex;
@@ -158,9 +203,19 @@
   .generation-summary > div + div { border-top: 1px solid var(--line); border-left: 0; }
   .source-review-heading, .script-review-heading { align-items: flex-start; flex-direction: column; }
   .script-review-heading > div:last-child { justify-items: start; }
+  .speech-jump-nav { top: 8px; margin-inline: -2px; padding-inline: 2px; }
+  .speech-section-card { scroll-margin-top: 76px; }
   .speech-section-card header { grid-template-columns: 36px minmax(0, 1fr); }
   .speech-section-card header small { grid-column: 2; padding: 0; }
+  .script-editor-panel { padding-bottom: calc(184px + env(safe-area-inset-bottom)); }
+  .script-toolbar { position: fixed; right: max(12px, env(safe-area-inset-right)); bottom: calc(92px + env(safe-area-inset-bottom) + var(--script-keyboard-inset)); left: max(12px, env(safe-area-inset-left)); }
+  .script-toolbar .actions { width: 100%; }
+  .script-toolbar .actions .ui-button { width: 100%; }
   .generation-safety-note { text-align: left; }
+}
+
+@media (pointer: coarse) {
+  .source-detail-toggle, .speech-jump-button { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { type KeyboardEvent, useState } from "react";
+import { type KeyboardEvent, useEffect, useState } from "react";
 import { Mic2 } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import type { PresentationDocument } from "@studydeck/shared";
@@ -22,9 +22,19 @@ function handleCardKeyDown(event: KeyboardEvent<HTMLDivElement>, onActivate: () 
 
 export function LandingFinalCtaArtifact({ document, speechExcerpt }: LandingFinalCtaArtifactProps) {
   const [activeView, setActiveView] = useState<ArtifactView>("slides");
+  const [compact, setCompact] = useState(false);
   const shouldReduceMotion = useReducedMotion() === true;
   const transition = shouldReduceMotion ? { duration: 0 } : transitions.surface;
   const slideIsFront = activeView === "slides";
+  const cardOffset = compact ? 12 : 28;
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 48rem)");
+    const updateCompact = () => setCompact(query.matches);
+    updateCompact();
+    query.addEventListener("change", updateCompact);
+    return () => query.removeEventListener("change", updateCompact);
+  }, []);
 
   return (
     <div className="landing-final-cta-artifact">
@@ -38,7 +48,7 @@ export function LandingFinalCtaArtifact({ document, speechExcerpt }: LandingFina
           onKeyDown={(event) => handleCardKeyDown(event, () => setActiveView("speech"))}
           animate={slideIsFront
             ? { x: 0, y: 0, scale: 1, rotate: 0, zIndex: 2 }
-            : { x: 28, y: -20, scale: 0.88, rotate: 2, zIndex: 1 }}
+            : { x: cardOffset, y: -cardOffset, scale: compact ? 0.92 : 0.88, rotate: 2, zIndex: 1 }}
           transition={transition}
         >
           <DemoSlidePreview className="landing-final-cta-slide" document={document} />
@@ -53,7 +63,7 @@ export function LandingFinalCtaArtifact({ document, speechExcerpt }: LandingFina
           onClick={() => setActiveView("slides")}
           onKeyDown={(event) => handleCardKeyDown(event, () => setActiveView("slides"))}
           animate={slideIsFront
-            ? { x: -28, y: 20, scale: 0.88, rotate: -2, zIndex: 1 }
+            ? { x: -cardOffset, y: cardOffset, scale: compact ? 0.92 : 0.88, rotate: -2, zIndex: 1 }
             : { x: 0, y: 0, scale: 1, rotate: 0, zIndex: 2 }}
           transition={transition}
         >

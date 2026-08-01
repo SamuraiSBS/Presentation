@@ -149,6 +149,35 @@ export const demoProject = {
   },
 };
 
+const scriptReviewSources = Array.from({ length: 6 }, (_, index) => ({
+  id: `src-script-review-${index + 1}`,
+  label: `Материал для раздела ${index + 1}`,
+  type: index % 2 === 0 ? "WEB" : "FILE",
+  excerpt: `Краткий фрагмент источника ${index + 1}. Он нужен только после явного раскрытия, чтобы не перегружать страницу проверки речи.`,
+  ...(index % 2 === 0 ? { url: `https://example.com/source-${index + 1}` } : {}),
+}));
+
+const scriptReviewDraft = Array.from({ length: 14 }, (_, index) => {
+  const order = index + 1;
+  return `Слайд ${order}: Раздел ${order}\nВ этом разделе раскрывается ключевая мысль слайда ${order}. Текст оставлен достаточно длинным для проверки навигации, сохранения и прогрессивного раскрытия на мобильном экране.`;
+}).join("\n\n");
+
+/** A demo-only long script used by deterministic responsive review tests. */
+export const demoScriptReviewProject = {
+  id: "script-review-demo",
+  title: "Проверка длинного текста выступления",
+  status: "script_ready" as const,
+  narrationState: "editable_draft" as const,
+  slideCount: 14,
+  updatedAt: new Date("2026-07-31T12:00:00.000Z").toISOString(),
+  accessRole: "owner" as const,
+  presentationRevision: 1,
+  speechDraft: scriptReviewDraft,
+  sources: scriptReviewSources,
+  exports: [],
+  presentation: null,
+};
+
 const demoUser = {
   id: "demo-user",
   name: "Учебный пример",

@@ -83,9 +83,11 @@ async function demoPreviewResponse(path: string): Promise<unknown | null> {
     demoProfile,
     demoProject,
     demoProjectList,
+    demoScriptReviewProject,
   } = await import("./demo-project");
 
   if (path === "/projects/demo") return demoProject;
+  if (path === "/projects/script-review-demo") return demoScriptReviewProject;
   if (path === "/dashboard") return demoDashboard;
   if (path === "/folders") return demoFolders;
   if (path === "/users/me") return demoProfile;

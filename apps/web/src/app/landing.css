@@ -1352,8 +1352,9 @@
   .landing-output-speech { min-height: 16rem; }
   .landing-final-cta { border-radius: 1rem; padding: 1.25rem; }
   .landing-final-cta h2 { max-width: 14ch; font-size: clamp(2.125rem, 10vw, 3rem); }
-  .landing-final-cta-artifact { min-height: 15rem; }
-  .landing-final-cta-card-stack { min-height: 15rem; }
+  .landing-final-cta-artifact { min-height: 0; }
+  .landing-final-cta-card-stack { width: min(100%, 30rem); min-height: 0; margin-inline: auto; }
+  .landing-final-cta-card-hint { right: 0.5rem; bottom: 0.5rem; max-width: calc(100% - 1rem); padding: 0.3rem 0.5rem; font-size: 0.6875rem; line-height: 1.2; text-align: center; }
   .landing-final-cta-speech-sheet { min-height: 0; }
   .landing-sticky-create { position: fixed; z-index: var(--z-mobile-nav); right: 0.875rem; bottom: max(0.875rem, env(safe-area-inset-bottom)); gap: 0.375rem; min-height: 2.75rem; border-radius: 999px; padding: 0 0.875rem; background: var(--orange); color: var(--ink); box-shadow: 0 0.5rem 0.875rem rgba(76, 39, 8, 0.2); font-size: 0.8125rem; font-weight: 900; }
 }
