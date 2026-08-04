@@ -473,7 +473,7 @@ describe("prepareGenerationSources", () => {
   });
 });
 
-describe("handleGenerationJob editable-draft persistence", () => {
+describe("handleGenerationJob v6 narration persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     finalizeFailedCostEnvelope.mockReset();
@@ -560,6 +560,66 @@ describe("handleGenerationJob editable-draft persistence", () => {
       }),
     });
     expect(JSON.stringify(prismaMock.userActivityEvent.create.mock.calls)).not.toContain(editableText);
+
+    expect(generatePresentationFromNarration).not.toHaveBeenCalled();
+    expect(prismaMock.presentation.upsert).not.toHaveBeenCalled();
+    expect(prismaMock.generationJob.create).not.toHaveBeenCalled();
+    expect(finalizeFailedCostEnvelope).not.toHaveBeenCalled();
+    expect((job as { retry: ReturnType<typeof vi.fn> }).retry).not.toHaveBeenCalled();
+    expect((job as { discard: ReturnType<typeof vi.fn> }).discard).not.toHaveBeenCalled();
+  });
+
+  it("persists accepted v6 narration at the same boundary without presentation work", async () => {
+    const acceptedText = "PRIVATE_ACCEPTED_SPEECH_CONTENT";
+    generateNarrationDraft.mockResolvedValue({
+      text: acceptedText,
+      narrativePlan: [],
+      generationMode: "aitunnel",
+      narrationOutcome: {
+        kind: "accepted",
+        text: acceptedText,
+        stage: "narration_full_rewrite",
+      },
+    });
+    const job = {
+      id: "queue-accepted-speech",
+      name: "generate-narration",
+      data: { projectId: "editable-draft-project", userId: "user-1", generationJobId: "database-narration-job", costEnvelopeId: "envelope-accepted" },
+      opts: { attempts: 1 },
+      attemptsMade: 0,
+      updateProgress: vi.fn().mockResolvedValue(undefined),
+      discard: vi.fn(),
+      retry: vi.fn(),
+    } as never;
+
+    await expect(handleGenerationJob(job)).resolves.toBeUndefined();
+
+    expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "editable-draft-project" },
+      data: expect.objectContaining({
+        speechDraft: acceptedText,
+        status: "script_ready",
+        error: null,
+      }),
+    }));
+    expect(prismaMock.generationJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: "completed",
+        progressStage: "completed",
+        error: "accepted_speech",
+      }),
+    }));
+    expect(prismaMock.userActivityEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: "generation.completed",
+        metadata: {
+          kind: "narration",
+          narrationOutcome: "accepted",
+          narrationStage: "narration_full_rewrite",
+        },
+      }),
+    });
+    expect(JSON.stringify(prismaMock.userActivityEvent.create.mock.calls)).not.toContain(acceptedText);
 
     expect(generatePresentationFromNarration).not.toHaveBeenCalled();
     expect(prismaMock.presentation.upsert).not.toHaveBeenCalled();

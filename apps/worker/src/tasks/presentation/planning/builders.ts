@@ -642,8 +642,17 @@ export function buildSlideBlueprints(
   narrationText: string,
   narrativePlan: SlideNarrative[],
   designBrief: DesignBrief,
+  options?: { acceptedFullNarration?: boolean },
 ): SlideBlueprint[] {
-  const sections = parseNarrationSections(normalizeNarrationText(narrationText, project));
+  const sections = options?.acceptedFullNarration
+    ? parseNarrationSections(narrationText)
+    : parseNarrationSections(normalizeNarrationText(narrationText, project));
+  if (options?.acceptedFullNarration && (
+    sections.length !== project.slideCount
+    || sections.some((section, index) => section.order !== index + 1 || !section.title || !section.text.trim())
+  )) {
+    throw new Error("Accepted narration does not contain one complete section per slide");
+  }
   return Array.from({ length: project.slideCount }, (_, index) => {
     const order = index + 1;
     const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, order);
@@ -667,8 +676,21 @@ export function buildSlideTextPlans(
   narrativePlan: SlideNarrative[],
   deckStory: DeckStory,
   sources: Source[],
+  options?: { acceptedFullNarration?: boolean },
 ): SlideTextPlan[] {
-  const sections = parseNarrationSections(normalizeNarrationText(narrationText, project));
+  // Full-document narration has already passed its own v6/v7 contract before
+  // this stage. Its distribution targets are intentionally soft, so sending
+  // it through the legacy per-slide ceiling can reject a valid accepted draft
+  // (for example a 117-word opening against the former 108-word ceiling).
+  const sections = options?.acceptedFullNarration
+    ? parseNarrationSections(narrationText)
+    : parseNarrationSections(normalizeNarrationText(narrationText, project));
+  if (options?.acceptedFullNarration && (
+    sections.length !== project.slideCount
+    || sections.some((section, index) => section.order !== index + 1 || !section.title || !section.text.trim())
+  )) {
+    throw new Error("Accepted narration does not contain one complete section per slide");
+  }
   return Array.from({ length: project.slideCount }, (_, index) => {
     const order = index + 1;
     const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, order);

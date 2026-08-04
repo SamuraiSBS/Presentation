@@ -44,7 +44,7 @@ import {
   scoreUniversityTone,
   scoreVisualRhythm,
 } from "./presentation-quality.js";
-import { preserveAcceptedGeneratedText, preserveAcceptedNarration } from "./presentation/quality/orchestration.js";
+import { preserveAcceptedGeneratedText, preserveAcceptedNarration, repairReleaseCandidate } from "./presentation/quality/orchestration.js";
 
 const source = {
   id: "source-1",
@@ -66,7 +66,7 @@ const mandatorySourceProject = {
 };
 
 describe("mandatory source snapshot release gate", () => {
-  it("permits only the local accepted-narration projection for an economic run", () => {
+  it("permits the local or AITunnel accepted-narration projection for an economic run", () => {
     const presentation = makePresentation({ generationMode: "local" });
     const sources = [1, 2, 3].map((number) => ({ ...source, id: `snapshot-${number}`, url: `https://example.edu/${number}` }));
     const attributed = presentationSchema.parse({
@@ -77,6 +77,13 @@ describe("mandatory source snapshot release gate", () => {
     const release = productionQualityReleaseResult(attributed, sources, { ...mandatorySourceProject, slideCount: 2 });
 
     expect(release.issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ field: "generationMode" })]));
+
+    const aitunnelRelease = productionQualityReleaseResult(
+      presentationSchema.parse({ ...attributed, generationMode: "aitunnel" }),
+      sources,
+      { ...mandatorySourceProject, slideCount: 2 },
+    );
+    expect(aitunnelRelease.issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ field: "generationMode" })]));
   });
 
   it("blocks a standard economical run until all snapshot sources are attributed", () => {
@@ -822,6 +829,20 @@ describe("presentation quality checks", () => {
     }));
   });
 
+  it("rebuilds overlong visible text from accepted narration without changing speech", () => {
+    const presentation = makePresentation({
+      slides: [{
+        ...makeSlide(1, "Dense point", "The thesis stays short.", ["This bullet tries to carry far too much visible slide text because it includes several ideas, examples, qualifications, and a conclusion all at once"]),
+        speakerNotes: "The experiment changed the measured result. The control group kept the original condition. The observed difference supports the conclusion.",
+      }] as any,
+    });
+    const project = { id: "dense", title: "Experiment", prompt: "Explain the experiment", scenario: "lesson", level: "university", mode: "with_sources", slideCount: 1 } as const;
+    const repaired = applyVisibleTextIntegrityFallbacks(presentation, findLongSlideTextIssues(presentation), project);
+
+    expect(findLongSlideTextIssues(repaired)).toHaveLength(0);
+    expect(repaired.slides[0].speakerNotes).toBe(presentation.slides[0].speakerNotes);
+  });
+
   it("repairs only affected slides", () => {
     const presentation = makePresentation({
       slides: [
@@ -1058,6 +1079,25 @@ describe("presentation quality checks", () => {
     expect(issues).toContainEqual(expect.objectContaining({ slideId: "slide-1", category: "off_topic", field: "visual.description" }));
     const repaired = applyTopicRelevanceFallbacks(presentation, issues, project);
     expect(repaired.slides[0].visual.description).not.toContain("политики");
+  });
+
+  it("repairs a release-time off-topic visual after a provider repair regresses to the last valid candidate", () => {
+    const project = { id: "release-bmw-topic", title: "История BMW", prompt: "Автомобили BMW и их развитие", scenario: "lesson", level: "university", mode: "with_sources", slideCount: 2 } as const;
+    const presentation = makePresentation({
+      title: project.title,
+      generationMode: "aitunnel",
+      slides: [{
+        ...makeSlide(1, "BMW 328", "BMW 328 показывает ранний этап истории марки.", ["Автомобиль задал важный ориентир для марки."]),
+        visual: { ...makeSlide(1, "x", "x", []).visual, description: "Переговоры мировых лидеров и дипломатия" },
+      }, makeSlide(2, "BMW M", "BMW M развивает спортивное направление марки.", ["Подразделение стало отдельной частью истории BMW."])] as any,
+    });
+
+    const repaired = repairReleaseCandidate(presentation, presentation.sources, project);
+
+    expect(findOffTopicVisualIssues(repaired, project)).toHaveLength(0);
+    expect(repaired.generatedText).toBe(presentation.generatedText);
+    expect(repaired.slides[0].speakerNotes).toBe(presentation.slides[0].speakerNotes);
+    expect(repaired.slides[0].sourceRefs).toEqual(presentation.slides[0].sourceRefs);
   });
 
   it("blocks an unfulfilled image and rejects generated canvas text that diverges from canonical fields", () => {

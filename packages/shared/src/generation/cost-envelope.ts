@@ -1,11 +1,20 @@
-export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v6";
-export const COST_ENVELOPE_LIMIT_RUB = "20.00000000";
+export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v9";
+export const COST_ENVELOPE_LIMIT_RUB = "26.90000000";
 export const COST_ENVELOPE_BUCKETS = {
   sources: "0.50000000",
-  narrative_plan: "0.75000000",
-  narration_full_candidate: "2.50000000",
-  narration_full_rewrite: "14.10000000",
-  narration_targeted_repair: "0.90000000",
+  // The narrative plan is generated once for narration and again when the
+  // accepted speech is turned into slides.
+  narrative_plan: "1.50000000",
+  narration_full_candidate: "1.00000000",
+  narration_full_rewrite: "7.50000000",
+  narration_targeted_repair: "0.75000000",
+  design_brief: "0.50000000",
+  // Terra produces the final structured presentation. This is the dominant
+  // post-narration request and must be inside the persisted project cap.
+  presentation: "12.00000000",
+  quality_critique: "0.30000000",
+  quality_repair: "1.00000000",
+  slide_text_repair: "0.60000000",
   images: "0.50000000",
   export_infra: "0.75000000",
 } as const;
@@ -45,13 +54,13 @@ export const HISTORICAL_COST_ENVELOPE_V5_BUCKETS = {
 export type CostEnvelopeBucket = keyof typeof COST_ENVELOPE_BUCKETS | keyof typeof HISTORICAL_COST_ENVELOPE_V5_BUCKETS;
 export type CostEnvelopePolicy = { version: string; limitRub: string; buckets: Record<string, string> };
 
-export const AITUNNEL_APPROVED_MODELS = ["gemini-3.5-flash-lite", "gemini-3.6-flash"] as const;
+export const AITUNNEL_APPROVED_MODELS = ["gpt-5.6-luna", "gpt-5.6-terra"] as const;
 export type AitunnelApprovedModel = typeof AITUNNEL_APPROVED_MODELS[number];
 export type AitunnelCatalogPrice = { inputRubPerMillion: string; outputRubPerMillion: string; version: string; effectiveFrom: string };
-export const AITUNNEL_PROVIDER_CATALOG_VERSION = "aitunnel-approved-catalog-2026-07-24";
+export const AITUNNEL_PROVIDER_CATALOG_VERSION = "aitunnel-approved-catalog-2026-08-04";
 export const AITUNNEL_PROVIDER_CATALOG: Record<AitunnelApprovedModel, AitunnelCatalogPrice> = {
-  "gemini-3.5-flash-lite": { inputRubPerMillion: "60", outputRubPerMillion: "500", version: "aitunnel-gemini-3.5-flash-lite-model-page-2026-07-24", effectiveFrom: "2026-07-24T00:00:00.000Z" },
-  "gemini-3.6-flash": { inputRubPerMillion: "455", outputRubPerMillion: "2275", version: "aitunnel-gemini-3.6-flash-pricing-2026-07-24", effectiveFrom: "2026-07-24T00:00:00.000Z" },
+  "gpt-5.6-luna": { inputRubPerMillion: "20", outputRubPerMillion: "120", version: "aitunnel-gpt-5.6-luna-pricing-2026-08-04", effectiveFrom: "2026-08-04T00:00:00.000Z" },
+  "gpt-5.6-terra": { inputRubPerMillion: "200", outputRubPerMillion: "1200", version: "aitunnel-gpt-5.6-terra-pricing-2026-08-04", effectiveFrom: "2026-08-04T00:00:00.000Z" },
 };
 
 export function standardGenerationCostPolicy(): CostEnvelopePolicy { return { version: COST_ENVELOPE_POLICY_VERSION, limitRub: COST_ENVELOPE_LIMIT_RUB, buckets: { ...COST_ENVELOPE_BUCKETS } }; }

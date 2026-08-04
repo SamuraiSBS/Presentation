@@ -70,9 +70,9 @@ function fullSpeech(wordsBySlide: readonly number[]) {
 
 describe("Plan 18 v6 full-document narration foundation", () => {
   it("uses exactly the three future narration stages, models, and output caps", () => {
-    expect(aitunnelModelForStage("narration_full_candidate")).toBe("gemini-3.5-flash-lite");
-    expect(aitunnelModelForStage("narration_full_rewrite")).toBe("gemini-3.6-flash");
-    expect(aitunnelModelForStage("narration_targeted_repair")).toBe("gemini-3.5-flash-lite");
+    expect(aitunnelModelForStage("narration_full_candidate")).toBe("gpt-5.6-luna");
+    expect(aitunnelModelForStage("narration_full_rewrite")).toBe("gpt-5.6-terra");
+    expect(aitunnelModelForStage("narration_targeted_repair")).toBe("gpt-5.6-luna");
     expect(aitunnelStagePolicy("narration_full_candidate").maxOutputTokens).toBe(AITUNNEL_NARRATION_FULL_CANDIDATE_MAX_OUTPUT_TOKENS);
     expect(aitunnelStagePolicy("narration_full_rewrite").maxOutputTokens).toBe(AITUNNEL_NARRATION_FULL_REWRITE_MAX_OUTPUT_TOKENS);
     expect(aitunnelStagePolicy("narration_targeted_repair").maxOutputTokens).toBe(AITUNNEL_NARRATION_TARGETED_REPAIR_MAX_OUTPUT_TOKENS);
@@ -115,9 +115,9 @@ describe("Plan 18 v6 full-document narration foundation", () => {
     const rewriteReservation = reserveAitunnelStageCall("narration_full_rewrite", productionRequestFor("narration_full_rewrite", rewrite))!;
     const repairReservation = reserveAitunnelStageCall("narration_targeted_repair", productionRequestFor("narration_targeted_repair", repair))!;
 
-    expect(candidateReservation).toMatchObject({ inputTokens: 2944, outputTokens: 4500, costRub: "2.42664000" });
-    expect(rewriteReservation).toMatchObject({ inputTokens: 8456, outputTokens: 4500, costRub: "14.08498000" });
-    expect(repairReservation).toMatchObject({ inputTokens: 3137, outputTokens: 1400, costRub: "0.88822000" });
+    expect(candidateReservation).toMatchObject({ inputTokens: 2941, outputTokens: 4500, costRub: "0.59882000" });
+    expect(rewriteReservation).toMatchObject({ inputTokens: 8455, outputTokens: 4500, costRub: "7.09100000" });
+    expect(repairReservation).toMatchObject({ inputTokens: 3134, outputTokens: 1400, costRub: "0.23068000" });
     expect(Number(candidateReservation.costRub)).toBeLessThanOrEqual(Number(buckets.narration_full_candidate));
     expect(Number(rewriteReservation.costRub)).toBeLessThanOrEqual(Number(buckets.narration_full_rewrite));
     expect(Number(repairReservation.costRub)).toBeLessThanOrEqual(Number(buckets.narration_targeted_repair));
@@ -180,7 +180,7 @@ describe("Plan 18 v6 full-document narration foundation", () => {
       systemInstructionsTokens: 1192,
       instructionsTokens: 422,
       compactEstimatedInputTokens: 4390,
-      compactWorstCaseCostRub: "12.23495000",
+      compactWorstCaseCostRub: "6.27800000",
     });
   });
 
@@ -242,6 +242,27 @@ describe("Plan 18 v6 full-document narration foundation", () => {
       { stage: "narration_full_candidate", text: candidateText, diagnostics: candidate },
       { stage: "narration_full_rewrite", text: acceptedText, diagnostics: accepted },
     ])).toEqual({ kind: "accepted", text: acceptedText, stage: "narration_full_rewrite" });
+  });
+
+  it("rewrites a complete candidate rejected for the observed short and template-quality defects", async () => {
+    const candidate = fullSpeech([91, 98, 85, 84, 90, 89, 86, 90, 89, 87])
+      .replace("fact1_1 fact1_2 fact1_3", "задают логику объяснения");
+    const accepted = fullSpeech(Array(10).fill(117));
+    const diagnostics = assessFullNarrationDocument(candidate, project, plan);
+    const client = { responses: { create: vi.fn()
+      .mockResolvedValueOnce({ output_text: candidate, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" })
+      .mockResolvedValueOnce({ output_text: accepted, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" }) } };
+
+    expect(diagnostics).toMatchObject({
+      totalWords: 889,
+      hasCanonicalSectionCoverage: true,
+      isStructurallyUsable: false,
+      isAccepted: false,
+    });
+    expect(diagnostics.issueCodes).toEqual(expect.arrayContaining(["template_or_repetition", "whole_speech_below_minimum"]));
+
+    await expect(runV6Narration(client)).resolves.toMatchObject({ kind: "accepted", stage: "narration_full_rewrite", text: accepted });
+    expect(client.responses.create).toHaveBeenCalledTimes(2);
   });
 
   it("runs at most the bounded candidate, rewrite, and batch-repair sequence", async () => {

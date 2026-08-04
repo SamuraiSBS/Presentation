@@ -13,16 +13,19 @@ import {
 } from "./aitunnel-narration-budget.js";
 
 describe("AITUNNEL narration budget", () => {
-  it("routes only the three compact structured stages to the exact Lite model", () => {
-    expect(aitunnelModelForStage("narrative_plan")).toBe("gemini-3.5-flash-lite");
-    expect(aitunnelModelForStage("design_brief")).toBe("gemini-3.5-flash-lite");
-    expect(aitunnelModelForStage("quality_critique")).toBe("gemini-3.5-flash-lite");
-    expect(aitunnelModelForStage("narration_section_1_candidate")).toBe("gemini-3.5-flash-lite");
-    expect(aitunnelModelForStage("narration_section_1_fallback")).toBe("gemini-3.6-flash");
-    expect(aitunnelModelForStage("narration_global_rewrite")).toBe("gemini-3.6-flash");
-    expect(aitunnelModelForStage("narration")).toBe("gemini-3.6-flash");
-    expect(aitunnelModelForStage("presentation")).toBe("gemini-3.6-flash");
-    expect(aitunnelModelForStage("quality_repair")).toBe("gemini-3.6-flash");
+  it("routes Luna everywhere except the final presentation and complete narration rewrite", () => {
+    expect(aitunnelModelForStage("narrative_plan")).toBe("gpt-5.6-luna");
+    expect(aitunnelModelForStage("design_brief")).toBe("gpt-5.6-luna");
+    expect(aitunnelModelForStage("quality_critique")).toBe("gpt-5.6-luna");
+    expect(aitunnelModelForStage("narration_section_1_candidate")).toBe("gpt-5.6-luna");
+    expect(aitunnelModelForStage("narration_section_1_fallback")).toBe("gpt-5.6-luna");
+    expect(aitunnelModelForStage("narration_global_rewrite")).toBe("gpt-5.6-luna");
+    expect(aitunnelModelForStage("narration")).toBe("gpt-5.6-luna");
+    expect(aitunnelModelForStage("narration_full_candidate")).toBe("gpt-5.6-luna");
+    expect(aitunnelModelForStage("narration_full_rewrite")).toBe("gpt-5.6-terra");
+    expect(aitunnelModelForStage("narration_targeted_repair")).toBe("gpt-5.6-luna");
+    expect(aitunnelModelForStage("presentation")).toBe("gpt-5.6-terra");
+    expect(aitunnelModelForStage("quality_repair")).toBe("gpt-5.6-luna");
     expect(aitunnelModelForStage("narrative_plan", { AITUNNEL_ECONOMY_MODEL: "auto" })).toBeUndefined();
     expect(aitunnelModelForStage("narrative_plan", { AITUNNEL_ECONOMY_MODEL: "other" })).toBeUndefined();
   });
@@ -50,9 +53,9 @@ describe("AITUNNEL narration budget", () => {
     const estimate = estimateInputTokens({ input: "Пример запроса" });
     expect(estimate).toBeGreaterThan(0);
     const reservation = reserveNarrationCall({ estimatedInputTokens: 932, maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS });
-    expect(reservation.costRub).toBe("0.24792000");
+    expect(reservation.costRub).toBe("0.06472000");
     expect(canStartCall({ remainingBudgetRub: "0.75000000", reservation })).toBe(true);
-    expect(canStartCall({ remainingBudgetRub: "0.24791999", reservation })).toBe(false);
+    expect(canStartCall({ remainingBudgetRub: "0.06471999", reservation })).toBe(false);
   });
 
   it("keeps worst-case compact candidate and fallback requests inside their buckets", () => {
@@ -65,8 +68,8 @@ describe("AITUNNEL narration budget", () => {
   it("settles actual usage, returns unused reservation, and detects provider overruns", () => {
     const reservation = reserveNarrationCall({ estimatedInputTokens: 1_000, maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS });
     const settled = settleCall({ reservation, actualUsage: { inputTokens: 900, outputTokens: 350 } });
-    expect(settled).toMatchObject({ status: "settled", actualCostRub: "0.22900000", overrun: false });
-    if (settled.status === "settled") expect(remainingBudget("10", settled.actualCostRub)).toBe("9.77100000");
+    expect(settled).toMatchObject({ status: "settled", actualCostRub: "0.06000000", overrun: false });
+    if (settled.status === "settled") expect(remainingBudget("10", settled.actualCostRub)).toBe("9.94000000");
     expect(settleCall({ reservation, actualUsage: { inputTokens: 1_000, outputTokens: 385 } })).toMatchObject({ status: "settled", overrun: true });
   });
 

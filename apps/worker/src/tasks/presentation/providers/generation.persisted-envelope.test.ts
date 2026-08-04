@@ -130,14 +130,14 @@ it("accepts the bounded maximal v6 reservation batch before its first provider c
 it("measures the persisted maximum rewrite payload without emitting its text", () => {
   const draft = fullV6Speech(156);
   const prompt = buildAitunnelFullNarrationRewriteWithDraftPrompt(project, groundedSources, plan, draft, assessFullNarrationDocument(draft, project, plan));
-  expect(reserveAitunnelStageCall("narration_full_rewrite", { input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: prompt }] })!).toMatchObject({ inputTokens: 8398, outputTokens: 4500, costRub: "14.05859000" });
+  expect(reserveAitunnelStageCall("narration_full_rewrite", { input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: prompt }] })!).toMatchObject({ inputTokens: 8398, outputTokens: 4500, costRub: "7.07960000" });
 });
 
 it("still fail-closes v6 before a provider call when a maximum rewrite no longer fits its bucket", async () => {
   const create = vi.fn();
   const client = { responses: { create } } as never;
   const policy = standardGenerationCostPolicy();
-  policy.buckets.narration_full_rewrite = "14.05858999";
+  policy.buckets.narration_full_rewrite = "7.07959999";
   mocks.findUniqueOrThrow.mockResolvedValue({ policySnapshot: policy });
 
   await expect(runWithUsageContext(
@@ -228,14 +228,14 @@ it("settles one persisted narrative-plan reservation with the matching envelope-
   expect(create).toHaveBeenCalledTimes(1);
   expect(mocks.reserveCostEnvelope).toHaveBeenCalledWith(expect.objectContaining({
     envelopeId: "envelope-1",
-    idempotencyKey: "envelope-1:narrative_plan",
+    idempotencyKey: "envelope-1:job-1:narrative_plan",
     bucket: "narrative_plan",
     stage: "narrative_plan",
     amountRub: policy.buckets.narrative_plan,
   }));
   expect(mocks.settleCostEnvelope).toHaveBeenCalledWith(expect.objectContaining({
     envelopeId: "envelope-1",
-    idempotencyKey: "envelope-1:narrative_plan",
+    idempotencyKey: "envelope-1:job-1:narrative_plan",
     actualRub: expect.any(String),
   }));
   expect(mocks.aiUsageEventUpsert).toHaveBeenCalledWith(expect.objectContaining({
@@ -303,10 +303,10 @@ it("serially releases every unused reservation after a section quality terminal 
     expect(statuses.get(stageKey("narration_section_2_candidate"))).toBe("settled");
     expect(statuses.get(stageKey("narration_section_2_fallback"))).toBe("settled");
     expect(logged).toContainEqual(expect.objectContaining({
-      narrationStage: "narration_section_2_candidate", model: "gemini-3.5-flash-lite", failureCategory: "quality", qualityReason: "word_range",
+      narrationStage: "narration_section_2_candidate", model: "gpt-5.6-luna", failureCategory: "quality", qualityReason: "word_range",
     }));
     expect(logged).toContainEqual(expect.objectContaining({
-      narrationStage: "narration_section_2_fallback", model: "gemini-3.6-flash", failureCategory: "quality", qualityReason: "word_range",
+      narrationStage: "narration_section_2_fallback", model: "gpt-5.6-luna", failureCategory: "quality", qualityReason: "word_range",
     }));
     expect(JSON.stringify(logged)).not.toContain(invalidText);
     for (const stage of laterStages) {
@@ -344,7 +344,7 @@ it("logs no quality reason and makes no fallback call when every Lite section is
     await runWithAitunnelProjectBudget(new AitunnelProjectBudget(), () => generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan));
 
     expect(create).toHaveBeenCalledTimes(10);
-    expect(create.mock.calls.every(([request]) => request.model === "gemini-3.5-flash-lite")).toBe(true);
+    expect(create.mock.calls.every(([request]) => request.model === "gpt-5.6-luna")).toBe(true);
     expect(logged.filter((entry) => (entry as { failureCategory?: string }).failureCategory === "quality")).toHaveLength(0);
     expect(logged.every((entry) => (entry as { narrationStage?: string }).narrationStage?.endsWith("_candidate"))).toBe(true);
     expect(new Set(logged.map((entry) => (entry as { narrationStage: string }).narrationStage)).size).toBe(10);
@@ -369,7 +369,7 @@ it("rejects the observed 1034-word shape locally and uses only the existing fall
   );
 
   expect(create).toHaveBeenCalledTimes(12);
-  expect(create.mock.calls.slice(0, 4).map(([request]) => request.model)).toEqual(["gemini-3.5-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.6-flash"]);
+  expect(create.mock.calls.slice(0, 4).map(([request]) => request.model)).toEqual(Array(4).fill("gpt-5.6-luna"));
   expect(statuses.get("envelope-1:narration_section_2_fallback")).toBe("settled");
   expect(statuses.get("envelope-1:narration_global_rewrite")).toBe("settled");
   expect(MAX_AITUNNEL_NARRATION_TEXT_CALLS).toBe(3);
@@ -430,7 +430,7 @@ it("uses a normal per-slide Flash fallback and releases the one global slot when
   );
 
   expect(create).toHaveBeenCalledTimes(11);
-  expect(create.mock.calls[1]![0].model).toBe("gemini-3.6-flash");
+  expect(create.mock.calls[1]![0].model).toBe("gpt-5.6-luna");
   expect(statuses.get("envelope-1:narration_section_1_fallback")).toBe("settled");
   expect(statuses.get("envelope-1:narration_global_rewrite")).toBe("released");
   expect(mocks.releaseCostEnvelope).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: "envelope-1:narration_global_rewrite", reason: "global_rewrite_not_needed" }));
@@ -452,7 +452,7 @@ it("uses the global Flash replacement once, then stops after a later dual qualit
   )).rejects.toThrow("narration_quality_failure");
 
   expect(create).toHaveBeenCalledTimes(6);
-  expect(create.mock.calls.slice(0, 3).map(([request]) => request.model)).toEqual(["gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.6-flash"]);
+  expect(create.mock.calls.slice(0, 3).map(([request]) => request.model)).toEqual(Array(3).fill("gpt-5.6-luna"));
   expect(statuses.get("envelope-1:narration_global_rewrite")).toBe("settled");
   expect(statuses.get("envelope-1:narration_section_3_candidate")).toBe("settled");
   expect(statuses.get("envelope-1:narration_section_3_fallback")).toBe("settled");
@@ -488,7 +488,7 @@ it("logs floor-aware word bounds and does not request a second global rewrite af
     )).rejects.toThrow("narration_quality_failure");
 
     expect(create).toHaveBeenCalledTimes(9);
-    expect(create.mock.calls.filter(([request]) => request.model === "gemini-3.6-flash")).toHaveLength(3);
+    expect(create.mock.calls.filter(([request]) => request.model === "gpt-5.6-luna")).toHaveLength(9);
     expect(statuses.get("envelope-1:narration_global_rewrite")).toBe("settled");
     expect(logged).toContainEqual(expect.objectContaining({
       narrationTextCall: 6,

@@ -5,7 +5,7 @@ import { isApprovedAitunnelModel } from "./aitunnel-provider-catalog.js";
 type EnvLike = Record<string, string | undefined>;
 
 export const AITUNNEL_DEFAULT_BASE_URL = "https://api.aitunnel.ru/v1";
-export const AITUNNEL_DEFAULT_NARRATION_MODEL = "gemini-3.6-flash";
+export const AITUNNEL_DEFAULT_NARRATION_MODEL = "gpt-5.6-terra";
 
 export type AitunnelConfig = {
   apiKey: string;

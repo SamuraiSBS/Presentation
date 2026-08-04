@@ -309,7 +309,7 @@ function addEditorialImageCanvas(slide: Slide, theme: PresentationTheme, element
   const textX = imageOnRight ? EDITORIAL_MARGIN_X : 648;
   const textWidth = 520;
   const thesis = slide.thesis || slideBodyText(slide);
-  const support = editorialSupportItems(slide, thesis, 2);
+  const support = editorialSupportItems(slide, thesis, 2, 9, 520, 76);
 
   elements.push(
     imageElement(`${slide.id}-editorial-image`, image, imageX, 0, 576, 720, 2, 1, imageFitForVisual(slide)),
@@ -349,7 +349,7 @@ function addEditorialImageCanvas(slide: Slide, theme: PresentationTheme, element
 
 function addEditorialNarrativeCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
   const thesis = slide.thesis || slideBodyText(slide);
-  const support = editorialSupportItems(slide, thesis, 3);
+  const support = editorialSupportItems(slide, thesis, 3, 9, 440, 82);
   addEditorialContentTitle(slide, theme, elements);
   elements.push(
     textElement(`${slide.id}-editorial-thesis`, thesis, EDITORIAL_MARGIN_X, 214, 520, 264, 5, {
@@ -381,7 +381,7 @@ function addEditorialNarrativeCanvas(slide: Slide, theme: PresentationTheme, ele
 
 function addEditorialStatementCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
   const phrase = slide.thesis || quoteText(slide) || slide.title;
-  const support = editorialSupportItems(slide, phrase, 2);
+  const support = editorialSupportItems(slide, phrase, 2, 9, 500, 66);
   elements.push(
     textElement(`${slide.id}-editorial-title`, slide.title, EDITORIAL_MARGIN_X, 62, EDITORIAL_CONTENT_WIDTH, 68, 5, {
       role: "body",
@@ -420,12 +420,22 @@ function addEditorialStatementCanvas(slide: Slide, theme: PresentationTheme, ele
 }
 
 function addEditorialComparisonCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
-  const rows = comparisonRows(slide).slice(0, 3);
-  const leftLabel = cleanCanvasText(slide.visual?.leftLabel) || "Первая сторона";
-  const rightLabel = cleanCanvasText(slide.visual?.rightLabel) || "Вторая сторона";
+  // Comparison cells are deliberately compact visual labels. Their full
+  // source values remain on the slide model and in the speaker notes; fitting
+  // the canvas must never reduce the type size below the readable minimum.
+  const rows = comparisonRows(slide)
+    .slice(0, 3)
+    .map((row) => ({
+      ...row,
+      left: compactEditorialPoint(row.left, 7, 504, 64),
+      right: compactEditorialPoint(row.right, 7, 504, 64),
+    }));
+  const leftLabel = sentencePreview(cleanCanvasText(slide.visual?.leftLabel) || "Первая сторона", 36);
+  const rightLabel = sentencePreview(cleanCanvasText(slide.visual?.rightLabel) || "Вторая сторона", 36);
+  const intro = compactSummaryPoint(slide.thesis, 15) || sentencePreview(slide.thesis, 120);
   addEditorialContentTitle(slide, theme, elements);
   elements.push(
-    textElement(`${slide.id}-editorial-comparison-intro`, slide.thesis, EDITORIAL_MARGIN_X, 158, EDITORIAL_CONTENT_WIDTH, 62, 5, {
+    textElement(`${slide.id}-editorial-comparison-intro`, intro, EDITORIAL_MARGIN_X, 158, EDITORIAL_CONTENT_WIDTH, 62, 5, {
       role: "body",
       fontSize: 26,
       fontFamily: theme.fonts.body,
@@ -556,7 +566,7 @@ function addEditorialGraphVisual(slide: Slide, theme: PresentationTheme, element
 
 function addEditorialSequenceVisual(slide: Slide, theme: PresentationTheme, elements: CanvasElement[], groupId: string) {
   const items = uniqueCanvasItems(sequenceItems(slide)).slice(0, 4);
-  const safeItems = items.length >= 2 ? items : editorialSupportItems(slide, slide.thesis, 3);
+  const safeItems = items.length >= 2 ? items : editorialSupportItems(slide, slide.thesis, 3, 8, 188, 176);
   const count = Math.max(1, safeItems.length);
   const columnWidth = Math.min(188, (672 - Math.max(0, count - 1) * EDITORIAL_GUTTER) / count);
   const startX = 492;
@@ -594,7 +604,7 @@ function addEditorialSummaryCanvas(
   muted: string,
 ) {
   const conclusion = slide.thesis || slideBodyText(slide);
-  const support = editorialSupportItems(slide, conclusion, 3);
+  const support = editorialSupportItems(slide, conclusion, 3, 6, 324, 80);
   elements.push(
     textElement(`${slide.id}-editorial-title`, slide.title, EDITORIAL_MARGIN_X, 62, 720, 62, 5, {
       role: "body",
@@ -665,13 +675,13 @@ function addEditorialFooter(
   );
 }
 
-function editorialSupportItems(slide: Slide, reference: string, limit: number) {
+function editorialSupportItems(slide: Slide, reference: string, limit: number, maxWords = 12, width = 440, height = 82) {
   return uniqueCanvasItems([
     ...(slide.bullets || []),
     ...(slide.visual?.items || []).map((item) => [item.label, item.text].filter(Boolean).join(": ")),
   ])
     .filter((item) => !isDuplicateCanvasText(item, reference) && !isDuplicateCanvasText(item, slide.title))
-    .map((item) => compactSummaryPoint(item, 12) || item)
+    .map((item) => compactEditorialPoint(item, maxWords, width, height) || item)
     .slice(0, limit);
 }
 
@@ -2653,6 +2663,19 @@ function compactSummaryPoint(value: string, maxWords: number) {
     words.pop();
   }
   return words.length ? `${words.join(" ")}.` : "";
+}
+
+function compactEditorialPoint(value: string, maxWords: number, width: number, height: number) {
+  const compact = compactSummaryPoint(value, maxWords) || cleanCanvasText(value);
+  const words = compact.split(/\s+/).filter(Boolean);
+  const fitted: string[] = [];
+  for (const word of words) {
+    if (fitted.length >= maxWords) break;
+    const candidate = [...fitted, word].join(" ");
+    if (fitted.length && estimatedTextHeight(candidate, MIN_GENERATED_BODY_FONT_SIZE, width) > height * 1.14) break;
+    fitted.push(word);
+  }
+  return fitted.join(" ");
 }
 
 function compactChipSentence(value: string, maxWords: number) {

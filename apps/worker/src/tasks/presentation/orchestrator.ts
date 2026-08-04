@@ -206,20 +206,21 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
           const narrativePlan = await generateNarrativePlanWithProvider(provider, project, sources, researchBrief, { openAIClient: client, openAIModel: config.narrationModel });
           const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
           const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
-          const narrationOutcome = currentUsageContext()?.costEnvelopePolicyVersion === "standard-generation-cost-envelope-v6"
+          const narrationOutcome = ["standard-generation-cost-envelope-v6", "standard-generation-cost-envelope-v7", "standard-generation-cost-envelope-v8", "standard-generation-cost-envelope-v9"].includes(currentUsageContext()?.costEnvelopePolicyVersion || "")
             ? await generateAitunnelFullNarrationOutcome(client, project, sources, narrativePlan)
             : undefined;
-          // An editable v6 draft is a narration-only recovery result.  It is
-          // intentionally persisted before any presentation-oriented artifact
-          // construction: malformed slide text plans must not discard a
-          // structurally usable speech that the user can edit.
-          if (narrationOutcome?.kind === "editable_draft") {
+          // Every v6 outcome is narration-only. It must reach the persistence
+          // boundary before presentation-oriented artifact construction: an
+          // accepted speech is just as independent from slide-text planning as
+          // an editable recovery draft. Slide generation consumes the saved
+          // speech in its later, deterministic job.
+          if (narrationOutcome) {
             return { text: narrationOutcome.text, narrativePlan, generationMode: provider, narrationOutcome };
           }
-          const text = narrationOutcome?.text || await generateAitunnelNarration(client, config.narrationModel, project, sources, narrativePlan, researchBrief);
+          const text = await generateAitunnelNarration(client, config.narrationModel, project, sources, narrativePlan, researchBrief);
           const slideTextPlans = buildSlideTextPlans(project, text, narrativePlan, deckStory, sources);
           generationPipelineArtifactsSchema.parse({ researchBrief, narrativePlan, deckStory, designBrief, slideBlueprints: [], slideTextPlans });
-          return { text, narrativePlan, generationMode: provider, ...(narrationOutcome ? { narrationOutcome } : {}) };
+          return { text, narrativePlan, generationMode: provider };
         });
       }
 
@@ -260,15 +261,18 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
 }
 
 /**
- * Economic presentation generation starts after narration is accepted.  This
- * projection is intentionally local: it never instantiates a provider or
- * invokes a model repair/critic path.
+ * AITunnel uses Terra for the final structured document after the narration
+ * has been accepted. Other provider modes retain the local projection, which
+ * keeps their established no-network post-acceptance behaviour unchanged.
  */
 export async function generatePresentationFromNarration(
   project: ProjectInput,
   sources: Source[],
   narrationText: string,
 ): Promise<PresentationDocument> {
+  if (selectAiProviders().includes("aitunnel")) {
+    return generatePresentationFromNarrationWithProviders(project, sources, narrationText);
+  }
   return buildLocalPresentationFromAcceptedNarration(project, sources, narrationText);
 }
 
@@ -366,15 +370,20 @@ export async function generatePresentationFromNarrationWithProviders(
   sources: Source[],
   narrationText: string,
 ): Promise<PresentationDocument> {
-  const fixedNarration = normalizeNarrationText(narrationText, project);
   const providers = selectAiProviders();
   const errors: string[] = [];
 
   for (const provider of providers) {
     try {
-      return provider === "openai" ? await generateOpenAIPresentationFromNarration(project, sources, fixedNarration)
-        : provider === "aitunnel" ? await generateAitunnelPresentationFromNarration(project, sources, fixedNarration)
-          : await generateYandexPresentationFromNarration(project, sources, fixedNarration);
+      // Full-document AITunnel narration is accepted against its own contract,
+      // whose per-slide targets are deliberately soft. Re-normalizing it here
+      // would reintroduce the retired legacy ceiling before Terra sees it.
+      const providerNarration = provider === "aitunnel"
+        ? narrationText
+        : normalizeNarrationText(narrationText, project);
+      return provider === "openai" ? await generateOpenAIPresentationFromNarration(project, sources, providerNarration)
+        : provider === "aitunnel" ? await generateAitunnelPresentationFromNarration(project, sources, providerNarration)
+          : await generateYandexPresentationFromNarration(project, sources, providerNarration);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       errors.push(`${provider}: ${message}`);

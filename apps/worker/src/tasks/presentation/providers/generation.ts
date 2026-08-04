@@ -20,6 +20,7 @@ import {
 } from "../../../aitunnel-narration-budget.js";
 import {
   type DesignBrief,
+  type CostEnvelopeBucket,
   type DeckStory,
   type GenerationPipelineArtifacts,
   type Highlight,
@@ -230,9 +231,9 @@ export async function generateWithAitunnel(project: ProjectInput, sources: Sourc
     researchBrief, deckStory, designBrief, slideBlueprints, slideTextPlans, openAIClient: client, openAIModel: config.narrationModel,
   });
   return finalizeGeneratedPresentation(parsed, project, sources, "aitunnel", narrationText, narrativePlan, (presentation, issues) =>
-    repairSlideTextWithOpenAI(client, presentation, issues, { provider: "aitunnel", model: config.narrationModel }), {
-      critique: (presentation, deterministic) => critiquePresentationQualityWithOpenAI(client, presentation, deterministic, { provider: "aitunnel", model: config.narrationModel }),
-      repair: (presentation, issues, attempt) => repairPresentationQualityWithOpenAI(client, presentation, issues, attempt, { provider: "aitunnel", model: config.narrationModel }),
+    repairSlideTextWithOpenAI(client, presentation, issues, { provider: "aitunnel", model: aitunnelModelForStage("slide_text_repair")! }), {
+      critique: (presentation, deterministic) => critiquePresentationQualityWithOpenAI(client, presentation, deterministic, { provider: "aitunnel", model: aitunnelModelForStage("quality_critique")! }),
+      repair: (presentation, issues, attempt) => repairPresentationQualityWithOpenAI(client, presentation, issues, attempt, { provider: "aitunnel", model: aitunnelModelForStage("quality_repair")! }),
     }, designBrief);
   });
 }
@@ -280,14 +281,14 @@ export async function generateAitunnelPresentationFromNarration(project: Project
   const researchBrief = buildResearchBrief(project, sources);
   const narrativePlan = await generateNarrativePlanWithProvider("aitunnel", project, sources, researchBrief, { openAIClient: client, openAIModel: config.narrationModel });
   const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
-  const slideTextPlans = buildSlideTextPlans(project, narrationText, narrativePlan, deckStory, sources);
+  const slideTextPlans = buildSlideTextPlans(project, narrationText, narrativePlan, deckStory, sources, { acceptedFullNarration: true });
   const designBrief = await generateDesignBriefWithProvider("aitunnel", project, sources, researchBrief, narrativePlan, deckStory, slideTextPlans, { openAIClient: client, openAIModel: config.narrationModel });
-  const slideBlueprints = buildSlideBlueprints(project, narrationText, narrativePlan, designBrief);
+  const slideBlueprints = buildSlideBlueprints(project, narrationText, narrativePlan, designBrief, { acceptedFullNarration: true });
   const parsed = await generatePresentationDocumentWithProvider("aitunnel", project, sources, narrationText, narrativePlan, { researchBrief, deckStory, designBrief, slideBlueprints, slideTextPlans, openAIClient: client, openAIModel: config.narrationModel });
   return finalizeGeneratedPresentation(parsed, project, sources, "aitunnel", narrationText, narrativePlan, (presentation, issues) =>
-    repairSlideTextWithOpenAI(client, presentation, issues, { provider: "aitunnel", model: config.narrationModel }), {
-      critique: (presentation, deterministic) => critiquePresentationQualityWithOpenAI(client, presentation, deterministic, { provider: "aitunnel", model: config.narrationModel }),
-      repair: (presentation, issues, attempt) => repairPresentationQualityWithOpenAI(client, presentation, issues, attempt, { provider: "aitunnel", model: config.narrationModel }),
+    repairSlideTextWithOpenAI(client, presentation, issues, { provider: "aitunnel", model: aitunnelModelForStage("slide_text_repair")! }), {
+      critique: (presentation, deterministic) => critiquePresentationQualityWithOpenAI(client, presentation, deterministic, { provider: "aitunnel", model: aitunnelModelForStage("quality_critique")! }),
+      repair: (presentation, issues, attempt) => repairPresentationQualityWithOpenAI(client, presentation, issues, attempt, { provider: "aitunnel", model: aitunnelModelForStage("quality_repair")! }),
     }, designBrief);
   });
 }
@@ -330,7 +331,7 @@ export async function generateOpenAINarration(client: OpenAI, project: ProjectIn
 }
 
 export async function generateAitunnelNarration(client: OpenAI, model: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief): Promise<string> {
-  if (currentUsageContext()?.costEnvelopePolicyVersion === "standard-generation-cost-envelope-v6") {
+  if (isFullNarrationCostEnvelopePolicy(currentUsageContext()?.costEnvelopePolicyVersion)) {
     return (await generateAitunnelFullNarrationOutcome(client, project, sources, narrativePlan)).text;
   }
   return generateLegacyAitunnelNarration(client, model, project, sources, narrativePlan, researchBrief);
@@ -366,9 +367,10 @@ export async function generateAitunnelFullNarrationOutcome(client: OpenAI, proje
       return selected;
     }
 
-    // A rewrite only receives a complete, locally usable candidate.  A broken
-    // response is neither made editable nor sent back to the provider.
-    if (!attempts[0]!.diagnostics.isStructurallyUsable) return finishV6Recovery(project.id, attempts, calledStages, reservations, "candidate_not_usable", null);
+    // A full rewrite can correct length and quality defects when all ten
+    // canonical sections are present.  Missing, reordered, or empty sections
+    // still have no reliable full-document shape to send back to the provider.
+    if (!attempts[0]!.diagnostics.hasCanonicalSectionCoverage) return finishV6Recovery(project.id, attempts, calledStages, reservations, "candidate_not_usable", null);
     let rewritten: string;
     try {
       rewritten = await requestV6NarrationStage(client, project, "narration_full_rewrite", buildAitunnelFullNarrationRewriteWithDraftPrompt(project, sources, narrativePlan, candidate, attempts[0]!.diagnostics), reservations, calledStages);
@@ -435,6 +437,10 @@ type V6ProviderTerminationMetadata = {
   providerTerminationReason?: V6ProviderTerminationReason;
 };
 
+function isFullNarrationCostEnvelopePolicy(version: string | undefined) {
+  return version === "standard-generation-cost-envelope-v6" || version === "standard-generation-cost-envelope-v7" || version === "standard-generation-cost-envelope-v8" || version === "standard-generation-cost-envelope-v9";
+}
+
 async function generateLegacyAitunnelNarration(client: OpenAI, model: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief): Promise<string> {
   if (!currentAitunnelProjectBudget()) return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), () => generateAitunnelNarration(client, model, project, sources, narrativePlan, researchBrief));
   const policy = aitunnelNarrationBudgetConfig();
@@ -452,7 +458,7 @@ async function generateLegacyAitunnelNarration(client: OpenAI, model: string, pr
       let section: string;
       let candidateAccepted = false;
       try {
-        section = validateAitunnelNarrationSection(candidate.text, project, narrativePlan, part, "gemini-3.5-flash-lite", part.candidateStage);
+        section = validateAitunnelNarrationSection(candidate.text, project, narrativePlan, part, aitunnelModelForStage(part.candidateStage)!, part.candidateStage);
         candidateAccepted = true;
       } catch (error) {
         if (!(error instanceof AitunnelNarrationSectionQualityError)) throw error;
@@ -462,7 +468,7 @@ async function generateLegacyAitunnelNarration(client: OpenAI, model: string, pr
           reservationKey: reservationKeys?.[part.fallbackStage], section: part,
         });
         try {
-          section = validateAitunnelNarrationSection(fallback.text, project, narrativePlan, part, "gemini-3.6-flash", part.fallbackStage);
+          section = validateAitunnelNarrationSection(fallback.text, project, narrativePlan, part, aitunnelModelForStage(part.fallbackStage)!, part.fallbackStage);
         } catch (fallbackError) {
           if (!(fallbackError instanceof AitunnelNarrationSectionQualityError) || globalRewriteUsed) throw fallbackError;
           globalRewriteUsed = true;
@@ -471,7 +477,7 @@ async function generateLegacyAitunnelNarration(client: OpenAI, model: string, pr
             stage: "narration_global_rewrite", prompt: part.globalRewritePrompt(fallbackError.reason),
             reservationKey: reservationKeys?.narration_global_rewrite, section: part,
           });
-          section = validateAitunnelNarrationSection(global.text, project, narrativePlan, part, "gemini-3.6-flash", "narration_global_rewrite");
+          section = validateAitunnelNarrationSection(global.text, project, narrativePlan, part, aitunnelModelForStage("narration_global_rewrite")!, "narration_global_rewrite");
         }
       }
       accepted.push(section);
@@ -1313,12 +1319,29 @@ export async function generateNarrativePlanWithProvider(
     prompt: buildNarrativePlanPrompt(project, sources, researchBrief),
     schema: z.array(slideNarrativeSchema),
     schemaName: "studydeck_narrative_plan",
-    parse: (value) => normalizeNarrativePlan(value, project),
+    parse: (value) => normalizeNarrativePlan(unwrapNarrativePlanResponse(value), project),
     jsonSchema: narrativePlanJsonSchema,
     yandexModelTier: "economy",
     aitunnelStage: "narrative_plan",
     ...options,
   });
+}
+
+function unwrapNarrativePlanResponse(value: unknown) {
+  let parsed: unknown;
+  try {
+    parsed = parseJsonOutput(value);
+  } catch {
+    // `normalizeNarrativePlan` intentionally turns malformed provider output
+    // into a deterministic plan; preserve that established recovery path.
+    return value;
+  }
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray((parsed as { slides?: unknown }).slides)) {
+    return (parsed as { slides: unknown[] }).slides;
+  }
+  // Keep accepting the historical array shape for retries and deterministic
+  // tests. New provider calls are constrained by the object-root JSON schema.
+  return parsed;
 }
 
 export async function generateDesignBriefWithProvider(
@@ -1551,13 +1574,13 @@ export async function requestOpenAIStructuredLegacy({
     if (provider === "aitunnel" && (!reserved || reserved.status !== "reserved")) {
       throw new Error(reserved?.status || "aitunnel_project_budget_exhausted_preflight");
     }
-    persistedReservation = await reservePersistedNarrativePlanEnvelope(provider, aitunnelStage);
+    persistedReservation = await reservePersistedAitunnelStageEnvelope(provider, aitunnelStage);
     let response: Awaited<ReturnType<typeof client.responses.create>>;
     try {
       response = await client.responses.create(request);
     } catch (error) {
       if (persistedReservation) {
-        await failCostEnvelope({ ...persistedReservation, reason: "narrative_plan_provider_error" }).catch(() => undefined);
+        await failCostEnvelope({ ...persistedReservation, reason: `${aitunnelStage || "structured_generation"}_provider_error` }).catch(() => undefined);
       }
       throw error;
     }
@@ -1566,16 +1589,16 @@ export async function requestOpenAIStructuredLegacy({
     responseUsageRecorded = true;
     if (persistedReservation) {
       if (!usage || usage.inputTokens === undefined || usage.outputTokens === undefined) {
-        await settleCostEnvelope({ ...persistedReservation, reason: "narrative_plan_usage_unavailable" });
-        throw new Error("aitunnel_narrative_plan_usage_unavailable");
+        await settleCostEnvelope({ ...persistedReservation, reason: `${aitunnelStage || "structured_generation"}_usage_unavailable` });
+        throw new Error(`aitunnel_${aitunnelStage || "structured_generation"}_usage_unavailable`);
       }
       const priced = calculateProviderCost("aitunnel", model, startedAt, usage);
       if (priced.status !== "priced" || !priced.sourceCost) {
-        await settleCostEnvelope({ ...persistedReservation, reason: "narrative_plan_price_unavailable" });
-        throw new Error("aitunnel_narrative_plan_price_unavailable");
+        await settleCostEnvelope({ ...persistedReservation, reason: `${aitunnelStage || "structured_generation"}_price_unavailable` });
+        throw new Error(`aitunnel_${aitunnelStage || "structured_generation"}_price_unavailable`);
       }
       const settledEnvelope = await settleCostEnvelope({ ...persistedReservation, actualRub: priced.sourceCost, reason: "usage_reported" });
-      if (settledEnvelope.status !== "settled") throw new Error(`aitunnel_narrative_plan_${settledEnvelope.status}`);
+      if (settledEnvelope.status !== "settled") throw new Error(`aitunnel_${aitunnelStage || "structured_generation"}_${settledEnvelope.status}`);
     }
     if (budget && reservationKey) {
       const settled = budget.settle(reservationKey, usage);
@@ -1585,7 +1608,7 @@ export async function requestOpenAIStructuredLegacy({
     return typedResponse.output_parsed || response.output_text || "";
   } catch (error) {
     if (persistedReservation) {
-      await failCostEnvelope({ ...persistedReservation, reason: "narrative_plan_provider_error" }).catch(() => undefined);
+      await failCostEnvelope({ ...persistedReservation, reason: `${aitunnelStage || "structured_generation"}_provider_error` }).catch(() => undefined);
     }
     if (!responseUsageRecorded) {
       await recordAiUsage({ provider, model, operation: "structured_generation_legacy", schemaName, startedAt, error });
@@ -1594,15 +1617,25 @@ export async function requestOpenAIStructuredLegacy({
   }
 }
 
-async function reservePersistedNarrativePlanEnvelope(provider: "openai" | "aitunnel", stage: AitunnelStage | undefined) {
-  const envelopeId = provider === "aitunnel" && stage === "narrative_plan" ? currentUsageContext()?.costEnvelopeId : undefined;
-  if (!envelopeId) return undefined;
+async function reservePersistedAitunnelStageEnvelope(provider: "openai" | "aitunnel", stage: AitunnelStage | undefined) {
+  const persistedStages = new Set<AitunnelStage>([
+    "narrative_plan",
+    "design_brief",
+    "presentation",
+    "quality_critique",
+    "quality_repair",
+    "slide_text_repair",
+  ]);
+  const context = currentUsageContext();
+  const envelopeId = provider === "aitunnel" && stage && persistedStages.has(stage) ? context?.costEnvelopeId : undefined;
+  if (!envelopeId || !stage) return undefined;
   const envelope = await getPrisma().costEnvelope.findUniqueOrThrow({ where: { id: envelopeId }, select: { policySnapshot: true } });
-  const amountRub = String((envelope.policySnapshot as { buckets?: Record<string, string> }).buckets?.narrative_plan || "");
-  if (!/^\d+(?:\.\d+)?$/.test(amountRub) || amountRub === "0") throw new Error("aitunnel_narrative_plan_missing_policy_bucket");
-  const idempotencyKey = `${envelopeId}:narrative_plan`;
-  const reservation = await reserveCostEnvelope({ envelopeId, idempotencyKey, bucket: "narrative_plan", stage: "narrative_plan", amountRub });
-  if (reservation.status !== "reserved") throw new Error(`aitunnel_narrative_plan_${reservation.reason || "reservation_blocked"}`);
+  const bucket = stage as CostEnvelopeBucket;
+  const amountRub = String((envelope.policySnapshot as { buckets?: Record<string, string> }).buckets?.[bucket] || "");
+  if (!/^\d+(?:\.\d+)?$/.test(amountRub) || amountRub === "0") throw new Error(`aitunnel_${stage}_missing_policy_bucket`);
+  const idempotencyKey = `${envelopeId}:${context?.generationJobId || "direct"}:${stage}`;
+  const reservation = await reserveCostEnvelope({ envelopeId, idempotencyKey, bucket, stage, amountRub });
+  if (reservation.status !== "reserved") throw new Error(`aitunnel_${stage}_${reservation.reason || "reservation_blocked"}`);
   return { envelopeId, idempotencyKey };
 }
 

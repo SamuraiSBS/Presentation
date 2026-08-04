@@ -556,9 +556,13 @@ export class ProjectsService {
         ? await tx.costEnvelope.findFirst({
           where: { projectId, status: "active", narrationJob: { is: { status: "completed" } }, presentationJobId: null },
           orderBy: { createdAt: "desc" },
+          select: { id: true, policyVersion: true, sourceSnapshot: true },
         })
         : null;
-      if (existing) {
+      // A pre-v8 narration envelope does not reserve the final Terra request.
+      // Do not silently reuse it for slides: its old cap cannot safely govern
+      // the post-narration provider path.
+      if (existing?.policyVersion === policy.version) {
         const envelope = await tx.costEnvelope.update({ where: { id: existing.id }, data: { presentationJobId: job.id } });
         return { id: envelope.id, job };
       }
@@ -569,6 +573,10 @@ export class ProjectsService {
           limitRub: policy.limitRub,
           policySnapshot: policy,
           catalogSnapshot: aitunnelCatalogSnapshot(),
+          // A v7 narration run may already have paid to build the immutable
+          // source snapshot. Preserve it when upgrading only its presentation
+          // half to v8; do not repeat web research just for the envelope.
+          ...(kind === "presentation" && existing?.sourceSnapshot ? { sourceSnapshot: existing.sourceSnapshot } : {}),
           ...(kind === "narration" ? { narrationJobId: job.id } : { presentationJobId: job.id }),
         },
       });

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   runWithAitunnelProjectBudget: vi.fn(),
   selectAiProviders: vi.fn(),
   generateAitunnelFullNarrationOutcome: vi.fn(),
+  generateAitunnelPresentationFromNarration: vi.fn(),
   generateAitunnelNarration: vi.fn(),
   generateOpenAINarration: vi.fn(),
   generateYandexNarration: vi.fn(),
@@ -51,7 +52,7 @@ vi.mock("./providers/provider-selection.js", () => ({
 vi.mock("./providers/generation.js", () => ({
   generateWithAitunnel: vi.fn(),
   generateWithOpenAI: vi.fn(),
-  generateAitunnelPresentationFromNarration: vi.fn(),
+  generateAitunnelPresentationFromNarration: mocks.generateAitunnelPresentationFromNarration,
   generateOpenAIPresentationFromNarration: vi.fn(),
   generateAitunnelNarration: mocks.generateAitunnelNarration,
   generateAitunnelFullNarrationOutcome: mocks.generateAitunnelFullNarrationOutcome,
@@ -72,7 +73,7 @@ vi.mock("./planning/builders.js", () => ({
 }));
 
 vi.mock("./narration/processing.js", () => ({
-  normalizeNarrationText: vi.fn(),
+  normalizeNarrationText: vi.fn((value: string) => value),
   parseNarrationSections: vi.fn(),
 }));
 
@@ -98,7 +99,7 @@ vi.mock("@studydeck/shared", async (importOriginal) => {
   };
 });
 
-const { generateNarrationDraft } = await import("./orchestrator.js");
+const { generateNarrationDraft, generatePresentationFromNarration } = await import("./orchestrator.js");
 
 const project = {
   id: "editable-draft-project",
@@ -182,7 +183,7 @@ describe("v6 editable narration persistence boundary", () => {
     expect(mocks.captureGenerationError).not.toHaveBeenCalled();
   });
 
-  it("keeps v6 accepted narration on the existing artifact-validation gate", async () => {
+  it("returns v6 accepted narration before presentation artifacts can be built or parsed", async () => {
     mocks.selectAiProviders.mockReturnValue(["aitunnel"]);
     mocks.currentUsageContext.mockReturnValue({ costEnvelopePolicyVersion: "standard-generation-cost-envelope-v6" });
     mocks.generateAitunnelFullNarrationOutcome.mockResolvedValue({
@@ -192,14 +193,33 @@ describe("v6 editable narration persistence boundary", () => {
     });
     mocks.buildSlideTextPlans.mockReturnValue([]);
     mocks.generationPipelineArtifactsParse.mockImplementation(() => {
-      throw new Error("invalid presentation artifacts");
+      throw new Error("presentation artifact construction must not run for accepted narration");
     });
 
-    await expect(generateNarrationDraft(project, sources)).rejects.toThrow("invalid presentation artifacts");
+    await expect(generateNarrationDraft(project, sources)).resolves.toEqual({
+      text: "Accepted narration text.",
+      narrativePlan,
+      generationMode: "aitunnel",
+      narrationOutcome: {
+        kind: "accepted",
+        text: "Accepted narration text.",
+        stage: "narration_full_candidate",
+      },
+    });
 
     expect(mocks.generateAitunnelNarration).not.toHaveBeenCalled();
-    expect(mocks.buildSlideTextPlans).toHaveBeenCalledTimes(1);
-    expect(mocks.generationPipelineArtifactsParse).toHaveBeenCalledTimes(1);
+    expect(mocks.buildSlideTextPlans).not.toHaveBeenCalled();
+    expect(mocks.generationPipelineArtifactsParse).not.toHaveBeenCalled();
+  });
+
+  it("routes the accepted AITunnel narration into the provider-backed final document", async () => {
+    const generated = { id: "provider-document", generationMode: "aitunnel" };
+    mocks.selectAiProviders.mockReturnValue(["aitunnel"]);
+    mocks.generateAitunnelPresentationFromNarration.mockResolvedValue(generated);
+
+    await expect(generatePresentationFromNarration(project, sources, "Accepted narration text.")).resolves.toBe(generated);
+
+    expect(mocks.generateAitunnelPresentationFromNarration).toHaveBeenCalledWith(project, sources, "Accepted narration text.");
   });
 
   it("keeps legacy AITUNNEL narration on its existing artifact-validation path", async () => {

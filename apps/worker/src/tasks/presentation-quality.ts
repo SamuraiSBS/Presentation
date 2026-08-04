@@ -1470,13 +1470,13 @@ export function productionQualityReleaseResult(
   attempts = 0,
 ): ProductionQualityReleaseResult {
   const critique = critiquePresentationDeterministically(presentation, sources, project);
-  // The normal production path remains Yandex-only.  A run with a persisted
-  // economic source snapshot is different: its paid provider work ended at
-  // accepted narration and the document is the required local projection.
-  // Neither path may pass with a demo or fallback document.
+  // AITunnel is a production provider alongside Yandex. A run with a
+  // persisted economic source snapshot may also use its local projection
+  // after accepted narration. Neither path may pass with a demo or fallback
+  // document.
   const allowedGenerationModes = project.mandatorySourceSnapshot
-    ? ["local"]
-    : ["yandex"];
+    ? ["local", "aitunnel"]
+    : ["yandex", "aitunnel"];
   const issues = allowedGenerationModes.includes(presentation.generationMode)
     ? critique.issues
     : [...critique.issues, {
@@ -1484,11 +1484,11 @@ export function productionQualityReleaseResult(
         category: "schema_risk" as const,
         field: "generationMode",
         message: project.mandatorySourceSnapshot
-          ? "Economic presentation was not assembled from accepted narration locally."
-          : "Generated presentation was not produced by the required Yandex provider.",
+          ? "Economic presentation was not assembled from accepted narration locally or through AITunnel."
+          : "Generated presentation was not produced by an approved production provider.",
         repairInstruction: project.mandatorySourceSnapshot
-          ? "Resume the linked presentation job from the accepted narration; do not use a demo or provider fallback document."
-          : "Run a new generation with Yandex configured; do not substitute a local fallback document.",
+          ? "Resume the linked presentation job from accepted narration using AITunnel or the local projection; do not use a demo or provider fallback document."
+          : "Run a new generation with Yandex or AITunnel configured; do not substitute a local fallback document.",
       }];
   return {
     issueCategories: [...new Set(issues.map((issue) => issue.category))],
@@ -1725,6 +1725,9 @@ export async function improvePresentationQuality(
     ...findGenericTextIssues(best),
     ...findVisibleTextIntegrityIssues(best),
     ...findContentSlideContractIssues(best),
+    // Dense visible copy is mechanically recoverable from the accepted
+    // narration; repair it before escalating to another paid model pass.
+    ...findLongSlideTextIssues(best),
     ...findIntraSlideDuplicateIssues(best),
     // Exact deck-wide central-claim repeats are safe to replace locally from
     // the matching narrative-plan job. Softer semantic matches stay in the
@@ -1733,6 +1736,10 @@ export async function improvePresentationQuality(
     ...findEntityCategoryMismatchIssues(best),
   ];
   if (contentIssues.length) {
+    const releaseTextIssuesBefore = [
+      ...findGenericTextIssues(best),
+      ...findLongSlideTextIssues(best),
+    ];
     const affectedSlideIds = new Set(contentIssues
       .map((issue) => issue.slideId)
       .filter((id): id is string => Boolean(id)));
@@ -1742,12 +1749,14 @@ export async function improvePresentationQuality(
     );
     const fallbackCritique = critiquePresentationDeterministically(fallback, sources, project);
     const remaining = [
+      ...findGenericTextIssues(fallback),
+      ...findLongSlideTextIssues(fallback),
       ...findVisibleTextIntegrityIssues(fallback),
       ...findContentSlideContractIssues(fallback),
       ...findIntraSlideDuplicateIssues(fallback),
       ...findDeckWideDuplicateIssues(fallback).filter((issue) => issue.severity === "blocker"),
     ];
-    if (fallbackCritique.score >= bestCritique.score || !remaining.length) {
+    if (fallbackCritique.score >= bestCritique.score || remaining.length < releaseTextIssuesBefore.length || !remaining.length) {
       best = fallback;
       bestCritique = fallbackCritique;
     }
@@ -1909,7 +1918,7 @@ export function applyVisibleTextIntegrityFallbacks(
   project: QualityProjectInput,
 ): PresentationDocument {
   const affected = new Set(issues
-    .filter((issue) => issue.category === "duplicate" || issue.category === "generic_text" || issue.message.startsWith("Visible text is incomplete:") || issue.field === "contentContract")
+    .filter((issue) => issue.category === "duplicate" || issue.category === "generic_text" || issue.category === "too_long" || issue.message.startsWith("Visible text is incomplete:") || issue.field === "contentContract")
     .map((issue) => issue.slideId)
     .filter((id): id is string => Boolean(id)));
   const fieldsBySlide = new Map<string, Set<string>>();

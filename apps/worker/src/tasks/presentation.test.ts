@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auditSlideCanvas, getRussianStudentSpeechTimingBudget, presentationSchema } from "@studydeck/shared";
 import {
   buildGenerationPrompt,
+  buildLocalPresentationFromAcceptedNarration,
   buildSafePresentationFromNarration,
   findSlideTextIssues,
   generateNarrationDraft,
@@ -520,7 +521,7 @@ describe("Yandex narration full duration rewrite", () => {
     const originalFetch = global.fetch;
     global.fetch = async () => { throw new Error("provider access is forbidden in the local presentation path"); };
     try {
-      const presentation = await generatePresentationFromNarration(project, [{
+      const presentation = buildLocalPresentationFromAcceptedNarration(project, [{
         id: "saturn-source", label: "Saturn reference", type: "WEB", url: "https://science.example/saturn",
         excerpt: "Saturn is a planet with rings and a complex system of moons.",
       }], accepted);
@@ -684,10 +685,10 @@ describe("Yandex narration full duration rewrite", () => {
       responses: { create: async (request: { model: string }) => { models.push(request.model); const order = ++calls; return { output_text: narrationSection(order, order === 1 ? 80 : order === 10 ? 100 : 140), usage: { input_tokens: 100, output_tokens: 100 } }; } },
     } as never;
 
-    const result = await generateAitunnelNarration(client, "gemini-3.5-flash-lite", project, [], plan);
+    const result = await generateAitunnelNarration(client, "gpt-5.6-terra", project, [], plan);
     expect(MAX_AITUNNEL_NARRATION_TEXT_CALLS).toBe(3);
     expect(calls).toBe(10);
-    expect(models).toEqual(Array(10).fill("gemini-3.5-flash-lite"));
+    expect(models).toEqual(Array(10).fill("gpt-5.6-luna"));
     expect(() => normalizeNarrationText(result, project, plan)).not.toThrow();
   });
 
@@ -797,7 +798,7 @@ describe("Yandex narration full duration rewrite", () => {
   it("fits the ten-slide initial actual cost and context-light rewrite reservation inside the narration cap", () => {
     const initialPrompt = buildNarrationPrompt(project, [], plan);
     const rewritePrompt = buildAitunnelFullNarrationRewritePrompt(project, [], plan, undefined, "duration");
-    const initialRequest = { model: "gemini-3.6-flash", input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: initialPrompt }], max_output_tokens: 2400, reasoning: { effort: "minimal", exclude: true } };
+    const initialRequest = { model: "gpt-5.6-luna", input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: initialPrompt }], max_output_tokens: 2400, reasoning: { effort: "minimal", exclude: true } };
     const rewriteRequest = { ...initialRequest, input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: rewritePrompt }] };
     const budget = new AitunnelProjectBudget({ AITUNNEL_PROJECT_BUDGET_RUB: "30", AITUNNEL_NARRATION_JOB_BUDGET_RUB: "20" });
     expect(budget.reserve("initial", "narration", initialRequest)).toMatchObject({ status: "reserved" });
@@ -812,9 +813,9 @@ describe("Yandex narration full duration rewrite", () => {
       responses: { create: async (request: { model: string }) => { models.push(request.model); const order = ++calls; return { output_text: narrationSection(order, order === 1 ? 80 : order === 10 ? 100 : 140), usage: { input_tokens: 100, output_tokens: 100 }, id: `response-${calls}` }; } },
     } as never;
 
-    await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).resolves.toContain("Слайд 1:");
+    await expect(generateAitunnelNarration(client, "gpt-5.6-terra", project, [], plan)).resolves.toContain("Слайд 1:");
     expect(calls).toBe(10);
-    expect(models).toEqual(Array(10).fill("gemini-3.5-flash-lite"));
+    expect(models).toEqual(Array(10).fill("gpt-5.6-luna"));
   });
 
   it("replaces an invalid Lite section once with Flash and then continues with Lite", async () => {
@@ -828,8 +829,8 @@ describe("Yandex narration full duration rewrite", () => {
       return { output_text: calls === 1 ? short : narrationSection(order, order === 1 ? 80 : order === 10 ? 100 : 140), usage: { input_tokens: 100, output_tokens: 100 } };
     } } } as never;
 
-    await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).resolves.toContain("Слайд 10:");
-    expect(models).toEqual(["gemini-3.5-flash-lite", "gemini-3.6-flash", ...Array(9).fill("gemini-3.5-flash-lite")]);
+    await expect(generateAitunnelNarration(client, "gpt-5.6-terra", project, [], plan)).resolves.toContain("Слайд 10:");
+    expect(models).toEqual(Array(11).fill("gpt-5.6-luna"));
   });
 
   it("keeps rejected narration details out of AITUNNEL logs and the public failure", async () => {
@@ -845,7 +846,7 @@ describe("Yandex narration full duration rewrite", () => {
     } as never;
 
     try {
-      await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).rejects.not.toThrow(sentinel);
+      await expect(generateAitunnelNarration(client, "gpt-5.6-terra", project, [], plan)).rejects.not.toThrow(sentinel);
       expect(JSON.stringify(logged)).not.toContain(sentinel);
       expect(logged.length).toBeGreaterThanOrEqual(2);
     } finally {
@@ -858,7 +859,7 @@ describe("Yandex narration full duration rewrite", () => {
     const client = { responses: { create: async () => { calls += 1; return { output_text: completeNarration(), usage: { input_tokens: 100, output_tokens: 100 } }; } } } as never;
     const budget = new AitunnelProjectBudget({ AITUNNEL_PROJECT_BUDGET_RUB: "0.00000001", AITUNNEL_NARRATION_JOB_BUDGET_RUB: "0.00000001" });
 
-    await expect(runWithAitunnelProjectBudget(budget, () => generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan))).rejects.toThrow("narration_budget_exhausted_failure");
+    await expect(runWithAitunnelProjectBudget(budget, () => generateAitunnelNarration(client, "gpt-5.6-terra", project, [], plan))).rejects.toThrow("narration_budget_exhausted_failure");
     expect(calls).toBe(0);
   });
 
@@ -868,7 +869,7 @@ describe("Yandex narration full duration rewrite", () => {
       responses: { create: async () => { calls += 1; throw new Error("provider unavailable"); } },
     } as never;
 
-    await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).rejects.toThrow("narration_provider_failure");
+    await expect(generateAitunnelNarration(client, "gpt-5.6-terra", project, [], plan)).rejects.toThrow("narration_provider_failure");
     expect(calls).toBe(1);
   });
 
@@ -878,7 +879,7 @@ describe("Yandex narration full duration rewrite", () => {
       responses: { create: async (request: Record<string, unknown>) => {
         calls += 1;
         expect(request).toMatchObject({
-          model: "gemini-3.5-flash-lite",
+          model: "gpt-5.6-luna",
           max_output_tokens: 384,
           reasoning: { effort: "minimal", exclude: true },
         });
@@ -886,7 +887,7 @@ describe("Yandex narration full duration rewrite", () => {
       } },
     } as never;
 
-    await expect(generateAitunnelNarration(client, "gemini-3.6-flash", project, [], plan)).rejects.toThrow("narration_usage_unavailable_failure");
+    await expect(generateAitunnelNarration(client, "gpt-5.6-terra", project, [], plan)).rejects.toThrow("narration_usage_unavailable_failure");
     expect(calls).toBe(1);
   });
 });

@@ -44,11 +44,13 @@ describe("usage ledger pricing", () => {
     expect(calculateProviderCost("yandex", "yandexgpt-5.1", at, { inputTokens: 1_000, outputTokens: 2_000 })).toMatchObject({ status: "priced", sourceCost: "2.40000000", currency: "RUB" });
   });
 
-  it("prices the explicit AITUNNEL Gemini model in RUB and leaves unknown models unknown", () => {
-    const at = new Date("2026-07-24T12:00:00Z");
+  it("prices historical Gemini and current GPT 5.6 AITUNNEL models in RUB", () => {
+    const at = new Date("2026-08-04T12:00:00Z");
     expect(calculateProviderCost("aitunnel", "gemini-3.6-flash", at, { inputTokens: 1_000, outputTokens: 2_000 })).toMatchObject({ status: "priced", sourceCost: "5.00500000", currency: "RUB", version: "aitunnel-gemini-3.6-flash-pricing-2026-07-24" });
     expect(calculateProviderCost("aitunnel", "unknown", at, { inputTokens: 1_000 })).toMatchObject({ status: "unknown_price", sourceCost: null });
     expect(calculateProviderCost("aitunnel", "gemini-3.5-flash-lite", at, { inputTokens: 1_000, outputTokens: 2_000 })).toMatchObject({ status: "priced", sourceCost: "1.06000000", currency: "RUB", version: "aitunnel-gemini-3.5-flash-lite-model-page-2026-07-24" });
+    expect(calculateProviderCost("aitunnel", "gpt-5.6-luna", at, { inputTokens: 1_000, outputTokens: 2_000 })).toMatchObject({ status: "priced", sourceCost: "0.26000000", currency: "RUB", version: "aitunnel-gpt-5.6-luna-pricing-2026-08-04" });
+    expect(calculateProviderCost("aitunnel", "gpt-5.6-terra", at, { inputTokens: 1_000, outputTokens: 2_000 })).toMatchObject({ status: "priced", sourceCost: "2.60000000", currency: "RUB", version: "aitunnel-gpt-5.6-terra-pricing-2026-08-04" });
   });
 
   it("normalizes AI SDK and Responses usage classes", () => {

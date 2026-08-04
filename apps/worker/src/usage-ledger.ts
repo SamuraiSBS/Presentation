@@ -215,10 +215,16 @@ function priceFor(provider: string, model: string, at: Date): Price | null {
   if (catalogPrice && catalogPrice.effectiveFrom <= at) return catalogPrice;
 
   if (provider === "aitunnel" && model.trim().toLowerCase() === "gemini-3.6-flash") {
-    return { input: AITUNNEL_PRIMARY_PRICE.inputRubPerMillion, output: AITUNNEL_PRIMARY_PRICE.outputRubPerMillion, currency: "RUB", version: AITUNNEL_PRIMARY_PRICE.version, effectiveFrom: new Date("2026-07-24T00:00:00Z") };
+    return { input: "455", output: "2275", currency: "RUB", version: "aitunnel-gemini-3.6-flash-pricing-2026-07-24", effectiveFrom: new Date("2026-07-24T00:00:00Z") };
   }
   if (provider === "aitunnel" && model.trim().toLowerCase() === "gemini-3.5-flash-lite") {
-    return { input: AITUNNEL_ECONOMY_PRICE.inputRubPerMillion, output: AITUNNEL_ECONOMY_PRICE.outputRubPerMillion, currency: "RUB", version: AITUNNEL_ECONOMY_PRICE.version, effectiveFrom: new Date("2026-07-24T00:00:00Z") };
+    return { input: "60", output: "500", currency: "RUB", version: "aitunnel-gemini-3.5-flash-lite-model-page-2026-07-24", effectiveFrom: new Date("2026-07-24T00:00:00Z") };
+  }
+  if (provider === "aitunnel" && model.trim().toLowerCase() === "gpt-5.6-luna") {
+    return { input: AITUNNEL_ECONOMY_PRICE.inputRubPerMillion, output: AITUNNEL_ECONOMY_PRICE.outputRubPerMillion, currency: "RUB", version: AITUNNEL_ECONOMY_PRICE.version, effectiveFrom: new Date("2026-08-04T00:00:00Z") };
+  }
+  if (provider === "aitunnel" && model.trim().toLowerCase() === "gpt-5.6-terra") {
+    return { input: AITUNNEL_PRIMARY_PRICE.inputRubPerMillion, output: AITUNNEL_PRIMARY_PRICE.outputRubPerMillion, currency: "RUB", version: AITUNNEL_PRIMARY_PRICE.version, effectiveFrom: new Date("2026-08-04T00:00:00Z") };
   }
 
   const input = process.env.YANDEX_INPUT_PRICE_RUB_PER_MILLION;

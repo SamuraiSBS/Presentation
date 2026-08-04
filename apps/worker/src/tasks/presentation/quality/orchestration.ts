@@ -4,8 +4,10 @@ import { generateText, Output } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import { captureGenerationError, errorLogFields, logger } from "../../../observability.js";
-import { normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
+import { calculateProviderCost, currentUsageContext, normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
 import { aitunnelModelForStage, aitunnelStagePolicy, currentAitunnelProjectBudget, type AitunnelStage } from "../../../aitunnel-narration-budget.js";
+import { failCostEnvelope, reserveCostEnvelope, settleCostEnvelope } from "../../../cost-envelope.js";
+import { getPrisma } from "../../../prisma.js";
 import {
   type DesignBrief,
   type DeckStory,
@@ -27,6 +29,7 @@ import {
   type SlideVisual,
   type MermaidDiagramSpec,
   type Source,
+  type CostEnvelopeBucket,
   PREMIUM_PRESENTATION_THEMES,
   PREMIUM_PRESENTATION_THEME_IDS,
   SLIDE_LAYOUT_DEFINITIONS,
@@ -44,7 +47,11 @@ import {
   slideTextPlanSchema,
 } from "@studydeck/shared";
 import {
+  applyTopicRelevanceFallbacks,
+  applyVisualPlanFallbacks,
   findContentSlideContractIssues,
+  applyVisibleTextIntegrityFallbacks,
+  critiquePresentationDeterministically,
   improvePresentationQuality,
   productionQualityReleaseResult,
   rebuildGeneratedCanvases,
@@ -146,7 +153,7 @@ import type { YandexCompletionResponse } from "../constants.js";
 import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
 import { recordOpenAIResponse } from "../providers/generation.js";
 import { shortenVisibleTitle, buildQualityCritique } from "../planning/builders.js";
-import { requestYandexText, parseNarrationSections, validateNarrationSections, isUsableNarrationSentence, formatNarrationSection } from "../narration/processing.js";
+import { requestYandexText, parseNarrationSections, validateNarrationSections, assessFullNarrationDocument, isUsableNarrationSentence, formatNarrationSection } from "../narration/processing.js";
 import { normalizePresentation, normalizeSlide, fallbackTitle, sentenceCount, speechSentences, sentenceFragment, buildFallbackBulletItems, ensureRange, uniqueShortItems, splitIntoSentences, normalizeTitleKey, isDuplicateDisplayText, fallbackSlideText } from "../normalization/presentation.js";
 import { parseJsonText, cleanGeneratedText, cleanMultilineText, cleanText, sanitizeSpeechText, shortenWords } from "../utilities.js";
 import { jsonSchema, slideTextRepairSchema, qualityCritiqueJsonSchema, qualityRepairJsonSchema } from "../schemas.js";
@@ -265,7 +272,11 @@ export async function finalizeGeneratedPresentation(
     }, "polishing regressed a validated presentation; restoring the last valid candidate");
     return preserveAcceptedNarration(lastValidCandidate, generatedText, project);
   }
-  const released = rebuildGeneratedCanvases(preserveAcceptedNarration(finalPresentation, generatedText, project));
+  let released = repairReleaseCandidate(
+    rebuildGeneratedCanvases(preserveAcceptedNarration(finalPresentation, generatedText, project)),
+    sources,
+    project,
+  );
   const release = productionQualityReleaseResult(released, sources, project);
   logger.info({
     projectId: project.id,
@@ -283,10 +294,55 @@ export async function finalizeGeneratedPresentation(
   });
 }
 
+/**
+ * The last validated candidate can be restored after a provider repair
+ * regresses a content contract. Re-run the deterministic projections on that
+ * restored candidate before release: otherwise the final gate observes
+ * generic, duplicate, off-topic, or weak-visual fields that were already
+ * locally repairable and rejects an otherwise usable paid generation.
+ */
+export function repairReleaseCandidate(
+  presentation: PresentationDocument,
+  sources: Source[],
+  project: ProjectInput,
+) {
+  let repaired = presentation;
+  let issues = critiquePresentationDeterministically(repaired, sources, project).issues;
+
+  const topicIssues = issues.filter((issue) => issue.category === "off_topic");
+  if (topicIssues.length) {
+    repaired = rebuildGeneratedCanvases(applyTopicRelevanceFallbacks(repaired, topicIssues, project));
+    issues = critiquePresentationDeterministically(repaired, sources, project).issues;
+  }
+
+  const visibleIssues = issues.filter((issue) =>
+    issue.category === "generic_text"
+    || issue.category === "duplicate"
+    || issue.category === "too_long"
+    || issue.message.startsWith("Visible text is incomplete:")
+    || issue.field === "contentContract",
+  );
+  if (visibleIssues.length) {
+    repaired = rebuildGeneratedCanvases(applyVisibleTextIntegrityFallbacks(repaired, visibleIssues, project));
+    issues = critiquePresentationDeterministically(repaired, sources, project).issues;
+  }
+
+  const visualIssues = issues.filter((issue) => issue.category === "bad_visual");
+  if (visualIssues.length) {
+    repaired = rebuildGeneratedCanvases(applyVisualPlanFallbacks(repaired, visualIssues));
+  }
+
+  return repaired;
+}
+
+function isAcceptedFullNarration(text: string, project: ProjectInput) {
+  return project.slideCount === 10 && assessFullNarrationDocument(text, project).isAccepted;
+}
+
 export function preserveAcceptedNarration(presentation: PresentationDocument, narrationText: string, project: ProjectInput): PresentationDocument {
   const acceptedGeneratedText = cleanGeneratedText(narrationText);
   const sections = parseNarrationSections(acceptedGeneratedText);
-  if (sections.length !== project.slideCount || validateNarrationSections(sections, project).length) return presentation;
+  if (sections.length !== project.slideCount || (!isAcceptedFullNarration(acceptedGeneratedText, project) && validateNarrationSections(sections, project).length)) return presentation;
 
   const narrationByOrder = new Map(sections.map((section) => [section.order, section]));
   return preserveAcceptedGeneratedText({
@@ -327,7 +383,7 @@ export function repairPresentationNarrationLocally(
   // A narration that reached this layer has already been accepted upstream.
   // Do not manufacture replacement sentences here: it would silently change
   // the canonical generatedText and can desynchronise section-to-slide mapping.
-  if (!canLocallyRepairNarrationSections(sections, project) || validateNarrationSections(sections, project).length) {
+  if (!canLocallyRepairNarrationSections(sections, project) || (!isAcceptedFullNarration(presentation.generatedText, project) && validateNarrationSections(sections, project).length)) {
     return null;
   }
   const canonical = sections.map((section) => formatNarrationSection(section)).join("\n\n");
@@ -346,6 +402,7 @@ export function canLocallyRepairNarrationSections(sections: NarrationSection[], 
 }
 
 type OpenAICompatibleUsage = { provider: "openai" | "aitunnel"; model: string };
+type AitunnelQualityStage = "slide_text_repair" | "quality_critique" | "quality_repair";
 
 export async function repairSlideTextWithOpenAI(client: OpenAI, presentation: PresentationDocument, issues: SlideTextIssue[], usage: OpenAICompatibleUsage = { provider: "openai", model: process.env.OPENAI_MODEL || "gpt-4.1-mini" }) {
   const startedAt = new Date();
@@ -372,7 +429,7 @@ export async function repairSlideTextWithOpenAI(client: OpenAI, presentation: Pr
     },
   };
   const response = await requestOpenAICompatibleResponse(client, usage, "slide_text_repair", request);
-  await recordOpenAIResponse(response, "slide_text_repair", "studydeck_slide_text_repair", startedAt, usage.provider, usage.provider === "aitunnel" ? aitunnelModelForStage("slide_text_repair") || usage.model : usage.model);
+  await recordOpenAIResponse(response, "slide_text_repair", "studydeck_slide_text_repair", startedAt, usage.provider, usage.provider === "aitunnel" ? aitunnelModelForStage("slide_text_repair") || usage.model : usage.model, undefined, "slide_text_repair");
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   return typedResponse.output_parsed || parseJsonText(response.output_text || "");
 }
@@ -410,7 +467,7 @@ export async function critiquePresentationQualityWithOpenAI(
     },
   };
   const response = await requestOpenAICompatibleResponse(client, usage, "quality_critique", request);
-  await recordOpenAIResponse(response, "quality_critique", "studydeck_quality_critique", startedAt, usage.provider, usage.provider === "aitunnel" ? aitunnelModelForStage("quality_critique") || usage.model : usage.model);
+  await recordOpenAIResponse(response, "quality_critique", "studydeck_quality_critique", startedAt, usage.provider, usage.provider === "aitunnel" ? aitunnelModelForStage("quality_critique") || usage.model : usage.model, undefined, "quality_critique");
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   return typedResponse.output_parsed || parseJsonText(response.output_text || "");
 }
@@ -453,12 +510,12 @@ export async function repairPresentationQualityWithOpenAI(
     },
   };
   const response = await requestOpenAICompatibleResponse(client, usage, "quality_repair", request);
-  await recordOpenAIResponse(response, "quality_repair", "studydeck_quality_repair", startedAt, usage.provider, usage.provider === "aitunnel" ? aitunnelModelForStage("quality_repair") || usage.model : usage.model);
+  await recordOpenAIResponse(response, "quality_repair", "studydeck_quality_repair", startedAt, usage.provider, usage.provider === "aitunnel" ? aitunnelModelForStage("quality_repair") || usage.model : usage.model, attempt, "quality_repair");
   const typedResponse = response as typeof response & { output_parsed?: unknown };
   return (typedResponse.output_parsed || parseJsonText(response.output_text || "")) as QualityRepairResponse;
 }
 
-async function requestOpenAICompatibleResponse(client: OpenAI, usage: OpenAICompatibleUsage, stage: AitunnelStage, request: OpenAI.Responses.ResponseCreateParamsNonStreaming): Promise<OpenAI.Responses.Response> {
+async function requestOpenAICompatibleResponse(client: OpenAI, usage: OpenAICompatibleUsage, stage: AitunnelQualityStage, request: OpenAI.Responses.ResponseCreateParamsNonStreaming): Promise<OpenAI.Responses.Response> {
   if (usage.provider !== "aitunnel") return client.responses.create(request);
   const policy = aitunnelStagePolicy(stage);
   if (!policy.model) throw new Error("aitunnel_price_unavailable");
@@ -472,10 +529,44 @@ async function requestOpenAICompatibleResponse(client: OpenAI, usage: OpenAIComp
   const key = `${stage}-${Date.now()}-${Math.random()}`;
   const reserved = budget?.reserve(key, stage, boundedRequest);
   if (!reserved || reserved.status !== "reserved") throw new Error(reserved?.status || "aitunnel_project_budget_exhausted_preflight");
-  const response = await client.responses.create(boundedRequest);
-  const settled = budget!.settle(key, normalizeOpenAIUsage((response as { usage?: unknown }).usage));
+  const persistedReservation = await reservePersistedAitunnelQualityEnvelope(stage);
+  let response: OpenAI.Responses.Response;
+  try {
+    response = await client.responses.create(boundedRequest);
+  } catch (error) {
+    if (persistedReservation) await failCostEnvelope({ ...persistedReservation, reason: `${stage}_provider_error` }).catch(() => undefined);
+    throw error;
+  }
+  const responseUsage = normalizeOpenAIUsage((response as { usage?: unknown }).usage);
+  if (persistedReservation) {
+    if (!responseUsage) {
+      await settleCostEnvelope({ ...persistedReservation, reason: `${stage}_usage_unavailable` });
+      throw new Error(`aitunnel_${stage}_usage_unavailable`);
+    }
+    const priced = calculateProviderCost("aitunnel", policy.model, new Date(), responseUsage);
+    if (priced.status !== "priced" || !priced.sourceCost) {
+      await settleCostEnvelope({ ...persistedReservation, reason: `${stage}_usage_or_price_unavailable` });
+      throw new Error(`aitunnel_${stage}_usage_or_price_unavailable`);
+    }
+    const settledEnvelope = await settleCostEnvelope({ ...persistedReservation, actualRub: priced.sourceCost, reason: "usage_reported" });
+    if (settledEnvelope.status !== "settled") throw new Error(`aitunnel_${stage}_${settledEnvelope.status}`);
+  }
+  const settled = budget!.settle(key, responseUsage);
   if (settled.status !== "settled") throw new Error(settled.status);
   return response;
+}
+
+async function reservePersistedAitunnelQualityEnvelope(stage: AitunnelQualityStage) {
+  const context = currentUsageContext();
+  if (!context?.costEnvelopeId) return undefined;
+  const envelope = await getPrisma().costEnvelope.findUniqueOrThrow({ where: { id: context.costEnvelopeId }, select: { policySnapshot: true } });
+  const bucket = stage as CostEnvelopeBucket;
+  const amountRub = String((envelope.policySnapshot as { buckets?: Record<string, string> }).buckets?.[bucket] || "");
+  if (!/^\d+(?:\.\d+)?$/.test(amountRub) || amountRub === "0") throw new Error(`aitunnel_${stage}_missing_policy_bucket`);
+  const idempotencyKey = `${context.costEnvelopeId}:${context.generationJobId || "direct"}:${stage}:${Date.now()}`;
+  const reservation = await reserveCostEnvelope({ envelopeId: context.costEnvelopeId, idempotencyKey, bucket, stage, amountRub });
+  if (reservation.status !== "reserved") throw new Error(`aitunnel_${stage}_${reservation.reason || "reservation_blocked"}`);
+  return { envelopeId: context.costEnvelopeId, idempotencyKey };
 }
 
 export async function repairPresentationQualityWithYandex(
@@ -948,9 +1039,11 @@ export function assertPresentationQuality(presentation: PresentationDocument, pr
     issues.push("generatedText is not divided into slide narration");
   }
 
-  const narrationIssues = validateNarrationSections(parseNarrationSections(presentation.generatedText), project);
-  if (narrationIssues.length) {
-    issues.push(...narrationIssues);
+  if (!isAcceptedFullNarration(presentation.generatedText, project)) {
+    const narrationIssues = validateNarrationSections(parseNarrationSections(presentation.generatedText), project);
+    if (narrationIssues.length) {
+      issues.push(...narrationIssues);
+    }
   }
 
   for (const slide of presentation.slides) {

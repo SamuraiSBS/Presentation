@@ -147,7 +147,7 @@ import type { AitunnelNarrationTimingReason, FullNarrationSafeDiagnostics } from
 export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[], _researchBrief?: ResearchBrief) {
   const timingBudget = getRussianStudentSpeechTimingBudget(project);
   return [
-    "Верни JSON-массив narrativePlan для StudyDeck презентации.",
+    "Верни JSON-объект вида {\"slides\":[...]} с narrativePlan для StudyDeck презентации.",
     `Тема и запрос пользователя: ${project.prompt}`,
     `Название проекта: ${project.title}`,
     `Сценарий: ${project.scenario}`,

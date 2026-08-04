@@ -20,9 +20,9 @@ describe("openAIClientOptions", () => {
     expect(aitunnelConfig({ OPENAI_API_KEY: "sk-openai", AITUNNEL_API_KEY: "aitunnel-key" })).toMatchObject({
       apiKey: "aitunnel-key",
       baseURL: AITUNNEL_DEFAULT_BASE_URL,
-      narrationModel: "gemini-3.6-flash",
+      narrationModel: "gpt-5.6-terra",
     });
     expect(aitunnelConfig({ AITUNNEL_API_KEY: "aitunnel-key", AITUNNEL_NARRATION_MODEL: "auto" })).toBeUndefined();
-    expect(aitunnelConfig({ AITUNNEL_NARRATION_MODEL: "gemini-3.6-flash" })).toBeUndefined();
+    expect(aitunnelConfig({ AITUNNEL_NARRATION_MODEL: "gpt-5.6-terra" })).toBeUndefined();
   });
 });

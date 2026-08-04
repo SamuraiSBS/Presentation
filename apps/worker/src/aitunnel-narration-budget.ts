@@ -4,12 +4,12 @@ import { AITUNNEL_PROVIDER_CATALOG, aitunnelPriceForApprovedModel } from "./aitu
 
 type EnvLike = Record<string, string | undefined>;
 
-export const AITUNNEL_ECONOMY_PRICE = AITUNNEL_PROVIDER_CATALOG["gemini-3.5-flash-lite"];
-export const AITUNNEL_PRIMARY_PRICE = AITUNNEL_PROVIDER_CATALOG["gemini-3.6-flash"];
+export const AITUNNEL_ECONOMY_PRICE = AITUNNEL_PROVIDER_CATALOG["gpt-5.6-luna"];
+export const AITUNNEL_PRIMARY_PRICE = AITUNNEL_PROVIDER_CATALOG["gpt-5.6-terra"];
 // Kept for compatibility with the Lite-only section route.
 export const AITUNNEL_NARRATION_PRICE = AITUNNEL_ECONOMY_PRICE;
 export const AITUNNEL_NARRATION_DEFAULT_BUDGET_RUB = 10;
-export const AITUNNEL_PROJECT_DEFAULT_BUDGET_RUB = 10;
+export const AITUNNEL_PROJECT_DEFAULT_BUDGET_RUB = 12;
 // 384 tokens covers the largest shared 140-word role target with room for
 // Russian punctuation and the required slide heading; it is not the old
 // 1350-token Flash ceiling.
@@ -29,8 +29,8 @@ export const AITUNNEL_NARRATION_FULL_REWRITE_MAX_OUTPUT_TOKENS = 4500;
 // punctuation rather than making the three-section repair route nominal only.
 export const AITUNNEL_NARRATION_TARGETED_REPAIR_MAX_OUTPUT_TOKENS = 1400;
 export const AITUNNEL_NARRATION_DEFAULT_REASONING_EFFORT = "minimal";
-export const AITUNNEL_ECONOMY_MODEL = "gemini-3.5-flash-lite";
-export const AITUNNEL_PRIMARY_MODEL = "gemini-3.6-flash";
+export const AITUNNEL_ECONOMY_MODEL = "gpt-5.6-luna";
+export const AITUNNEL_PRIMARY_MODEL = "gpt-5.6-terra";
 
 type AitunnelNarrationSlideOrder = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 export type AitunnelNarrationCandidateStage = `narration_section_${AitunnelNarrationSlideOrder}_candidate`;
@@ -48,28 +48,28 @@ const STAGE_POLICIES: Record<AitunnelStage, { model: "economy" | "primary"; maxO
   narrative_plan: { model: "economy", maxOutputTokens: 1200, reasoningEffort: "minimal" },
   design_brief: { model: "economy", maxOutputTokens: 1200, reasoningEffort: "minimal" },
   quality_critique: { model: "economy", maxOutputTokens: 800, reasoningEffort: "minimal" },
-  narration_section_1_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_1_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
-  narration_section_2_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_2_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
-  narration_section_3_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_3_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
-  narration_section_4_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_4_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
-  narration_section_5_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_5_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
-  narration_section_6_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_6_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
-  narration_section_7_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_7_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
-  narration_section_8_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_8_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
-  narration_section_9_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_9_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
-  narration_section_10_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_10_fallback: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
-  narration_global_rewrite: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_1_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_1_fallback: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_2_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_2_fallback: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_3_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_3_fallback: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_4_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_4_fallback: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_5_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_5_fallback: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_6_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_6_fallback: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_7_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_7_fallback: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_8_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_8_fallback: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_9_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_9_fallback: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_section_10_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" }, narration_section_10_fallback: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_global_rewrite: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
   // These are the only narration stages for future v6 envelopes. The
   // section-route stages above stay typed temporarily so historical v5 jobs
   // and their snapshots are never reinterpreted during the staged rollout.
   narration_full_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_FULL_CANDIDATE_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
   narration_full_rewrite: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_FULL_REWRITE_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
   narration_targeted_repair: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_TARGETED_REPAIR_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
-  narration: { model: "primary", maxOutputTokens: 2400, reasoningEffort: "minimal" },
-  narration_rewrite: { model: "primary", maxOutputTokens: 2400, reasoningEffort: "minimal" },
+  narration: { model: "economy", maxOutputTokens: 2400, reasoningEffort: "minimal" },
+  narration_rewrite: { model: "economy", maxOutputTokens: 2400, reasoningEffort: "minimal" },
   presentation: { model: "primary", maxOutputTokens: 6000, reasoningEffort: "minimal" },
-  slide_text_repair: { model: "primary", maxOutputTokens: 2400, reasoningEffort: "minimal" },
-  quality_repair: { model: "primary", maxOutputTokens: 3600, reasoningEffort: "minimal" },
+  slide_text_repair: { model: "economy", maxOutputTokens: 2400, reasoningEffort: "minimal" },
+  quality_repair: { model: "economy", maxOutputTokens: 3600, reasoningEffort: "minimal" },
 };
 const SCALE = 100_000_000n;
 const MILLION = 1_000_000n;

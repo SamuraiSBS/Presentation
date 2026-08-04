@@ -2116,6 +2116,61 @@ describe("shared contracts", () => {
     expect(auditSlideCanvas(canvas)).toEqual([]);
   });
 
+  it("compacts editorial comparison and summary projections without altering canonical content", () => {
+    const theme = PREMIUM_PRESENTATION_THEMES.studydeckEditorial;
+    const sourceRows = [
+      {
+        label: "Economic effect",
+        left: "The first approach depends on a long chain of approvals and repeatedly delays the final decision for every participant.",
+        right: "The second approach gives teams a clear route to a decision and shortens the feedback cycle for every participant.",
+      },
+      {
+        label: "Learning effect",
+        left: "Students receive fragmented evidence after the discussion and cannot connect the examples with the central concept.",
+        right: "Students work with one shared evidence base and can connect each example to the central concept during discussion.",
+      },
+    ];
+    const comparison = presentationSchema.parse({
+      id: "presentation-editorial-capacity",
+      title: "Editorial capacity",
+      scenario: "university_report",
+      level: "university_student",
+      slideCount: 2,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Comparison", "Conclusion"],
+      presentationTheme: theme,
+      speechScript: [
+        { slideOrder: 1, slideTitle: "Comparison", text: "Narration." },
+        { slideOrder: 2, slideTitle: "Conclusion", text: "Narration." },
+      ],
+      slides: [
+        {
+          id: "slide-editorial-comparison", order: 1, title: "Comparison", slideKind: "content", layout: "comparison",
+          thesis: "The comparison shows how the two approaches differ in decision speed, evidence quality, and the student's ability to act on feedback.",
+          bullets: [],
+          visual: { type: "comparison_diagram", leftLabel: "A long description of the first approach", rightLabel: "A long description of the second approach", rows: sourceRows },
+          blocks: [], speakerNotes: "Narration.", timingSeconds: 45, sourceRefs: [],
+        },
+        {
+          id: "slide-editorial-summary", order: 2, title: "Conclusion", slideKind: "summary", layout: "summary",
+          thesis: "The conclusion keeps the full argument in the structured slide while the canvas presents only short, readable support points.",
+          bullets: sourceRows.map((row) => row.left),
+          visual: { type: "none" }, blocks: [], speakerNotes: "Narration.", timingSeconds: 45, sourceRefs: [],
+        },
+      ],
+    });
+
+    const comparisonCanvas = buildSlideCanvas(comparison.slides[0], theme);
+    const summaryCanvas = buildSlideCanvas(comparison.slides[1], theme);
+
+    expect(auditSlideCanvas(comparisonCanvas)).toEqual([]);
+    expect(auditSlideCanvas(summaryCanvas)).toEqual([]);
+    expect(comparisonCanvas.elements.find((element) => element.id.endsWith("comparison-left-0"))).toMatchObject({ type: "text" });
+    expect(comparison.slides[0].visual?.rows).toEqual(sourceRows);
+    expect(comparison.slides[1].bullets).toEqual(sourceRows.map((row) => row.left));
+  });
+
   it("resolves premium themes from themeId and falls back for unknown IDs", () => {
     const fallback = resolvePresentationTheme({
       presentationTheme: {

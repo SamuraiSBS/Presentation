@@ -5,20 +5,27 @@ export const jsonSchema = {
 };
 
 export const narrativePlanJsonSchema = {
-  type: "array",
-  items: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      slideOrder: { type: "number" },
-      slideTitle: { type: "string" },
-      slidePurpose: { type: "string" },
-      keyMessage: { type: "string" },
-      audienceQuestion: { type: "string" },
-      transitionToNext: { type: "string" },
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    slides: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          slideOrder: { type: "number" },
+          slideTitle: { type: "string" },
+          slidePurpose: { type: "string" },
+          keyMessage: { type: "string" },
+          audienceQuestion: { type: "string" },
+          transitionToNext: { type: "string" },
+        },
+        required: ["slideOrder", "slideTitle", "slidePurpose", "keyMessage", "audienceQuestion", "transitionToNext"],
+      },
     },
-    required: ["slideOrder", "slideTitle", "slidePurpose", "keyMessage", "audienceQuestion", "transitionToNext"],
   },
+  required: ["slides"],
 };
 
 export const designBriefJsonSchema = {
