@@ -1,0 +1,34 @@
+Prompt 03a выполнен и остановлен.
+
+Изменено в этой сессии:
+
+- `apps/worker/src/tasks/generation.ts` — terminal/unavailable inherited envelope блокирует provider-путь; разрешена только локальная сборка из accepted narration и snapshot.
+- `apps/worker/src/economic-release-gate.ts` — cap-blocked envelope не мешает сохранить валидную локальную recovery-презентацию, если нет незавершённых платных reservations.
+- `apps/worker/src/economic-release-gate.test.ts`
+- `apps/worker/src/tasks/generation.test.ts`
+- `apps/worker/src/tasks/generation-recovery-actual-gate.test.ts`
+
+| Требование | Код | Deterministic evidence |
+|---|---|---|
+| Одна lineage / один envelope | retry использует inherited envelope и не создаёт новый | API-тест очереди presentation retry проходит |
+| Cap до provider | terminal/unavailable envelope сразу переводит в local-only путь | тест подтверждает: нет provider, Tavily, reserve или settle |
+| Local recovery с `accepted_speech` | local projection + release gate | создаётся ровно одна `Presentation`, проект становится `ready` |
+| Недостаточные артефакты | существующая проверка `hasAcceptedNarrationRecoveryArtifacts` | malformed/generic/local-only варианты отклоняются |
+| Не маскировать diagnostic | terminal причина стабильна; cleanup не заменяет исходную | существующие `generation.test.ts` проходят |
+
+Проверки:
+
+```text
+npm run test -w @studydeck/worker -- src/cost-envelope.test.ts src/economic-release-gate.test.ts src/tasks/generation.test.ts src/tasks/generation-recovery-actual-gate.test.ts
+36 passed
+
+npm run typecheck -w @studydeck/worker
+passed
+
+npm run test -w @studydeck/api -- src/projects/projects.service.test.ts
+15 passed
+```
+
+`0 RUB`: AI/AITunnel/Tavily/live generation, Docker, миграции и сетевые вызовы не выполнялись. Commit не выполнялся.
+
+Текущий worktree содержит также ранее существовавшие изменения в API/worker/shared и plan-пакете; историческое удаление `.audit-bmw/tmpw120oeib/enlarged.pptx` не изменялось. Отдельный ранний запуск более широкого `presentation.test.ts` выявил 2 уже имеющиеся failures (`bad_narration`, `schema_risk`); они не входят в финальный узкий набор 03a и не исправлялись вне scope.

@@ -1,0 +1,26 @@
+Prompt 02 не закрыт: forced-release mock больше не считаю достаточным доказательством.
+
+Подтверждено:
+
+- `npm run typecheck -w @studydeck/worker` — успешно.
+- Локальный тест accepted narration/source refs — успешно.
+- `git diff --check` для Prompt 02-файлов — успешно.
+- Реальный `productionQualityReleaseResult` на содержательной local-projection fixture отклонил документ: `generic_text`, `bad_narration`, `contentContract`, `duplicate`. Значит quality gates не ослаблены, но positive E2E `provider failure → actual gate → ready` пока не доказан.
+
+Точные существующие падения полного `presentation.test.ts`:
+
+- `hides weak visual blocks and keeps useful structured visuals` → `bad_narration`.
+- `uses slide speaker notes as the narration fallback for each concrete slide` → `schema_risk`.
+
+Они воспроизводились до последних правок Prompt 02; однако строгой независимости от незавершённого общего worker diff доказать не удалось.
+
+Изменения Prompt 02 сохранены в:
+
+- [generation.ts](D:/presentation/apps/worker/src/tasks/generation.ts)
+- [orchestrator.ts](D:/presentation/apps/worker/src/tasks/presentation/orchestrator.ts)
+- [generation.test.ts](D:/presentation/apps/worker/src/tasks/generation.test.ts)
+- [presentation.test.ts](D:/presentation/apps/worker/src/tasks/presentation.test.ts)
+
+Docker, миграции, commit, deploy и AI/Tavily-вызовы не выполнялись.
+
+0 RUB: внешние AI/Tavily вызовы не выполнялись.

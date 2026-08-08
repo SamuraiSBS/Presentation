@@ -1,0 +1,40 @@
+## Prompt 03b — остановка без правок (вариант B)
+
+Обе ошибки воспроизведены:
+
+```text
+Tests: 2 failed | 99 passed (101)
+
+hides weak visual blocks and keeps useful structured visuals
+→ ... rejected the document: bad_narration
+
+uses slide speaker notes as the narration fallback for each concrete slide
+→ ... rejected the document: schema_risk
+```
+
+Причинная связь с допустимыми незакоммиченными правками 03a не доказана:
+
+| Проверка | Результат |
+|---|---|
+| Fixtures двух тестов vs `HEAD` | В их диапазонах нет diff-hunks; изменения тест-файла находятся около строк 1–573, failures — около 2372 и 3049 |
+| Исполняемый путь | `generatePresentation → generateWithYandex → finalizeGeneratedPresentation` |
+| Изменения 03a | AITunnel full-narration и local accepted-narration recovery; тесты используют Yandex |
+| Изменение production gate | Применяется только при `acceptedNarrationRecovery`; в обоих fixtures это поле отсутствует |
+
+Baseline на `HEAD` отдельно не запускался, поэтому не утверждаю, что failures существовали до текущего diff. Поскольку доказанной связи с 03a/recovery нет, правки не вносились; typecheck не запускался по правилам Prompt 03b.
+
+Команды:
+
+```powershell
+git -c safe.directory=D:/presentation status --short
+npm run test -w @studydeck/worker -- src/tasks/presentation.test.ts
+git -c safe.directory=D:/presentation diff --unified=0 -- apps/worker/src/tasks/presentation.test.ts
+git -c safe.directory=D:/presentation diff --check
+git -c safe.directory=D:/presentation status --short
+```
+
+Первый sandbox-запуск Vitest был технически заблокирован `spawn EPERM`; повтор той же локальной команды дал приведённый результат. Рабочее дерево до и после triage одинаково: собственных изменений нет; историческое удаление `.audit-bmw/tmpw120oeib/enlarged.pptx` не затрагивалось.
+
+`0 RUB`: live generation, AI/AITunnel, Tavily, сеть, Docker, миграции, commit/push/deploy не выполнялись.
+
+Prompt 03 остаётся не принят; повторный paid live-run не разрешён.

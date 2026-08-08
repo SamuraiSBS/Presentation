@@ -367,10 +367,10 @@ export async function generateAitunnelFullNarrationOutcome(client: OpenAI, proje
       return selected;
     }
 
-    // A full rewrite can correct length and quality defects when all ten
-    // canonical sections are present.  Missing, reordered, or empty sections
-    // still have no reliable full-document shape to send back to the provider.
-    if (!attempts[0]!.diagnostics.hasCanonicalSectionCoverage) return finishV6Recovery(project.id, attempts, calledStages, reservations, "candidate_not_usable", null);
+    // A full rewrite is the recovery route for both weak prose and malformed
+    // structure. It receives the original candidate plus the fixed contract,
+    // so a missing or reordered section must not terminate the user journey
+    // before the bounded rewrite has had one chance to repair it.
     let rewritten: string;
     try {
       rewritten = await requestV6NarrationStage(client, project, "narration_full_rewrite", buildAitunnelFullNarrationRewriteWithDraftPrompt(project, sources, narrativePlan, candidate, attempts[0]!.diagnostics), reservations, calledStages);
@@ -438,7 +438,7 @@ type V6ProviderTerminationMetadata = {
 };
 
 function isFullNarrationCostEnvelopePolicy(version: string | undefined) {
-  return version === "standard-generation-cost-envelope-v6" || version === "standard-generation-cost-envelope-v7" || version === "standard-generation-cost-envelope-v8" || version === "standard-generation-cost-envelope-v9";
+  return version === "standard-generation-cost-envelope-v6" || version === "standard-generation-cost-envelope-v7" || version === "standard-generation-cost-envelope-v8" || version === "standard-generation-cost-envelope-v9" || version === "standard-generation-cost-envelope-v10";
 }
 
 async function generateLegacyAitunnelNarration(client: OpenAI, model: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief): Promise<string> {

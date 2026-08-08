@@ -1,0 +1,30 @@
+Prompt 03e остановлен без paid E2E и без commit.
+
+Я устранил API-only gap в candidate: OpenAI теперь создаёт и наследует тот же `CostEnvelope` lineage, что и AITunnel; worker также пытается резервировать envelope до OpenAI provider stage.
+
+Бесплатные проверки:
+
+```text
+API projects.service.test.ts: 15/15 passed
+Worker generation.test.ts: passed
+Worker generation-recovery-actual-gate.test.ts: passed
+API/worker typecheck: passed
+git diff --check: passed
+```
+
+Но обязательный OpenAI ledger test не прошёл:
+
+```text
+applies the same persisted reservation and envelope-scoped usage to an OpenAI narrative plan
+→ aitunnel_narrative_plan_price_unavailable
+```
+
+Причина: после успешного envelope reservation OpenAI flow не имеет существующей pricing записи для расчёта actual cost/`settled`. Из-за этого cannot prove required `actual usage/settled ledger belongs to one envelope`.
+
+Изменение OpenAI pricing/catalog — единственный прямой способ снять этот блокер, но пользователь запретил менять pricing policy. Поэтому:
+
+- Новый project/job не создан.
+- Paid E2E не запускался: `0 RUB`.
+- Commit не создан.
+- Provider/model routing, keys, cap, demo policy и quality gates не менялись.
+- Candidate worktree оставлен с незакоммиченными изменениями для inspection.

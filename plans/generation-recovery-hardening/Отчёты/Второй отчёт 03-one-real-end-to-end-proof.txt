@@ -1,0 +1,101 @@
+## Prompt 03 — read-only дополнение по `cmses2qp60003s40jg8ud98hb`
+
+Ничего не изменялось: без Docker build/up/restart, тестов, миграций, сетевых/AI/Tavily вызовов, проектов и generation.
+
+### Дословный вывод: project, jobs, Presentation
+
+```text
+=== PROJECT ===
+cmses2qp60003s40jg8ud98hb|failed|Автоматическая подготовка не прошла проверку качества после всех попыток. Материалы сохранены — запустите подготовку ещё раз.|2026-08-04 14:53:19.146|2026-08-04 15:35:32.018
+
+=== GENERATION_JOBS ===
+cmses2qt10005s40jd9olqwoi|narration|completed|257|completed|100|accepted_speech|2026-08-04 14:53:19.285|2026-08-04 14:54:00.328
+cmses5fvm0009s40jd7docdd1|presentation|failed|258|failed|100|Автоматическая подготовка не прошла проверку качества после всех попыток. Материалы сохранены — запустите подготовку ещё раз.|2026-08-04 14:55:25.09|2026-08-04 14:56:48.248
+cmsese9kj000bs40j45mvrql7|presentation|failed|259|failed|100|Не удалось завершить подготовку презентации. Попробуйте ещё раз — ваши материалы и текст сохранены.|2026-08-04 15:02:16.82|2026-08-04 15:02:17.244
+cmsesk1nk0001o50jvkz1x19s|presentation|failed|260|failed|100|Подготовка продолжается с безопасным вариантом визуалов.|2026-08-04 15:06:46.497|2026-08-04 15:09:04.432
+cmsesv2iq0005o50jcmoa6mdw|presentation|failed|261|failed|100|Автоматическая подготовка не прошла проверку качества после всех попыток. Материалы сохранены — запустите подготовку ещё раз.|2026-08-04 15:15:20.834|2026-08-04 15:17:01.315
+cmset1jwz0009o50jhfn4dv46|presentation|failed|262|failed|100|Автоматическая подготовка не прошла проверку качества после всех попыток. Материалы сохранены — запустите подготовку ещё раз.|2026-08-04 15:20:23.316|2026-08-04 15:21:40.891
+cmsetc5v4000do50jk6harxfb|presentation|failed|263|failed|100|Автоматическая подготовка не прошла проверку качества после всех попыток. Материалы сохранены — запустите подготовку ещё раз.|2026-08-04 15:28:38.321|2026-08-04 15:29:58.287
+cmsetj7o0000ho50jem01n7qz|presentation|failed|264|failed|100|Автоматическая подготовка не прошла проверку качества после всех попыток. Материалы сохранены — запустите подготовку ещё раз.|2026-08-04 15:34:07.248|2026-08-04 15:35:32.057
+
+=== PRESENTATION ===
+0 presentation rows
+```
+
+### Источники и accepted speech
+
+```text
+cmses2xbw0005o40jv78cnztm|WEB|https://rosleshoz.gov.ru/activity/forest-security-and-protection/fires/operative-information
+cmses2xdy0007o40ja7yujo34|WEB|https://www.interfax-russia.ru/main/ploshchad-lesnyh-pozharov-sokratilas-v-2026-godu-v-poltora-raza-po-sravneniyu-s-2025-godom-minprirody-rf
+cmses2xev0009o40jj47gf2rf|WEB|https://cyberleninka.ru/article/n/baza-dannyh-harakteristik-lesnyh-pozharov
+cmses2xft000bo40jvg783r29|WEB|https://forestcomplex.ru/rf-protection/pozharoopasnyy-sezon-rossiya-2026-lesnye-pozhary-prognoz
+
+cmses2qt10005s40jd9olqwoi|completed|accepted_speech|speechDraft_chars=11698|speechDraftUpdatedAt=2026-08-04 14:55:24.962
+```
+
+### Cost envelope lineage
+
+```text
+cmses2qt70007s40j10ocd17q|limit=27.90000000|settled=12.47764000|released=8.25000000|narrationJobId=cmses2qt10005s40jd9olqwoi|presentationJobId=cmses5fvm0009s40jd7docdd1
+cmsese9ku000ds40j97yq98pc|limit=27.90000000|settled=0.00000000|released=0.00000000|narrationJobId=<null>|presentationJobId=cmsese9kj000bs40j45mvrql7
+cmsesk1nt0003o50jd3yfmej1|limit=27.90000000|settled=11.35038000|released=0.00000000|narrationJobId=<null>|presentationJobId=cmsesk1nk0001o50jvkz1x19s
+cmsesv2j30007o50jx65qmub1|limit=27.90000000|settled=11.37538000|released=0.00000000|narrationJobId=<null>|presentationJobId=cmsesv2iq0005o50jcmoa6mdw
+cmset1jxa000bo50j0fjg7qmd|limit=27.90000000|settled=11.22934000|released=0.00000000|narrationJobId=<null>|presentationJobId=cmset1jwz0009o50jhfn4dv46
+cmsetc5vc000fo50j5c60kwpf|limit=27.90000000|settled=11.35622000|released=0.00000000|narrationJobId=<null>|presentationJobId=cmsetc5v4000do50jk6harxfb
+cmsetj7oa000jo50j5bu4yfez|limit=27.90000000|settled=11.44282000|released=0.00000000|narrationJobId=<null>|presentationJobId=cmsetj7o0000ho50jem01n7qz
+
+envelopes=7|settled_total=69.23178000|caps_total=195.30000000
+```
+
+Единственный `CostEvent`:
+
+```text
+cmses2x7x0003o40jve9gv1zb|category=web_search|provider=tavily|quantity=1.0000000000|unit=api_credit|rub=0.5000000000|measurement=calculated|job=cmses2qt10005s40jd9olqwoi|envelope=cmses2qt70007s40j10ocd17q
+```
+
+### Полный AiUsageEvent ledger
+
+```text
+cmses35xs000fo40jej2qvb05|job=cmses2qt10005s40jd9olqwoi|envelope=cmses2qt70007s40j10ocd17q|aitunnel|gpt-5.6-luna|narrative_plan|2621 tokens|0.1724200000 RUB
+cmses3m7e000no40jhohs016n|job=cmses2qt10005s40jd9olqwoi|envelope=cmses2qt70007s40j10ocd17q|aitunnel|gpt-5.6-luna|narration_full_candidate|4395 tokens|0.3652000000 RUB
+cmses5pb5000to40jv6udp9nc|job=cmses5fvm0009s40jd7docdd1|envelope=cmses2qt70007s40j10ocd17q|aitunnel|gpt-5.6-luna|narrative_plan|2621 tokens|0.1724200000 RUB
+cmses5xsg000xo40jse7zj6nw|job=cmses5fvm0009s40jd7docdd1|envelope=cmses2qt70007s40j10ocd17q|aitunnel|gpt-5.6-luna|design_brief|11748 tokens|0.3487600000 RUB
+cmses70i60011o40jcevmjfkn|job=cmses5fvm0009s40jd7docdd1|envelope=cmses2qt70007s40j10ocd17q|aitunnel|gpt-5.6-terra|presentation|23950 tokens|10.7900000000 RUB
+cmses77mk0015o40jah0ub9ab|job=cmses5fvm0009s40jd7docdd1|envelope=cmses2qt70007s40j10ocd17q|aitunnel|gpt-5.6-luna|slide_text_repair|2147 tokens|0.1288400000 RUB
+cmsesk9hd0007rt0j8dsz5ff2|job=cmsesk1nk0001o50jvkz1x19s|envelope=cmsesk1nt0003o50jd3yfmej1|aitunnel|gpt-5.6-luna|narrative_plan|2621 tokens|0.1724200000 RUB
+cmseskjac000brt0j0mafbvsc|job=cmsesk1nk0001o50jvkz1x19s|envelope=cmsesk1nt0003o50jd3yfmej1|aitunnel|gpt-5.6-luna|design_brief|11538 tokens|0.3342600000 RUB
+cmseslkqx000frt0jrewnxghj|job=cmsesk1nk0001o50jvkz1x19s|envelope=cmsesk1nt0003o50jd3yfmej1|aitunnel|gpt-5.6-terra|presentation|23773 tokens|10.7546000000 RUB
+cmsesmyhr000jrt0jdum7pszc|job=cmsesk1nk0001o50jvkz1x19s|envelope=cmsesk1nt0003o50jd3yfmej1|aitunnel|gpt-5.6-luna|slide_text_repair|1410 tokens|0.0891000000 RUB
+cmsesvqs30003mz0jljevaxfu|job=cmsesv2iq0005o50jcmoa6mdw|envelope=cmsesv2j30007o50jx65qmub1|aitunnel|gpt-5.6-luna|narrative_plan|2621 tokens|0.1724200000 RUB
+cmsesvzxq0007mz0j5x5kus74|job=cmsesv2iq0005o50jcmoa6mdw|envelope=cmsesv2j30007o50jx65qmub1|aitunnel|gpt-5.6-luna|design_brief|11707 tokens|0.3431400000 RUB
+cmsesx25q000bmz0jazvyktkv|job=cmsesv2iq0005o50jcmoa6mdw|envelope=cmsesv2j30007o50jx65qmub1|aitunnel|gpt-5.6-terra|presentation|23916 tokens|10.7832000000 RUB
+cmsesx7e8000fmz0jxaa3f19k|job=cmsesv2iq0005o50jcmoa6mdw|envelope=cmsesv2j30007o50jx65qmub1|aitunnel|gpt-5.6-luna|slide_text_repair|1306 tokens|0.0766200000 RUB
+cmset1ony0003p90jt9x4aik6|job=cmset1jwz0009o50jhfn4dv46|envelope=cmset1jxa000bo50j0fjg7qmd|aitunnel|gpt-5.6-luna|narrative_plan|1696 tokens|0.0614200000 RUB
+cmset1wky0007p90jn653ewba|job=cmset1jwz0009o50jhfn4dv46|envelope=cmset1jxa000bo50j0fjg7qmd|aitunnel|gpt-5.6-luna|design_brief|11532 tokens|0.3335400000 RUB
+cmset32p1000bp90jv7meact1|job=cmset1jwz0009o50jhfn4dv46|envelope=cmset1jxa000bo50j0fjg7qmd|aitunnel|gpt-5.6-terra|presentation|23796 tokens|10.7592000000 RUB
+cmset374o000fp90jysefs71f|job=cmset1jwz0009o50jhfn4dv46|envelope=cmset1jxa000bo50j0fjg7qmd|aitunnel|gpt-5.6-luna|slide_text_repair|1294 tokens|0.0751800000 RUB
+cmsetcgi90003tb0jckntrr0u|job=cmsetc5v4000do50jk6harxfb|envelope=cmsetc5vc000fo50j5c60kwpf|aitunnel|gpt-5.6-luna|narrative_plan|2621 tokens|0.1724200000 RUB
+cmsetcogp0007tb0jpik3e2vp|job=cmsetc5v4000do50jk6harxfb|envelope=cmsetc5vc000fo50j5c60kwpf|aitunnel|gpt-5.6-luna|design_brief|11598 tokens|0.3430600000 RUB
+cmsetdpy4000btb0jiv14ejb3|job=cmsetc5v4000do50jk6harxfb|envelope=cmsetc5vc000fo50j5c60kwpf|aitunnel|gpt-5.6-terra|presentation|23820 tokens|10.7640000000 RUB
+cmsetdue3000ftb0jgk8ohap0|job=cmsetc5v4000do50jk6harxfb|envelope=cmsetc5vc000fo50j5c60kwpf|aitunnel|gpt-5.6-luna|slide_text_repair|1307 tokens|0.0767400000 RUB
+cmsetjhud0003s70je80rncpf|job=cmsetj7o0000ho50jem01n7qz|envelope=cmsetj7oa000jo50j5bu4yfez|aitunnel|gpt-5.6-luna|narrative_plan|2621 tokens|0.1724200000 RUB
+cmsetjqj30007s70je6uqefei|job=cmsetj7o0000ho50jem01n7qz|envelope=cmsetj7oa000jo50j5bu4yfez|aitunnel|gpt-5.6-luna|design_brief|11679 tokens|0.3535800000 RUB
+cmsetkvc6000bs70j727x9m0y|job=cmsetj7o0000ho50jem01n7qz|envelope=cmsetj7oa000jo50j5bu4yfez|aitunnel|gpt-5.6-terra|presentation|24174 tokens|10.8348000000 RUB
+cmsetkzym000fs70j3pi9truk|job=cmsetj7o0000ho50jem01n7qz|envelope=cmsetj7oa000jo50j5bu4yfez|aitunnel|gpt-5.6-luna|slide_text_repair|1351 tokens|0.0820200000 RUB
+```
+
+Все `AiUsageEvent.status=succeeded`; сохранённый расход соответствует сумме settled envelopes: `69.23178000 RUB`.
+
+### Сохранённые failed diagnostics
+
+```text
+job=258: AI narration quality check failed: slide 1 narration is too long for one slide, got 125 words; slide 3–9 have 8 narration sentences; slide 10 has 159 words.
+job=259: Mandatory source snapshot is unavailable for this generation run.
+job=260: Production quality gate rejected generated presentation: generic_text, bad_visual, bad_narration.
+job=261: AI generation quality check failed: slide 5 Content slide must contain two or three distinct support points, unless its quote or diagram exception is explicit.
+job=262: AI generation quality check failed: slide 5 Content slide must contain two or three distinct support points, unless its quote or diagram exception is explicit.
+job=263: Production quality gate rejected generated presentation: generic_text, too_long, bad_narration.
+job=264: Production quality gate rejected generated presentation: generic_text, too_long, bad_narration.
+```
+
+Canvas, export и speech-to-slide checks выполнить невозможно: сохранённый запрос подтверждает `0 presentation rows`.

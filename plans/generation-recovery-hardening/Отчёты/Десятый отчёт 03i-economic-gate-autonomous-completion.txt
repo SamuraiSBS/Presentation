@@ -1,0 +1,14 @@
+Non-paid closure завершён.
+
+- Export: `cmskmvzzv000bpe0j2rpilxpo` → `ready` (`pptx`).
+- Revision parity: export `1` = current Presentation `1`; 8 slides и 8 canvas.
+- Preflight: `passed=true`, `repaired=false`; PPTX сохранён в MinIO.
+- Исправлен parity: advisory quality diagnostics уже released revision больше не блокируют export, но structural/canvas/source/object blockers сохранены.
+- Tests: export suite 18 passed, 1 skipped; worker typecheck и diff check зелёные.
+- Финальный diff включал только `export-preflight.ts` и `export.test.ts`; plans/reports/`.audit-bmw` не включались.
+- Commit: `9376deb fix: preserve released export parity`.
+- Новых AI/AITunnel/Tavily/generation calls не было: `AiUsageEvent=9` без изменений, generation jobs осталось `2`; добавлены только local export/storage CostEvent.
+
+::git-stage{cwd="D:\presentation\.worktrees\generation-recovery-autonomous"}
+
+::git-commit{cwd="D:\presentation\.worktrees\generation-recovery-autonomous"}

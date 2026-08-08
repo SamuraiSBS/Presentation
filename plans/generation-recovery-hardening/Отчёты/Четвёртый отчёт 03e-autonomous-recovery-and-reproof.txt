@@ -1,0 +1,31 @@
+Paid E2E не запускался; commit не создан. Причина стопа: candidate runtime использует direct `openai/gpt-5.5`, а в новой изолированной БД `ExchangeRate` пуст, поэтому нельзя корректно получить RUB settlement и доказать `settled ≤ cap`. Расход: 0 RUB; project/job не создавались.
+
+Выполнено в `D:\presentation\.worktrees\generation-recovery-autonomous` на `codex/generation-recovery-autonomous` от `7b8486d`:
+
+- Подтверждён официальный exact price `gpt-5.5`: $5 input, $0.50 cached input, $30 output / 1M tokens. Существующий catalog уже содержит эти значения. [OpenAI GPT-5.5 model page](https://developers.openai.com/api/docs/models/gpt-5.5)
+- Исправлена provider-neutral parity: точная модель проверяется до provider-call; unknown model освобождает reservation без вызова; settlement для OpenAI теперь конвертируется в RUB, а не записывает USD в RUB-envelope.
+- Добавлены deterministic проверки четырёх stages (`narrative_plan`, `design_brief`, `presentation`, `quality_repair`), одного envelope, reservation-before-call, RUB settlement и unknown-model no-call.
+
+Бесплатные gates:
+
+- API tests: 15/15.
+- Worker targeted tests: 57/57; pricing/persisted set: 29/29.
+- API и worker typecheck: passed.
+- `git diff --check`: passed.
+- `presentation.test.ts`: 115/117; две известные baseline-ошибки `bad_narration` и `schema_risk`, не связанные с этим pricing diff.
+
+Runtime preflight:
+
+- `docker compose config --no-interpolate`: exit 0; build context — candidate worktree.
+- `docker compose build api worker`: exit 0.
+- Candidate image/container evidence:
+  - API image `sha256:b662de…`, container `0b505de3955b9a6d058252b543a99d02ae57abd62aab3e06c8dea3fea09fc5bd`
+  - Worker image `sha256:699fda…`, container `d45ae820dfe7d98621a80bb3782ce970939786cffdb14c407b09bcf431a79b12`
+  - Docker labels point to the candidate worktree.
+- API health: HTTP 200.
+- Redis: `PONG`; PostgreSQL: accepting connections; MinIO health: HTTP 200; worker started.
+- Runtime: `AI_PROVIDER=openai`, `OPENAI_MODEL=gpt-5.5`, empty `OPENAI_BASE_URL` (direct official), Tavily enabled, demo disabled, cap `27.90000000 RUB`.
+- Start ledger: projects/jobs/envelopes/usage-events/exchange-rates all `0`. Generation/export queues empty; only one delayed system `admin-maintenance` job.
+- Raw recreate blockers encountered and safely isolated: host ports `4000`, then `6379` were occupied by another stack. Candidate-only temporary override moved API to `4002` and removed infra host publishes; it was deleted from the candidate diff afterward.
+
+No provider routing, model configuration, cap, demo policy, or existing prices were changed. No push/deploy occurred. The original worktree was not edited or staged.

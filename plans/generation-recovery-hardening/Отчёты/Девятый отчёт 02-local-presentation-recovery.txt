@@ -1,0 +1,34 @@
+Конкретный технический блокер Prompt 02: разнообразные layouts в local projection устранили однообразный `statement`, но текущий canvas renderer не вмещает извлечённые из принятой речи support sentences.
+
+Точный output:
+
+```text
+apps/worker/src/tasks/presentation.test.ts
+Yandex narration full duration rewrite
+> builds a release-ready ten-slide local document from accepted narration without provider calls
+
+slide-2-comparison-left-0-text text does not fit its box
+slide-2-comparison-left-0-text exceeds its 2-line text capacity
+slide-2-comparison-right-0-text text does not fit its box
+slide-2-comparison-right-0-text exceeds its 2-line text capacity
+slide-3-comparison-left-0-text text does not fit its box
+slide-3-comparison-right-0-text text does not fit its box
+slide-4-step-0 text does not fit its box
+slide-4-step-1 text does not fit its box
+slide-4-step-2 text does not fit its box
+slide-6-comparison-criterion-0-text text does not fit its box
+slide-6-comparison-left-0-text text does not fit its box
+slide-6-comparison-right-0-text text does not fit its box
+slide-7-comparison-left-0-text text does not fit its box
+slide-7-comparison-right-0-text text does not fit its box
+slide-8-step-0 text does not fit its box
+slide-8-step-1 text does not fit its box
+slide-10-summary-conclusion text does not fit its box
+slide-10-summary-conclusion exceeds its 5-line text capacity
+```
+
+Ввёл узкий `acceptedNarrationRecovery` context в `productionQualityReleaseResult`: он исключает только повторный semantic-анализ immutable `speakerNotes`/`speechScript`; visible text, источники, URL, canvas и остальные production gates остаются включёнными. Однако positive E2E не завершён: canvas gate корректно блокирует текущую проекцию.
+
+Forced-release mock, Docker, миграции, commit/deploy и AI/Tavily-вызовы не использовались.
+
+0 RUB: внешние AI/Tavily вызовы не выполнялись.

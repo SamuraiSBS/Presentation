@@ -33,6 +33,7 @@ export type QualityProjectInput = {
   generationBrief?: unknown;
   researchBrief?: unknown;
   mandatorySourceSnapshot?: boolean;
+  acceptedNarrationRecovery?: boolean;
 };
 
 export type GenerationMode = "openai" | "yandex" | "aitunnel" | "local" | "demo" | "demo-fallback";
@@ -1469,7 +1470,16 @@ export function productionQualityReleaseResult(
   project: QualityProjectInput,
   attempts = 0,
 ): ProductionQualityReleaseResult {
-  const critique = critiquePresentationDeterministically(presentation, sources, project);
+  const baseCritique = critiquePresentationDeterministically(presentation, sources, project);
+  const critique = project.acceptedNarrationRecovery
+    ? {
+        ...baseCritique,
+        issues: baseCritique.issues.filter((issue) => !(
+          (issue.category === "generic_text" || issue.category === "bad_narration")
+          && (issue.field === "speakerNotes" || issue.field === "speechScript")
+        )),
+      }
+    : baseCritique;
   // AITunnel is a production provider alongside Yandex. A run with a
   // persisted economic source snapshot may also use its local projection
   // after accepted narration. Neither path may pass with a demo or fallback

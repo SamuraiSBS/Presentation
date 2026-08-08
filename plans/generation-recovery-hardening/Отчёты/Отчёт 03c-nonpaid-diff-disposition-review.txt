@@ -1,0 +1,55 @@
+## Prompt 03c — read-only disposition report
+
+### Raw `git status --short`
+
+```text
+ D .audit-bmw/tmpw120oeib/enlarged.pptx
+ M apps/api/src/projects/projects.service.test.ts
+ M apps/api/src/projects/projects.service.ts
+ M apps/worker/src/cost-envelope.test.ts
+ M apps/worker/src/cost-envelope.ts
+ M apps/worker/src/economic-release-gate.test.ts
+ M apps/worker/src/economic-release-gate.ts
+ M apps/worker/src/tasks/generation.test.ts
+ M apps/worker/src/tasks/generation.ts
+ M apps/worker/src/tasks/presentation-quality.ts
+ M apps/worker/src/tasks/presentation.test.ts
+ M apps/worker/src/tasks/presentation/narration/full-document-v6.test.ts
+ M apps/worker/src/tasks/presentation/narration/processing.ts
+ M apps/worker/src/tasks/presentation/orchestrator.ts
+ M apps/worker/src/tasks/presentation/providers/generation.ts
+ M apps/worker/src/tasks/web-search.ts
+ M packages/shared/src/generation/cost-envelope.ts
+?? apps/worker/src/tasks/generation-recovery-actual-gate.test.ts
+?? plans/generation-recovery-hardening/
+```
+
+| Файл | Принадлежность | Evidence | Риск | Решение |
+|---|---|---|---|---|
+| `.audit-bmw/tmpw120oeib/enlarged.pptx` | предсуществующий | README и отчёты прямо требуют не трогать | историческое удаление | сохранить без действий |
+| `apps/api/src/projects/projects.service{,.test}.ts` | предсуществующий | не входят в перечень 03a; отдельного evidence нет | API-изменения не рассмотрены этим prompt | hold |
+| `apps/worker/src/cost-envelope.ts` | предсуществующий/неясно | 03a подтверждает лишь новый transaction-mock test, не весь source diff | policy/cap logic без отдельной disposition | hold |
+| `apps/worker/src/cost-envelope.test.ts` | неясно, содержит hunk 03a | Шестой отчёт 03a: cap-blocking test, 39/39 target tests | файл содержит ранее существовавший diff | hold |
+| `apps/worker/src/economic-release-gate{,.test}.ts` | неясно, содержит hunks 03a | Третий–шестой отчёты 03a: local recovery и 39/39 | происхождение всего diff неотделимо | hold |
+| `apps/worker/src/tasks/generation{,.test}.ts` | неясно, содержит hunks 03a | Пятый отчёт: terminal diagnostic; Шестой: 39/39 | смешан с предсуществующими source-search/recovery hunks | hold |
+| `apps/worker/src/tasks/generation-recovery-actual-gate.test.ts` | неясно, содержит evidence 03a | Шестой отчёт: no provider/Tavily/reserve/settle on terminal retry | файл был уже untracked до поздних добавлений | hold |
+| `apps/worker/src/tasks/presentation-quality.ts` | предсуществующий/вне 03a | 03b лишь исключает causal link к двум сбоям | ослабление quality gate требует отдельного review | hold |
+| `apps/worker/src/tasks/presentation.test.ts` | предсуществующий | 03b: 2 failed / 99 passed; baseline не запускался | `bad_narration`, `schema_risk` unresolved | hold |
+| `apps/worker/src/tasks/presentation/narration/full-document-v6.test.ts` | предсуществующий/неясно | отдельного evidence 03a/03b нет | narration coverage вне disposition | hold |
+| `apps/worker/src/tasks/presentation/narration/processing.ts` | предсуществующий/неясно | отдельного evidence 03a/03b нет | production narration path не принят | hold |
+| `apps/worker/src/tasks/presentation/orchestrator.ts` | предсуществующий/неясно | 03b указывает его как failing execution path | два unresolved regression failure | hold |
+| `apps/worker/src/tasks/presentation/providers/generation.ts` | предсуществующий/неясно | отдельного evidence 03a/03b нет | provider behavior не dispositioned | hold |
+| `apps/worker/src/tasks/web-search.ts` | предсуществующий/неясно | отдельного evidence 03a/03b нет | paid source-search logic вне review | hold |
+| `packages/shared/src/generation/cost-envelope.ts` | предсуществующий/неясно | отдельного evidence 03a/03b нет | shared cap/version change затрагивает весь flow | hold |
+| `plans/generation-recovery-hardening/` | плановые материалы/неисполняемые артефакты | содержит prompts и сохранённые отчёты | не является готовым product diff | сохранить, не коммитить сейчас |
+
+### Evidence и отдельная оценка
+
+- **03a narrow core:** сохранённые отчёты 03a подтверждают deterministic-покрытие terminal envelope, local presentation recovery и атомарного cap-block до provider-вызова: target-набор — `39 passed (39)` и worker typecheck прошёл. Но сами отчёты прямо фиксируют, что полный diff в затронутых файлах включает ранее существовавшие hunks, которые построчно не отделены.
+- **Два regression failure:** отчёт 03b воспроизводит `2 failed | 99 passed` в `presentation.test.ts`: `bad_narration` и `schema_risk`. Связь с допустимыми правками 03a не доказана; baseline на `HEAD` не запускался.
+- **Prompt 03 live proof:** сохранённый отчёт Prompt 03 фиксирует failed project, ряд failed presentation jobs, `0 presentation rows` и расход `69.23178000 RUB`. Это не runtime-доказательство готового recovery flow.
+- **Остальной API/shared/worker diff:** для него нет принятого 03a/03b evidence, а часть файлов лежит на критическом provider/source-search/narration пути.
+
+Итог: **`hold`**. Подтверждённое ядро 03a существует, но его нельзя безопасно отделить на уровне файлов от иных незакоммиченных изменений. Поэтому текущий diff не следует считать кандидатом на commit-readiness review без нового явного решения пользователя.
+
+Prompt 03 **не принят**; новый paid run запрещён; Prompt 04 не разрешён. Изменений, тестов, Docker, сети, AI/Tavily, generation, миграций или Git-операций записи не выполнялось.

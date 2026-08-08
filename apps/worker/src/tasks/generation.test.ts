@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { auditSlideCanvas, presentationSchema, PREMIUM_PRESENTATION_THEMES } from "@studydeck/shared";
-import { handleGenerationJob, prepareGenerationSources, repairPresentationLayout } from "./generation.js";
+import { handleGenerationJob, hasAcceptedNarrationRecoveryArtifacts, prepareGenerationSources, repairPresentationLayout } from "./generation.js";
 import { searchWebSources } from "./web-search.js";
 import { readObjectBuffer } from "../storage.js";
 import { extractTextFromSource } from "./extract.js";
@@ -16,7 +16,7 @@ const mandatorySourceSnapshot = {
   ],
 };
 
-const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, finalizeFailedCostEnvelope, captureGenerationError, generateNarrationDraft, generatePresentationFromNarration, costEnvelope, prismaMock } = vi.hoisted(() => ({
+const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, finalizeFailedCostEnvelope, captureGenerationError, generateNarrationDraft, generatePresentationFromNarration, buildLocalPresentationFromAcceptedNarration, productionQualityReleaseResult, costEnvelope, prismaMock } = vi.hoisted(() => ({
   reserveCostEnvelope: vi.fn(),
   settleCostEnvelope: vi.fn(),
   failCostEnvelope: vi.fn(),
@@ -24,6 +24,8 @@ const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, finalizeFaile
   captureGenerationError: vi.fn(),
   generateNarrationDraft: vi.fn(),
   generatePresentationFromNarration: vi.fn(),
+  buildLocalPresentationFromAcceptedNarration: vi.fn(),
+  productionQualityReleaseResult: vi.fn(),
   costEnvelope: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
   prismaMock: {
     source: { create: vi.fn(), deleteMany: vi.fn(), update: vi.fn() },
@@ -33,6 +35,7 @@ const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, finalizeFaile
     generationJob: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
     presentation: { findUnique: vi.fn(), upsert: vi.fn() },
     userActivityEvent: { create: vi.fn() },
+    $transaction: vi.fn(),
   },
 }));
 
@@ -61,6 +64,13 @@ vi.mock("./web-search.js", () => ({
 vi.mock("./presentation.js", () => ({
   generateNarrationDraft,
   generatePresentationFromNarration,
+  buildLocalPresentationFromAcceptedNarration,
+}));
+
+vi.mock("./presentation-quality.js", () => ({
+  productionQualityReleaseResult,
+  findSpeechTimingIssues: () => [],
+  findFactualRiskIssues: () => [],
 }));
 
 vi.mock("../cost-envelope.js", () => ({
@@ -89,6 +99,7 @@ describe("prepareGenerationSources", () => {
     captureGenerationError.mockReset();
     generateNarrationDraft.mockReset();
     generatePresentationFromNarration.mockReset();
+    buildLocalPresentationFromAcceptedNarration.mockReset();
     costEnvelope.findUnique.mockReset();
     costEnvelope.findUniqueOrThrow.mockReset();
     costEnvelope.update.mockReset();
@@ -302,10 +313,10 @@ describe("prepareGenerationSources", () => {
     const first = await prepareGenerationSources(project, { refreshWeb: true, costEnvelopeId: "envelope-1" });
     expect(first.map((source) => source.id)).toEqual(["saved-1", "saved-2", "saved-3"]);
     expect(searchWebSources).toHaveBeenCalledTimes(1);
-    expect(reserveCostEnvelope).toHaveBeenCalledWith(expect.objectContaining({ bucket: "sources", idempotencyKey: "envelope-1:mandatory-source-search" }));
+    expect(reserveCostEnvelope).toHaveBeenCalledWith(expect.objectContaining({ bucket: "sources", idempotencyKey: "envelope-1:mandatory-source-search:1" }));
     expect(settleCostEnvelope).toHaveBeenCalledWith({
       envelopeId: "envelope-1",
-      idempotencyKey: "envelope-1:mandatory-source-search",
+      idempotencyKey: "envelope-1:mandatory-source-search:1",
       actualRub: "0.50000000",
     });
     expect(failCostEnvelope).not.toHaveBeenCalled();
@@ -318,12 +329,10 @@ describe("prepareGenerationSources", () => {
   });
 
   it("settles one chargeable but insufficient mandatory search, exhausts the envelope, and never starts narration", async () => {
-    const policySnapshot = { buckets: { sources: "0.50000000" } };
+    const policySnapshot = { buckets: { sources: "1.50000000" } };
     costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: null, policySnapshot });
     costEnvelope.findUniqueOrThrow.mockResolvedValue({ policySnapshot });
-    reserveCostEnvelope
-      .mockResolvedValueOnce({ status: "reserved", idempotent: false })
-      .mockResolvedValueOnce({ status: "reserved", idempotent: true });
+    reserveCostEnvelope.mockResolvedValue({ status: "reserved", idempotent: false });
     settleCostEnvelope.mockResolvedValue({ status: "settled" });
     prismaMock.source.create
       .mockResolvedValueOnce({ id: "saved-1", label: "One", type: "WEB", size: 0, objectKey: null, excerpt: "Evidence one", url: "https://nasa.gov/one" })
@@ -337,10 +346,10 @@ describe("prepareGenerationSources", () => {
     await expect(prepareGenerationSources(project, { refreshWeb: true, costEnvelopeId: "envelope-insufficient" }))
       .rejects.toThrow("Mandatory source research did not return enough relevant sources");
 
-    expect(settleCostEnvelope).toHaveBeenCalledTimes(1);
-    expect(settleCostEnvelope).toHaveBeenCalledWith({
+    expect(settleCostEnvelope).toHaveBeenCalledTimes(3);
+    expect(settleCostEnvelope).toHaveBeenLastCalledWith({
       envelopeId: "envelope-insufficient",
-      idempotencyKey: "envelope-insufficient:mandatory-source-search",
+      idempotencyKey: "envelope-insufficient:mandatory-source-search:3",
       actualRub: "0.50000000",
       reason: "mandatory_source_search_insufficient",
       exhaustEnvelope: true,
@@ -349,20 +358,14 @@ describe("prepareGenerationSources", () => {
     expect(captureGenerationError).not.toHaveBeenCalled();
     expect(generateNarrationDraft).not.toHaveBeenCalled();
 
-    await expect(prepareGenerationSources(project, { refreshWeb: true, costEnvelopeId: "envelope-insufficient" }))
-      .rejects.toThrow("already in progress");
-    expect(searchWebSources).toHaveBeenCalledTimes(1);
-    expect(settleCostEnvelope).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a pre-success HTTP failure as provider_error without settlement or raw provider telemetry", async () => {
-    const policySnapshot = { buckets: { sources: "0.50000000" } };
+  it("retries bounded pre-success HTTP failures without raw provider telemetry", async () => {
+    const policySnapshot = { buckets: { sources: "1.50000000" } };
     const rawProviderDetail = "Tavily 503: private project prompt; raw source excerpt";
     costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: null, policySnapshot });
     costEnvelope.findUniqueOrThrow.mockResolvedValue({ policySnapshot });
-    reserveCostEnvelope
-      .mockResolvedValueOnce({ status: "reserved", idempotent: false })
-      .mockResolvedValueOnce({ status: "reserved", idempotent: true });
+    reserveCostEnvelope.mockResolvedValue({ status: "reserved", idempotent: false });
     failCostEnvelope.mockResolvedValue({ status: "provider_error" });
     vi.mocked(searchWebSources).mockRejectedValue(new Error(rawProviderDetail));
 
@@ -373,8 +376,9 @@ describe("prepareGenerationSources", () => {
     expect(settleCostEnvelope).not.toHaveBeenCalled();
     expect(failCostEnvelope).toHaveBeenCalledWith({
       envelopeId: "envelope-provider-failure",
-      idempotencyKey: "envelope-provider-failure:mandatory-source-search",
+      idempotencyKey: "envelope-provider-failure:mandatory-source-search:3",
       reason: "mandatory_source_search_failed",
+      exhaustEnvelope: true,
     });
     expect(captureGenerationError).toHaveBeenCalledWith(
       expect.objectContaining({ message: "mandatory_source_search_provider_failure" }),
@@ -383,10 +387,37 @@ describe("prepareGenerationSources", () => {
     expect(JSON.stringify(captureGenerationError.mock.calls)).not.toContain(rawProviderDetail);
     expect(JSON.stringify(captureGenerationError.mock.calls)).not.toContain(project.prompt);
 
-    await expect(prepareGenerationSources(project, { refreshWeb: true, costEnvelopeId: "envelope-provider-failure" }))
-      .rejects.toThrow("already in progress");
-    expect(searchWebSources).toHaveBeenCalledTimes(1);
-    expect(failCostEnvelope).toHaveBeenCalledTimes(1);
+    expect(searchWebSources).toHaveBeenCalledTimes(3);
+    expect(failCostEnvelope).toHaveBeenCalledTimes(3);
+  });
+
+  it("combines bounded source-search refinements into one mandatory snapshot", async () => {
+    const policySnapshot = { buckets: { sources: "1.50000000" } };
+    costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: null, policySnapshot });
+    costEnvelope.findUniqueOrThrow.mockResolvedValue({ policySnapshot });
+    reserveCostEnvelope.mockResolvedValue({ status: "reserved", idempotent: false });
+    settleCostEnvelope.mockResolvedValue({ status: "settled" });
+    prismaMock.source.create
+      .mockResolvedValueOnce({ id: "saved-1", label: "One", type: "WEB", size: 0, objectKey: null, excerpt: "Evidence one", url: "https://nasa.gov/one" })
+      .mockResolvedValueOnce({ id: "saved-2", label: "Two", type: "WEB", size: 0, objectKey: null, excerpt: "Evidence two", url: "https://esa.int/two" })
+      .mockResolvedValueOnce({ id: "saved-3", label: "Three", type: "WEB", size: 0, objectKey: null, excerpt: "Evidence three", url: "https://example.edu/three" });
+    vi.mocked(searchWebSources)
+      .mockResolvedValueOnce([
+        { id: "web-1", label: "One", type: "WEB", size: 0, excerpt: "Evidence one", url: "https://nasa.gov/one" },
+        { id: "web-2", label: "Two", type: "WEB", size: 0, excerpt: "Evidence two", url: "https://esa.int/two" },
+      ])
+      .mockResolvedValueOnce([
+        { id: "web-2", label: "One", type: "WEB", size: 0, excerpt: "Evidence one", url: "https://nasa.gov/one" },
+        { id: "web-3", label: "Three", type: "WEB", size: 0, excerpt: "Evidence three", url: "https://example.edu/three" },
+      ]);
+
+    const result = await prepareGenerationSources({ id: "project-refined", prompt: "Saturn", mode: "with_sources", speechDraft: null, sources: [] }, { refreshWeb: true, costEnvelopeId: "envelope-refined" });
+
+    expect(result.map((source) => source.id)).toEqual(["saved-1", "saved-2", "saved-3"]);
+    expect(searchWebSources).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(searchWebSources).mock.calls[1]?.[0]).toEqual(expect.objectContaining({ researchAngle: expect.any(String) }));
+    expect(settleCostEnvelope).toHaveBeenNthCalledWith(1, expect.objectContaining({ reason: "mandatory_source_search_refining" }));
+    expect(settleCostEnvelope).toHaveBeenNthCalledWith(2, expect.objectContaining({ idempotencyKey: "envelope-refined:mandatory-source-search:2" }));
   });
 
   it("does not duplicate Tavily work when a concurrent retry owns the source reservation", async () => {
@@ -473,6 +504,38 @@ describe("prepareGenerationSources", () => {
   });
 });
 
+describe("accepted narration local recovery eligibility", () => {
+  const acceptedNarration = Array.from({ length: 10 }, (_, index) => {
+    const order = index + 1;
+    const words = Array.from({ length: order === 1 ? 118 : order === 10 ? 124 : 132 }, (_, word) => `evidence${order}_${word + 1}`);
+    const split = Math.floor(words.length / 2);
+    return `Слайд ${order}: Saturn evidence ${order}\n${words.slice(0, split).join(" ")}. ${words.slice(split).join(" ")}.`;
+  }).join("\n\n");
+  const project = {
+    id: "accepted-recovery-project",
+    title: "Saturn evidence",
+    prompt: "Explain Saturn using the saved evidence.",
+    scenario: "university_report",
+    level: "university_student",
+    mode: "with_sources",
+    slideCount: 10,
+  };
+  const snapshotSources = mandatorySourceSnapshot.sources.map((source) => ({
+    id: source.sourceId,
+    label: source.title,
+    type: "WEB" as const,
+    size: 0,
+    excerpt: source.evidenceExcerpt,
+    url: source.url,
+  }));
+
+  it("permits recovery only for an accepted full narration and a real URL snapshot", () => {
+    expect(hasAcceptedNarrationRecoveryArtifacts(project, snapshotSources, acceptedNarration)).toBe(true);
+    expect(hasAcceptedNarrationRecoveryArtifacts(project, [{ ...snapshotSources[0]!, type: "TXT", url: undefined }], acceptedNarration)).toBe(false);
+    expect(hasAcceptedNarrationRecoveryArtifacts(project, snapshotSources, "Слайд 1: Коротко\nОдна фраза.")).toBe(false);
+  });
+});
+
 describe("handleGenerationJob v6 narration persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -506,7 +569,8 @@ describe("handleGenerationJob v6 narration persistence", () => {
     prismaMock.generationJob.updateMany.mockResolvedValue({ count: 1 });
     prismaMock.presentation.findUnique.mockResolvedValue(null);
     prismaMock.userActivityEvent.create.mockResolvedValue({});
-    costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: mandatorySourceSnapshot });
+    costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: mandatorySourceSnapshot, status: "active" });
+    prismaMock.$transaction.mockImplementation(async (operations: Promise<unknown>[]) => Promise.all(operations));
   });
 
   it("persists an editable v6 draft at the real job boundary without presentation, accept, or retry work", async () => {
@@ -680,6 +744,7 @@ describe("handleGenerationJob failed narration envelope finalization", () => {
     finalizeFailedCostEnvelope.mockReset();
     generateNarrationDraft.mockReset();
     generatePresentationFromNarration.mockReset();
+    buildLocalPresentationFromAcceptedNarration.mockReset();
     prismaMock.project.update.mockResolvedValue({});
     prismaMock.project.findUnique.mockResolvedValue({ speechDraft: null });
     prismaMock.project.findUniqueOrThrow.mockResolvedValue(narrationProject());
@@ -687,7 +752,7 @@ describe("handleGenerationJob failed narration envelope finalization", () => {
     prismaMock.generationJob.updateMany.mockResolvedValue({ count: 1 });
     prismaMock.presentation.findUnique.mockResolvedValue(null);
     prismaMock.userActivityEvent.create.mockResolvedValue({});
-    costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: mandatorySourceSnapshot });
+    costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: mandatorySourceSnapshot, status: "active" });
   });
 
   it("finalizes exactly one terminal failed narration envelope without a draft, then rethrows the generation error", async () => {
@@ -762,9 +827,83 @@ describe("handleGenerationJob failed narration envelope finalization", () => {
     expect(finalizeFailedCostEnvelope).not.toHaveBeenCalled();
   });
 
+  it("marks the presentation ready after a structured provider failure using only accepted narration and its saved source snapshot", async () => {
+    const acceptedNarration = Array.from({ length: 10 }, (_, index) => {
+      const order = index + 1;
+      const words = Array.from({ length: order === 1 ? 118 : order === 10 ? 124 : 132 }, (_, word) => `evidence${order}_${word + 1}`);
+      const split = Math.floor(words.length / 2);
+      return `Слайд ${order}: Saturn evidence ${order}\n${words.slice(0, split).join(" ")}. ${words.slice(split).join(" ")}.`;
+    }).join("\n\n");
+    const snapshotSources = mandatorySourceSnapshot.sources.map((source) => ({
+      id: source.sourceId,
+      label: source.title,
+      type: "WEB" as const,
+      size: 0,
+      excerpt: source.evidenceExcerpt,
+      url: source.url,
+    }));
+    const recovered = presentationSchema.parse({
+      id: "local-recovery",
+      title: "Saturn evidence",
+      scenario: "university_report",
+      level: "university_student",
+      slideCount: 10,
+      generationMode: "local",
+      generatedText: acceptedNarration,
+      sources: snapshotSources,
+      outline: Array.from({ length: 10 }, (_, index) => `Saturn evidence ${index + 1}`),
+      narrativePlan: Array.from({ length: 10 }, (_, index) => ({
+        slideOrder: index + 1,
+        slideTitle: `Saturn evidence ${index + 1}`,
+        slidePurpose: "Explain grounded evidence.",
+        keyMessage: "Saved evidence supports the explanation.",
+        audienceQuestion: "What does the saved source establish?",
+        transitionToNext: index === 9 ? "" : "Continue with the next grounded point.",
+      })),
+      speechScript: acceptedNarration.split("\n\n").map((section, index) => ({ slideOrder: index + 1, slideTitle: `Saturn evidence ${index + 1}`, text: section.split("\n")[1]! })),
+      slides: acceptedNarration.split("\n\n").map((section, index) => ({
+        id: `slide-${index + 1}`,
+        order: index + 1,
+        title: `Saturn evidence ${index + 1}`,
+        slideKind: index === 0 ? "title" : index === 9 ? "summary" : "content",
+        layout: index === 0 ? "hero" : index === 9 ? "summary" : "bullets",
+        thesis: "Saved evidence supports a concrete explanation of Saturn.",
+        bullets: ["The source records a grounded observation.", "The narration keeps that observation in context."],
+        definition: null,
+        keyConcepts: [],
+        visual: { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] },
+        highlights: [],
+        blocks: [{ type: "bullets", items: ["The source records a grounded observation.", "The narration keeps that observation in context."] }],
+        speakerNotes: section.split("\n")[1]!,
+        timingSeconds: 45,
+        sourceRefs: [{ sourceId: snapshotSources[index % snapshotSources.length]!.id, label: snapshotSources[index % snapshotSources.length]!.label, excerpt: snapshotSources[index % snapshotSources.length]!.excerpt, page: null }],
+      })),
+    });
+    prismaMock.project.findUniqueOrThrow.mockResolvedValue({ ...narrationProject(acceptedNarration), title: "Saturn evidence", prompt: "Explain Saturn using the saved evidence.", scenario: "university_report", mode: "with_sources" });
+    generatePresentationFromNarration.mockRejectedValue(new Error("structured presentation response was malformed"));
+    buildLocalPresentationFromAcceptedNarration.mockReturnValue(recovered);
+    productionQualityReleaseResult.mockReturnValue({ finalDisposition: "released", issueCategories: [], issues: [], attempts: 1 });
+    costEnvelope.findUniqueOrThrow.mockResolvedValue({
+      limitRub: { toString: () => "10" }, reservedRub: { toString: () => "0" }, settledRub: { toString: () => "1.5" }, status: "active",
+      sourceSnapshot: mandatorySourceSnapshot, reservations: [{ status: "settled", reason: null }], _count: { costEvents: 0 },
+    });
+
+    await expect(handleGenerationJob(queueJob({ name: "generate-presentation", costEnvelopeId: "envelope-presentation" }))).resolves.toBeUndefined();
+
+    expect(generatePresentationFromNarration).toHaveBeenCalledTimes(1);
+    expect(buildLocalPresentationFromAcceptedNarration).toHaveBeenCalledTimes(1);
+    expect(searchWebSources).not.toHaveBeenCalled();
+    expect(productionQualityReleaseResult).toHaveBeenCalledTimes(1);
+    expect(prismaMock.presentation.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ document: expect.objectContaining({ generatedText: acceptedNarration, sources: snapshotSources }) }) }));
+    expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "ready" } }));
+    expect(prismaMock.generationJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "completed" }) }));
+    expect(finalizeFailedCostEnvelope).not.toHaveBeenCalled();
+  });
+
   it("does not finalize a terminal presentation failure through the narration helper", async () => {
     prismaMock.project.findUniqueOrThrow.mockResolvedValue(narrationProject("Accepted narration text"));
     generatePresentationFromNarration.mockRejectedValue(new Error("presentation schema failure"));
+    buildLocalPresentationFromAcceptedNarration.mockImplementation(() => { throw new Error("presentation schema failure"); });
 
     await expect(handleGenerationJob(queueJob({ name: "generate-presentation", costEnvelopeId: "envelope-presentation" })))
       .rejects.toThrow("presentation schema failure");
@@ -775,6 +914,7 @@ describe("handleGenerationJob failed narration envelope finalization", () => {
   it("does not finalize while a presentation failure is scheduled for retry", async () => {
     prismaMock.project.findUniqueOrThrow.mockResolvedValue(narrationProject("Accepted narration text"));
     generatePresentationFromNarration.mockRejectedValue(new Error("presentation request timeout"));
+    buildLocalPresentationFromAcceptedNarration.mockImplementation(() => { throw new Error("presentation request timeout"); });
 
     await expect(handleGenerationJob(queueJob({
       name: "generate-presentation",

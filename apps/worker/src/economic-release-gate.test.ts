@@ -38,4 +38,13 @@ describe("economic release gate", () => {
     const result = evaluateEconomicReleaseGate({ presentation: document(), sources, project, envelope: { ...envelope, reservations: [{ status: "reserved", reason: null }], imageSearchQueries: 3 } });
     expect(result).toEqual(expect.objectContaining({ passed: false, categories: expect.arrayContaining(["paid_stage_unresolved", "visual_cap"]) }));
   });
+
+  it("releases accepted-artifact local recovery after a cap-blocked envelope", () => {
+    expect(evaluateEconomicReleaseGate({
+      presentation: document(),
+      sources,
+      project: { ...project, acceptedNarrationRecovery: true },
+      envelope: { ...envelope, status: "exhausted" },
+    })).toEqual({ passed: true, categories: [] });
+  });
 });

@@ -1,0 +1,19 @@
+Prompt 03e остановлен после единственного разрешённого paid E2E. Retry, второй project, commit, push и deploy не выполнялись.
+
+- Candidate: `D:\presentation\.worktrees\generation-recovery-autonomous`, ветка `codex/generation-recovery-autonomous`.
+- Candidate Compose запущен с `--env-file D:\presentation\.env`; временный runtime override использовал только ссылку на исходный env и уже удалён.
+- Redacted-проверка внутри candidate `api` и `worker`: `OPENAI_API_KEY=present`, `TAVILY_API_KEY=present` — без значений.
+- API health 200; worker стартовал; Redis `PONG`, Postgres accepting connections, MinIO health 200. Demo выключен, Tavily включён, cap `27.90000000 RUB`; на старте projects/jobs/envelopes/cost/usage были нулевыми, generation/export queues пустыми.
+- Runtime IDs: API image `b662de7b…`, container `3c6b8f9b…`; worker image `699fda95…`, container `29d2c6a6…`.
+
+Единственный flow:
+
+- Project: `cmskimbng0003s70jyjecs7sv`
+- Narration job: `cmskimbsm0005s70jpcantxsn`
+- Envelope: `cmskimbv60007s70jtnfuqv06`
+- Tavily WEB URLs: History of Computer Communications, ETHW, Wikipedia Transistor, Perse School PDF.
+- Итог: `failed`, `Presentation=0`.
+
+Причина: оба фактических narration-ответа были получены, но не прошли quality gate: 805 и 871 слов, с `section_count` и `whole_speech_below_minimum`. Recovery признал repair непригодным; presentation job не создавался.
+
+Ledger: settled `3.66222000 RUB` при cap `27.90000000 RUB` (`under_cap=true`), активных generation jobs/queued retries нет. Cap, pricing, routing, keys и исходный worktree не менялись. Локальный commit не создан.

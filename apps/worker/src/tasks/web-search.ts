@@ -24,6 +24,8 @@ export type SourceResearchBrief = {
 export type WebSearchRequest = {
   prompt: string;
   title?: string | null;
+  /** A bounded, internal search refinement used after an insufficient result set. */
+  researchAngle?: string;
   /**
    * The already-settled envelope amount for mandatory source research.
    * It keeps the non-AI CostEvent on the same immutable RUB basis as the
@@ -88,10 +90,11 @@ export function buildTavilyWebSearchQuery(request: string | WebSearchRequest) {
   const { prompt } = normalizeWebSearchRequest(request);
   const topic = extractSearchTopic(request);
   const terms = extractSearchTerms(topic);
+  const refinement = typeof request === "string" ? "" : cleanText(request.researchAngle || "");
   const academicContext = hasLikelyRussianText(topic)
     ? ["факты", "определение", "причины", "последствия", "университетский доклад"]
     : ["facts", "definition", "causes", "consequences", "university report"];
-  const query = cleanText([...terms, ...academicContext].join(" "));
+  const query = cleanText([...terms, refinement, ...academicContext].join(" "));
   return shortenAtWord(query || cleanText(prompt), TAVILY_QUERY_SAFE_LENGTH);
 }
 

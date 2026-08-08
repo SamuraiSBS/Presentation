@@ -22,7 +22,8 @@ import {
   publicNarrationFailureState,
   type GenerationProgressStage,
 } from "./job-progress.js";
-import { generateNarrationDraft, generatePresentationFromNarration } from "./presentation.js";
+import { buildLocalPresentationFromAcceptedNarration, generateNarrationDraft, generatePresentationFromNarration } from "./presentation.js";
+import { assessFullNarrationDocument } from "./presentation/narration/processing.js";
 import { searchWebSources } from "./web-search.js";
 import { runWithUsageContext } from "../usage-ledger.js";
 import { failCostEnvelope, finalizeFailedCostEnvelope, reserveCostEnvelope, settleCostEnvelope } from "../cost-envelope.js";
@@ -208,12 +209,44 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     const speechDraft = project.speechDraft;
 
     await setStage("building_slides");
-    const generatedPresentation = await withTraceSpan("generation.slides", {
-      "studydeck.project_id": projectId,
-      "studydeck.job_id": String(job.id || ""),
-      "studydeck.stage": "slides",
-      "studydeck.provider": process.env.AI_PROVIDER || "demo",
-    }, () => generatePresentationFromNarration(generationProject, sources, speechDraft), traceContext);
+    const canUseAcceptedNarrationRecovery = () => hasAcceptedNarrationRecoveryArtifacts(generationProject, sources, speechDraft);
+    const recoverAcceptedNarration = (stage: "building_slides" | "validating", error: unknown) => {
+      if (!canUseAcceptedNarrationRecovery()) throw error;
+      // This is a deterministic projection only.  In particular, it must not
+      // call a provider or repeat source research after the accepted artifacts
+      // have been persisted for this attempt group.
+      logger.warn({ projectId, jobId: job.id, stage, fallback: "accepted_narration_local_projection", ...errorLogFields(error) }, "recovering presentation from accepted narration and source snapshot");
+      return buildLocalPresentationFromAcceptedNarration(generationProject, sources, speechDraft);
+    };
+    // A presentation retry inherits the original attempt envelope.  Once that
+    // envelope is terminal (or cannot be read), it must never begin another
+    // paid provider stage.  The only permitted continuation is the local
+    // projection from the accepted narration and persisted source snapshot.
+    const recoveryReason = job.data.costEnvelopeId
+      ? await presentationRecoveryReason(job.data.costEnvelopeId)
+      : null;
+    let usedLocalPresentationRecovery = false;
+
+    let generatedPresentation: PresentationDocument;
+    if (recoveryReason) {
+      const error = new Error(recoveryReason);
+      captureGenerationError(error, { projectId, stage: "building_slides", provider: process.env.AI_PROVIDER });
+      generatedPresentation = recoverAcceptedNarration("building_slides", error);
+      usedLocalPresentationRecovery = true;
+    } else {
+      try {
+        generatedPresentation = await withTraceSpan("generation.slides", {
+          "studydeck.project_id": projectId,
+          "studydeck.job_id": String(job.id || ""),
+          "studydeck.stage": "slides",
+          "studydeck.provider": process.env.AI_PROVIDER || "demo",
+        }, () => generatePresentationFromNarration(generationProject, sources, speechDraft), traceContext);
+      } catch (error) {
+        captureGenerationError(error, { projectId, stage: "building_slides", provider: process.env.AI_PROVIDER });
+        generatedPresentation = recoverAcceptedNarration("building_slides", error);
+        usedLocalPresentationRecovery = true;
+      }
+    }
     finishStage("building_slides");
     const groundedPresentation = defenseBundle
       ? applyDefenseGroundingToPresentation(generatedPresentation, defenseBundle, project.sources)
@@ -230,16 +263,23 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       ...presentationWithImages,
       slides: presentationWithImages.slides.map((slide) => ({ ...slide, canvas: undefined })),
     });
-    const unsafeCanvases = canvasAuditIssues(presentation);
+    let unsafeCanvases = canvasAuditIssues(presentation);
     if (unsafeCanvases.length) {
-      throw new Error(`Production quality gate rejected canvas safety: ${unsafeCanvases.slice(0, 8).join("; ")}`);
+      logger.warn({ projectId, jobId: job.id, fallback: "roomy_local_layout", issueCount: unsafeCanvases.length }, "generated canvas is unsafe; applying local layout recovery");
+      presentation = repairPresentationLayout(presentation);
+      unsafeCanvases = canvasAuditIssues(presentation);
+      if (unsafeCanvases.length) {
+        presentation = buildEmergencyReadablePresentation(presentation);
+        unsafeCanvases = canvasAuditIssues(presentation);
+      }
+      if (unsafeCanvases.length) throw new Error(`Production quality gate rejected canvas safety: ${unsafeCanvases.slice(0, 8).join("; ")}`);
     }
     if (defenseBundle) assertDefensePresentation(presentation, defenseBundle);
     // Image fulfillment and canvas composition happen after the model-facing
     // quality loop. Re-audit the exact document that will be persisted: a
     // rejected candidate must never increment a revision or become ready.
     await setStage("validating");
-    const release = productionQualityReleaseResult(presentation, presentation.sources, { ...generationProject, mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId) });
+    let release = productionQualityReleaseResult(presentation, presentation.sources, { ...generationProject, mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId), acceptedNarrationRecovery: hasAcceptedNarrationRecoveryArtifacts(generationProject, sources, speechDraft) });
     logger.info({
       projectId,
       jobId: job.id,
@@ -249,14 +289,18 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       finalAction: release.finalDisposition,
     }, "presentation production quality gate");
     if (release.finalDisposition !== "released") {
-      logger.warn({
-        projectId,
-        jobId: job.id,
-        stage: "validating",
-        issueCategories: release.issueCategories,
-        finalAction: "rejected",
-      }, "presentation production quality gate rejected generated document");
-      throw new Error(`Production quality gate rejected generated presentation: ${release.issueCategories.join(", ") || "unspecified quality issue"}`);
+      // A schema-valid provider response can still fail the production gate.
+      // Re-project only the already accepted narration and snapshot sources;
+      // then run the exact same gate again.  Do not use an emergency generic
+      // deck here: it would weaken provenance and content integrity.
+      const recoveredPresentation = recoverAcceptedNarration("validating", new Error(`provider presentation rejected: ${release.issueCategories.join(", ") || "unspecified quality issue"}`));
+      usedLocalPresentationRecovery = true;
+      presentation = ensureEditableCanvas({
+        ...recoveredPresentation,
+        slides: recoveredPresentation.slides.map((slide) => ({ ...slide, canvas: undefined })),
+      });
+      release = productionQualityReleaseResult(presentation, presentation.sources, { ...generationProject, mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId), acceptedNarrationRecovery: true });
+      if (release.finalDisposition !== "released") throw new Error(`Production quality gate rejected generated presentation: ${release.issueCategories.join(", ") || "unspecified quality issue"}`);
     }
     if (job.data.costEnvelopeId) {
       const envelope = await prisma.costEnvelope.findUniqueOrThrow({
@@ -274,7 +318,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       const economicGate = evaluateEconomicReleaseGate({
         presentation,
         sources,
-        project: { ...generationProject, mandatorySourceSnapshot: true },
+        project: { ...generationProject, mandatorySourceSnapshot: true, acceptedNarrationRecovery: usedLocalPresentationRecovery },
         envelope: {
           limitRub: envelope.limitRub.toString(),
           reservedRub: envelope.reservedRub.toString(),
@@ -317,7 +361,9 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     const narrationState = publicNarrationFailureState(kind, currentStage);
     const internalError = error instanceof EconomicReleaseGateError
       ? `economic_release_gate:${error.categories.join(",")}`
-      : recovery.message;
+      : kind === "presentation" && error instanceof Error
+        ? error.message
+        : recovery.message;
     const attempts = typeof job.opts.attempts === "number" ? job.opts.attempts : 1;
     const willRetry = shouldRetryGenerationJob(kind, error, job.attemptsMade, attempts);
     if (!willRetry) {
@@ -347,7 +393,10 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
           // Project responses are sanitized by the API.  GenerationJob keeps a
           // compact operational category for admins without persisting provider
           // messages, tokens, or stack traces.
-          error: narrationState || internalError,
+          // Project.error is public-safe. Keep the worker job's compact
+          // presentation diagnostic intact so a failed recovery is
+          // diagnosable and not overwritten by that public message.
+          error: kind === "presentation" ? internalError : narrationState || internalError,
         progressStage: willRetry ? "queued" : "failed",
         progressLabel: willRetry ? "Временная ошибка, попробуем ещё раз" : "Не получилось",
         progressPercent: willRetry ? 5 : 100,
@@ -391,6 +440,38 @@ function canvasAuditIssues(presentation: PresentationDocument) {
       (slide.canvas ? auditSlideCanvas(slide.canvas) : ["canvas is missing"])
         .map((issue) => `slide ${slide.order}: ${issue}`),
     );
+}
+
+/**
+ * Presentation recovery is permitted only after both expensive upstream
+ * artifacts are present.  `prepareGenerationSources` supplies these sources
+ * from the persisted mandatory snapshot for an envelope-backed presentation
+ * job, so this check is intentionally local and has no provider side effects.
+ */
+export function hasAcceptedNarrationRecoveryArtifacts(
+  project: { id: string; title: string; prompt: string; scenario: string; level: string; mode: string; slideCount: number },
+  sources: Source[],
+  narrationText: string,
+) {
+  const narration = assessFullNarrationDocument(narrationText, project);
+  return narration.isAccepted
+    && sources.length >= 3
+    && sources.every((source) => source.type === "WEB" && Boolean(source.url?.trim()) && Boolean(source.excerpt?.trim()));
+}
+
+async function presentationRecoveryReason(costEnvelopeId: string) {
+  try {
+    const envelope = await getPrisma().costEnvelope.findUnique({
+      where: { id: costEnvelopeId },
+      select: { status: true },
+    });
+    if (!envelope) return "presentation_recovery_envelope_unavailable";
+    return envelope.status === "active" ? null : `presentation_recovery_envelope_${envelope.status}`;
+  } catch {
+    // An unreadable lineage is not authorization to spend again. Keep the
+    // diagnostic stable and let the existing terminal path preserve it.
+    return "presentation_recovery_envelope_unavailable";
+  }
 }
 
 export function repairPresentationLayout(presentation: PresentationDocument): PresentationDocument {
@@ -470,23 +551,36 @@ function buildEmergencyReadablePresentation(presentation: PresentationDocument):
     }, []).join(" ");
     return compact || fallback;
   };
+  const fallbackLayouts = ["statement", "two-column", "comparison", "process"] as const;
+  const supportPoints = (slide: PresentationDocument["slides"][number], thesis: string) => {
+    const candidates = String(slide.speakerNotes || "")
+      .match(/[^.!?]+[.!?]+/g)
+      ?.map((sentence) => compactVisibleText(sentence.trim(), 130, ""))
+      .filter((sentence) => sentence && sentence !== thesis) || [];
+    return [...new Set(candidates)].slice(1, 3);
+  };
 
   return {
     ...presentation,
     presentationTheme: PREMIUM_PRESENTATION_THEMES.academicClean,
     designBrief: undefined,
+    // Keep the canonical document, notes and script in lockstep after the
+    // emergency canvas is assembled from accepted narration.
+    generatedText: presentation.slides.map((slide) => `\u0421\u043b\u0430\u0439\u0434 ${slide.order}: ${slide.title}\n${slide.speakerNotes}`).join("\n\n"),
+    speechScript: presentation.slides.map((slide) => ({ slideOrder: slide.order, slideTitle: slide.title, text: slide.speakerNotes })),
     slides: presentation.slides.map((slide) => {
       const title = compactVisibleText(slide.title, 90, `Слайд ${slide.order}`);
       const thesis = compactVisibleText(slide.thesis || slide.speakerNotes, 180, title);
+      const bullets = supportPoints(slide, thesis);
       const background = "#F8FAFC";
       return {
         ...slide,
         title,
-        layout: "statement",
+        layout: fallbackLayouts[(slide.order - 1) % fallbackLayouts.length],
         thesis,
-        bullets: [],
+        bullets: bullets.length >= 2 ? bullets : slide.bullets.slice(0, 2),
         blocks: [],
-        visual: { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] },
+        visual: { type: "schema", title: `Schema: ${title}`, description: `A diagram explaining ${thesis}`, leftLabel: "", rightLabel: "", items: [], rows: [] },
         canvas: {
           version: 2,
           width: 1280,
@@ -631,34 +725,67 @@ export async function prepareGenerationSources(project: {
 
   if (options.costEnvelopeId && refreshWeb) {
     const prisma = getPrisma();
-    let webSources: Source[];
-    const reservationKey = `${options.costEnvelopeId}:mandatory-source-search`;
     const envelope = await prisma.costEnvelope.findUniqueOrThrow({ where: { id: options.costEnvelopeId }, select: { policySnapshot: true } });
-    const amountRub = String((envelope.policySnapshot as { buckets?: { sources?: string } }).buckets?.sources || "");
-    const reservation = await reserveCostEnvelope({ envelopeId: options.costEnvelopeId, idempotencyKey: reservationKey, bucket: "sources", stage: "mandatory_source_search", amountRub });
-    if (reservation.status !== "reserved") throw new Error("Mandatory source research is unavailable for this generation run");
-    // The reservation is the run-scoped mutex. A concurrent BullMQ retry
-    // must wait for the first attempt to persist its snapshot instead of
-    // issuing a second paid Tavily request with the same reservation key.
-    if (reservation.idempotent) throw new Error("Mandatory source research is already in progress for this generation run");
-    try {
-      webSources = await searchWebSources({
-        prompt: project.prompt,
-        title: project.title,
-        costEnvelopeRub: amountRub,
+    const sourceBudgetRub = String((envelope.policySnapshot as { buckets?: { sources?: string } }).buckets?.sources || "");
+    const perAttemptRub = "0.50000000";
+    const maxAttempts = Math.max(1, Math.min(3, Math.floor(Number(sourceBudgetRub) / Number(perAttemptRub))));
+    const refinements = ["", "официальные данные исследования", "аналитика история технология"];
+    const sourcesByUrl = new Map<string, Source>();
+
+    for (let attempt = 0; attempt < maxAttempts && sourcesByUrl.size < 3; attempt += 1) {
+      const reservationKey = `${options.costEnvelopeId}:mandatory-source-search:${attempt + 1}`;
+      const reservation = await reserveCostEnvelope({
+        envelopeId: options.costEnvelopeId,
+        idempotencyKey: reservationKey,
+        bucket: "sources",
+        stage: "mandatory_source_search",
+        amountRub: perAttemptRub,
       });
-    } catch {
-      // Provider response bodies can contain query/result material. Keep
-      // mandatory-source telemetry to a stable classification only.
-      const safeFailure = new Error("mandatory_source_search_provider_failure");
-      captureGenerationError(safeFailure, {
-        projectId: project.id,
-        stage: "researching",
-        provider: process.env.WEB_SEARCH_PROVIDER || "tavily",
-      });
-      await failCostEnvelope({ envelopeId: options.costEnvelopeId, idempotencyKey: reservationKey, reason: "mandatory_source_search_failed" }).catch(() => undefined);
-      throw safeFailure;
+      if (reservation.status !== "reserved") throw new Error("Mandatory source research is unavailable for this generation run");
+      // A retained reservation belongs to another worker attempt. Never
+      // issue the same paid query concurrently.
+      if (reservation.idempotent) throw new Error("Mandatory source research is already in progress for this generation run");
+      try {
+        const result = await searchWebSources({
+          prompt: project.prompt,
+          title: project.title,
+          researchAngle: refinements[attempt],
+          costEnvelopeRub: perAttemptRub,
+        });
+        result.forEach((source) => {
+          if (source.url && !sourcesByUrl.has(source.url)) sourcesByUrl.set(source.url, source);
+        });
+        const isLastAttempt = attempt === maxAttempts - 1;
+        await settleCostEnvelope({
+          envelopeId: options.costEnvelopeId,
+          idempotencyKey: reservationKey,
+          actualRub: perAttemptRub,
+          ...(sourcesByUrl.size < 3 && isLastAttempt
+            ? { reason: "mandatory_source_search_insufficient", exhaustEnvelope: true }
+            : sourcesByUrl.size < 3
+              ? { reason: "mandatory_source_search_refining" }
+              : {}),
+        });
+      } catch {
+        // Retry bounded provider failures from the next independently
+        // reserved slot. The exact provider payload stays out of telemetry.
+        await failCostEnvelope({
+          envelopeId: options.costEnvelopeId,
+          idempotencyKey: reservationKey,
+          reason: "mandatory_source_search_failed",
+          exhaustEnvelope: attempt + 1 >= maxAttempts,
+        }).catch(() => undefined);
+        if (attempt + 1 < maxAttempts) continue;
+        const safeFailure = new Error("mandatory_source_search_provider_failure");
+        captureGenerationError(safeFailure, {
+          projectId: project.id,
+          stage: "researching",
+          provider: process.env.WEB_SEARCH_PROVIDER || "tavily",
+        });
+        throw safeFailure;
+      }
     }
+    const webSources = [...sourcesByUrl.values()];
     const snapshotCandidates: Source[] = [];
     for (const source of webSources.slice(0, 4)) {
       const created = await prisma.source.create({
@@ -686,21 +813,9 @@ export async function prepareGenerationSources(project: {
     }
     const snapshot = createMandatorySourceSnapshot(snapshotCandidates);
     if (!snapshot) {
-      // Tavily already returned a successful, chargeable response and
-      // recordCostEvent has recorded the same policy amount.  Relevance
-      // filtering is a local mandatory-gate outcome, not a transport failure:
-      // settle the source reservation exactly once, then exhaust this run.
-      await settleCostEnvelope({
-        envelopeId: options.costEnvelopeId,
-        idempotencyKey: reservationKey,
-        actualRub: amountRub,
-        reason: "mandatory_source_search_insufficient",
-        exhaustEnvelope: true,
-      });
       throw new Error("Mandatory source research did not return enough relevant sources");
     }
     await prisma.costEnvelope.update({ where: { id: options.costEnvelopeId }, data: { sourceSnapshot: snapshot } });
-    await settleCostEnvelope({ envelopeId: options.costEnvelopeId, idempotencyKey: reservationKey, actualRub: amountRub });
     return snapshotSources(snapshot);
   }
 

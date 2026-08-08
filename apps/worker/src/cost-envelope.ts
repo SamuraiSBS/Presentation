@@ -127,14 +127,20 @@ export async function releaseCostEnvelope(input: { envelopeId: string; idempoten
 }
 
 /** Provider failures are conservatively terminal: do not reuse an uncertain reservation. */
-export async function failCostEnvelope(input: { envelopeId: string; idempotencyKey: string; reason?: string }) {
+export async function failCostEnvelope(input: { envelopeId: string; idempotencyKey: string; reason?: string; exhaustEnvelope?: boolean }) {
   return getPrisma().$transaction(async (tx) => {
     const envelope = await lockEnvelope(tx, input.envelopeId);
     const reservation = await tx.costEnvelopeReservation.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
     if (!reservation || reservation.envelopeId !== envelope.id) return { status: "missing_reservation" as const };
     if (reservation.status !== "reserved") return { status: reservation.status as "settled" | "released" | "provider_error" | "unknown_usage" | "overrun", idempotent: true };
     await tx.costEnvelopeReservation.update({ where: { id: reservation.id }, data: { status: "provider_error", reason: input.reason || "provider_error", settledAt: new Date() } });
-    await tx.costEnvelope.update({ where: { id: envelope.id }, data: { status: "exhausted" } });
+    await tx.costEnvelope.update({
+      where: { id: envelope.id },
+      // A bounded recovery flow may reserve the next slot after a provider
+      // transport failure. Keep the uncertain reservation counted, but do
+      // not discard the remaining, explicitly budgeted recovery capacity.
+      data: input.exhaustEnvelope === false ? {} : { status: "exhausted" },
+    });
     return { status: "provider_error" as const };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }

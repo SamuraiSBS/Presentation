@@ -604,7 +604,11 @@ export function assessFullNarrationDocument(value: unknown, project: ProjectInpu
   const structuralIssueCount = [...issueCodes].filter((code) => structuralCodes.includes(code)).length;
   const severeIssueCount = [...issueCodes].filter((code) => severeCodes.includes(code)).length;
   const hasCanonicalSectionCoverage = structuralIssueCount === 0;
-  const isStructurallyUsable = hasCanonicalSectionCoverage && severeIssueCount === 0;
+  // Template, repetition and commentary defects are semantic repair work;
+  // they do not make a complete ten-section draft structurally unusable.
+  // Keeping this distinction lets the bounded targeted repair run and, if it
+  // still cannot pass, preserves the best real-AI draft for review.
+  const isStructurallyUsable = hasCanonicalSectionCoverage;
   const isWithinMaximum = timing?.maxWords === undefined || totalWords <= timing.maxWords;
   return {
     totalWords,
@@ -622,7 +626,14 @@ export function assessFullNarrationDocument(value: unknown, project: ProjectInpu
 
 /** A bounded batch repair is meaningful only for localised section defects. */
 export function isFullNarrationTargetedRepairEligible(diagnostics: FullNarrationSafeDiagnostics) {
-  const targetedCodes: readonly FullNarrationIssueCode[] = ["fragmentary_section", "pathologically_unbalanced_section"];
+  const targetedCodes: readonly FullNarrationIssueCode[] = [
+    "fragmentary_section",
+    "pathologically_unbalanced_section",
+    "template_or_repetition",
+    "provider_commentary",
+    "prompt_echo",
+    "planning_formula",
+  ];
   return diagnostics.isStructurallyUsable
     && diagnostics.issueCodes.length > 0
     // A local fragment normally also makes the whole document short.  That

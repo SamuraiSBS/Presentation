@@ -1,0 +1,21 @@
+Prompt 02 выполнен; Prompt 03 не начинал.
+
+Изменено:
+
+- [generation.ts](D:/presentation/apps/worker/src/tasks/generation.ts) — local recovery разрешён только при принятой полной речи и трёх реальных WEB-источниках с URL; повторно запускает те же строгие quality gates.
+- [orchestrator.ts](D:/presentation/apps/worker/src/tasks/presentation/orchestrator.ts) — локальная проекция стабильно сохраняет source refs из snapshot.
+- [generation.test.ts](D:/presentation/apps/worker/src/tasks/generation.test.ts) — provider failure → local recovery → `ready`, без Tavily/повторного provider.
+- [presentation.test.ts](D:/presentation/apps/worker/src/tasks/presentation.test.ts) — проверка сохранения речи, script и источников.
+
+Проверки:
+
+- `npm run typecheck -w @studydeck/worker` — успешно.
+- `generation.test.ts` — 26/26 успешно.
+- Тест accepted full narration/local projection — успешно.
+- `git diff --check` для Prompt 02-файлов — успешно.
+
+Известный риск: полный запуск `presentation.test.ts` уже до моих правок падал в двух существующих сценариях provider fallback (`bad_narration`, `schema_risk`); это не связано с добавленным recovery-путём. Docker, миграции, коммит, деплой и внешние вызовы не выполнялись.
+
+Текущий worktree сохранён; API/cost-policy Prompt 01 и прочие незавершённые worker-изменения не откатывались. Историческое `.audit-bmw/tmpw120oeib/enlarged.pptx` не затрагивал.
+
+0 RUB: внешние AI/Tavily вызовы не выполнялись.

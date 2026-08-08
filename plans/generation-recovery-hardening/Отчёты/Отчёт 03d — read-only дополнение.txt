@@ -1,0 +1,236 @@
+## 03d — read-only дополнение
+
+Ни candidate, ни индекс, ни worktree не менялись. Tests, Docker, live/AI/Tavily и сети не запускались.
+
+### 1. Raw `git status --short`
+
+```text
+ D .audit-bmw/tmpw120oeib/enlarged.pptx
+ M apps/api/src/projects/projects.service.test.ts
+ M apps/api/src/projects/projects.service.ts
+ M apps/worker/src/cost-envelope.test.ts
+ M apps/worker/src/cost-envelope.ts
+ M apps/worker/src/economic-release-gate.test.ts
+ M apps/worker/src/economic-release-gate.ts
+ M apps/worker/src/tasks/generation.test.ts
+ M apps/worker/src/tasks/generation.ts
+ M apps/worker/src/tasks/presentation-quality.ts
+ M apps/worker/src/tasks/presentation.test.ts
+ M apps/worker/src/tasks/presentation/narration/full-document-v6.test.ts
+ M apps/worker/src/tasks/presentation/narration/processing.ts
+ M apps/worker/src/tasks/presentation/orchestrator.ts
+ M apps/worker/src/tasks/presentation/providers/generation.ts
+ M apps/worker/src/tasks/web-search.ts
+ M packages/shared/src/generation/cost-envelope.ts
+?? apps/worker/src/tasks/generation-recovery-actual-gate.test.ts
+?? plans/generation-recovery-hardening/
+```
+
+Точный счёт: **17 tracked paths**: **16 product-файлов** под `apps/` или `packages/` и **1** историческое удаление `.audit-bmw/tmpw120oeib/enlarged.pptx`. Отдельно есть 2 untracked status entries.
+
+Исправление формулировки 03d: утверждение о **16 tracked product-файлах** верно; если считать все tracked изменения, число — **17**, а не 16.
+
+### 2. Raw `git diff --unified=0`
+
+`apps/api/src/projects/projects.service.ts`
+
+```diff
+@@ -555,3 +555,7 @@ export class ProjectsService {
+-      const existing = kind === "presentation"
+-        ? await tx.costEnvelope.findFirst({
+-          where: { projectId, status: "active", narrationJob: { is: { status: "completed" } }, presentationJobId: null },
++      const priorNarrationEnvelopes = kind === "presentation"
++        ? await tx.costEnvelope.findMany({
++          // A failed presentation can exhaust its envelope after the source
++          // snapshot was successfully captured. Keep that immutable snapshot
++          // available for the next presentation attempt instead of forcing a
++          // second paid web search or failing the worker without sources.
++          where: { projectId, narrationJob: { is: { status: "completed" } } },
+@@ -559 +563,2 @@ export class ProjectsService {
+-          select: { id: true, policyVersion: true, sourceSnapshot: true },
++          take: 10,
++          select: { id: true, policyVersion: true, sourceSnapshot: true, status: true, presentationJobId: true },
+@@ -561 +566,6 @@ export class ProjectsService {
+-        : null;
++        : [];
++      // The envelope is the attempt group. A recovery job must retain this
++      // identifier even after a prior presentation job exhausted it: creating
++      // a replacement envelope would grant the same user run a fresh cap.
++      const existing = priorNarrationEnvelopes.find((envelope) => envelope.policyVersion === policy.version) || null;
++      const preservedSourceSnapshot = priorNarrationEnvelopes.find((envelope) => envelope.sourceSnapshot && typeof envelope.sourceSnapshot === "object")?.sourceSnapshot;
+@@ -565,3 +575,6 @@ export class ProjectsService {
+-      if (existing?.policyVersion === policy.version) {
+-        const envelope = await tx.costEnvelope.update({ where: { id: existing.id }, data: { presentationJobId: job.id } });
+-        return { id: envelope.id, job };
++      if (existing) {
++        if (!existing.presentationJobId) {
++          const envelope = await tx.costEnvelope.update({ where: { id: existing.id }, data: { presentationJobId: job.id } });
++          return { id: envelope.id, job };
++        }
++        return { id: existing.id, job };
+@@ -579 +592 @@ export class ProjectsService {
+-          ...(kind === "presentation" && existing?.sourceSnapshot ? { sourceSnapshot: existing.sourceSnapshot } : {}),
++          ...(kind === "presentation" && preservedSourceSnapshot ? { sourceSnapshot: preservedSourceSnapshot } : {}),
+```
+
+`apps/api/src/projects/projects.service.test.ts`
+
+```diff
+@@ -63,0 +64 @@ function createHarness() {
++      findMany: vi.fn().mockResolvedValue([]),
+@@ -230,0 +232,25 @@ describe("ProjectsService generation", () => {
++
++  it("reuses an exhausted presentation attempt group instead of granting a retry a new cap", async () => {
++    const { service, tx } = createHarness();
++    const originalProvider = process.env.AI_PROVIDER;
++    process.env.AI_PROVIDER = "aitunnel";
++    tx.generationJob.create.mockResolvedValueOnce({ id: "presentation-retry-job" });
++    tx.costEnvelope.findMany.mockResolvedValueOnce([{
++      id: "attempt-group-1",
++      policyVersion: "standard-generation-cost-envelope-v10",
++      sourceSnapshot: { version: 1, sources: [] },
++      status: "exhausted",
++      presentationJobId: "failed-presentation-job",
++    }]);
++
++    try {
++      await expect((service as any).createAitunnelEnvelope("project-1", "presentation"))
++        .resolves.toMatchObject({ id: "attempt-group-1", job: { id: "presentation-retry-job" } });
++    } finally {
++      if (originalProvider === undefined) delete process.env.AI_PROVIDER;
++      else process.env.AI_PROVIDER = originalProvider;
++    }
++
++    expect(tx.costEnvelope.create).not.toHaveBeenCalled();
++    expect(tx.costEnvelope.update).not.toHaveBeenCalled();
++  });
+```
+
+`apps/worker/src/economic-release-gate.ts`
+
+```diff
+@@ -54 +54 @@ export function evaluateEconomicReleaseGate(input: EconomicReleaseGateInput): Ec
+-  if (envelope.status === "exhausted" || envelope.status === "cancelled"
++  if ((envelope.status === "exhausted" && !project.acceptedNarrationRecovery) || envelope.status === "cancelled"
+```
+
+`apps/worker/src/economic-release-gate.test.ts`
+
+```diff
+@@ -40,0 +41,9 @@ describe("economic release gate", () => {
++
++  it("releases accepted-artifact local recovery after a cap-blocked envelope", () => {
++    expect(evaluateEconomicReleaseGate({
++      presentation: document(),
++      sources,
++      project: { ...project, acceptedNarrationRecovery: true },
++      envelope: { ...envelope, status: "exhausted" },
++    })).toEqual({ passed: true, categories: [] });
++  });
+```
+
+`apps/worker/src/cost-envelope.test.ts`
+
+```diff
+@@ -1 +1 @@
+-import { describe, expect, it } from "vitest";
++import { describe, expect, it, vi } from "vitest";
+@@ -2,0 +3,15 @@ import { AITUNNEL_APPROVED_MODELS, AITUNNEL_PROVIDER_CATALOG, COST_ENVELOPE_BUCK
++import { reserveCostEnvelope } from "./cost-envelope.js";
++
++const { prismaMock, transactionMock } = vi.hoisted(() => {
++  const tx = {
++    $queryRaw: vi.fn(),
++    costEnvelope: { findUnique: vi.fn(), update: vi.fn(), create: vi.fn() },
++    costEnvelopeReservation: { findUnique: vi.fn(), aggregate: vi.fn(), create: vi.fn() },
++  };
++  return {
++    prismaMock: { $transaction: vi.fn() },
++    transactionMock: tx,
++  };
++});
++
++vi.mock("./prisma.js", () => ({ getPrisma: () => prismaMock }));
+@@ -5 +20 @@ describe("standard generation cost envelope policy", () => {
+-  it("has the exact v9 26.90 RUB cap including the final Terra presentation", () => {
++  it("has the exact v10 27.90 RUB cap including the final Terra presentation", () => {
+@@ -20 +35 @@ describe("standard generation cost envelope policy", () => {
+-    expect(Object.values(policy.buckets).reduce((sum, amount) => sum + Number(amount), 0)).toBeCloseTo(26.9, 8);
++    expect(Object.values(policy.buckets).reduce((sum, amount) => sum + Number(amount), 0)).toBeCloseTo(27.9, 8);
+@@ -38,0 +54,29 @@ describe("standard generation cost envelope policy", () => {
++
++  it("atomically blocks a presentation reservation when persisted settled plus active reservations would exceed the inherited cap", async () => {
++    const policy = standardGenerationCostPolicy();
++    transactionMock.$queryRaw.mockResolvedValue([{ id: "inherited-envelope" }]);
++    transactionMock.costEnvelope.findUnique.mockResolvedValue({
++      id: "inherited-envelope",
++      status: "active",
++      limitRub: { toString: () => "27.90000000" },
++      settledRub: { toString: () => "24.00000000" },
++      reservedRub: { toString: () => "3.50000000" },
++      policySnapshot: policy,
++    });
++    transactionMock.costEnvelopeReservation.findUnique.mockResolvedValue(null);
++    transactionMock.costEnvelopeReservation.aggregate.mockResolvedValue({ _sum: { reservedRub: { toString: () => "0.00000000" } } });
++    prismaMock.$transaction.mockImplementation(async (callback: (tx: typeof transactionMock) => unknown) => callback(transactionMock));
++
++    await expect(reserveCostEnvelope({
++      envelopeId: "inherited-envelope",
++      idempotencyKey: "inherited-envelope:retry:presentation",
++      bucket: "presentation",
++      stage: "presentation",
++      amountRub: "1.00000000",
++    })).resolves.toEqual({ status: "blocked", reason: "envelope_exhausted" });
++
++    expect(transactionMock.costEnvelopeReservation.create).not.toHaveBeenCalled();
++    expect(transactionMock.costEnvelope.update).not.toHaveBeenCalled();
++    expect(transactionMock.costEnvelope.create).not.toHaveBeenCalled();
++    expect(Number("24.00000000") + Number("3.50000000") + Number("1.00000000")).toBeGreaterThan(Number("27.90000000"));
++  });
+```
+
+### 3. Точные фрагменты evidence
+
+`Отчёт 01-project-budget-and-source-reuse.txt`:
+
+> `apps/api/src/projects/projects.service.ts` — retry презентации теперь повторно использует исходный `CostEnvelope` как attempt group даже после его `exhausted`-статуса; новый полный лимит не создаётся.
+
+> `apps/api/src/projects/projects.service.test.ts` — регресс-тест: exhausted presentation retry не создаёт и не обновляет envelope, а получает ID исходной группы.
+
+> `apps/worker/src/cost-envelope.test.ts` — ожидания синхронизированы с уже изменённой политикой v10: cap 27.90 RUB.
+
+`Отчёт 02-local-presentation-recovery.txt` — это prerequisite для `acceptedNarrationRecovery`, но не прямое file-level evidence пяти hunks:
+
+> `generation.ts` — local recovery разрешён только при принятой полной речи и трёх реальных WEB-источниках с URL; повторно запускает те же строгие quality gates.
+
+`Третий отчёт 03-one-real-end-to-end-proof.txt` (Prompt 03a):
+
+> `apps/worker/src/economic-release-gate.ts` — cap-blocked envelope не мешает сохранить валидную локальную recovery-презентацию, если нет незавершённых платных reservations.
+
+> Одна lineage / один envelope: retry использует inherited envelope и не создаёт новый.
+
+> Local recovery с `accepted_speech`: local projection + release gate; создаётся ровно одна `Presentation`, проект становится `ready`.
+
+`Шестой отчёт 03-one-real-end-to-end-proof.txt` (Prompt 03a):
+
+> `atomically blocks a presentation reservation when persisted settled plus active reservations would exceed the inherited cap`
+
+> `expect(transactionMock.costEnvelopeReservation.create).not.toHaveBeenCalled();`  
+> `expect(transactionMock.costEnvelope.update).not.toHaveBeenCalled();`  
+> `expect(transactionMock.costEnvelope.create).not.toHaveBeenCalled();`
+
+> Новый envelope и reservation не создаются, persisted значения не меняются.
+
+### 4. Disposition
+
+| Hunk | Report evidence | Prerequisite | Candidate / hold |
+|---|---|---|---|
+| `projects.service.ts` attempt-group reuse | Prompt 01: service прямо указан | Текущая v10 cost-policy/shared contract | candidate bundle |
+| `projects.service.test.ts` retry test | Prompt 01: test прямо указан | Предыдущий service hunk | candidate bundle |
+| `economic-release-gate.ts` exhausted recovery exception | Prompt 03a: file и поведение прямо указаны | `acceptedNarrationRecovery` contract и Prompt 02 local-recovery path | hold |
+| `economic-release-gate.test.ts` | Prompt 03a: file прямо указан | Предыдущий gate hunk и тот же contract | hold |
+| `cost-envelope.test.ts` transaction mock | Prompt 03a: точный test/assertions в шестом отчёте | `reserveCostEnvelope` и v10/27.90 policy source; текущий file также содержит Prompt 01 expectation change | hold |
+
+Коррекция к 03d-manifest: «полностью атрибутируемый» корректно описывает происхождение пяти hunks по отчётам, но не доказывает, что каждый можно перенести на чистый `HEAD` самостоятельно. На текущем evidence только API service+test образуют candidate bundle; три worker-части удерживаются зависимостями.
+
+Остановился.

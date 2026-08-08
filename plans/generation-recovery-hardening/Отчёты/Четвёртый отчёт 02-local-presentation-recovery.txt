@@ -1,0 +1,3 @@
+Не смог завершить Prompt 02 в этом ходе: добавил contract-aware сохранение полных support sentences для accepted full narration, но positive E2E с реальным gate и `ready` ещё не готов. Не буду выдавать его за закрытый без требуемого доказательства.
+
+Никаких Docker, миграций, commit/deploy или AI/Tavily-вызовов не выполнял.

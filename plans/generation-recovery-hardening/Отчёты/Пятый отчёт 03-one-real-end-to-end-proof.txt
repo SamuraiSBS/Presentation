@@ -1,0 +1,64 @@
+Prompt 03a продолжен без live/network/Docker действий. Выявлен и исправлен один production дефект: `GenerationJob.error` для presentation-retry теперь сохраняет исходный operational diagnostic, а не публичный текст `Project.error`.
+
+Изменённые в этом продолжении файлы:
+
+- `apps/worker/src/tasks/generation.ts`
+- `apps/worker/src/tasks/generation-recovery-actual-gate.test.ts`
+
+Ключевой relevant diff:
+
+```diff
+- : recovery.message;
++ : kind === "presentation" && error instanceof Error
++   ? error.message
++   : recovery.message;
+```
+
+```diff
+- error: narrationState || internalError,
++ error: kind === "presentation" ? internalError : narrationState || internalError,
+```
+
+Новые тестовые сценарии:
+
+- `does not spend again when a retry inherits a terminal envelope`
+  - `generatePresentationFromNarration`, `searchWebSources`, `reserveCostEnvelope`, `settleCostEnvelope`, `costEnvelope.create` — `not.toHaveBeenCalled()`;
+  - одна `presentation.upsert`;
+  - `document.sources` содержит исходные `sourceSnapshot.sources[*].sourceId`;
+  - все `slide.sourceRefs[*].sourceId` принадлежат исходному snapshot.
+- `fails terminally with insufficient persisted artifacts without creating a presentation or spending`
+  - terminal reject: `presentation_recovery_envelope_exhausted`;
+  - нет `Presentation`, envelope, provider/Tavily/reserve/settle;
+  - проект получает `status: "failed"`.
+- `keeps the original presentation terminal diagnostic when local recovery is ineligible`
+  - `.rejects.toBe(diagnostic)`;
+  - `GenerationJob.error === "provider_presentation_terminal_diagnostic"`;
+  - diagnostic записан через `captureGenerationError(... stage: "building_slides")`.
+
+Результат обновлённого target-набора — дословно:
+
+```text
+Test Files  4 passed (4)
+Tests       38 passed (38)
+
+✓ src/cost-envelope.test.ts (4 tests)
+✓ src/tasks/generation.test.ts (26 tests)
+✓ src/tasks/generation-recovery-actual-gate.test.ts (5 tests)
+✓ src/economic-release-gate.test.ts (3 tests)
+```
+
+```text
+> @studydeck/worker@1.0.0 typecheck
+> tsc --noEmit
+```
+
+Ограничение доказательства по пункту 4: текущие тесты подтверждают cap policy и cap-blocked local-recovery путь, но отдельного прямого unit-теста с persisted `settled + reserved > limit` на каждом provider stage в этом продолжении не добавлено. Production-код `reserveCostEnvelope` уже делает эту атомарную проверку до reservation; для полного формального покрытия нужен отдельный Prisma-transaction mock test.
+
+`presentation.test.ts` не изменялся. Его две ранее зафиксированные ошибки остаются нерешённым внешним риском:
+
+```text
+bad_narration
+schema_risk
+```
+
+Baseline на `HEAD` не запускался, поэтому утверждения о происхождении этих failures не делаются. `0 RUB`: AI/Tavily/live generation не выполнялись.

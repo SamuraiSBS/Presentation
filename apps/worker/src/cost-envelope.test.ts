@@ -1,8 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AITUNNEL_APPROVED_MODELS, AITUNNEL_PROVIDER_CATALOG, COST_ENVELOPE_BUCKETS, COST_ENVELOPE_LIMIT_RUB, aitunnelCatalogSnapshot, costEnvelopePolicyIsValid, historicalStandardGenerationCostPolicyV5, standardGenerationCostPolicy } from "@studydeck/shared";
+import { reserveCostEnvelope } from "./cost-envelope.js";
+
+const { prismaMock, transactionMock } = vi.hoisted(() => {
+  const tx = {
+    $queryRaw: vi.fn(),
+    costEnvelope: { findUnique: vi.fn(), update: vi.fn(), create: vi.fn() },
+    costEnvelopeReservation: { findUnique: vi.fn(), aggregate: vi.fn(), create: vi.fn() },
+  };
+  return {
+    prismaMock: { $transaction: vi.fn() },
+    transactionMock: tx,
+  };
+});
+
+vi.mock("./prisma.js", () => ({ getPrisma: () => prismaMock }));
 
 describe("standard generation cost envelope policy", () => {
-  it("has the exact v9 26.90 RUB cap including the final Terra presentation", () => {
+  it("has the exact v10 27.90 RUB cap including the final Terra presentation", () => {
     const policy = standardGenerationCostPolicy();
     expect(policy.limitRub).toBe(COST_ENVELOPE_LIMIT_RUB);
     expect(policy.buckets).toEqual(COST_ENVELOPE_BUCKETS);
@@ -17,7 +32,7 @@ describe("standard generation cost envelope policy", () => {
   it("keeps narration reservations at exactly 9.25 RUB and includes all provider stages in the cap", () => {
     const policy = standardGenerationCostPolicy();
     expect(Number(policy.buckets.narration_full_candidate) + Number(policy.buckets.narration_full_rewrite) + Number(policy.buckets.narration_targeted_repair)).toBeCloseTo(9.25, 8);
-    expect(Object.values(policy.buckets).reduce((sum, amount) => sum + Number(amount), 0)).toBeCloseTo(26.9, 8);
+    expect(Object.values(policy.buckets).reduce((sum, amount) => sum + Number(amount), 0)).toBeCloseTo(27.9, 8);
   });
 
   it("continues to validate persisted v5 snapshots without treating them as v6", () => {
@@ -35,5 +50,34 @@ describe("standard generation cost envelope policy", () => {
       expect.objectContaining({ model: "gpt-5.6-luna", version: AITUNNEL_PROVIDER_CATALOG["gpt-5.6-luna"].version }),
       expect.objectContaining({ model: "gpt-5.6-terra", version: AITUNNEL_PROVIDER_CATALOG["gpt-5.6-terra"].version }),
     ]));
+  });
+
+  it("atomically blocks a presentation reservation when persisted settled plus active reservations would exceed the inherited cap", async () => {
+    const policy = standardGenerationCostPolicy();
+    transactionMock.$queryRaw.mockResolvedValue([{ id: "inherited-envelope" }]);
+    transactionMock.costEnvelope.findUnique.mockResolvedValue({
+      id: "inherited-envelope",
+      status: "active",
+      limitRub: { toString: () => "27.90000000" },
+      settledRub: { toString: () => "24.00000000" },
+      reservedRub: { toString: () => "3.50000000" },
+      policySnapshot: policy,
+    });
+    transactionMock.costEnvelopeReservation.findUnique.mockResolvedValue(null);
+    transactionMock.costEnvelopeReservation.aggregate.mockResolvedValue({ _sum: { reservedRub: { toString: () => "0.00000000" } } });
+    prismaMock.$transaction.mockImplementation(async (callback: (tx: typeof transactionMock) => unknown) => callback(transactionMock));
+
+    await expect(reserveCostEnvelope({
+      envelopeId: "inherited-envelope",
+      idempotencyKey: "inherited-envelope:retry:presentation",
+      bucket: "presentation",
+      stage: "presentation",
+      amountRub: "1.00000000",
+    })).resolves.toEqual({ status: "blocked", reason: "envelope_exhausted" });
+
+    expect(transactionMock.costEnvelopeReservation.create).not.toHaveBeenCalled();
+    expect(transactionMock.costEnvelope.update).not.toHaveBeenCalled();
+    expect(transactionMock.costEnvelope.create).not.toHaveBeenCalled();
+    expect(Number("24.00000000") + Number("3.50000000") + Number("1.00000000")).toBeGreaterThan(Number("27.90000000"));
   });
 });

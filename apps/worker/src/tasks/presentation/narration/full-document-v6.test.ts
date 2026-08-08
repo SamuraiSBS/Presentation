@@ -256,7 +256,7 @@ describe("Plan 18 v6 full-document narration foundation", () => {
     expect(diagnostics).toMatchObject({
       totalWords: 889,
       hasCanonicalSectionCoverage: true,
-      isStructurallyUsable: false,
+      isStructurallyUsable: true,
       isAccepted: false,
     });
     expect(diagnostics.issueCodes).toEqual(expect.arrayContaining(["template_or_repetition", "whole_speech_below_minimum"]));
@@ -428,17 +428,17 @@ describe("Prompt 19.6B v6 text-free narration telemetry", () => {
     }
   });
 
-  it("classifies a structurally unusable candidate exactly once without retaining draft text", async () => {
+  it("retries a malformed candidate once before safely failing without retaining draft text", async () => {
     const telemetry = captureV6Telemetry();
     const unusableDraft = "DRAFT_SENTINEL_NO_USABLE";
     const client = { responses: { create: vi.fn().mockResolvedValue({ output_text: unusableDraft, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" }) } };
 
     try {
       await expect(runV6Narration(client)).rejects.toThrow("narration_quality_failure");
-      expect(client.responses.create).toHaveBeenCalledTimes(1);
-      expect(telemetry.events.filter((event) => event.telemetryEvent === "narration_v6_attempt_assessment")).toHaveLength(1);
-      expect(expectOneRecoveryDecision(telemetry.events, "candidate_not_usable")).toMatchObject({ selectedOutcome: "none", narrationCallCount: 1 });
-      expect(expectOneRecoveryDecision(telemetry.events, "no_usable_draft")).toMatchObject({ selectedOutcome: "none", narrationCallCount: 1 });
+      expect(client.responses.create).toHaveBeenCalledTimes(2);
+      expect(telemetry.events.filter((event) => event.telemetryEvent === "narration_v6_attempt_assessment")).toHaveLength(2);
+      expect(expectOneRecoveryDecision(telemetry.events, "repair_not_eligible")).toMatchObject({ selectedOutcome: "none", narrationCallCount: 2 });
+      expect(expectOneRecoveryDecision(telemetry.events, "no_usable_draft")).toMatchObject({ selectedOutcome: "none", narrationCallCount: 2 });
       expect(recoveryDecisionEvents(telemetry.events, "terminal_recovery_failure_without_draft")).toHaveLength(0);
       expect(JSON.stringify(telemetry.events)).not.toContain(unusableDraft);
     } finally {

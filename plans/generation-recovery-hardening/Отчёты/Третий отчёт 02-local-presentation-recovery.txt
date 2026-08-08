@@ -1,0 +1,20 @@
+Prompt 02 всё ещё не закрыт.
+
+Я сохранил строгие production gates и проверил реальным `productionQualityReleaseResult`: реалистично-приближенные fixtures локальной проекции отвергаются категориями `generic_text`, `duplicate`, `bad_visual`, `bad_narration`. Forced-release mock не использовался как доказательство фактического gate.
+
+Позитивный сценарий `provider failure → actual gate released → ready` пока не реализован: локальная проекция требует дополнительной contract-aware переработки, чтобы гарантированно формировать неповторяющиеся семантические visible blocks из принятой речи без изменения самой речи. Не стал ослаблять gate или маскировать это mock-ом.
+
+Последний успешный набор до этой диагностики:
+
+- `npm run typecheck -w @studydeck/worker`
+- локальные deterministic tests accepted narration/source refs
+- `git diff --check`
+
+Два полного падения `apps/worker/src/tasks/presentation.test.ts` остаются:
+
+- строка 2440: `hides weak visual blocks and keeps useful structured visuals` — `bad_narration`;
+- строка 3069: `uses slide speaker notes as the narration fallback for each concrete slide` — `schema_risk`.
+
+Docker, миграции, commit, deploy и AI/Tavily-вызовы не выполнялись.
+
+0 RUB: внешние AI/Tavily вызовы не выполнялись.

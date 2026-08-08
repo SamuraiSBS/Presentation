@@ -61,6 +61,7 @@ function createHarness() {
     },
     costEnvelope: {
       findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn().mockResolvedValue({ id: "envelope-1" }),
       update: vi.fn(),
     },
@@ -227,6 +228,31 @@ describe("ProjectsService generation", () => {
       expect.objectContaining({ projectId: "project-1" }),
       expect.any(Object),
     );
+  });
+
+  it("reuses an exhausted presentation attempt group instead of granting a retry a new cap", async () => {
+    const { service, tx } = createHarness();
+    const originalProvider = process.env.AI_PROVIDER;
+    process.env.AI_PROVIDER = "aitunnel";
+    tx.generationJob.create.mockResolvedValueOnce({ id: "presentation-retry-job" });
+    tx.costEnvelope.findMany.mockResolvedValueOnce([{
+      id: "attempt-group-1",
+      policyVersion: "standard-generation-cost-envelope-v10",
+      sourceSnapshot: { version: 1, sources: [] },
+      status: "exhausted",
+      presentationJobId: "failed-presentation-job",
+    }]);
+
+    try {
+      await expect((service as any).createAitunnelEnvelope("project-1", "presentation"))
+        .resolves.toMatchObject({ id: "attempt-group-1", job: { id: "presentation-retry-job" } });
+    } finally {
+      if (originalProvider === undefined) delete process.env.AI_PROVIDER;
+      else process.env.AI_PROVIDER = originalProvider;
+    }
+
+    expect(tx.costEnvelope.create).not.toHaveBeenCalled();
+    expect(tx.costEnvelope.update).not.toHaveBeenCalled();
   });
 });
 

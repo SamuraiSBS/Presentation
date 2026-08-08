@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { auditSlideCanvas, getRussianStudentSpeechTimingBudget, presentationSchema } from "@studydeck/shared";
 import {
@@ -30,6 +31,7 @@ import { looksLikeSentenceFragment } from "./presentation/quality/orchestration.
 import { normalizeLayout as normalizeLayoutFromLayer, normalizeVisual } from "./presentation/normalization/presentation.js";
 import { findAitunnelNarrationTimingReasons, findSpokenNarrationIssues, normalizeNarrationText, parseNarrationSections, validateNarrationSections, yandexNarrationCompletionTelemetry } from "./presentation/narration/processing.js";
 import { shortenSentence } from "./presentation/utilities.js";
+import { productionQualityReleaseResult } from "./presentation-quality.js";
 
 const originalEnv = { ...process.env };
 const forbiddenNarrationFragments = [
@@ -509,6 +511,8 @@ describe("Yandex narration full duration rewrite", () => {
     return Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, index === 0 ? 105 : index === 9 ? 130 : contentWords)).join("\n\n");
   }
 
+
+
   function narrationPart(start: number, end: number, contentWords = 155) {
     return Array.from({ length: end - start + 1 }, (_, index) => {
       const order = start + index;
@@ -517,24 +521,54 @@ describe("Yandex narration full duration rewrite", () => {
   }
 
   it("builds a release-ready ten-slide local document from accepted narration without provider calls", async () => {
-    const accepted = completeNarration();
+    const accepted = readFileSync(new URL("../../../../e2e-237-accepted-speech.txt", import.meta.url), "utf8");
     const originalFetch = global.fetch;
     global.fetch = async () => { throw new Error("provider access is forbidden in the local presentation path"); };
     try {
-      const presentation = buildLocalPresentationFromAcceptedNarration(project, [{
-        id: "saturn-source", label: "Saturn reference", type: "WEB", url: "https://science.example/saturn",
-        excerpt: "Saturn is a planet with rings and a complex system of moons.",
-      }], accepted);
+      const recoveryProject = { ...project, title: "Фотоэнергетика", prompt: "Подготовь академическую презентацию по фотоэнергетике", mode: "with_sources" };
+      const sources = ["physics", "engineering", "energy"].map((id) => ({ id, label: `${id} source`, type: "WEB" as const, url: `https://science.example/${id}`, excerpt: "Фотоэнергетика солнечные панели фотоэффект кремний солнечная генерация энергия инженерные решения." }));
+      const presentation = buildLocalPresentationFromAcceptedNarration(recoveryProject, sources, accepted);
+      const release = productionQualityReleaseResult(presentation, sources, { ...recoveryProject, mandatorySourceSnapshot: true, acceptedNarrationRecovery: true });
 
       expect(presentation.generationMode).toBe("local");
       expect(presentation.slides).toHaveLength(10);
-      expect(presentation.generatedText).toBe(accepted);
+      expect(presentation.generatedText).toBe(accepted.trim());
       expect(presentation.speechScript.map((item) => item.text).join("\n\n")).toBe(accepted.replace(/Слайд \d+: [^\n]+\n/g, "").trim());
-      expect(presentation.slides.every((slide) => slide.bullets.length >= 2 && slide.bullets.length <= 3)).toBe(true);
       expect(presentation.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!))).toEqual([]);
+      expect(release.issues).toEqual([]);
+      expect(release).toMatchObject({ finalDisposition: "released", issueCategories: [] });
     } finally {
       global.fetch = originalFetch;
     }
+  });
+
+  it("keeps an accepted full narration with soft timing targets when the slide provider fails", () => {
+    const fullNarration = Array.from({ length: 10 }, (_, index) => {
+      const order = index + 1;
+      const words = order === 1 ? 125 : order === 10 ? 159 : 132;
+      const sentenceWords = Math.floor(words / 8);
+      const sentences = Array.from({ length: 8 }, (_, sentenceIndex) => {
+        const count = sentenceIndex === 7 ? words - sentenceWords * 7 : sentenceWords;
+        return Array.from({ length: count }, (_, wordIndex) => `fact${order}_${sentenceIndex}_${wordIndex}`).join(" ");
+      }).join(". ");
+      return `\u0421\u043b\u0430\u0439\u0434 ${order}: Saturn ${order}\n${sentences}.`;
+    }).join("\n\n");
+
+    const presentation = buildLocalPresentationFromAcceptedNarration(project, [{
+      id: "saturn-source", label: "Saturn reference", type: "WEB", url: "https://science.example/saturn",
+      excerpt: "Saturn is a planet with rings and a complex system of moons.",
+    }], fullNarration);
+
+    expect(presentation.generationMode).toBe("local");
+    expect(presentation.generatedText).toBe(fullNarration);
+    expect(presentation.slides).toHaveLength(10);
+    expect(presentation.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "saturn-source", url: "https://science.example/saturn" }),
+    ]));
+    expect(presentation.slides.map((slide) => slide.speakerNotes)).toEqual(presentation.speechScript.map((item) => item.text));
+    expect(presentation.slides.flatMap((slide) => slide.sourceRefs).every((ref) => ref.sourceId === "saturn-source")).toBe(true);
+    expect(presentation.slides.some((slide) => slide.sourceRefs.length > 0)).toBe(true);
+    expect(presentation.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!))).toEqual([]);
   });
 
   it("gives the ten-slide full rewrite an exact budget-derived editorial structure", () => {

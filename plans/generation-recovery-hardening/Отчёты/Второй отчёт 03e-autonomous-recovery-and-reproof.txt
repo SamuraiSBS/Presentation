@@ -1,0 +1,64 @@
+Prompt 03e остановлен на бесплатном preflight. Paid E2E и commit не выполнялись.
+
+Candidate runtime собран и запущен из:
+
+- Worktree: `D:\presentation\.worktrees\generation-recovery-autonomous`
+- Branch: `codex/generation-recovery-autonomous`
+- Base SHA: `7b8486d6f82ab4ffe22d0a3b705b2f93f95588bf`
+
+Raw build result:
+
+```text
+API_BUILD_EXIT=0
+WORKER_BUILD_EXIT=0
+```
+
+Новые image IDs:
+
+```text
+api_image=sha256:d3a02048abd839b5efaee1817cf07680e2b135bb5d1088624689b46fca6682e6
+worker_image=sha256:c2ebdb5dc543d7a924a9920be7eb9ec8248f89eab18fe0384e6c014e8c7887d2
+```
+
+`api` и `worker` были пересозданы только из этих images:
+
+```text
+api_container=92d9903c2ff57c38da625b3c108297cb4b2bfb9001bcc2a06c8121530cd6cbe1
+worker_container=f722af95b0ea0ba3d632050a7ada238f214911fcd49530e4ae44f57c67b4cf1f
+created=2026-08-08T14:03:02Z
+started=2026-08-08T14:04:31Z
+RECREATE_EXIT=0
+```
+
+Runtime checks passed:
+
+```text
+API_HEALTH={"ok":true,"service":"studydeck-api",...}
+Redis=PONG
+Postgres=accepting connections
+MinIO health HTTP=200
+worker started; queues=generation,exports,admin-maintenance
+GenerationJob statuses: completed=106, failed=159
+```
+
+Однако decisive preflight gate не пройден. Runtime configuration:
+
+```text
+AI_PROVIDER=openai
+OPENAI_MODEL=gpt-5.5
+WEB_SEARCH_PROVIDER=tavily
+ALLOW_DEMO_GENERATION=false
+OPENAI_API_KEY=set
+TAVILY_API_KEY=set
+```
+
+Candidate hardening проверяет и сохраняет единый `CostEnvelope` только на AITunnel-пути (`createAitunnelEnvelope`). При `AI_PROVIDER=openai` новый пользовательский run не получит envelope lineage и не позволит доказать обязательный критерий `settled <= cap` для одного attempt group. Менять provider routing, model policy или cap Prompt 03e запрещает.
+
+Поэтому:
+
+- Новый project/job не создан.
+- Paid E2E не запускался: `0 RUB`.
+- Retry не выполнялся.
+- Commit не создан.
+- Push/deploy не выполнялись.
+- Candidate worktree оставлен для дальнейшей инспекции; исходные product-файлы не изменялись.

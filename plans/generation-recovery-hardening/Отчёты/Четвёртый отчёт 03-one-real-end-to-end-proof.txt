@@ -1,0 +1,153 @@
+## Read-only дополнение к отчёту Prompt 03a
+
+Ничего не менялось и не запускалось: Docker, миграции, сеть, AI/Tavily, generation и paid live-run не выполнялись.
+
+### 1. Текущий `git status --short` — дословно
+
+```text
+ D .audit-bmw/tmpw120oeib/enlarged.pptx
+ M apps/api/src/projects/projects.service.test.ts
+ M apps/api/src/projects/projects.service.ts
+ M apps/worker/src/cost-envelope.test.ts
+ M apps/worker/src/cost-envelope.ts
+ M apps/worker/src/economic-release-gate.test.ts
+ M apps/worker/src/economic-release-gate.ts
+ M apps/worker/src/tasks/generation.test.ts
+ M apps/worker/src/tasks/generation.ts
+ M apps/worker/src/tasks/presentation-quality.ts
+ M apps/worker/src/tasks/presentation.test.ts
+ M apps/worker/src/tasks/presentation/narration/full-document-v6.test.ts
+ M apps/worker/src/tasks/presentation/narration/processing.ts
+ M apps/worker/src/tasks/presentation/orchestrator.ts
+ M apps/worker/src/tasks/presentation/providers/generation.ts
+ M apps/worker/src/tasks/web-search.ts
+ M packages/shared/src/generation/cost-envelope.ts
+?? apps/worker/src/tasks/generation-recovery-actual-gate.test.ts
+?? plans/generation-recovery-hardening/
+```
+
+Собственные точечные правки этой сессии: `economic-release-gate.ts`, `economic-release-gate.test.ts`, а также добавленные/дополненные recovery-проверки в `generation.ts`, `generation.test.ts`, `generation-recovery-actual-gate.test.ts`.
+
+Предсуществующие изменения уже были в `generation.ts`, `generation.test.ts`, `generation-recovery-actual-gate.test.ts`, остальных перечисленных API/worker/shared файлах, plan-пакете и удалении `.audit-bmw/.../enlarged.pptx`. Их построчно отделить от позднейших правок внутри одних и тех же файлов Git не позволяет без отдельного baseline-коммита.
+
+### 2. `git diff --` для пяти файлов 03a
+
+Команда выполнена read-only:
+
+```powershell
+git -c safe.directory=D:/presentation diff -- `
+  apps/worker/src/tasks/generation.ts `
+  apps/worker/src/economic-release-gate.ts `
+  apps/worker/src/economic-release-gate.test.ts `
+  apps/worker/src/tasks/generation.test.ts `
+  apps/worker/src/tasks/generation-recovery-actual-gate.test.ts
+```
+
+Ключевые дословные добавленные hunks:
+
+```diff
++    const recoveryReason = job.data.costEnvelopeId
++      ? await presentationRecoveryReason(job.data.costEnvelopeId)
++      : null;
+...
++    if (recoveryReason) {
++      const error = new Error(recoveryReason);
++      captureGenerationError(error, { projectId, stage: "building_slides", provider: process.env.AI_PROVIDER });
++      generatedPresentation = recoverAcceptedNarration("building_slides", error);
++      usedLocalPresentationRecovery = true;
++    }
+```
+
+```diff
++async function presentationRecoveryReason(costEnvelopeId: string) {
++  try {
++    const envelope = await getPrisma().costEnvelope.findUnique({
++      where: { id: costEnvelopeId },
++      select: { status: true },
++    });
++    if (!envelope) return "presentation_recovery_envelope_unavailable";
++    return envelope.status === "active" ? null : `presentation_recovery_envelope_${envelope.status}`;
++  } catch {
++    return "presentation_recovery_envelope_unavailable";
++  }
++}
+```
+
+```diff
+-  if (envelope.status === "exhausted" || envelope.status === "cancelled"
++  if ((envelope.status === "exhausted" && !project.acceptedNarrationRecovery) || envelope.status === "cancelled"
+```
+
+```diff
++  it("does not spend again when a retry inherits a terminal envelope", async () => {
++    ...
++    expect(generatePresentationFromNarration).not.toHaveBeenCalled();
++    expect(searchWebSources).not.toHaveBeenCalled();
++    expect(reserveCostEnvelope).not.toHaveBeenCalled();
++    expect(settleCostEnvelope).not.toHaveBeenCalled();
++    expect(prismaMock.presentation.upsert).toHaveBeenCalledTimes(1);
++    expect(prismaMock.project.update).toHaveBeenCalledWith(
++      expect.objectContaining({ data: expect.objectContaining({ status: "ready" }) }),
++    );
++  });
+```
+
+Полный diff содержит также ранее существовавшие hunks source-search и local-recovery; он состоит из 694 строк и был выведен без изменений командой выше.
+
+### 3. Полные результаты уже выполненных целевых проверок
+
+```text
+npm run test -w @studydeck/worker -- src/cost-envelope.test.ts src/economic-release-gate.test.ts src/tasks/generation.test.ts src/tasks/generation-recovery-actual-gate.test.ts
+
+Test Files  4 passed (4)
+Tests       36 passed (36)
+
+✓ src/cost-envelope.test.ts (4 tests)
+✓ src/tasks/generation.test.ts (26 tests)
+✓ src/tasks/generation-recovery-actual-gate.test.ts (3 tests)
+  ✓ recovers a provider failure to ready through the real release gate without a second provider or Tavily call
+  ✓ does not spend again when a retry inherits a terminal envelope
+  ✓ rejects malformed, generic, and local-only artifacts before local recovery
+✓ src/economic-release-gate.test.ts (3 tests)
+```
+
+```text
+npm run typecheck -w @studydeck/worker
+
+> @studydeck/worker@1.0.0 typecheck
+> tsc --noEmit
+```
+
+```text
+npm run test -w @studydeck/api -- src/projects/projects.service.test.ts
+
+Test Files  1 passed (1)
+Tests       15 passed (15)
+```
+
+### 4. Критерии 03a: тесты и точные assertions
+
+| Критерий | Тест / assertion | Статус |
+|---|---|---|
+| Retry использует исходный envelope и snapshot, новый envelope не создаётся | `projects.service.test.ts` — `reuses an exhausted presentation attempt group instead of granting a retry a new cap`; `expect(tx.costEnvelope.create).not.toHaveBeenCalled()` | Пройден |
+| Terminal/cap-blocked retry не делает provider/Tavily/reserve/settle | `does not spend again when a retry inherits a terminal envelope`; четыре `not.toHaveBeenCalled()` выше | Пройден |
+| `accepted_speech` создаёт одну local Presentation и `ready` | тот же тест: `presentation.upsert` ровно один раз; `project.update(... status: "ready")`; provider/Tavily отсутствуют | Пройден |
+| Недостаточные артефакты — честный terminal без Presentation/envelope/provider | `rejects malformed, generic, and local-only artifacts before local recovery` проверяет только eligibility: `hasAcceptedNarrationRecoveryArtifacts(...) === false`. Прямого теста terminal persistence с одновременно `not.toHaveBeenCalled()` для presentation/envelope/provider в текущем наборе **нет**. | Неполное доказательство |
+| Исходный diagnostic сохраняется | `keeps the original generation error and public failure classification when envelope finalization fails`; проверяет `.rejects.toBe(generationError)` и `captureGenerationError(finalizationError, { stage: "failed_envelope_finalization", ... })` | Пройден для narration-finalization; отдельного presentation-retry варианта нет |
+
+### 5. Ранний `presentation.test.ts`
+
+Точный ранний результат:
+
+```text
+Test Files  1 failed | 3 passed (4)
+Tests       2 failed | 131 passed (133)
+
+FAIL generatePresentation fallback behavior > hides weak visual blocks and keeps useful structured visuals
+Error: AI generation failed. yandex: Presentation production quality gate rejected the document: bad_narration
+
+FAIL generatePresentation fallback behavior > uses slide speaker notes as the narration fallback for each concrete slide
+Error: AI generation failed. yandex: Presentation production quality gate rejected the document: schema_risk
+```
+
+Read-only baseline доступен только как содержимое `HEAD` для `apps/worker/src/tasks/presentation.test.ts`; сохранённого запуска этого теста на `HEAD` нет. Поэтому утверждать, что две ошибки были на baseline, нельзя. `presentation.test.ts` по вашему указанию не менялся.

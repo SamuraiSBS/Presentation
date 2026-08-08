@@ -1,0 +1,30 @@
+Конкретный технический блокер Prompt 02 — structured `release.issues` для current local projection реального accepted narration:
+
+| Категория | Slides | Field / reason |
+|---|---:|---|
+| `generic_text` | 3–4 | `speakerNotes`; на 3–8 также `bullets.0` / `bullets.1` |
+| `duplicate` | 1 | `bullets.0` |
+| `bad_narration` | 3–4 | `speakerNotes`, `speechScript` |
+| `bad_visual` | 3–10 | повтор layout; также `designBrief.slideDirections.imageStrategy` на 4–10 |
+
+Точный вывод получен из:
+
+```text
+apps/worker/src/tasks/presentation.test.ts
+Yandex narration full duration rewrite
+> builds a release-ready ten-slide local document from accepted narration without provider calls
+```
+
+Тест падает на `apps/worker/src/tasks/presentation.test.ts:538`:
+
+```text
+expected release.issues to deeply equal []
+received 29 issues:
+generic_text, duplicate, bad_narration, bad_visual
+```
+
+Это показывает, что accepted narration artifact сам не удовлетворяет текущим строгим semantic/visual gates после локальной проекции. Исправление потребует преобразовать видимый контент и visual-plan contract без изменения речи; такого преобразования ещё нет. Я не ослаблял gate и не применял forced-release mock.
+
+Docker, миграции, commit, deploy и AI/Tavily-вызовы не выполнялись.
+
+0 RUB: внешние AI/Tavily вызовы не выполнялись.

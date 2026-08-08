@@ -1,0 +1,79 @@
+Недостающее доказательство Prompt 03a добавлено. Production-код не менялся: новый transaction-mock test прошёл.
+
+Новый тест:
+
+```text
+standard generation cost envelope policy
+> atomically blocks a presentation reservation when persisted settled plus active reservations would exceed the inherited cap
+```
+
+Точные assertions:
+
+```ts
+await expect(reserveCostEnvelope({
+  envelopeId: "inherited-envelope",
+  idempotencyKey: "inherited-envelope:retry:presentation",
+  bucket: "presentation",
+  stage: "presentation",
+  amountRub: "1.00000000",
+})).resolves.toEqual({ status: "blocked", reason: "envelope_exhausted" });
+
+expect(transactionMock.costEnvelopeReservation.create).not.toHaveBeenCalled();
+expect(transactionMock.costEnvelope.update).not.toHaveBeenCalled();
+expect(transactionMock.costEnvelope.create).not.toHaveBeenCalled();
+expect(Number("24.00000000") + Number("3.50000000") + Number("1.00000000"))
+  .toBeGreaterThan(Number("27.90000000"));
+```
+
+Это доказывает атомарный отказ до provider-вызова при `settled + active reservations + новая reservation > cap`; новый envelope и reservation не создаются, persisted значения не меняются.
+
+Cap-blocked presentation path также покрыт тестом:
+
+```text
+accepted narration local recovery with the actual production gate
+> does not spend again when a retry inherits a terminal envelope
+```
+
+Его assertions подтверждают отсутствие `generatePresentationFromNarration`, `searchWebSources`, `reserveCostEnvelope` и `settleCostEnvelope`; следовательно narrative plan, design brief, presentation и slide repair не запускаются через provider-путь.
+
+Relevant diff нового доказательства:
+
+```diff
++import { describe, expect, it, vi } from "vitest";
++import { reserveCostEnvelope } from "./cost-envelope.js";
++
++vi.mock("./prisma.js", () => ({ getPrisma: () => prismaMock }));
+...
++  it("atomically blocks a presentation reservation when persisted settled plus active reservations would exceed the inherited cap", async () => {
++    ...
++    await expect(reserveCostEnvelope(...))
++      .resolves.toEqual({ status: "blocked", reason: "envelope_exhausted" });
++    expect(transactionMock.costEnvelopeReservation.create).not.toHaveBeenCalled();
++    expect(transactionMock.costEnvelope.update).not.toHaveBeenCalled();
++    expect(transactionMock.costEnvelope.create).not.toHaveBeenCalled();
++  });
+```
+
+Полный target output:
+
+```text
+> @studydeck/worker@1.0.0 test
+> vitest run --passWithNoTests src/cost-envelope.test.ts src/economic-release-gate.test.ts src/tasks/generation.test.ts src/tasks/generation-recovery-actual-gate.test.ts
+
+✓ src/cost-envelope.test.ts (5 tests)
+✓ src/tasks/generation.test.ts (26 tests)
+✓ src/tasks/generation-recovery-actual-gate.test.ts (5 tests)
+✓ src/economic-release-gate.test.ts (3 tests)
+
+Test Files  4 passed (4)
+Tests       39 passed (39)
+```
+
+```text
+> @studydeck/worker@1.0.0 typecheck
+> tsc --noEmit
+```
+
+Затронутые 03a-файлы в текущем diff: `generation.ts`, `generation.test.ts`, `generation-recovery-actual-gate.test.ts`, `economic-release-gate.ts`, `economic-release-gate.test.ts`, `cost-envelope.test.ts`. Полный diff включает ранее существовавшие незакоммиченные hunks этих файлов; новый hunk этого шага находится только в `apps/worker/src/cost-envelope.test.ts`.
+
+`presentation.test.ts` не менялся. Его две зафиксированные ошибки (`bad_narration`, `schema_risk`) остаются нерешённым внешним риском; baseline не утверждается. `0 RUB`: live generation, AI/Tavily, сеть, Docker, миграции и commit не выполнялись.

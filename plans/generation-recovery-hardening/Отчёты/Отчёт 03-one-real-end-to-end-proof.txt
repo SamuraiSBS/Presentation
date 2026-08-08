@@ -1,0 +1,34 @@
+## Prompt 03 — итог: не пройден, остановлен
+
+Новый проект и новый paid run не создавались. До запуска обнаружен уже выполненный проект `cmses2qp60003s40jg8ud98hb` («Спутниковые данные и прогноз лесных пожаров»): 1 narration job и 7 failed presentation jobs (`257–264`). Новый запуск стал бы запрещённой повторной попыткой.
+
+- Финальное состояние проекта: `failed`; Presentation отсутствует.
+- Последний user-visible текст: «Автоматическая подготовка не прошла проверку качества после всех попыток…».
+- API health: `{"ok":true,"service":"studydeck-api",...}`; Redis: `PONG`; worker запущен.
+- Реальные provider/model: `aitunnel / gpt-5.6-luna` (narration/design), `aitunnel / gpt-5.6-terra` (presentation).
+- Принятая речь есть: 11 698 символов; narration job `cmses2qt10005s40jd9olqwoi` — `completed`, `accepted_speech`.
+- Canvas/export/speech-to-slide parity недоступны: готовой презентации нет.
+
+Реальные Tavily WEB refs (4, единственный поиск):
+
+- `cmses2xbw0005o40jv78cnztm` — [Рослесхоз](https://rosleshoz.gov.ru/activity/forest-security-and-protection/fires/operative-information)
+- `cmses2xdy0007o40ja7yujo34` — [Интерфакс](https://www.interfax-russia.ru/main/ploshchad-lesnyh-pozharov-sokratilas-v-2026-godu-v-poltora-raza-po-sravneniyu-s-2025-godom-minprirody-rf)
+- `cmses2xev0009o40jj47gf2rf` — [CyberLeninka](https://cyberleninka.ru/article/n/baza-dannyh-harakteristik-lesnyh-pozharov)
+- `cmses2xft000bo40jvg783r29` — [Лесной комплекс](https://forestcomplex.ru/rf-protection/pozharoopasnyy-sezon-rossiya-2026-lesnye-pozhary-prognoz)
+
+| Этап | Provider/model | Фактический расход, RUB | Evidence |
+|---|---|---:|---|
+| Tavily sources | tavily | 0.500000 | 1 `CostEvent`, 4 WEB sources |
+| Narration | aitunnel / gpt-5.6-luna | 0.365200 | accepted candidate |
+| Narrative plans | aitunnel / gpt-5.6-luna | 1.095940 | 7 calls |
+| Design briefs | aitunnel / gpt-5.6-luna | 2.056340 | 6 calls |
+| Presentation | aitunnel / gpt-5.6-terra | 64.685800 | 6 calls |
+| Slide repairs | aitunnel / gpt-5.6-luna | 0.528500 | 6 calls |
+
+Итого фактически: **69.231780 RUB**; лимит одного запуска: **27.900000 RUB**; превышение: **41.331780 RUB**.
+
+Создано 7 envelope вместо одного: суммарный cap `195.30 RUB`. Первый envelope сам по себе уложился в cap (`12.477640 RUB`), но последующие presentation retries создали новые envelopes, что нарушает Prompt 01/03.
+
+Проверочные команды выполнялись read-only: `git status --short`, `docker compose ps/images/logs`, `curl.exe http://localhost:4000/v1/health`, `redis-cli ping`, а также SQL-запросы к Project/GenerationJob/Source/CostEnvelope/CostEvent/AiUsageEvent/Presentation. Узкий rebuild `api worker` был начат для сверки кода, но истёк по таймауту и не пересоздал контейнеры. Код, миграции, ключи, конфигурация, commit, push и deploy не менялись.
+
+Текущий worktree содержит существующие API/worker/shared изменения и plan-файлы; моих файловых изменений нет.

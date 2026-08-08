@@ -1,0 +1,24 @@
+Конкретный технический блокер Prompt 02: реальный accepted narration-артефакт `e2e-237-accepted-speech.txt` проходит local projection и canvas audit после contract-aware layout recovery, однако настоящий `productionQualityReleaseResult` отклоняет итоговый документ:
+
+```text
+finalDisposition: rejected
+issueCategories:
+- generic_text
+- duplicate
+- bad_narration
+- bad_visual
+```
+
+Точный тест:
+
+```text
+apps/worker/src/tasks/presentation.test.ts
+Yandex narration full duration rewrite
+> builds a release-ready ten-slide local document from accepted narration without provider calls
+```
+
+Последний запуск завершился ошибкой на assertion `released` в `apps/worker/src/tasks/presentation.test.ts:538`.
+
+Я не применял forced-release mock и не ослаблял quality gates. Docker, миграции, commit, deploy, AI/Tavily-вызовы не выполнялись.
+
+0 RUB: внешние AI/Tavily вызовы не выполнялись.

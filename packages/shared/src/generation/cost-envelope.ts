@@ -1,7 +1,10 @@
-export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v9";
-export const COST_ENVELOPE_LIMIT_RUB = "26.90000000";
+export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v10";
+export const COST_ENVELOPE_LIMIT_RUB = "27.90000000";
 export const COST_ENVELOPE_BUCKETS = {
-  sources: "0.50000000",
+  // A source snapshot is valid only when at least three sources pass the
+  // relevance gate. Reserve three bounded Tavily attempts so a weak first
+  // query can be refined automatically without exposing a failed project.
+  sources: "1.50000000",
   // The narrative plan is generated once for narration and again when the
   // accepted speech is turned into slides.
   narrative_plan: "1.50000000",

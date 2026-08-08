@@ -1,0 +1,96 @@
+# D:\presentation\plans\generation-recovery-hardening\README.…
+
+> D:\presentation\plans\generation-recovery-hardening\README.md
+> @plans/generation-recovery-hardening/Отчёты/
+> Выполни Prompt 03e-autonomous-recovery-and-reproof.md полностью и автономно. Полномочия пользователя, включая один paid E2E и локальный commit при успехе, уже даны в самом prompt. Не запрашивай промежуточных разрешений. После итогового отчёта остановись.
+
+<details><summary>11 previous messages</summary>
+
+> Принял Prompt 03e как жёсткую рамку: сначала прочитаю его и относящиеся отчёты, затем выполню только предусмотренные изменения, проверки и один разрешённый платный E2E. При успешном завершении сделаю локальный коммит и дам финальный отчёт.
+>
+> Исходное дерево зафиксировано на `7b8486d` и остаётся только источником для чтения. В отчётах подтверждён функциональный dependency closure вокруг retry-envelope, atomic cap и local recovery; создаю чистый кандидат от этого SHA и буду переносить только этот замкнутый набор, не плановые файлы и не историческое удаление PPTX.
+>
+> <details><summary>Edited 10 files</summary>
+>
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/api/src/projects/projects.service.ts` (+24 -11)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/cost-envelope.ts` (+8 -2)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/economic-release-gate.ts` (+1 -1)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/tasks/presentation-quality.ts` (+13 -3)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/tasks/presentation/narration/processing.ts` (+13 -2)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/tasks/presentation/providers/generation.ts` (+5 -5)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/tasks/web-search.ts` (+8 -5)
+> - Wrote `./.worktrees/generation-recovery-autonomous/packages/shared/src/generation/cost-envelope.ts` (+7 -4)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/tasks/presentation/orchestrator.ts` (+99 -17)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/tasks/generation.ts` (+71 -22)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/tasks/generation.ts` (+65 -19)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/tasks/generation.ts` (+65 -44)
+>
+> </details>
+>
+> Кандидатный production-код собран вручную из подтверждённых hunks; оба worker/API typecheck уже проходят. Baseline подтвердил, что два падения `presentation.test.ts` существуют и на чистом `HEAD`, поэтому они не будут маскироваться как регрессия кандидата. Теперь переношу узкие детерминированные проверки и прогоню gates до запуска сервисов.
+>
+> <details><summary>Created a file, edited 3 files</summary>
+>
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/tasks/generation-recovery-actual-gate.test.ts` (+141 -0)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/api/src/projects/projects.service.test.ts` (+30 -4)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/cost-envelope.test.ts` (+49 -5)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/economic-release-gate.test.ts` (+11 -2)
+>
+> </details>
+>
+> Первый целевой прогон был заблокирован средой (`spawn EPERM` при запуске Vitest worker-процесса), а не тестовым результатом. Typecheck прошёл. Повторяю те же локальные не-платные тесты с требуемым разрешённым доступом к процессам; новых внешних вызовов это не делает.
+>
+> <details><summary>Edited 3 files</summary>
+>
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/tasks/presentation.test.ts` (+12 -10)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/tasks/presentation/narration/full-document-v6.test.ts` (+6 -6)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/tasks/generation.test.ts` (+11 -8)
+> - Wrote `./.worktrees/generation-recovery-autonomous/apps/worker/src/tasks/generation.test.ts` (+3 -3)
+>
+> </details>
+>
+> Детерминированные gates завершены: API 15/15, основной worker-набор 42/42 и recovery-набор 13/13; `presentation.test.ts` оставляет ровно те же две baseline-ошибки (98/100) с теми же категориями. Перехожу к предоплатному runtime preflight: только candidate API/worker, без запуска generation до готовности сервисов.
+>
+> Сборка candidate `api` и `worker` идёт в Docker; она затрагивает только локальный runtime и нужна, чтобы paid E2E действительно исполнил текущий candidate SHA. После запуска ещё раз зафиксирую health, worker и пустую очередь — только затем будет использован единственный платный прогон.
+>
+> Повторная узкая сборка ещё выполняется; первый таймаут не изменил текущие контейнеры, поэтому платный запуск пока не был начат. Если build не завершится, это будет preflight-блокером и я остановлюсь без расхода на E2E.
+>
+> Preflight остановлен без paid E2E: Docker подтвердил, что активные `api`/`worker` всё ещё собраны около трёх часов назад, а candidate build дважды не завершился (124 с и 304 с). Запуск на этих старых контейнерах не был бы доказательством candidate SHA, поэтому единственный разрешённый платный прогон намеренно не израсходован. Коммит не создавался.
+</details>
+
+Prompt 03e остановлен на preflight, без paid E2E и без коммита.
+
+- Исходный `HEAD`: `7b8486d6f82ab4ffe22d0a3b705b2f93f95588bf`.
+- Candidate: `D:\presentation\.worktrees\generation-recovery-autonomous`, ветка `codex/generation-recovery-autonomous`.
+- Исходные product-файлы не редактировались. В исходном status появился только ожидаемый untracked `.worktrees/` от разрешённого candidate worktree.
+
+В candidate вручную собран recovery bundle: единый retry-envelope/source snapshot, atomic cap, bounded source refinement, accepted-narration local recovery, сохранение diagnostics и соответствующие contracts/tests.
+
+Детерминированные доказательства:
+
+| Требование | Evidence |
+|---|---|
+| Один envelope и source snapshot | API test: 15/15 passed |
+| Atomic cap до provider | cost-envelope + recovery tests: 13/13 passed |
+| Local recovery без AI/Tavily | actual production-gate test passed |
+| Narration/source recovery | worker tests: 42/42 passed |
+| `presentation.test.ts` регрессии | Candidate 98/100; те же 2 baseline failures на чистом HEAD: `bad_narration`, `schema_risk` |
+| Typecheck | Worker и API passed |
+| Diff hygiene | `git diff --check` passed |
+
+Candidate-файлы:
+
+- `apps/api/src/projects/projects.service{,.test}.ts`
+- `apps/worker/src/{cost-envelope{,.test}.ts,economic-release-gate{,.test}.ts}`
+- `apps/worker/src/tasks/{generation{,.test}.ts,generation-recovery-actual-gate.test.ts,presentation-quality.ts,presentation.test.ts,web-search.ts}`
+- `apps/worker/src/tasks/presentation/{orchestrator.ts,providers/generation.ts,narration/{processing.ts,full-document-v6.test.ts}}`
+- `packages/shared/src/generation/cost-envelope.ts`
+
+Runtime preflight не пройден: `docker compose -p presentation ... build api worker` не завершился ни за 124 с, ни за 304 с. Docker показал, что действующие `api` и `worker` остались старыми контейнерами (созданы ~54 минуты назад), поэтому запуск E2E на них не мог служить доказательством candidate revision.
+
+Итог:
+
+- Paid E2E: **не выполнялся**, расход **0 RUB**.
+- Коммит: **не создан**.
+- Push/deploy: **не выполнялись**.
+- Candidate оставлен для inspection, как требует prompt.

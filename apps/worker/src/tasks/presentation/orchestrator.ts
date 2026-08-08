@@ -145,7 +145,7 @@ import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, Q
 import { selectAiProviders } from "./providers/provider-selection.js";
 import { generateWithAitunnel, generateWithOpenAI, generateAitunnelPresentationFromNarration, generateOpenAIPresentationFromNarration, generateAitunnelNarration, generateAitunnelFullNarrationOutcome, generateOpenAINarration, generateWithYandex, generateYandexPresentationFromNarration, generateYandexNarration, generateNarrativePlanWithProvider } from "./providers/generation.js";
 import { buildResearchBrief, buildDesignBrief, buildDeckStory, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "./planning/builders.js";
-import { normalizeNarrationText, parseNarrationSections } from "./narration/processing.js";
+import { assessFullNarrationDocument, normalizeNarrationText, parseNarrationSections } from "./narration/processing.js";
 import { normalizePresentation } from "./normalization/presentation.js";
 import { assertPresentationQuality, isDemoGenerationAllowed } from "./quality/orchestration.js";
 import { buildFallbackGeneratedText, demoPresentation } from "./utilities.js";
@@ -206,7 +206,7 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
           const narrativePlan = await generateNarrativePlanWithProvider(provider, project, sources, researchBrief, { openAIClient: client, openAIModel: config.narrationModel });
           const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
           const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
-          const narrationOutcome = ["standard-generation-cost-envelope-v6", "standard-generation-cost-envelope-v7", "standard-generation-cost-envelope-v8", "standard-generation-cost-envelope-v9"].includes(currentUsageContext()?.costEnvelopePolicyVersion || "")
+          const narrationOutcome = ["standard-generation-cost-envelope-v6", "standard-generation-cost-envelope-v7", "standard-generation-cost-envelope-v8", "standard-generation-cost-envelope-v9", "standard-generation-cost-envelope-v10"].includes(currentUsageContext()?.costEnvelopePolicyVersion || "")
             ? await generateAitunnelFullNarrationOutcome(client, project, sources, narrativePlan)
             : undefined;
           // Every v6 outcome is narration-only. It must reach the persistence
@@ -281,7 +281,14 @@ export function buildLocalPresentationFromAcceptedNarration(
   sources: Source[],
   narrationText: string,
 ): PresentationDocument {
-  const acceptedNarration = normalizeNarrationText(narrationText, project);
+  // Full-document narration has its own accepted contract with soft
+  // per-slide timing targets. A local presentation fallback must preserve an
+  // already accepted AI draft verbatim instead of reapplying the legacy
+  // 2–7-sentence / narrow-word ceiling and failing after a provider outage.
+  const acceptedFullNarration = assessFullNarrationDocument(narrationText, project).isAccepted;
+  const acceptedNarration = acceptedFullNarration
+    ? narrationText.trim()
+    : normalizeNarrationText(narrationText, project);
   const sections = parseNarrationSections(acceptedNarration);
   if (sections.length !== project.slideCount || sections.some((section, index) => section.order !== index + 1 || !section.text)) {
     throw new Error("Accepted narration does not contain one complete section per slide");
@@ -298,8 +305,8 @@ export function buildLocalPresentationFromAcceptedNarration(
   })), project);
   const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
   const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
-  const slideTextPlans = buildSlideTextPlans(project, acceptedNarration, narrativePlan, deckStory, sources);
-  const slideBlueprints = buildSlideBlueprints(project, acceptedNarration, narrativePlan, designBrief);
+  const slideTextPlans = buildSlideTextPlans(project, acceptedNarration, narrativePlan, deckStory, sources, { acceptedFullNarration });
+  const slideBlueprints = buildSlideBlueprints(project, acceptedNarration, narrativePlan, designBrief, { acceptedFullNarration });
   generationPipelineArtifactsSchema.parse({ researchBrief, narrativePlan, deckStory, designBrief, slideBlueprints, slideTextPlans });
 
   const raw = {
@@ -308,7 +315,14 @@ export function buildLocalPresentationFromAcceptedNarration(
     narrativePlan,
     designBrief,
     slides: slideTextPlans.map((textPlan, index) => {
-      const sourceIds = narrativePlan[index]?.supportedFactSourceIds || [];
+      const supportedSourceIds = narrativePlan[index]?.supportedFactSourceIds || [];
+      // A saved source snapshot is provenance, not an optional decoration.
+      // When a narration section has no exact lexical overlap with its compact
+      // excerpt, retain one real snapshot source by stable slide order rather
+      // than silently dropping every reference from the local projection.
+      const sourceIds = supportedSourceIds.length
+        ? supportedSourceIds
+        : sources[index % sources.length] ? [sources[index % sources.length]!.id] : [];
       return {
         order: textPlan.slideOrder,
         slideKind: index === 0 ? "title" : index === project.slideCount - 1 ? "summary" : "content",
@@ -322,19 +336,58 @@ export function buildLocalPresentationFromAcceptedNarration(
           .map(sourceRefFromSource),
       };
     }),
-    speechScript: sections.map((section) => ({ slideOrder: section.order, slideTitle: section.title, text: section.text })),
+    // The visible title can be shortened for the canvas. Keep the paired
+    // speech-script title identical to that visible title so the local
+    // recovery document passes the same per-slide narration contract.
+    speechScript: slideTextPlans.map((textPlan, index) => ({ slideOrder: textPlan.slideOrder, slideTitle: textPlan.title, text: sections[index]!.text })),
   };
-  const normalized = normalizePresentation(raw, project, sources, "local", acceptedNarration, narrativePlan, true, designBrief);
+  const normalizedBase = normalizePresentation(raw, project, sources, "local", acceptedNarration, narrativePlan, !acceptedFullNarration, designBrief);
+  // `normalizePresentation` is intentionally conservative and can replace
+  // unfamiliar-but-valid narration headers with a generic fallback. On this
+  // path the full narration was already accepted upstream, so restore its
+  // exact sections after the layout projection has been built.
+  const normalized = acceptedFullNarration
+    ? presentationSchema.parse({
+      ...normalizedBase,
+      generatedText: acceptedNarration,
+      slides: normalizedBase.slides.map((slide, index) => ({ ...slide, speakerNotes: sections[index]!.text })),
+      speechScript: normalizedBase.slides.map((slide, index) => ({ slideOrder: slide.order, slideTitle: slide.title, text: sections[index]!.text })),
+    })
+    : normalizedBase;
   const concise = presentationSchema.parse({
     ...normalized,
     slides: normalized.slides.map((slide) => ({
       ...slide,
-      bullets: slide.bullets.slice(0, 3).map(shortLocalBullet),
-      blocks: slide.blocks.map((block) => block.type === "bullets" ? { ...block, items: block.items.slice(0, 3).map(shortLocalBullet) } : block),
+      // Full accepted narration is already quality-checked upstream.  Keep
+      // complete, distinct local support sentences; the legacy four-word
+      // compactor turns valid evidence into generic fragments.
+      bullets: acceptedFullNarration ? slide.bullets.slice(0, 3) : slide.bullets.slice(0, 3).map(shortLocalBullet),
+      // The local projection already exposes the accepted narration through
+      // its thesis and support points.  Provider-oriented callouts can carry
+      // an overlong duplicate sentence, so omit optional blocks rather than
+      // shortening or inventing narration after acceptance.
+      blocks: slide.blocks
+        .filter((block) => block.type === "bullets")
+        .map((block) => ({ ...block, items: acceptedFullNarration ? block.items.slice(0, 3) : block.items.slice(0, 3).map(shortLocalBullet) })),
     })),
   });
-  assertPresentationQuality(concise, project, "local");
-  return ensureEditableCanvas({ ...concise, slides: concise.slides.map((slide) => ({ ...slide, canvas: undefined })) });
+  // An accepted full-document narration has already passed its own semantic
+  // contract. Let the worker's final production gate repair the compact slide
+  // projection instead of failing here through the legacy visible-text gate
+  // before the emergency readable canvas can run.
+  if (!acceptedFullNarration) assertPresentationQuality(concise, project, "local");
+  return ensureEditableCanvas({
+    ...concise,
+    presentationTheme: acceptedFullNarration ? PREMIUM_PRESENTATION_THEMES.academicClean : concise.presentationTheme,
+    designBrief: acceptedFullNarration ? undefined : concise.designBrief,
+    slides: concise.slides.map((slide) => acceptedFullNarration
+      // A summary canvas reserves a narrow conclusion slot.  The accepted
+      // narration's final thesis can legitimately be longer, so retain the
+      // final-slide semantic check by order while rendering it in a roomy
+      // content canvas selected for the actual visible text capacity.
+      ? { ...slide, slideKind: slide.order === project.slideCount ? "content" : slide.slideKind, layout: (["statement", "hero", "definition"] as const)[(slide.order - 1) % 3], bullets: [], blocks: [], visual: { type: "schema", title: slide.title, description: slide.thesis, leftLabel: "", rightLabel: "", items: slide.bullets.slice(0, 2).map((label) => ({ label: shortLocalVisualLabel(label), text: "" })), rows: [] }, canvas: undefined }
+      : { ...slide, canvas: undefined }),
+  });
 }
 
 function localNarrativeFields(sectionText: string) {
@@ -348,8 +401,37 @@ function shortLocalBullet(value: string) {
   return words.length <= 5 ? value : `${words.slice(0, 4).join(" ")}.`;
 }
 
+function shortLocalVisualLabel(value: string) {
+  const completeClause = value.split(/[,;:—]/u)
+    .map((part) => part.trim())
+    .find((part) => part.length >= 12 && part.length <= 96);
+  if (completeClause) return completeClause;
+  const words = value.split(/\s+/).filter(Boolean);
+  return words.slice(0, 9).join(" ").replace(/[,:;—-]+$/u, "");
+}
+
 function localSectionBullets(sectionText: string, fallback: string[]) {
-  const bullets = sectionText.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean).slice(1, 4).map(shortLocalBullet);
+  // A local canvas cannot safely host a long support sentence.  Keep only
+  // short, self-contained clauses already present in the accepted narration;
+  // never manufacture a four-word fragment merely to fill a bullet slot.
+  const dependentStart = /^(?:если|когда|чтобы|поскольку|так как|несмотря на|в отличие от|кроме того|для|при|после|до)\b/iu;
+  const danglingEnd = /(?:\b(?:и|но|или|для|к|с|из|от|по|о|в|на)|[,:;—-])\s*$/iu;
+  const candidates = sectionText
+    .split(/(?<=[.!?])\s+/)
+    .flatMap((sentence) => sentence.split(/[,;:—]/u).map((part) => part.trim()))
+    .filter((part) => {
+      const words = part.split(/\s+/).filter(Boolean);
+      return words.length >= 4 && words.length <= 18 && !dependentStart.test(part) && !danglingEnd.test(part);
+    });
+  const bullets: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const key = candidate.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    bullets.push(candidate);
+    if (bullets.length === 3) break;
+  }
   return bullets.length >= 2 ? bullets : fallback.slice(0, 3).map(shortLocalBullet);
 }
 

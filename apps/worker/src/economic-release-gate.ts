@@ -51,7 +51,7 @@ export function evaluateEconomicReleaseGate(input: EconomicReleaseGateInput): Ec
     || rubUnits(envelope.reservedRub) + rubUnits(envelope.settledRub) > rubUnits(envelope.limitRub)) {
     categories.add("cost_envelope");
   }
-  if (envelope.status === "exhausted" || envelope.status === "cancelled"
+  if ((envelope.status === "exhausted" && !project.acceptedNarrationRecovery) || envelope.status === "cancelled"
     || envelope.reservations.some((reservation) => reservation.status !== "settled" && reservation.status !== "released")) {
     categories.add("paid_stage_unresolved");
   }

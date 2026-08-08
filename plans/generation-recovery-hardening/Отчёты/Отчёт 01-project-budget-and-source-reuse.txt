@@ -1,0 +1,51 @@
+Prompt 01 выполнен и на этом остановлен.
+
+Изменено мной:
+
+- `apps/api/src/projects/projects.service.ts` — retry презентации теперь повторно использует исходный `CostEnvelope` как attempt group даже после его `exhausted`-статуса; новый полный лимит не создаётся.
+- `apps/api/src/projects/projects.service.test.ts` — регресс-тест: exhausted presentation retry не создаёт и не обновляет envelope, а получает ID исходной группы.
+- `apps/worker/src/cost-envelope.test.ts` — ожидания синхронизированы с уже изменённой политикой v10: cap 27.90 RUB.
+
+Доказательства критериев:
+
+- Единый лимит для retries: API-тест прошёл, 15/15.
+- Source snapshot/reuse и запрет повторного Tavily при snapshot: worker-тесты прошли, 28/28 (`generation.test.ts` включает соответствующие сценарии).
+- Preflight/reservation и сохранение cap: worker cost-envelope тесты прошли.
+- Типы: `npm run typecheck -w @studydeck/api` и `npm run typecheck -w @studydeck/worker` — успешно.
+- `git diff --check` по изменённой Prompt-01 области — успешно.
+- Внешние AI/Tavily-вызовы: `0 RUB`, не выполнялись.
+
+Проверочные команды:
+
+```powershell
+npm run build -w @studydeck/shared
+npx vitest run src/projects/projects.service.test.ts --pool=threads --maxWorkers=1 --minWorkers=1
+npx vitest run src/cost-envelope.test.ts src/tasks/generation.test.ts --pool=threads --maxWorkers=1 --minWorkers=1
+npm run typecheck -w @studydeck/api
+npm run typecheck -w @studydeck/worker
+git diff --check -- <Prompt-01 paths>
+```
+
+Полный текущий `git status --short`:
+
+```text
+ D .audit-bmw/tmpw120oeib/enlarged.pptx
+ M apps/api/src/projects/projects.service.test.ts
+ M apps/api/src/projects/projects.service.ts
+ M apps/worker/src/cost-envelope.test.ts
+ M apps/worker/src/cost-envelope.ts
+ M apps/worker/src/tasks/generation.test.ts
+ M apps/worker/src/tasks/generation.ts
+ M apps/worker/src/tasks/presentation.test.ts
+ M apps/worker/src/tasks/presentation/narration/full-document-v6.test.ts
+ M apps/worker/src/tasks/presentation/narration/processing.ts
+ M apps/worker/src/tasks/presentation/orchestrator.ts
+ M apps/worker/src/tasks/presentation/providers/generation.ts
+ M apps/worker/src/tasks/web-search.ts
+ M packages/shared/src/generation/cost-envelope.ts
+?? plans/generation-recovery-hardening/
+```
+
+Мои изменения — первые три перечисленных файла. Остальное, включая удаление `.audit-bmw/...`, существовало до работы и сохранено без изменений. Docker, миграции, commit, deploy и следующие prompts не запускались.
+
+Риск: live/Docker proof намеренно не выполнялся, так как он запрещён Prompt 01; координатору следует принять или отклонить этот отчёт до перехода к следующему этапу.

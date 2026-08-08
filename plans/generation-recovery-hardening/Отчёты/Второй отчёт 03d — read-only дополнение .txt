@@ -1,0 +1,59 @@
+```diff
+diff --git a/plans/generation-recovery-hardening/03d-isolated-diff-manifest.md b/plans/generation-recovery-hardening/03d-isolated-diff-manifest.md
+@@
+-## Изолируемые, полностью атрибутируемые hunks
++## Полностью атрибутируемые, но dependency-held hunks
+ 
+-Следующие изменения можно перенести как самостоятельные hunks: их полный
+-diff в соответствующем участке совпадает с изменениями, указанными в
+-сохранённых отчётах Prompt 01 или 03a.
++Следующие изменения полностью атрибутируются сохранёнными отчётами Prompt 01
++или 03a. Это фиксирует их происхождение, но не доказывает, что любой из них
++можно перенести на чистый `HEAD` как самостоятельный patch: для всех пяти
++остаются неотделённые prerequisites.
+@@
+-| `apps/api/src/projects/projects.service.ts` | … | … | … | кандидат |
+-| `apps/api/src/projects/projects.service.test.ts` | … | … | … | кандидат |
+-| `apps/worker/src/economic-release-gate.ts` | … | … | … | кандидат |
+-| `apps/worker/src/economic-release-gate.test.ts` | … | … | … | кандидат |
+-| `apps/worker/src/cost-envelope.test.ts` | … | … | … | кандидат |
++| `apps/api/src/projects/projects.service.ts` | … | … | … | dependency-held |
++| `apps/api/src/projects/projects.service.test.ts` | … | … | … | dependency-held |
++| `apps/worker/src/economic-release-gate.ts` | … | … | … | dependency-held |
++| `apps/worker/src/economic-release-gate.test.ts` | … | … | … | dependency-held |
++| `apps/worker/src/cost-envelope.test.ts` | … | … | … | dependency-held |
+ 
+-`cost-envelope.test.ts` также содержит изменение ожиданий v9/26.90 на
+-v10/27.90, указанное в Prompt 01. Его нельзя переносить отдельно от policy
+-source, поэтому оно остаётся dependency-held, пока не будет отделён источник
+-v10 policy.
++API service+test также не являются самостоятельным candidate bundle: они
++зависят от неотделённого v10 shared/cost-policy source. Аналогично,
++`cost-envelope.test.ts` содержит ожидания v10/27.90 и transaction-mock test,
++которые нельзя отделить от policy/`reserveCostEnvelope` source. Экономический
++gate pair зависит от неотделённого `acceptedNarrationRecovery` contract и
++Prompt 02 local-recovery path.
++
++**Итог: `0 transferable candidate bundles from current evidence`.**
+@@
+-## Требуемый следующий технический шаг
+-
+-Если пользователь отдельно разрешит применить изоляцию, создать **новую
+-чистую рабочую копию от текущего `HEAD`**, не меняя эту, и собрать в ней
+-candidate patch в таком порядке:
+-
+-1. применить пять полностью атрибутируемых hunks выше;
+-2. перенести hunk-level bundle Prompt 02/03a только вместе с необходимыми
+-   prerequisites;
+-3. сравнить candidate с `HEAD` и текущим worktree read-only;
+-4. до любых тестов представить пользователю итоговый список файлов и
+-   неразрешённых зависимостей.
+-
+-Этот документ сам по себе не является применением patch, staging или
+-коммитом.
++## Остановка
++
++Этот документ не является применением patch, staging или коммитом. Никаких
++дальнейших действий, включая создание worktree, сборку candidate, тесты или
++запуски, не выполнять без нового явного решения пользователя.
+```

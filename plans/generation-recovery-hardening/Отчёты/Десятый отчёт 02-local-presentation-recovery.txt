@@ -1,0 +1,24 @@
+Prompt 02 завершён. Prompt 03 не начинался.
+
+Изменено:
+- Local projection подбирает короткие неповторяющиеся visible labels из принятой речи и использует вместимые layouts; canvas overflow устранён.
+- Принятая narration, `speakerNotes` и `speechScript` сохраняются без изменений.
+- Добавлен отдельный E2E worker-тест с настоящим `productionQualityReleaseResult`: provider failure → local recovery → released → `ready`; повторного provider/Tavily вызова нет.
+- Добавлены негативные проверки malformed, generic и local-only артефактов.
+
+Проверки прошли:
+
+```text
+npx vitest run ...generation-recovery-actual-gate.test.ts ...presentation.test.ts
+Test Files  2 passed
+Tests       3 passed | 100 skipped
+```
+
+- Реальный accepted artifact + 3 WEB URL sources: `auditSlideCanvas == []`, actual gate: `released`, issues: `[]`.
+- Provider failure: ровно один вызов provider, `searchWebSources` не вызывался, проект обновлён до `ready`.
+- `npm run typecheck -w @studydeck/worker` — успешно (`tsc --noEmit`).
+- `git diff --check` — успешно.
+
+Docker, миграции, commit, deploy, AI/Tavily и платные вызовы не запускались. Расход: **0 RUB**.
+
+Существующие изменения сохранены, включая удалённый в исходном diff `.audit-bmw/tmpw120oeib/enlarged.pptx` и незавершённые изменения API/worker/планов.

@@ -552,19 +552,32 @@ export class ProjectsService {
     const policy = standardGenerationCostPolicy();
     return this.prisma.$transaction(async (tx) => {
       const job = await tx.generationJob.create({ data: { projectId, kind, status: "queued" } });
-      const existing = kind === "presentation"
-        ? await tx.costEnvelope.findFirst({
-          where: { projectId, status: "active", narrationJob: { is: { status: "completed" } }, presentationJobId: null },
+      const priorNarrationEnvelopes = kind === "presentation"
+        ? await tx.costEnvelope.findMany({
+          // A failed presentation can exhaust its envelope after the source
+          // snapshot was successfully captured. Keep that immutable snapshot
+          // available for the next presentation attempt instead of forcing a
+          // second paid web search or failing the worker without sources.
+          where: { projectId, narrationJob: { is: { status: "completed" } } },
           orderBy: { createdAt: "desc" },
-          select: { id: true, policyVersion: true, sourceSnapshot: true },
+          take: 10,
+          select: { id: true, policyVersion: true, sourceSnapshot: true, status: true, presentationJobId: true },
         })
-        : null;
+        : [];
+      // The envelope is the attempt group. A recovery job must retain this
+      // identifier even after a prior presentation job exhausted it: creating
+      // a replacement envelope would grant the same user run a fresh cap.
+      const existing = priorNarrationEnvelopes.find((envelope) => envelope.policyVersion === policy.version) || null;
+      const preservedSourceSnapshot = priorNarrationEnvelopes.find((envelope) => envelope.sourceSnapshot && typeof envelope.sourceSnapshot === "object")?.sourceSnapshot;
       // A pre-v8 narration envelope does not reserve the final Terra request.
       // Do not silently reuse it for slides: its old cap cannot safely govern
       // the post-narration provider path.
-      if (existing?.policyVersion === policy.version) {
-        const envelope = await tx.costEnvelope.update({ where: { id: existing.id }, data: { presentationJobId: job.id } });
-        return { id: envelope.id, job };
+      if (existing) {
+        if (!existing.presentationJobId) {
+          const envelope = await tx.costEnvelope.update({ where: { id: existing.id }, data: { presentationJobId: job.id } });
+          return { id: envelope.id, job };
+        }
+        return { id: existing.id, job };
       }
       const envelope = await tx.costEnvelope.create({
         data: {
@@ -576,7 +589,7 @@ export class ProjectsService {
           // A v7 narration run may already have paid to build the immutable
           // source snapshot. Preserve it when upgrading only its presentation
           // half to v8; do not repeat web research just for the envelope.
-          ...(kind === "presentation" && existing?.sourceSnapshot ? { sourceSnapshot: existing.sourceSnapshot } : {}),
+          ...(kind === "presentation" && preservedSourceSnapshot ? { sourceSnapshot: preservedSourceSnapshot } : {}),
           ...(kind === "narration" ? { narrationJobId: job.id } : { presentationJobId: job.id }),
         },
       });

@@ -1,0 +1,241 @@
+## Read-only дополнение к Prompt 03b
+
+Новых команд не выполнялось; файловые изменения отсутствуют.
+
+### 1. Начальный `git status --short`
+
+```text
+ D .audit-bmw/tmpw120oeib/enlarged.pptx
+ M apps/api/src/projects/projects.service.test.ts
+ M apps/api/src/projects/projects.service.ts
+ M apps/worker/src/cost-envelope.test.ts
+ M apps/worker/src/cost-envelope.ts
+ M apps/worker/src/economic-release-gate.test.ts
+ M apps/worker/src/economic-release-gate.ts
+ M apps/worker/src/tasks/generation.test.ts
+ M apps/worker/src/tasks/generation.ts
+ M apps/worker/src/tasks/presentation-quality.ts
+ M apps/worker/src/tasks/presentation.test.ts
+ M apps/worker/src/tasks/presentation/narration/full-document-v6.test.ts
+ M apps/worker/src/tasks/presentation/narration/processing.ts
+ M apps/worker/src/tasks/presentation/orchestrator.ts
+ M apps/worker/src/tasks/presentation/providers/generation.ts
+ M apps/worker/src/tasks/web-search.ts
+ M packages/shared/src/generation/cost-envelope.ts
+?? apps/worker/src/tasks/generation-recovery-actual-gate.test.ts
+?? plans/generation-recovery-hardening/
+```
+
+### 2. Полный output выполненного теста
+
+```text
+> @studydeck/worker@1.0.0 test
+> vitest run --passWithNoTests src/tasks/presentation.test.ts
+
+ RUN  v2.1.9 D:/presentation/apps/worker
+
+ ❯ src/tasks/presentation.test.ts (101 tests | 2 failed) 5409ms
+   ✓ Yandex narration full duration rewrite > builds a release-ready ten-slide local document from accepted narration without provider calls 386ms
+   ✓ Yandex narration full duration rewrite > keeps an accepted full narration with soft timing targets when the slide provider fails 363ms
+   × generatePresentation fallback behavior > hides weak visual blocks and keeps useful structured visuals 528ms
+     → AI generation failed. yandex: Presentation production quality gate rejected the document: bad_narration
+   ✓ generatePresentation fallback behavior > repairs generic filler and fragments before saving production output 346ms
+   × generatePresentation fallback behavior > uses slide speaker notes as the narration fallback for each concrete slide 145ms
+     → AI generation failed. yandex: Presentation production quality gate rejected the document: schema_risk
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 99 passed (101)
+   Start at  22:28:28
+   Duration  24.96s (transform 4.63s, setup 0ms, collect 17.98s, tests 5.41s, environment 0ms, prepare 999ms)
+
+ Failed Tests 2
+
+ FAIL  src/tasks/presentation.test.ts > generatePresentation fallback behavior > hides weak visual blocks and keeps useful structured visuals
+Error: AI generation failed. yandex: Presentation production quality gate rejected the document: bad_narration
+ ❯ Module.generatePresentation src/tasks/presentation/orchestrator.ts:179:9
+    177|   }
+    178|
+    179|   throw new Error(`AI generation failed. ${errors.join(" | ")}`);
+       |         ^
+    180| }
+    181|
+ ❯ src/tasks/presentation.test.ts:2451:28
+
+ FAIL  src/tasks/presentation.test.ts > generatePresentation fallback behavior > uses slide speaker notes as the narration fallback for each concrete slide
+Error: AI generation failed. yandex: Presentation production quality gate rejected the document: schema_risk
+ ❯ Module.generatePresentation src/tasks/presentation/orchestrator.ts:179:9
+    177|   }
+    178|
+    179|   throw new Error(`AI generation failed. ${errors.join(" | ")}`);
+       |         ^
+    180| }
+    181|
+ ❯ src/tasks/presentation.test.ts:3080:28
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path D:\presentation\apps\worker
+npm error workspace @studydeck/worker@1.0.0
+npm error location D:\presentation\apps\worker
+npm error command failed
+npm error command C:\Windows\system32\cmd.exe /d /s /c vitest run --passWithNoTests src/tasks/presentation.test.ts
+```
+
+### 3. `git diff --unified=0 -- apps/worker/src/tasks/presentation.test.ts`
+
+```diff
+diff --git a/apps/worker/src/tasks/presentation.test.ts b/apps/worker/src/tasks/presentation.test.ts
+index 02f1b6f..936c14b 100644
+--- a/apps/worker/src/tasks/presentation.test.ts
++++ b/apps/worker/src/tasks/presentation.test.ts
+@@ -1,0 +2 @@ import { afterEach, describe, expect, it, vi } from "vitest";
++import { readFileSync } from "node:fs";
+@@ -32,0 +34 @@ import { shortenSentence } from "./presentation/utilities.js";
++import { productionQualityReleaseResult } from "./presentation-quality.js";
+@@ -511,0 +514,2 @@ describe("Yandex narration full duration rewrite", () => {
++
++
+@@ -520 +524 @@ describe("Yandex narration full duration rewrite", () => {
+-    const accepted = completeNarration();
++    const accepted = readFileSync(new URL("../../../../e2e-237-accepted-speech.txt", import.meta.url), "utf8");
+@@ -524,4 +528,4 @@ describe("Yandex narration full duration rewrite", () => {
+-      const presentation = buildLocalPresentationFromAcceptedNarration(project, [{
+-        id: "saturn-source", label: "Saturn reference", type: "WEB", url: "https://science.example/saturn",
+-        excerpt: "Saturn is a planet with rings and a complex system of moons.",
+-      }], accepted);
++      const recoveryProject = { ...project, title: "Фотоэнергетика", prompt: "Подготовь академическую презентацию по фотоэнергетике", mode: "with_sources" };
++      const sources = ["physics", "engineering", "energy"].map((id) => ({ id, label: `${id} source`, type: "WEB" as const, url: `https://science.example/${id}`, excerpt: "Фотоэнергетика солнечные панели фотоэффект кремний солнечная генерация энергия инженерные решения." }));
++      const presentation = buildLocalPresentationFromAcceptedNarration(recoveryProject, sources, accepted);
++      const release = productionQualityReleaseResult(presentation, sources, { ...recoveryProject, mandatorySourceSnapshot: true, acceptedNarrationRecovery: true });
+@@ -531 +535 @@ describe("Yandex narration full duration rewrite", () => {
+-      expect(presentation.generatedText).toBe(accepted);
++      expect(presentation.generatedText).toBe(accepted.trim());
+@@ -533 +536,0 @@ describe("Yandex narration full duration rewrite", () => {
+-      expect(presentation.slides.every((slide) => slide.bullets.length >= 2 && slide.bullets.length <= 3)).toBe(true);
+@@ -534,0 +538,2 @@ describe("Yandex narration full duration rewrite", () => {
++      expect(release.issues).toEqual([]);
++      expect(release).toMatchObject({ finalDisposition: "released", issueCategories: [] });
+@@ -539,0 +545,29 @@ describe("Yandex narration full duration rewrite", () => {
++  it("keeps an accepted full narration with soft timing targets when the slide provider fails", () => {
++    const fullNarration = Array.from({ length: 10 }, (_, index) => {
++      const order = index + 1;
++      const words = order === 1 ? 125 : order === 10 ? 159 : 132;
++      const sentenceWords = Math.floor(words / 8);
++      const sentences = Array.from({ length: 8 }, (_, sentenceIndex) => {
++        const count = sentenceIndex === 7 ? words - sentenceWords * 7 : sentenceWords;
++        return Array.from({ length: count }, (_, wordIndex) => `fact${order}_${sentenceIndex}_${wordIndex}`).join(" ");
++      }).join(". ");
++      return `\u0421\u043b\u0430\u0439\u0434 ${order}: Saturn ${order}\n${sentences}.`;
++    }).join("\n\n");
++
++    const presentation = buildLocalPresentationFromAcceptedNarration(project, [{
++      id: "saturn-source", label: "Saturn reference", type: "WEB", url: "https://science.example/saturn",
++      excerpt: "Saturn is a planet with rings and a complex system of moons.",
++    }], fullNarration);
++
++    expect(presentation.generationMode).toBe("local");
++    expect(presentation.generatedText).toBe(fullNarration);
++    expect(presentation.slides).toHaveLength(10);
++    expect(presentation.sources).toEqual(expect.arrayContaining([
++      expect.objectContaining({ id: "saturn-source", url: "https://science.example/saturn" }),
++    ]));
++    expect(presentation.slides.map((slide) => slide.speakerNotes)).toEqual(presentation.speechScript.map((item) => item.text));
++    expect(presentation.slides.flatMap((slide) => slide.sourceRefs).every((ref) => ref.sourceId === "saturn-source")).toBe(true);
++    expect(presentation.slides.some((slide) => slide.sourceRefs.length > 0)).toBe(true);
++    expect(presentation.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!))).toEqual([]);
++  });
++
+```
+
+В выводе нет hunks для failed fixtures около строк 2372 и 3049.
+
+### 4. `git diff --check`
+
+```text
+warning: in the working copy of 'apps/worker/src/tasks/presentation.test.ts', LF will be replaced by CRLF the next time Git touches it
+.audit-bmw/tmpw120oeib/enlarged.pptx: Permission denied
+warning: in the working copy of 'apps/api/src/projects/projects.service.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/api/src/projects/projects.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/cost-envelope.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/cost-envelope.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/economic-release-gate.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/economic-release-gate.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/generation.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/generation.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation-quality.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation/narration/full-document-v6.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation/narration/processing.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation/orchestrator.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation/providers/generation.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/web-search.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'packages/shared/src/generation/cost-envelope.ts', LF will be replaced by CRLF the next time Git touches it
+warning: could not open directory '.audit-bmw/tmpw120oeib/': No such file or directory
+```
+
+### 5. Сохранённый `spawn EPERM` output
+
+```text
+> @studydeck/worker@1.0.0 test
+> vitest run --passWithNoTests src/tasks/presentation.test.ts
+
+ RUN  v2.1.9 D:/presentation/apps/worker
+
+Unhandled Errors
+
+Vitest caught 1 unhandled error during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+
+ Test Files  no tests
+      Tests  no tests
+     Errors  1 error
+   Start at  22:28:19
+   Duration  22ms (transform 0ms, setup 0ms, collect 0ms, tests 0ms, environment 0ms, prepare 0ms)
+
+Unhandled Error
+Error: spawn EPERM
+ ❯ ChildProcess.spawn node:internal/child_process:421:11
+ ❯ spawn node:child_process:796:9
+ ❯ fork node:child_process:174:10
+ ❯ ProcessWorker.initialize ../../node_modules/tinypool/dist/index.js:101:18
+ ❯ ThreadPool._addNewWorker ../../node_modules/tinypool/dist/index.js:546:10
+ ❯ ThreadPool._ensureMinimumWorkers ../../node_modules/tinypool/dist/index.js:533:60
+ ❯ new ThreadPool ../../node_modules/tinypool/dist/index.js:523:8
+ ❯ new Tinypool ../../node_modules/tinypool/dist/index.js:746:16
+ ❯ createForksPool ../../node_modules/vitest/dist/chunks/resolveConfig.rBxzbVsl.js:6756:16
+ ❯ forks ../../node_modules/vitest/dist/chunks/resolveConfig.rBxzbVsl.js:7664:20
+
+Serialized Error: { errno: -4048, code: 'EPERM', syscall: 'spawn' }
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path D:\presentation\apps\worker
+npm error workspace @studydeck/worker@1.0.0
+npm error location D:\presentation\apps\worker
+npm error command failed
+npm error command C:\Windows\system32\cmd.exe /d /s /c vitest run --passWithNoTests src/tasks/presentation.test.ts
+```
+
+### Финальный `git status --short`
+
+```text
+ D .audit-bmw/tmpw120oeib/enlarged.pptx
+ M apps/api/src/projects/projects.service.test.ts
+ M apps/api/src/projects/projects.service.ts
+ M apps/worker/src/cost-envelope.test.ts
+ M apps/worker/src/cost-envelope.ts
+ M apps/worker/src/economic-release-gate.test.ts
+ M apps/worker/src/economic-release-gate.ts
+ M apps/worker/src/tasks/generation.test.ts
+ M apps/worker/src/tasks/generation.ts
+ M apps/worker/src/tasks/presentation-quality.ts
+ M apps/worker/src/tasks/presentation.test.ts
+ M apps/worker/src/tasks/presentation/narration/full-document-v6.test.ts
+ M apps/worker/src/tasks/presentation/narration/processing.ts
+ M apps/worker/src/tasks/presentation/orchestrator.ts
+ M apps/worker/src/tasks/presentation/providers/generation.ts
+ M apps/worker/src/tasks/web-search.ts
+ M packages/shared/src/generation/cost-envelope.ts
+?? apps/worker/src/tasks/generation-recovery-actual-gate.test.ts
+?? plans/generation-recovery-hardening/
+```

@@ -1,0 +1,13 @@
+Stopped before paid E2E and commit: candidate worker has no OpenAI or Tavily credentials configured, so the required live provider/source proof cannot run safely. No project or job was created.
+
+Implemented the FX blocker fix in the candidate worktree:
+
+- Immutable provider-neutral envelope FX snapshot; it seals dated CBR USD/RUB 82.1665, reference URL, and timestamps.
+- Missing/stale FX blocks before provider call.
+- Settlement and AI usage reuse the sealed snapshot; settlement is capped at reservation/envelope limit.
+
+Free checks passed: worker 26/26, API 15/15, API/worker typechecks, diff check. Candidate API/worker images rebuilt and runtime health passed.
+
+[FX envelope code](D:/presentation/.worktrees/generation-recovery-autonomous/apps/worker/src/cost-envelope.ts) · [provider integration](D:/presentation/.worktrees/generation-recovery-autonomous/apps/worker/src/tasks/presentation/providers/generation.ts)
+
+Official FX source: [Bank of Russia dated USD/RUB feed](https://www.cbr.ru/scripts/XML_daily.asp?date_req=08/08/2026).
