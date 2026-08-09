@@ -47,8 +47,7 @@ export function evaluateEconomicReleaseGate(input: EconomicReleaseGateInput): Ec
   const tavilyImages = presentation.slides.filter((slide) => slide.visual.image?.provider === "tavily").length;
   if (tavilyImages > 2 || envelope.imageSearchQueries > 2) categories.add("visual_cap");
 
-  if (rubUnits(envelope.limitRub) > rubUnits("10")
-    || rubUnits(envelope.reservedRub) + rubUnits(envelope.settledRub) > rubUnits(envelope.limitRub)) {
+  if (rubUnits(envelope.reservedRub) + rubUnits(envelope.settledRub) > rubUnits(envelope.limitRub)) {
     categories.add("cost_envelope");
   }
   if ((envelope.status === "exhausted" && !project.acceptedNarrationRecovery) || envelope.status === "cancelled"

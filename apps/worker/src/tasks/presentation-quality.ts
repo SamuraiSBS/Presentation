@@ -442,7 +442,7 @@ export function findVisibleTextIntegrityIssues(presentation: PresentationDocumen
   }));
 }
 
-/** Content slides normally project one claim and 2-3 support points from accepted speech. */
+/** Content slides may project one claim and zero to three support points from accepted speech. */
 export function findContentSlideContractIssues(presentation: PresentationDocument): QualityIssue[] {
   return presentation.slides.flatMap((slide) => {
     if (slide.slideKind !== "content" || contentSlideExceptionReason(slide)) return [];
@@ -455,8 +455,8 @@ export function findContentSlideContractIssues(presentation: PresentationDocumen
     if (visibleTextIntegrityReason(slide.thesis, false) || hasMetaSlideLanguage(slide.thesis)) {
       issues.push({ slideId: slide.id, severity: "major", category: "generic_text", field: "thesis", message: "Content slide must contain one complete, topic-specific thesis.", repairInstruction: "Project the first complete claim from accepted narration into the thesis without changing the narration." });
     }
-    if (usefulBullets.length < 2 || usefulBullets.length > 3) {
-      issues.push({ slideId: slide.id, severity: "major", category: "generic_text", field: "contentContract", message: "Content slide must contain two or three distinct support points, unless its quote or diagram exception is explicit.", repairInstruction: "Derive two or three distinct complete support points from accepted narration only; do not invent facts." });
+    if (usefulBullets.length > 3) {
+      issues.push({ slideId: slide.id, severity: "major", category: "generic_text", field: "contentContract", message: "Content slide must contain at most three distinct support points.", repairInstruction: "Keep only the strongest distinct support points from accepted narration; do not invent facts." });
     }
     return issues;
   });
@@ -542,7 +542,7 @@ export function findDeckWideDuplicateIssues(presentation: PresentationDocument):
         category: "duplicate",
         field: "keyMessage",
         message: `Slide ${right.slide.order} repeats the central message of slide ${left.slide.order}.`,
-        repairInstruction: "Replace the repeated central claim with this slide's distinct narrative-plan job, example, cause, consequence, stage, or conclusion. Preserve sourceRefs and do not invent facts.",
+        repairInstruction: "Replace the repeated central claim only with a distinct example, cause, consequence, stage, or conclusion from this slide's accepted narration. Preserve sourceRefs and do not invent facts.",
       });
     }
   }
@@ -627,7 +627,7 @@ export function findTopicRelevanceIssues(
       category: "off_topic" as const,
       field: "visibleText",
       message: "Visible slide text diverges from the project topic and accepted narration.",
-      repairInstruction: "Rewrite every visible field from the accepted narration and matching narrative-plan item. Keep speakerNotes and speechScript unchanged.",
+      repairInstruction: "Rewrite every visible field only from the matching accepted narration section. Keep speakerNotes and speechScript unchanged.",
     }];
   });
 }
@@ -751,8 +751,12 @@ export function findSlideSpeechAlignmentIssues(presentation: PresentationDocumen
     }
 
     const visibleTokens = uniqueTokens(topicTokens(contract.visibleText));
-    const acceptedTokens = uniqueTokens(topicTokens(`${contract.acceptedNarration} ${contract.keyMessage}`));
-    const visibleCoverage = Math.max(score.visibleToAccepted, score.visibleToKeyMessage);
+    // The accepted section for this exact slide order is the only textual
+    // donor for visible copy. Narrative metadata can remain useful for
+    // diagnostics, but must never turn an unsupported screen claim into a
+    // covered one.
+    const acceptedTokens = uniqueTokens(topicTokens(contract.acceptedNarration));
+    const visibleCoverage = score.visibleToAccepted;
     const softThreshold = slide.slideKind === "title" || slide.slideKind === "summary" ? 0.18 : 0.34;
     const hasForeignDomain = foreignDomainSignalCount(contract.visibleText) >= 2;
     const lacksSharedAnchors = visibleTokens.length >= 7 && acceptedTokens.length >= 4 && visibleCoverage < softThreshold;
@@ -764,6 +768,25 @@ export function findSlideSpeechAlignmentIssues(presentation: PresentationDocumen
         field: "visibleText",
         message: "Visible slide text does not express the accepted narration for the same slide order.",
         repairInstruction: "Rewrite only visible slide fields from the accepted narration; keep accepted narration unchanged.",
+      });
+    }
+    const visibleFields = visibleTextIntegrityEntries(slide)
+      .filter((entry) => !entry.label && entry.value.trim());
+    const lacksConcreteSupport = visibleFields.length > 0 && visibleFields.every((entry) =>
+      hasGenericOrMetaScreenText(entry.value)
+      || semanticOverlap(entry.value, contract.acceptedNarration) < 0.18,
+    );
+    const hasUnsupportedGenericField = visibleFields.some((entry) =>
+      isLowInformationProjection(entry.value),
+    );
+    if (lacksConcreteSupport || hasUnsupportedGenericField) {
+      issues.push({
+        slideId: slide.id,
+        severity: "major",
+        category: "generic_text",
+        field: "visibleText",
+        message: "Visible slide text has no concrete support in the accepted narration for this slide order.",
+        repairInstruction: "Keep one supported thesis and only distinct concrete support points from this slide's accepted narration; omit unsupported bullets.",
       });
     }
     return issues;
@@ -1471,12 +1494,14 @@ export function productionQualityReleaseResult(
   attempts = 0,
 ): ProductionQualityReleaseResult {
   const baseCritique = critiquePresentationDeterministically(presentation, sources, project);
-  const critique = project.acceptedNarrationRecovery
+  const hasCanonicalAcceptedNarration = parseAcceptedNarrationSections(presentation.generatedText).length === presentation.slides.length
+    && !findSlideSpeechAlignmentIssues(presentation).some((issue) => issue.field === "speechScript");
+  const critique = project.acceptedNarrationRecovery || hasCanonicalAcceptedNarration
     ? {
         ...baseCritique,
         issues: baseCritique.issues.filter((issue) => !(
           (issue.category === "generic_text" || issue.category === "bad_narration")
-          && (issue.field === "speakerNotes" || issue.field === "speechScript")
+          && (issue.field === "speakerNotes" || (project.acceptedNarrationRecovery && issue.field === "speechScript"))
         )),
       }
     : baseCritique;
@@ -1894,8 +1919,8 @@ export function applyQualityRepairs(
 
 /**
  * Last-resort, deterministic repair for leaked visible copy. The canonical
- * accepted narration remains untouched; this function only derives compact
- * screen text from it or, if unavailable, from the existing narrative plan.
+ * accepted narration remains untouched; this function derives compact screen
+ * text only from the matching accepted narration section.
  */
 export function applyTopicRelevanceFallbacks(
   presentation: PresentationDocument,
@@ -1946,13 +1971,13 @@ export function applyVisibleTextIntegrityFallbacks(
  * New-generation-only conclusion repair. It never deletes or edits slides in
  * a stored deck: improvePresentationQuality invokes it while building a new
  * document, and export/view paths do not call this function. The accepted
- * narration remains canonical; the summary surface is rebuilt from it and
- * from already planned story beats instead of fabricated closing facts.
+ * narration remains canonical; the summary surface is rebuilt only from its
+ * matching accepted section, never from the narrative plan or project text.
  */
 export function applyConclusionFallbacks(
   presentation: PresentationDocument,
   issues: QualityIssue[],
-  project: QualityProjectInput,
+  _project: QualityProjectInput,
 ): PresentationDocument {
   const affected = new Set(issues
     .filter((issue) => issue.category === "bad_narration" || issue.category === "off_topic")
@@ -1960,40 +1985,31 @@ export function applyConclusionFallbacks(
     .filter((id): id is string => Boolean(id)));
   if (!affected.size) return presentation;
 
+  const acceptedByOrder = new Map(parseAcceptedNarrationSections(presentation.generatedText)
+    .map((section) => [section.order, section]));
   const slides = presentation.slides.map((slide) => {
-    if (!affected.has(slide.id)) return slide;
-    const narrative = presentation.narrativePlan.find((item) => item.slideOrder === slide.order);
-    const script = presentation.speechScript.find((item) => item.slideOrder === slide.order)?.text || "";
-    const accepted = acceptedNarrationSentences([slide.speakerNotes, script]);
-    const earlierBeats = presentation.narrativePlan
-      .filter((item) => item.slideOrder < slide.order)
-      .flatMap((item) => [item.keyMessage, item.slidePurpose])
-      .map(cleanText)
-      .filter((item) => item && !isGenericConclusionEnding(item));
-    const topicAnchors = uniqueTokens(significantTokens(`${project.title} ${project.prompt}`));
-    const conclusionCandidates = [
-      ...accepted,
-      narrative?.keyMessage || "",
-      narrative?.slidePurpose || "",
-      ...earlierBeats,
-    ].map(cleanText).filter(Boolean);
-    const mainCandidate = conclusionCandidates.find((candidate) =>
-      wordCount(candidate) >= 4 && (topicAnchors.length === 0 || overlapCount(significantTokens(candidate), topicAnchors) > 0),
-    ) || conclusionCandidates.find((candidate) => wordCount(candidate) >= 4) || narrative?.keyMessage || project.title;
-    const thesis = ensureTopicAnchoredConclusion(compactSentence(mainCandidate, 26), project, topicAnchors);
-    const bullets = uniqueCompactSentences([
-      ...earlierBeats,
-      ...accepted.slice(1),
-      narrative?.keyMessage || "",
-      narrative?.slidePurpose || "",
-    ], thesis)
-      .filter((point) => !isGenericConclusionEnding(point))
+    // A conclusion fallback is local to an actual summary surface. Content
+    // slides use the regular visible-text fallback instead.
+    if (!affected.has(slide.id) || (slide.slideKind !== "summary" && slide.order !== presentation.slides.length)) return slide;
+    const section = acceptedByOrder.get(slide.order);
+    const accepted = acceptedNarrationSentences([section?.text || ""]);
+    // Missing accepted narration is a release-blocking structural defect, not
+    // permission to borrow project, narrative, or earlier-slide text.
+    if (!accepted.length) return slide;
+    const title = compactAcceptedNarrationTitle(section?.title || "", accepted);
+    const thesis = compactSentence(accepted[0], 26);
+    const supporting = uniqueCompactSentences(accepted.slice(1), thesis)
+      .filter((point) => !isLowInformationProjection(point) && !hasMetaSlideLanguage(point) && !visibleTextIntegrityReason(point, false))
       .slice(0, 3);
-    const supporting = ensureConclusionSupportingPoints(bullets, thesis, conclusionCandidates, project, topicAnchors);
-    const titleCandidate = narrative?.slideTitle || slide.title;
-    const title = isGenericConclusionEnding(titleCandidate)
-      ? `Что показывает ${project.title}`
-      : compactTitle(titleCandidate);
+    const visual = {
+      ...slide.visual,
+      title: "",
+      description: thesis,
+      leftLabel: slide.visual.leftLabel ? compactTitle(supporting[0] || title) : "",
+      rightLabel: slide.visual.rightLabel ? compactTitle(supporting[1] || title) : "",
+      items: [],
+      rows: [],
+    };
     return {
       ...slide,
       title,
@@ -2001,75 +2017,31 @@ export function applyConclusionFallbacks(
       layout: "summary" as const,
       thesis,
       bullets: supporting,
-      blocks: [{ type: "bullets" as const, items: supporting }],
+      blocks: supporting.length ? [{ type: "bullets" as const, items: supporting }] : [],
+      definition: slide.definition ? { term: title, text: thesis } : null,
       // The accepted narration and source refs are evidence-reviewed; do not
       // replace either one just to make the compact final surface look nicer.
       speakerNotes: slide.speakerNotes,
+      visual,
     };
   });
   const speechScript = presentation.speechScript.map((item) => {
     const slide = slides.find((candidate) => candidate.order === item.slideOrder);
     return slide ? { ...item, slideTitle: slide.title, text: slide.speakerNotes } : item;
   });
-  const narrativePlan = presentation.narrativePlan.map((item) => {
-    const slide = slides.find((candidate) => candidate.order === item.slideOrder);
-    if (!slide || !affected.has(slide.id)) return item;
-    return {
-      ...item,
-      slideTitle: slide.title,
-      keyMessage: slide.thesis,
-      slidePurpose: `${item.slidePurpose} Синтезировать предыдущие смысловые шаги без новых фактов.`,
-      transitionToNext: "",
-    };
-  });
   return presentationSchema.parse({
     ...presentation,
     slideCount: slides.length,
     outline: slides.map((slide) => slide.title),
-    narrativePlan,
     slides,
     speechScript,
   });
 }
 
-function ensureTopicAnchoredConclusion(
-  value: string,
-  project: QualityProjectInput,
-  anchors: string[],
-) {
-  const conclusion = compactSentence(value, 26);
-  if (!anchors.length || overlapCount(significantTokens(conclusion), anchors) > 0) return conclusion;
-  const topic = cleanText(project.title || project.prompt);
-  const stem = conclusion.replace(/[.!?]+$/g, "").replace(/^./u, (char) => char.toLowerCase());
-  return compactSentence(`${topic}: ${stem}`, 26);
-}
-
-function ensureConclusionSupportingPoints(
-  points: string[],
-  thesis: string,
-  candidates: string[],
-  project: QualityProjectInput,
-  anchors: string[],
-) {
-  const result = [...points];
-  for (const candidate of candidates) {
-    const point = ensureTopicAnchoredConclusion(compactSentence(candidate, 18), project, anchors);
-    if (!isCompleteConclusionStatement(point) || semanticOverlap(point, thesis) >= 0.8) continue;
-    if (result.some((existing) => semanticOverlap(existing, point) >= 0.8)) continue;
-    result.push(point);
-    if (result.length >= 3) break;
-  }
-  if (result.length < 2) {
-    const topic = cleanText(project.title || project.prompt);
-    result.push(compactSentence(`${topic} сохраняет значение через связь уже раскрытых причин и последствий`, 18));
-  }
-  return result.slice(0, 3);
-}
-
 function rebuildVisibleContentFromAcceptedNarration(
   presentation: PresentationDocument,
   affected: Set<string>,
-  project: QualityProjectInput,
+  _project: QualityProjectInput,
   fieldsBySlide?: Map<string, Set<string>>,
 ): PresentationDocument {
 
@@ -2079,51 +2051,39 @@ function rebuildVisibleContentFromAcceptedNarration(
     const strictContentRepair = slide.slideKind === "content" && affectedFields?.has("contentContract");
     const replaceAllVisible = !affectedFields || affectedFields.has("keyMessage") || affectedFields.has("duplicate");
     const needsField = (prefix: string) => strictContentRepair || replaceAllVisible || [...affectedFields || []].some((field) => field === prefix || field.startsWith(`${prefix}.`));
-    const script = presentation.speechScript.find((item) => item.slideOrder === slide.order)?.text || "";
-    const narrative = presentation.narrativePlan.find((item) => item.slideOrder === slide.order);
-    const accepted = parseAcceptedNarrationSections(presentation.generatedText).find((section) => section.order === slide.order)?.text || "";
-    // For a duplicate repair, the accepted section is the sole factual source.
-    // Reusing notes/script first could project the same support sentence back
-    // into both bullets and visual labels after it had just been removed.
-    const sentences = acceptedNarrationSentences(strictContentRepair || affectedFields?.has("duplicate")
-      ? [accepted]
-      : [slide.speakerNotes, script, accepted]);
-    if (strictContentRepair && sentences.length < 3) return slide;
-    const fallbackSentences = acceptedNarrationSentences([narrative?.keyMessage || "", narrative?.slidePurpose || ""]);
-    const candidates = sentences.length ? sentences : fallbackSentences;
-    const title = compactTitle(narrative?.slideTitle || candidates[0] || project.title || slide.title);
-    const thesis = compactSentence(candidates[0] || narrative?.keyMessage || slide.thesis, 26);
-    const bullets = uniqueCompactSentences(candidates.slice(1), thesis);
-    const safeBullets = bullets.length >= 2
-      ? bullets.slice(0, 3)
-      : uniqueCompactSentences([narrative?.keyMessage || "", narrative?.slidePurpose || "", ...candidates], thesis).slice(0, 3);
-    const candidateBullets = strictContentRepair
-      ? uniqueCompactSentences(candidates.slice(1), thesis).slice(0, 3)
-      : safeBullets.length >= 2
-      ? safeBullets
-      : [compactSentence(narrative?.keyMessage || "", 18), compactSentence(narrative?.slidePurpose || "", 18)].filter(Boolean);
-    const repairedBullets = candidateBullets.filter((bullet) => normalizedMessage(bullet) !== normalizedMessage(thesis));
-    const blockContent = compactSentence(
-      narrative?.audienceQuestion || narrative?.slidePurpose || candidates.at(-1) || `${title} \u0440\u0430\u0441\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u043a\u043b\u044e\u0447\u0435\u0432\u043e\u0439 \u0432\u044b\u0432\u043e\u0434.`,
-      18,
+    const acceptedSection = parseAcceptedNarrationSections(presentation.generatedText)
+      .find((section) => section.order === slide.order);
+    // The accepted section is the sole text donor. Notes and the narrative
+    // plan are projections or structure and can never refill this slide.
+    const candidates = acceptedNarrationSentences([acceptedSection?.text || ""]);
+    if (!candidates.length) return slide;
+    const title = compactAcceptedNarrationTitle(acceptedSection?.title || "", candidates);
+    const thesis = compactSentence(candidates[0], 26);
+    const candidateBullets = uniqueCompactSentences(candidates.slice(1), thesis).slice(0, 3);
+    const repairedBullets = candidateBullets.filter((bullet) =>
+      normalizedMessage(bullet) !== normalizedMessage(thesis)
+      && !isLowInformationProjection(bullet)
+      && !hasMetaSlideLanguage(bullet)
+      && !visibleTextIntegrityReason(bullet, false),
     );
+    const compactBullets = slide.slideKind === "title" ? [] : repairedBullets;
     const visual = {
       ...slide.visual,
-      title: "",
-      description: `Documentary or explanatory visual for ${title}.`,
-      leftLabel: slide.visual.leftLabel ? compactTitle(repairedBullets[0] || title) : "",
-      rightLabel: slide.visual.rightLabel ? compactTitle(repairedBullets[1] || title) : "",
+      title: needsField("visual.title") ? "" : slide.visual.title,
+      description: needsField("visual.description") ? thesis : slide.visual.description,
+      leftLabel: slide.visual.leftLabel ? compactTitle(compactBullets[0] || title) : "",
+      rightLabel: slide.visual.rightLabel ? compactTitle(compactBullets[1] || title) : "",
       // Do not mirror repaired bullets into visual labels: those labels are
       // inspected as visible text and were producing the same duplicate again.
-      items: affectedFields?.has("duplicate") ? [] : slide.visual.items,
-      rows: affectedFields?.has("duplicate") ? [] : slide.visual.rows,
+      items: needsField("visual") || affectedFields?.has("duplicate") ? [] : slide.visual.items,
+      rows: needsField("visual") || affectedFields?.has("duplicate") ? [] : slide.visual.rows,
     };
     return {
       ...slide,
       title: needsField("title") ? title : slide.title,
       thesis: needsField("thesis") ? thesis : slide.thesis,
-      bullets: needsField("bullets") ? repairedBullets.slice(0, 3) : slide.bullets,
-      blocks: needsField("blocks") ? [{ type: "callout" as const, content: blockContent }] : slide.blocks,
+      bullets: needsField("bullets") ? compactBullets.slice(0, 3) : slide.bullets,
+      blocks: needsField("blocks") ? (compactBullets.length ? [{ type: "bullets" as const, items: compactBullets }] : []) : slide.blocks,
       definition: slide.definition && (needsField("definition") || replaceAllVisible) ? { term: compactTitle(title), text: thesis } : slide.definition,
       visual: needsField("visual") ? visual : slide.visual,
       // Speaker notes are accepted evidence-reviewed narration and must remain canonical.
@@ -2148,9 +2108,16 @@ export function applySlideSpeechAlignmentFallbacks(
   issues: QualityIssue[],
   project: QualityProjectInput,
 ): PresentationDocument {
-  const visibleIssues = issues.filter((issue) => issue.category === "off_topic" && issue.field === "visibleText");
+  const visibleIssues = issues.filter((issue) =>
+    (issue.category === "off_topic" || issue.category === "generic_text")
+    && issue.field === "visibleText",
+  );
   const visibleRepaired = visibleIssues.length
-    ? applyTopicRelevanceFallbacks(presentation, visibleIssues, project)
+    ? rebuildVisibleContentFromAcceptedNarration(
+        presentation,
+        new Set(visibleIssues.map((issue) => issue.slideId).filter((id): id is string => Boolean(id))),
+        project,
+      )
     : presentation;
   const acceptedByOrder = new Map(parseAcceptedNarrationSections(visibleRepaired.generatedText)
     .map((section) => [section.order, section]));
@@ -2493,6 +2460,12 @@ function compactTitle(value: string) {
   return cleanText(value).replace(/[.!?]+$/g, "").split(/\s+/).slice(0, 12).join(" ") || "Ключевой вывод";
 }
 
+/** A generic accepted heading may be retained in narration, but it is not a useful screen label. */
+function compactAcceptedNarrationTitle(sectionTitle: string, sentences: string[]) {
+  const title = compactTitle(sectionTitle);
+  return isGenericTitle(title) ? compactTitle(sentences[0] || sectionTitle) : title;
+}
+
 function compactSentence(value: string, maxWords: number) {
   const words = cleanText(value).replace(/[.!?]+$/g, "").split(/\s+/).filter(Boolean).slice(0, maxWords);
   return words.length ? `${words.join(" ")}.` : "";
@@ -2507,6 +2480,11 @@ function uniqueCompactSentences(values: string[], thesis: string) {
     seen.add(key);
     return true;
   });
+}
+
+function isLowInformationProjection(value: string) {
+  if (hasGenericOrMetaScreenText(value)) return true;
+  return /(?:\u0438\u0433\u0440\u0430\u0435\u0442\s+\u0432\u0430\u0436\u043d\u0443\u044e\s+\u0440\u043e\u043b\u044c|\u043e\u0448\u0438\u0431\u043a\u0438\s+\u0432\u044b\u044f\u0432\u043b\u044f\u044e\u0442\u0441\u044f\s+\u0440\u0430\u043d\u044c\u0448\u0435|\u0441\u0442\u0440\u0430\u0442\u0435\u0433\u0438\u044f\s+\u043e\u0431\u0443\u0447\u0435\u043d\u0438\u044f\s+\u0443\u0442\u043e\u0447\u043d\u044f\u0435\u0442\u0441\u044f)/iu.test(value);
 }
 
 type VisibleTextIntegrityEntry = {

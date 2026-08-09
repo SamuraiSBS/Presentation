@@ -44,7 +44,7 @@ import {
   scoreUniversityTone,
   scoreVisualRhythm,
 } from "./presentation-quality.js";
-import { preserveAcceptedGeneratedText, preserveAcceptedNarration, repairReleaseCandidate } from "./presentation/quality/orchestration.js";
+import { applyNarrationFallbacks, applySlideTextRepairs, buildQualityRepairPrompt, preserveAcceptedGeneratedText, preserveAcceptedNarration, repairReleaseCandidate } from "./presentation/quality/orchestration.js";
 
 const source = {
   id: "source-1",
@@ -175,14 +175,15 @@ describe("presentation quality checks", () => {
     const valid = makePresentation({ slides: [{ ...makeSlide(1, "Evidence", "The experiment changed the measured result.", ["The control group kept the original condition.", "The observed difference supports the conclusion."]), slideKind: "content", layout: "bullets" }] as any });
     expect(findContentSlideContractIssues(valid)).toEqual([]);
     const sparse = presentationSchema.parse({ ...valid, slides: [{ ...valid.slides[0], bullets: [valid.slides[0].thesis] }] });
-    expect(findContentSlideContractIssues(sparse)).toContainEqual(expect.objectContaining({ field: "contentContract" }));
+    expect(findContentSlideContractIssues(sparse)).toEqual([]);
+    expect(findIntraSlideDuplicateIssues(sparse)).toContainEqual(expect.objectContaining({ field: "bullets.0", category: "duplicate" }));
     const diagram = presentationSchema.parse({ ...sparse, slides: [{ ...sparse.slides[0], layout: "statement", visual: { ...sparse.slides[0].visual, type: "process_diagram", items: [{ label: "Step one", text: "The first stage changes the input." }, { label: "Step two", text: "The second stage records the outcome." }] } }] });
     expect(findContentSlideContractIssues(diagram)).toEqual([]);
   });
 
   it("rebuilds sparse content only from accepted narration and leaves a custom canvas intact", () => {
     const base = makePresentation({ slides: [{ ...makeSlide(1, "Evidence", "A generic statement.", ["A generic statement."]), slideKind: "content", layout: "bullets", speakerNotes: "The experiment changed the measured result. The control group kept the original condition. The observed difference supports the conclusion." }] as any });
-    const issues = findContentSlideContractIssues(base);
+    const issues = findIntraSlideDuplicateIssues(base);
     const project = { id: "contract", title: "Experiment", prompt: "Explain the experiment", scenario: "lesson", level: "university", mode: "with_sources", slideCount: 1 } as const;
     const repaired = applyVisibleTextIntegrityFallbacks(base, issues, project);
     expect(repaired.slides[0].bullets).toEqual(["The control group kept the original condition.", "The observed difference supports the conclusion."]);
@@ -191,6 +192,34 @@ describe("presentation quality checks", () => {
     const custom = presentationSchema.parse({ ...base, slides: [{ ...base.slides[0], canvas: { ...base.slides[0].canvas!, elements: [...base.slides[0].canvas!.elements, { id: "user-mark", type: "shape", shape: "rect", x: 1, y: 1, w: 10, h: 10, rotation: 0, zIndex: 99, opacity: 1, locked: false, fill: "#FFFFFF", stroke: "#FFFFFF", strokeWidth: 0 }] } }] });
     expect(applyVisibleTextIntegrityFallbacks(custom, issues, project).slides[0].canvas).toEqual(custom.slides[0].canvas);
   });
+
+  it("removes unsupported generic bullets and keeps a one-thesis projection when speech has no concrete support", () => {
+    const accepted = "Регулярная обратная связь помогает студенту замечать ошибки на раннем этапе и корректировать стратегию обучения.";
+    const base = makePresentation({
+      generatedText: `Слайд 1: Обратная связь\n${accepted}\n\nСлайд 2: ${makePresentation().slides[1].title}\n${makePresentation().slides[1].speakerNotes}`,
+      slides: [{
+        ...makePresentation().slides[0],
+        slideKind: "content",
+        layout: "statement",
+        title: "Обратная связь",
+        thesis: accepted,
+        bullets: ["Ошибки выявляются раньше.", "Стратегия обучения уточняется.", "Обратная связь играет важную роль."],
+        speakerNotes: accepted,
+      }, makePresentation().slides[1]],
+      speechScript: [{ slideOrder: 1, slideTitle: "Обратная связь", text: accepted }, makePresentation().speechScript[1]],
+    });
+    const project = { id: "generic-bullets", title: "Обратная связь", prompt: "Объясни обратную связь", scenario: "lesson", level: "university", mode: "with_sources", slideCount: 2 } as const;
+
+    const issues = findSlideSpeechAlignmentIssues(base);
+    expect(issues).toContainEqual(expect.objectContaining({ slideId: "slide-1", category: "generic_text", field: "visibleText" }));
+
+    const repaired = applySlideSpeechAlignmentFallbacks(base, issues, project);
+    expect(repaired.slides[0].thesis).toBe(accepted);
+    expect(repaired.slides[0].bullets).toEqual([]);
+    expect(repaired.generatedText).toBe(base.generatedText);
+    expect(repaired.slides[0].speakerNotes).toBe(accepted);
+  });
+
   it("uses selected slide-count bounds, including an open-ended fourteen-slide floor", () => {
     const presentation = (words: number) => ({
       speechScript: [{ slideOrder: 1, slideTitle: "Speech", text: Array.from({ length: words }, () => "слово").join(" ") }],
@@ -281,7 +310,7 @@ describe("presentation quality checks", () => {
     expect(findWeakConclusionIssues(presentation, project)).toEqual([]);
   });
 
-  it("rebuilds a weak new-generation summary from accepted narration and earlier beats", () => {
+  it("rebuilds a weak new-generation summary from its accepted narration", () => {
     const project = { id: "porsche-repair", title: "История Porsche 911", prompt: "Объясни развитие Porsche 911", scenario: "lesson", level: "university", mode: "with_sources", slideCount: 5 } as const;
     const slides = Array.from({ length: 5 }, (_, index) => ({
       ...makeSlide(index + 1, `Porsche 911 этап ${index + 1}`, `Porsche 911 раскрывает этап ${index + 1}.`, [`Деталь Porsche 911 ${index + 1} поддерживает общий вывод.`]),
@@ -323,6 +352,45 @@ describe("presentation quality checks", () => {
     expect(repaired.narrativePlan).toHaveLength(5);
     expect(repaired.speechScript).toHaveLength(5);
     expect(auditSlideCanvas(rebuilt.slides[4].canvas!)).toEqual([]);
+  });
+
+  it("rebuilds a summary only from its matching accepted section", () => {
+    const base = makePresentation();
+    const accepted = "SummaryAnchor states the final supported result. SummaryAnchor identifies the concrete consequence that follows from this result.";
+    const customCanvas = {
+      ...base.slides[1].canvas!,
+      elements: [...base.slides[1].canvas!.elements, {
+        id: "custom-summary-marker", type: "shape" as const, shape: "rect" as const,
+        x: 3, y: 3, w: 3, h: 3, rotation: 0, zIndex: 99, opacity: 1, locked: false,
+        fill: "#FFFFFF", stroke: "#FFFFFF", strokeWidth: 0,
+      }],
+    };
+    const presentation = presentationSchema.parse({
+      ...base,
+      generatedText: `Slide 1: Earlier stage\nEarlierBeatAnchor describes an earlier stage only.\n\nSlide 2: Final section\n${accepted}`,
+      narrativePlan: [
+        { ...base.narrativePlan[0], keyMessage: "EarlierBeatAnchor should never move into the final summary." },
+        { ...base.narrativePlan[1], keyMessage: "KeyMessageAnchor should never become visible fallback text." },
+      ],
+      slides: [base.slides[0], {
+        ...base.slides[1], title: "Thanks", thesis: "ProjectAnchor is a fabricated conclusion.", bullets: ["EarlierBeatAnchor is fabricated support."],
+        blocks: [{ type: "bullets", items: ["KeyMessageAnchor is fabricated support."] }], speakerNotes: accepted, canvas: customCanvas,
+      }],
+      speechScript: [base.speechScript[0], { slideOrder: 2, slideTitle: "Thanks", text: accepted }],
+    });
+    const project = { id: "summary-only", title: "ProjectAnchor", prompt: "ProjectAnchor is not a text donor", scenario: "lesson", level: "university", mode: "with_sources", slideCount: 2 } as const;
+    const repaired = applyConclusionFallbacks(presentation, [{
+      slideId: "slide-2", severity: "major", category: "off_topic", field: "visibleText", message: "wrong summary", repairInstruction: "replace",
+    }], project);
+    const visible = [repaired.slides[1].title, repaired.slides[1].thesis, ...repaired.slides[1].bullets, ...repaired.slides[1].blocks.flatMap((block) => block.type === "bullets" ? block.items : [block.content])].join(" ");
+
+    expect(visible).toContain("SummaryAnchor");
+    expect(visible).not.toMatch(/EarlierBeatAnchor|KeyMessageAnchor|ProjectAnchor/);
+    expect(repaired.generatedText).toBe(presentation.generatedText);
+    expect(repaired.slides[1].speakerNotes).toBe(accepted);
+    expect(repaired.speechScript[1].text).toBe(accepted);
+    expect(repaired.slides[1].sourceRefs).toEqual(presentation.slides[1].sourceRefs);
+    expect(repaired.slides[1].canvas).toEqual(customCanvas);
   });
 
   it("requires a matching source for precise visible claims and attaches one when the evidence matches", () => {
@@ -435,10 +503,162 @@ describe("presentation quality checks", () => {
     expect(issues).toContainEqual(expect.objectContaining({ category: "bad_narration", field: "speechScript" }));
     const repaired = applySlideSpeechAlignmentFallbacks(presentation, issues, project);
     expect(repaired.speechScript).toEqual([
-      { slideOrder: 1, slideTitle: "Porsche legacy", text: acceptedFirst },
+      { slideOrder: 1, slideTitle: "Porsche 911 legacy", text: acceptedFirst },
       { slideOrder: 2, slideTitle: "Engineering conclusion", text: acceptedSecond },
     ]);
     expect(findSlideSpeechAlignmentIssues(repaired)).toHaveLength(0);
+  });
+
+  it("does not let a narrative key message or source-only claim cover visible text", () => {
+    const base = makePresentation();
+    const accepted = "AcceptedAnchor names the measured mechanism that changes the result. The control condition remains stable while the measured mechanism is observed.";
+    const customCanvas = {
+      ...base.slides[0].canvas!,
+      elements: [...base.slides[0].canvas!.elements, {
+        id: "custom-alignment-marker", type: "shape" as const, shape: "rect" as const,
+        x: 2, y: 2, w: 4, h: 4, rotation: 0, zIndex: 99, opacity: 1, locked: false,
+        fill: "#FFFFFF", stroke: "#FFFFFF", strokeWidth: 0,
+      }],
+    };
+    const presentation = presentationSchema.parse({
+      ...base,
+      generatedText: `Slide 1: Accepted mechanism\n${accepted}\n\nSlide 2: ${base.slides[1].title}\n${base.slides[1].speakerNotes}`,
+      narrativePlan: [{ ...base.narrativePlan[0], keyMessage: "NarrativeOnlyAnchor defines a different conclusion." }, base.narrativePlan[1]],
+      sources: [{ ...source, excerpt: "SourceOnlyAnchor describes an unrelated source claim." }],
+      slides: [{
+        ...base.slides[0], title: "NarrativeOnlyAnchor", thesis: "SourceOnlyAnchor is the visible conclusion.",
+        bullets: ["NarrativeOnlyAnchor supplies a supporting claim."],
+        blocks: [{ type: "bullets", items: ["SourceOnlyAnchor supplies a second claim."] }],
+        speakerNotes: accepted, canvas: customCanvas,
+      }, base.slides[1]],
+      speechScript: [{ slideOrder: 1, slideTitle: "NarrativeOnlyAnchor", text: accepted }, base.speechScript[1]],
+    });
+    const project = { id: "accepted-only", title: "Measured mechanism", prompt: "Explain the measured mechanism", scenario: "lesson", level: "university", mode: "with_sources", slideCount: 2 } as const;
+
+    const issues = findSlideSpeechAlignmentIssues(presentation);
+    expect(issues).toContainEqual(expect.objectContaining({ slideId: "slide-1", category: "off_topic", field: "visibleText" }));
+    const repaired = applySlideSpeechAlignmentFallbacks(presentation, issues, project);
+    const visible = [repaired.slides[0].title, repaired.slides[0].thesis, ...repaired.slides[0].bullets, ...repaired.slides[0].blocks.flatMap((block) => block.type === "bullets" ? block.items : [block.content])].join(" ");
+
+    expect(visible).toContain("AcceptedAnchor");
+    expect(visible).not.toMatch(/NarrativeOnlyAnchor|SourceOnlyAnchor/);
+    expect(repaired.generatedText).toBe(presentation.generatedText);
+    expect(repaired.slides[0].speakerNotes).toBe(accepted);
+    expect(repaired.speechScript[0].text).toBe(accepted);
+    expect(repaired.slides[0].sourceRefs).toEqual(presentation.slides[0].sourceRefs);
+    expect(repaired.slides[0].canvas).toEqual(customCanvas);
+  });
+
+  it("keeps narration fallbacks bound to section order when generated sections arrive out of order", () => {
+    const base = makePresentation({
+      generatedText: "Слайд 2: Second section\nSecondAnchor describes the second mechanism. SecondAnchor supplies its distinct consequence.\n\nСлайд 1: First section\nFirstAnchor describes the first mechanism. FirstAnchor supplies its distinct condition.",
+      slides: [
+        { ...makeSlide(1, "Broken first", "Foreign first claim.", ["Foreign first support."]), slideKind: "content", layout: "statement" },
+        { ...makeSlide(2, "Broken second", "Foreign second claim.", ["Foreign second support."]), slideKind: "content", layout: "statement" },
+      ] as any,
+    });
+    const project = { id: "ordered-fallback", title: "Mechanisms", prompt: "Explain two mechanisms", scenario: "lesson", level: "university", mode: "with_sources", slideCount: 2 } as const;
+    const repaired = applyNarrationFallbacks(base, [
+      { slideOrder: 1, fields: ["title", "thesis", "bullets.0"], reasons: ["foreign visible text"] },
+      { slideOrder: 2, fields: ["title", "thesis", "bullets.0"], reasons: ["foreign visible text"] },
+    ], project);
+
+    expect(repaired.slides[0].thesis).toContain("FirstAnchor");
+    expect(repaired.slides[0].thesis).not.toContain("SecondAnchor");
+    expect(repaired.slides[1].thesis).toContain("SecondAnchor");
+    expect(repaired.slides[1].thesis).not.toContain("FirstAnchor");
+  });
+
+  it("keeps provider repair input and normalization bound to the matching accepted section", () => {
+    const base = makePresentation({
+      title: "ProjectDonor",
+      generatedText: "Слайд 2: Second section\nSecondAnchor describes the second mechanism. SecondAnchor supplies its distinct consequence.\n\nСлайд 1: First section\nFirstAnchor describes the first mechanism. FirstAnchor supplies its distinct condition.",
+      narrativePlan: [
+        { ...makePresentation().narrativePlan[0], keyMessage: "NarrativeDonor must not enter provider repair text." },
+        { ...makePresentation().narrativePlan[1], keyMessage: "SecondNarrativeDonor must not enter slide one." },
+      ],
+      sources: [{ ...source, excerpt: "SourceDonor must not enter provider repair text." }],
+      slides: [
+        { ...makeSlide(1, "Broken first", "Foreign first claim.", ["Foreign first support."]), slideKind: "content", layout: "statement" },
+        { ...makeSlide(2, "Broken second", "Foreign second claim.", ["Foreign second support."]), slideKind: "content", layout: "statement" },
+      ] as any,
+    });
+    const project = { id: "provider-order", title: "ProjectDonor", prompt: "ProjectDonor must not be a donor", scenario: "lesson", level: "university", mode: "with_sources", slideCount: 2 } as const;
+    const issues = [{
+      slideId: "slide-1", severity: "major" as const, category: "off_topic" as const, field: "thesis", message: "repair slide one", repairInstruction: "replace",
+    }];
+    const prompt = buildQualityRepairPrompt(base, issues, 1);
+    const repaired = applySlideTextRepairs(base, {
+      slides: [{ slideOrder: 1, title: "", thesis: "", bullets: [], blocks: [] }],
+    }, project);
+
+    expect(prompt).toContain("FirstAnchor");
+    expect(prompt).toContain('"title":"First section"');
+    expect(prompt).toContain('"affectedFields":["thesis"]');
+    expect(prompt).toContain("sole text donor");
+    expect(prompt).toContain("Do not use narrative plan, sources, the project request");
+    expect(prompt).not.toMatch(/SecondAnchor|NarrativeDonor|SecondNarrativeDonor|SourceDonor|ProjectDonor/);
+    expect(repaired.slides[0].title).toContain("First section");
+    expect(repaired.slides[0].thesis).toContain("FirstAnchor");
+    expect(`${repaired.slides[0].title} ${repaired.slides[0].thesis}`).not.toContain("SecondAnchor");
+  });
+
+  it("does not serialize narrative donor instructions from real duplicate issues into provider repair", () => {
+    const repeatedClaim = "Shared mechanism changes the measured result in the same way.";
+    const base = makePresentation({
+      generatedText: "Слайд 1: First accepted section\nFirstAnchor explains the first distinct mechanism.\n\nСлайд 2: Second accepted section\nSecondAnchor explains the second distinct mechanism.",
+      narrativePlan: [
+        { ...makePresentation().narrativePlan[0], keyMessage: "NarrativeOnlyAnchor belongs only to the first plan item." },
+        { ...makePresentation().narrativePlan[1], keyMessage: "SecondNarrativeOnlyAnchor belongs only to the second plan item." },
+      ],
+      slides: [
+        { ...makeSlide(1, "First", repeatedClaim, ["First visible support."]), slideKind: "content", layout: "statement" },
+        { ...makeSlide(2, "Second", repeatedClaim, ["Second visible support."]), slideKind: "content", layout: "statement" },
+      ] as any,
+    });
+    const issues = findDeckWideDuplicateIssues(base);
+    const prompt = buildQualityRepairPrompt(base, issues, 1);
+
+    expect(issues).toContainEqual(expect.objectContaining({ slideId: "slide-2", category: "duplicate", field: "keyMessage" }));
+    expect(prompt).toContain("SecondAnchor");
+    expect(prompt).toContain('"title":"Second accepted section"');
+    expect(prompt).not.toMatch(/FirstAnchor|NarrativeOnlyAnchor|SecondNarrativeOnlyAnchor/);
+    expect(prompt).not.toContain("narrative-plan job");
+    expect(prompt).not.toContain("matching narrative-plan item");
+    expect(prompt).not.toContain("repairInstruction");
+  });
+
+  it("uses compact density for title, content, process, and summary projections", () => {
+    const base = makePresentation({
+      slides: [
+        { ...makeSlide(1, "Foreign title", "Foreign claim.", ["Foreign support."]), slideKind: "title", layout: "hero" },
+        { ...makeSlide(2, "Foreign content", "Foreign claim.", ["Foreign support."]), slideKind: "content", layout: "statement" },
+        { ...makeSlide(3, "Foreign process", "Foreign claim.", ["Foreign support."]), slideKind: "content", layout: "process" },
+        { ...makeSlide(4, "Foreign summary", "Foreign claim.", ["Foreign support."]), slideKind: "summary", layout: "summary" },
+      ] as any,
+    });
+    const accepted = [
+      "Slide 1: Grounded title\nTitleAnchor introduces the specific subject.",
+      "Slide 2: Grounded content\nContentAnchor explains the central mechanism. ContentAnchor adds a concrete condition. ContentAnchor gives a specific consequence.",
+      "Slide 3: Grounded process\nProcessAnchor begins with the first existing step. ProcessAnchor continues with the second existing step. ProcessAnchor completes the third existing step.",
+      "Slide 4: Grounded summary\nSummaryAnchor states the final supported conclusion. SummaryAnchor gives one concrete consequence.",
+    ].join("\n\n");
+    const presentation = presentationSchema.parse({ ...base, generatedText: accepted });
+    const project = { id: "density", title: "Grounded subject", prompt: "Explain the grounded subject", scenario: "lesson", level: "university", mode: "with_sources", slideCount: 4 } as const;
+    const repaired = applySlideSpeechAlignmentFallbacks(presentation, presentation.slides.map((slide) => ({
+      slideId: slide.id, severity: "major" as const, category: "off_topic" as const, field: "visibleText", message: "foreign", repairInstruction: "replace",
+    })), project);
+
+    expect(repaired.slides[0].bullets).toEqual([]);
+    expect(repaired.slides[1].bullets.length).toBeGreaterThanOrEqual(0);
+    expect(repaired.slides[1].bullets.length).toBeLessThanOrEqual(3);
+    expect(repaired.slides[2].bullets.length).toBeGreaterThanOrEqual(2);
+    expect(repaired.slides[2].bullets.length).toBeLessThanOrEqual(3);
+    expect(repaired.slides[3].bullets.length).toBeLessThanOrEqual(3);
+    for (const slide of repaired.slides) {
+      expect(slide.title.split(/\s+/).length).toBeLessThanOrEqual(12);
+      expect(slide.thesis.split(/\s+/).length).toBeLessThanOrEqual(26);
+    }
   });
 
   it("detects and silently repairs cross-topic visible text without changing accepted narration or custom canvas", async () => {
@@ -1098,6 +1318,28 @@ describe("presentation quality checks", () => {
     expect(repaired.generatedText).toBe(presentation.generatedText);
     expect(repaired.slides[0].speakerNotes).toBe(presentation.slides[0].speakerNotes);
     expect(repaired.slides[0].sourceRefs).toEqual(presentation.slides[0].sourceRefs);
+  });
+
+  it("keeps a custom canvas and rejects its schema defect instead of hiding it in text repair", () => {
+    const base = makePresentation();
+    const customCanvas = {
+      ...base.slides[0].canvas!,
+      elements: [
+        ...base.slides[0].canvas!.elements.map((element) => element.id === "slide-1-title" && element.type === "text"
+          ? { ...element, text: "Wrong canonical title" }
+          : element),
+        { id: "user-canvas-marker", type: "shape" as const, shape: "rect" as const, x: 2, y: 2, w: 3, h: 3, rotation: 0, zIndex: 99, opacity: 1, locked: false, fill: "#FFFFFF", stroke: "#FFFFFF", strokeWidth: 0 },
+      ],
+    };
+    const invalid = presentationSchema.parse({
+      ...base,
+      slides: [{ ...base.slides[0], canvas: customCanvas }, base.slides[1]],
+    });
+    const project = { id: "custom-canvas", title: invalid.title, prompt: invalid.title, scenario: invalid.scenario, level: invalid.level, mode: "with_sources", slideCount: invalid.slideCount } as const;
+    const repaired = repairReleaseCandidate(invalid, invalid.sources, project);
+
+    expect(repaired.slides[0].canvas).toEqual(customCanvas);
+    expect(productionQualityReleaseResult(repaired, repaired.sources, project).finalDisposition).toBe("rejected");
   });
 
   it("blocks an unfulfilled image and rejects generated canvas text that diverges from canonical fields", () => {

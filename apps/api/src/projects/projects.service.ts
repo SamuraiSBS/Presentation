@@ -552,13 +552,19 @@ export class ProjectsService {
     const policy = standardGenerationCostPolicy();
     return this.prisma.$transaction(async (tx) => {
       const job = await tx.generationJob.create({ data: { projectId, kind, status: "queued" } });
-      const priorNarrationEnvelopes = kind === "presentation"
+      const priorAttemptEnvelopes = kind === "presentation"
         ? await tx.costEnvelope.findMany({
           // A failed presentation can exhaust its envelope after the source
-          // snapshot was successfully captured. Keep that immutable snapshot
-          // available for the next presentation attempt instead of forcing a
-          // second paid web search or failing the worker without sources.
-          where: { projectId, narrationJob: { is: { status: "completed" } } },
+          // snapshot was successfully captured. Include that failed
+          // presentation envelope itself: it is the attempt group whose cap
+          // and immutable snapshot must govern the retry.
+          where: {
+            projectId,
+            OR: [
+              { narrationJob: { is: { status: "completed" } } },
+              { presentationJob: { is: { status: "failed" } } },
+            ],
+          },
           orderBy: { createdAt: "desc" },
           take: 10,
           select: { id: true, policyVersion: true, sourceSnapshot: true, status: true, presentationJobId: true },
@@ -567,17 +573,18 @@ export class ProjectsService {
       // The envelope is the attempt group. A recovery job must retain this
       // identifier even after a prior presentation job exhausted it: creating
       // a replacement envelope would grant the same user run a fresh cap.
-      const existing = priorNarrationEnvelopes.find((envelope) => envelope.policyVersion === policy.version) || null;
-      const preservedSourceSnapshot = priorNarrationEnvelopes.find((envelope) => envelope.sourceSnapshot && typeof envelope.sourceSnapshot === "object")?.sourceSnapshot;
+      const existing = priorAttemptEnvelopes.find((envelope) => envelope.policyVersion === policy.version) || null;
+      const preservedSourceSnapshot = priorAttemptEnvelopes.find((envelope) => envelope.sourceSnapshot && typeof envelope.sourceSnapshot === "object")?.sourceSnapshot;
       // A pre-v8 narration envelope does not reserve the final Terra request.
       // Do not silently reuse it for slides: its old cap cannot safely govern
       // the post-narration provider path.
       if (existing) {
-        if (!existing.presentationJobId) {
-          const envelope = await tx.costEnvelope.update({ where: { id: existing.id }, data: { presentationJobId: job.id } });
-          return { id: envelope.id, job };
-        }
-        return { id: existing.id, job };
+        // Keep the attempt-group envelope and its immutable snapshot, but
+        // move the one-to-one presentation-job relation to the retry. The
+        // worker's reservation keys include generationJobId, so this keeps
+        // retry spend under the same cap without replaying prior settlement.
+        const envelope = await tx.costEnvelope.update({ where: { id: existing.id }, data: { presentationJobId: job.id } });
+        return { id: envelope.id, job };
       }
       const envelope = await tx.costEnvelope.create({
         data: {

@@ -673,9 +673,9 @@ export function buildSlideBlueprints(
 export function buildSlideTextPlans(
   project: ProjectInput,
   narrationText: string,
-  narrativePlan: SlideNarrative[],
-  deckStory: DeckStory,
-  sources: Source[],
+  _narrativePlan: SlideNarrative[],
+  _deckStory: DeckStory,
+  _sources: Source[],
   options?: { acceptedFullNarration?: boolean },
 ): SlideTextPlan[] {
   // Full-document narration has already passed its own v6/v7 contract before
@@ -693,23 +693,26 @@ export function buildSlideTextPlans(
   }
   return Array.from({ length: project.slideCount }, (_, index) => {
     const order = index + 1;
-    const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, order);
     const section = sections[index];
-    const notes = completeNarrationSentences(section?.text || plan.keyMessage || deckStory.mainIdea).slice(0, 7).join(" ");
-    const sourceHint = sourceEvidenceForSlide(sources, order);
-    const supportedFactSourceIds = sourceHint && sources.length ? [sources[(order - 1) % sources.length].id] : [];
-    const coreClaim = shortenSentence(firstSentence(notes) || plan.keyMessage || deckStory.mainIdea, 180);
-    const evidenceOrExample = sourceHint || shortenSentence(secondSentence(notes), 160);
-    const listenerTakeaway = shortenSentence(lastSentence(notes) || plan.keyMessage || deckStory.conclusion, 180);
-    const title = shortenVisibleTitle(section?.title || plan.slideTitle || fallbackTitle(project, order));
+    if (!section?.text.trim()) {
+      throw new Error(`Narration section ${order} is required before a slide text plan can be built`);
+    }
+    const notes = completeNarrationSentences(section.text).slice(0, 7).join(" ");
+    const sentences = completeNarrationSentences(section.text);
+    const coreClaim = shortenSentence(firstSentence(notes), 180);
+    const evidenceOrExample = shortenSentence(sentences[1] || "", 160);
+    const listenerTakeaway = shortenSentence(sentences.at(-1) || coreClaim, 180);
+    const title = shortenVisibleTitle(section.title || firstSentence(notes));
     const thesis = ensureSentence(shortenSentence(coreClaim, 170));
-    const bullets = compressVisibleSlideText([evidenceOrExample, listenerTakeaway, plan.audienceQuestion])
-      .filter((item) => item && normalizeTitleKey(item) !== normalizeTitleKey(title))
-      .slice(0, order === project.slideCount ? 3 : 2);
+    const bullets = compressVisibleSlideText(sentences.slice(1))
+      .filter((item) => item && normalizeTitleKey(item) !== normalizeTitleKey(title) && normalizeTitleKey(item) !== normalizeTitleKey(thesis))
+      .slice(0, 3);
 
     return slideTextPlanSchema.parse({
       slideOrder: order,
-      slideQuestion: plan.audienceQuestion,
+      // Kept for the existing contract, but derived from section N rather
+      // than copied from the narrative-plan audience question.
+      slideQuestion: coreClaim,
       coreClaim,
       evidenceOrExample,
       listenerTakeaway,
@@ -717,7 +720,7 @@ export function buildSlideTextPlans(
       thesis,
       bullets,
       speakerNotes: notes,
-      supportedFactSourceIds,
+      supportedFactSourceIds: [],
       entityAssertions: [],
     });
   });

@@ -36,6 +36,7 @@ import {
   deckStorySchema,
   designBriefSchema,
   generationPipelineArtifactsSchema,
+  hasCustomSlideCanvas,
   hasMeasurableValue,
   presentationSchema,
   qualityCritiqueSchema,
@@ -48,6 +49,7 @@ import {
 } from "@studydeck/shared";
 import {
   applyTopicRelevanceFallbacks,
+  applySlideSpeechAlignmentFallbacks,
   applyVisualPlanFallbacks,
   findContentSlideContractIssues,
   applyVisibleTextIntegrityFallbacks,
@@ -315,6 +317,15 @@ export function repairReleaseCandidate(
     issues = critiquePresentationDeterministically(repaired, sources, project).issues;
   }
 
+  const speechIssues = issues.filter((issue) =>
+    (issue.category === "off_topic" || issue.category === "generic_text") && issue.field === "visibleText"
+    || issue.category === "bad_narration" && issue.field === "speechScript",
+  );
+  if (speechIssues.length) {
+    repaired = rebuildGeneratedCanvases(applySlideSpeechAlignmentFallbacks(repaired, speechIssues, project));
+    issues = critiquePresentationDeterministically(repaired, sources, project).issues;
+  }
+
   const visibleIssues = issues.filter((issue) =>
     issue.category === "generic_text"
     || issue.category === "duplicate"
@@ -330,6 +341,42 @@ export function repairReleaseCandidate(
   const visualIssues = issues.filter((issue) => issue.category === "bad_visual");
   if (visualIssues.length) {
     repaired = rebuildGeneratedCanvases(applyVisualPlanFallbacks(repaired, visualIssues));
+  }
+
+  // Release repair must re-establish the canonical narration projections after
+  // any text or visual fallback changed slide titles or generated fields.
+  repaired = preserveAcceptedNarration(repaired, repaired.generatedText, project);
+  const finalIssues = critiquePresentationDeterministically(repaired, sources, project).issues;
+  // A generated canvas is a deterministic projection and can be regenerated
+  // from the canonical slide fields. A custom canvas is user content: never
+  // discard or overwrite it to hide a canvas/schema defect; leave that error
+  // for the release gate unchanged.
+  const canvasTheme = resolvePresentationTheme({
+    title: repaired.title,
+    scenario: repaired.scenario,
+    level: repaired.level,
+    presentationTheme: repaired.presentationTheme,
+    designBrief: repaired.designBrief,
+  });
+  const unsafeGeneratedCanvasIds = new Set(finalIssues
+    .filter((issue) => issue.category === "schema_risk" && issue.field?.startsWith("canvas"))
+    .map((issue) => issue.slideId)
+    .filter((id): id is string => Boolean(id))
+    .filter((id) => {
+      const slide = repaired.slides.find((candidate) => candidate.id === id);
+      return Boolean(slide?.canvas) && !hasCustomSlideCanvas(slide!, canvasTheme);
+    }));
+  if (unsafeGeneratedCanvasIds.size) {
+    repaired = presentationSchema.parse({
+      ...repaired,
+      slides: repaired.slides.map((slide) => unsafeGeneratedCanvasIds.has(slide.id) ? { ...slide, canvas: undefined } : slide),
+    });
+    repaired = rebuildGeneratedCanvases(repaired);
+  }
+  const finalSpeechIssues = critiquePresentationDeterministically(repaired, sources, project).issues
+    .filter((issue) => issue.category === "bad_narration" && issue.field === "speechScript");
+  if (finalSpeechIssues.length) {
+    repaired = rebuildGeneratedCanvases(applySlideSpeechAlignmentFallbacks(repaired, finalSpeechIssues, project));
   }
 
   return repaired;
@@ -587,10 +634,13 @@ export async function repairPresentationQualityWithYandex(
 export function buildSlideTextRepairPrompt(presentation: PresentationDocument, issues: SlideTextIssue[]) {
   const slides = issues.map((issue) => {
     const slide = presentation.slides.find((candidate) => candidate.order === issue.slideOrder);
+    const acceptedSection = parseNarrationSections(presentation.generatedText)
+      .find((section) => section.order === issue.slideOrder);
     return {
       slideOrder: issue.slideOrder,
-      title: slide?.title,
-      speakerNotes: slide?.speakerNotes,
+      slideKind: slide?.slideKind,
+      layout: slide?.layout,
+      acceptedSpeech: acceptedSection?.text || "",
       problems: issue.reasons,
       fields: issue.fields,
       current: slide
@@ -614,7 +664,8 @@ export function buildSlideTextRepairPrompt(presentation: PresentationDocument, i
   return [
     "Перепиши только перечисленные проблемные слайды одним ответом.",
     "Текст должен быть понятным без заметок докладчика: законченные формулировки, конкретный смысл, без обрывков и метатекста о презентации.",
-    "Сохрани факты и смысл speakerNotes. Не придумывай имена, даты, числа, причины или выводы, которых там нет.",
+    "Единственный смысловой источник каждого исправления — acceptedSpeech того же slideOrder. Разрешено только кратко перефразировать или грамматически сжать его; не используй sources, narrative plan, project request или другой слайд как текстовый донор.",
+    "Не придумывай имена, даты, числа, причины или выводы, которых нет в acceptedSpeech.",
     "title можно менять только если поле title указано в problems/fields; speakerNotes и speechScript не меняй.",
     "Верни объект { slides: [...] }. Для каждого slideOrder верни полный набор title, thesis, bullets, blocks, definition и visual с исправленным видимым текстом.",
     JSON.stringify({ slides }),
@@ -667,47 +718,52 @@ export function buildQualityCriticPrompt(presentation: PresentationDocument, det
 
 export function buildQualityRepairPrompt(presentation: PresentationDocument, issues: QualityIssue[], attempt: number) {
   const affectedSlideIds = new Set(issues.map((issue) => issue.slideId).filter(Boolean));
-  const acceptedNarration = new Map(parseNarrationSections(presentation.generatedText).map((section) => [section.order, section.text]));
+  // Repair instructions may be useful to local code, but are not provider
+  // input: older diagnostics can contain donor guidance that conflicts with
+  // the accepted-section-only contract.
+  const safeIssues = issues.map(({ slideId, severity, category, field, message }) => ({
+    slideId,
+    severity,
+    category,
+    field,
+    message,
+  }));
+  const acceptedNarration = new Map(parseNarrationSections(presentation.generatedText).map((section) => [section.order, section]));
   const slides = presentation.slides
     .filter((slide) => !affectedSlideIds.size || affectedSlideIds.has(slide.id))
-    .map((slide) => ({
-      slideId: slide.id,
-      slideOrder: slide.order,
-      title: slide.title,
-      slideKind: slide.slideKind,
-      layout: slide.layout,
-      thesis: slide.thesis,
-      bullets: slide.bullets,
-      blocks: slide.blocks,
-      visual: {
-        type: slide.visual.type,
-        title: slide.visual.title,
-        description: slide.visual.description,
-        leftLabel: slide.visual.leftLabel,
-        rightLabel: slide.visual.rightLabel,
-        items: slide.visual.items,
-        rows: slide.visual.rows,
-      },
-      speakerNotes: slide.speakerNotes,
-      acceptedNarration: acceptedNarration.get(slide.order) || slide.speakerNotes,
-      sourceRefs: slide.sourceRefs.map((ref) => ({ sourceId: ref.sourceId, label: ref.label })),
-    }));
+    .map((slide) => {
+      const slideIssues = issues.filter((issue) => issue.slideId === slide.id);
+      const acceptedSection = acceptedNarration.get(slide.order);
+      return {
+        slideId: slide.id,
+        slideOrder: slide.order,
+        slideKind: slide.slideKind,
+        layout: slide.layout,
+        affectedFields: [...new Set(slideIssues.map((issue) => issue.field).filter((field): field is string => Boolean(field)))],
+        problems: slideIssues.map((issue) => issue.message),
+        acceptedSection: acceptedSection
+          ? { order: acceptedSection.order, title: acceptedSection.title, text: acceptedSection.text }
+          : null,
+      };
+    });
 
   return [
     `Repair attempt ${attempt}. Repair only the listed broken fields and slides.`,
     "Return JSON { slides: [...] }. Each slide item must include slideId or slideOrder plus changed fields only.",
-    "You may change title, thesis, bullets, blocks, visual.description and speakerNotes when the issue explicitly requires it.",
+    "Use acceptedSection for the same slideOrder as the sole text donor. It includes the exact accepted title and text for that repair.",
+    "Do not use narrative plan, sources, the project request, current slide text, speakerNotes, speechScript, or another section as a text donor. Narrative plan may guide an existing structural choice only; it may not supply a word, claim, or takeaway.",
+    "Do not return or change speakerNotes or speechScript. If acceptedSection is absent, leave visible text unchanged rather than inventing a fallback.",
+    "You may change only the listed affectedFields among title, thesis, bullets, blocks, definition, and visible visual labels.",
     "For visual rhythm issues you may also choose a schema-valid layout and make the visual description concrete; the worker will rebuild generated canvases.",
     "For visual coverage or image-relevance issues, change the design direction toward a specific anchored photo or a useful diagram; never add a random stock image and never edit a user canvas.",
-    "For weak speech, rewrite speakerNotes from the accepted narration and keep the matching speechScript aligned.",
-    "For off_topic issues, preserve accepted narration exactly and rewrite every visible field only from that narration and the matching narrative-plan item. A topic word at the start does not make unrelated later text acceptable.",
+    "For off_topic issues, preserve accepted narration exactly and rewrite every visible field only from its matching acceptedSection. A topic word at the start does not make unrelated later text acceptable.",
     "Each visible field must be a complete standalone audience-facing formulation. Never start a bullet, block, or visual text as a continuation of another layout slot, and never leave it ending on a connector or incomplete predicate.",
-    "Give every slide one distinct narrative-plan takeaway. Remove exact thesis/bullet or repeated visible copies; replace a repeated deck-level claim with that slide's own example, stage, cause, consequence, or conclusion.",
+    "Remove exact thesis/bullet or repeated visible copies; retain only a distinct example, stage, cause, consequence, or conclusion that is explicitly supported by acceptedSection.",
     "Replace template transitions, filler, and watery phrases with topic-specific causes, examples, consequences, concrete mechanisms, and a clear conclusion.",
     "Do not write about slide structure, transitions, next sections, or what the presentation will explain; write the actual subject matter.",
     "Do not invent precise facts, dates, names, numbers, or citations. Preserve existing sourceRefs.",
     "Keep slide text compact: title <= 12 words, thesis one sentence, bullets <= 18 words.",
-    JSON.stringify({ issues, slides }),
+    JSON.stringify({ issues: safeIssues, slides }),
   ].join("\n\n");
 }
 
@@ -720,8 +776,9 @@ export function applySlideTextRepairs(
   const repairs = Array.isArray(response.slides) ? response.slides : [];
   if (!repairs.length) return presentation;
 
-  const narrationSections = parseNarrationSections(presentation.generatedText);
-  const slides = presentation.slides.map((slide, index) => {
+  const narrationByOrder = new Map(parseNarrationSections(presentation.generatedText)
+    .map((section) => [section.order, section]));
+  const slides = presentation.slides.map((slide) => {
     const repair = repairs.find((candidate) => Number(candidate?.slideOrder) === slide.order);
     if (!repair) return slide;
     return normalizeSlide(
@@ -738,7 +795,7 @@ export function applySlideTextRepairs(
       slide.order,
       presentation.sources,
       project,
-      narrationSections[index],
+      narrationByOrder.get(slide.order),
     );
   });
 
@@ -751,32 +808,25 @@ export function applyNarrationFallbacks(
   project: ProjectInput,
 ): PresentationDocument {
   const issueMap = new Map(issues.map((issue) => [issue.slideOrder, issue]));
-  const narrationSections = parseNarrationSections(presentation.generatedText);
-  const slides = presentation.slides.map((slide, index) => {
+  const narrationByOrder = new Map(parseNarrationSections(presentation.generatedText)
+    .map((section) => [section.order, section]));
+  const slides = presentation.slides.map((slide) => {
     const issue = issueMap.get(slide.order);
     if (!issue) return slide;
 
-    const sentences = completeNarrationSentences(slide.speakerNotes);
-    const existingBullet = slide.bullets.find(
-      (item, itemIndex) =>
-        !issue.fields.includes(`bullets.${itemIndex}`) &&
-        !hasGenericOrMetaScreenText(item) &&
-        !looksLikeSentenceFragment(item),
-    );
-    const fallbackThesis = existingBullet
-      ? shortenCompleteSentence(`${slide.title}: ${sentenceFragment(existingBullet)}`, 18)
-      : sentences[0] || slide.thesis || fallbackSlideText(project, slide.order);
+    const section = narrationByOrder.get(slide.order);
+    const sentences = completeNarrationSentences(section?.text || "");
+    if (!sentences.length) return slide;
+    const fallbackThesis = sentences[0];
     const title = issue.fields.includes("title")
-      ? shortenVisibleTitle(narrationSections[index]?.title || fallbackTitle(project, slide.order))
+      ? shortenVisibleTitle(section?.title || fallbackThesis)
       : slide.title;
     const thesis = issue.fields.includes("thesis") ? fallbackThesis : slide.thesis;
     const bullets = uniqueShortItems(sentences.slice(1, 5)).filter((item) => !isDuplicateDisplayText(item, thesis));
-    const safeBullets = ensureRange(
-      bullets,
-      buildFallbackBulletItems(project, slide.order, slide.speakerNotes),
-      slide.slideKind === "summary" ? 3 : 2,
-      slide.slideKind === "summary" ? 5 : 3,
-    );
+    // A sentence can be grammatically complete yet still be filler. Keep the
+    // compact local fallback grounded and meaningful rather than restoring
+    // it solely because it appeared in accepted narration.
+    const safeBullets = bullets.filter((bullet) => !hasGenericOrMetaScreenText(bullet)).slice(0, 3);
     const repairedBullets = issue.fields.some((field) => field.startsWith("bullets.")) ? safeBullets : slide.bullets;
     const repairedBlocks = issue.fields.some((field) => field.startsWith("blocks."))
       ? [{ type: "bullets" as const, items: safeBullets }]
@@ -816,7 +866,7 @@ export function applyNarrationFallbacks(
       slide.order,
       presentation.sources,
       project,
-      narrationSections[index],
+      section,
     );
   });
 

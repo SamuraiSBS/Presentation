@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ensureEditableCanvas, presentationSchema } from "@studydeck/shared";
+import { COST_ENVELOPE_LIMIT_RUB, ensureEditableCanvas, presentationSchema } from "@studydeck/shared";
 import { evaluateEconomicReleaseGate } from "./economic-release-gate.js";
 
 const sources = [1, 2, 3].map((index) => ({ id: `source-${index}`, label: `Источник ${index}`, type: "WEB", size: 0, url: `https://example.edu/${index}`, excerpt: `Источник ${index} подтверждает учебный тезис.` }));
@@ -32,6 +32,25 @@ const envelope = { limitRub: "10", reservedRub: "0", settledRub: "9", status: "a
 describe("economic release gate", () => {
   it("releases a complete ten-slide bounded economic run", () => {
     expect(evaluateEconomicReleaseGate({ presentation: document(), sources, project, envelope })).toEqual({ passed: true, categories: [] });
+  });
+
+  it("releases a v10 envelope when settled plus reserved spend remains within its persisted cap", () => {
+    expect(evaluateEconomicReleaseGate({
+      presentation: document(),
+      sources,
+      project,
+      envelope: { ...envelope, limitRub: COST_ENVELOPE_LIMIT_RUB, settledRub: "11.78768000" },
+    })).toEqual({ passed: true, categories: [] });
+  });
+
+  it("still rejects actual cost-envelope overruns", () => {
+    const result = evaluateEconomicReleaseGate({
+      presentation: document(),
+      sources,
+      project,
+      envelope: { ...envelope, limitRub: COST_ENVELOPE_LIMIT_RUB, reservedRub: "16", settledRub: "12" },
+    });
+    expect(result).toEqual(expect.objectContaining({ passed: false, categories: expect.arrayContaining(["cost_envelope"]) }));
   });
 
   it("rejects unresolved spending and visual overruns before persistence", () => {

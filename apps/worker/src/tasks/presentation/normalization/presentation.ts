@@ -166,29 +166,39 @@ export function normalizePresentation(
     project,
   );
   const narrationSections = parseNarrationSections(normalizedGeneratedText);
-  const narrationOutline = narrationSections.map((section) => section.title);
+  const narrationByOrder = new Map(narrationSections.map((section) => [section.order, section]));
+  const narrationOutline = Array.from({ length: project.slideCount }, (_, index) =>
+    narrationByOrder.get(index + 1)?.title || "",
+  ).filter(Boolean);
   const outline = narrationOutline.length === project.slideCount ? narrationOutline : normalizeOutline(input.outline);
   const rawSlides = Array.isArray(input.slides) ? input.slides : [];
   const normalizedDesignBrief = normalizeDesignBrief(designBrief || input.designBrief, project, publicSources, narrativePlan);
   const slides = rawSlides
     .slice(0, project.slideCount)
-    .map((slide, index) => normalizeSlide(slide, index + 1, publicSources, project, narrationSections[index]));
+    .map((slide, index) => {
+      const order = index + 1;
+      return normalizeSlide(slide, order, publicSources, project, narrationByOrder.get(order));
+    });
 
   while (slides.length < project.slideCount) {
-    slides.push(buildFallbackSlide(slides.length + 1, project, publicSources, narrationSections[slides.length]));
+    const order = slides.length + 1;
+    slides.push(buildFallbackSlide(order, project, publicSources, narrationByOrder.get(order)));
   }
 
   repairRepeatedSlideTitles(slides, outline, project);
   diversifySlideLayouts(slides, normalizedDesignBrief);
-  const normalizedNarrativePlan = normalizePresentationNarrativePlan(input.narrativePlan, narrativePlan, project, narrationSections, slides);
+  const normalizedNarrativePlan = normalizePresentationNarrativePlan(input.narrativePlan, narrativePlan, project, narrationByOrder, slides);
   const documentTitle = cleanPresentationTitle(input.title, project);
 
   const rawSpeechScript = Array.isArray(input.speechScript) ? input.speechScript : [];
+  const rawSpeechScriptByOrder = new Map(rawSpeechScript
+    .filter((item) => Number.isInteger(Number(item?.slideOrder)))
+    .map((item) => [Number(item?.slideOrder), item]));
   const speechTitleCounts = countTitles(rawSpeechScript.map((item) => cleanText(item?.slideTitle)));
   const speechScript = slides.map((slide, index) => {
-    const source = rawSpeechScript.find((item) => Number(item?.slideOrder) === slide.order) || rawSpeechScript[index];
+    const source = rawSpeechScriptByOrder.get(slide.order);
     const sourceTitle = cleanText(source?.slideTitle);
-    const narrationSection = narrationSections[index];
+    const narrationSection = narrationByOrder.get(slide.order);
 
     return {
       slideOrder: slide.order,
@@ -231,7 +241,7 @@ export function normalizePresentationNarrativePlan(
   rawPlan: unknown,
   generatedPlan: SlideNarrative[],
   project: ProjectInput,
-  narrationSections: NarrationSection[],
+  narrationByOrder: Map<number, NarrationSection>,
   slides: Slide[],
 ) {
   const fromInput = normalizeNarrativePlan(rawPlan, project);
@@ -247,7 +257,7 @@ export function normalizePresentationNarrativePlan(
 
   return Array.from({ length: project.slideCount }, (_, index) => {
     const order = index + 1;
-    const section = narrationSections[index];
+    const section = narrationByOrder.get(order);
     const slide = slides[index];
     const fallback = buildFallbackNarrativeItem(project, order, section?.title || slide?.title);
     return {
@@ -333,15 +343,27 @@ export function normalizeSlide(rawSlide: unknown, order: number, sources: Source
   const rawBlocks = Array.isArray(slide.blocks) ? slide.blocks.map(normalizeBlock).filter((block): block is SlideBlock => Boolean(block)) : [];
   const slideKind = normalizeSlideKind(slide.slideKind, order, project.slideCount);
   const title = shortenWords(sanitizeScreenText(slide.title) || narrationSection?.title || fallbackTitle(project, order), slideKind === "title" ? 12 : 8);
-  const narrationFallbackSource = [narrationSection?.text, slideText(rawBlocks)].filter(Boolean).join(" ");
+  const acceptedNarration = narrationSection?.text || "";
+  // Once narration has been accepted, incomplete provider fields may only be
+  // completed from that section. Raw blocks remain available as the provider
+  // projection, but must not become a second donor when a field is blank.
+  const narrationFallbackSource = acceptedNarration || slideText(rawBlocks);
   const thesis = normalizeThesis(slide.thesis, rawBlocks, project, order, slideKind, title, narrationFallbackSource);
-  const fallbackSource = [narrationSection?.text, thesis, slideText(rawBlocks)].filter(Boolean).join(" ");
-  const bullets = ensureSlideSentenceDensity(normalizeBullets(slide.bullets, rawBlocks, project, order, slideKind, title, fallbackSource), thesis, project, order, slideKind, fallbackSource);
+  const fallbackSource = acceptedNarration || [thesis, slideText(rawBlocks)].filter(Boolean).join(" ");
+  const bullets = ensureSlideSentenceDensity(
+    normalizeBullets(slide.bullets, rawBlocks, project, order, slideKind, title, fallbackSource, acceptedNarration),
+    thesis,
+    project,
+    order,
+    slideKind,
+    fallbackSource,
+    acceptedNarration,
+  );
   const definition = normalizeDefinition(slide.definition);
   const keyConcepts = normalizeKeyConcepts(slide.keyConcepts, title, bullets, slideKind);
   const highlights = normalizeHighlights(slide.highlights, thesis, bullets, slideKind);
-  const visual = normalizeVisual(slide.visual, title, thesis, bullets, slideKind, project, order);
-  const blocks = normalizeSlideBlocks(rawBlocks, project, order, thesis, bullets, slideKind);
+  const visual = normalizeVisual(slide.visual, title, thesis, bullets, slideKind, project, order, acceptedNarration ? thesis : "");
+  const blocks = normalizeSlideBlocks(rawBlocks, project, order, thesis, bullets, slideKind, acceptedNarration);
 
   return {
     id: cleanText(slide.id) || `slide-${order}`,
@@ -409,11 +431,13 @@ export function normalizeThesis(value: unknown, blocks: SlideBlock[], project: P
   if (fromValue && !isDuplicateDisplayText(fromValue, title)) return shortenSentence(fromValue, slideKind === "title" ? 150 : 180);
   const fromBlocks = firstSentence(slideText(blocks));
   const fromNarration = firstCompleteScreenSentence(fallbackSource);
-  const fallback = [fromBlocks, fromNarration].find((item) => item && !isDuplicateDisplayText(item, title)) || "";
+  // Prefer section narration to an arbitrary provider block. The latter is a
+  // projection to audit, never a fallback source for accepted narration.
+  const fallback = [fromNarration, fromBlocks].find((item) => item && !isDuplicateDisplayText(item, title)) || "";
   return shortenSentence(fallback || fallbackSlideText(project, order), slideKind === "title" ? 150 : 180);
 }
 
-export function normalizeBullets(value: unknown, blocks: SlideBlock[], project: ProjectInput, order: number, slideKind: SlideKind, title = "", fallbackSource = "") {
+export function normalizeBullets(value: unknown, blocks: SlideBlock[], project: ProjectInput, order: number, slideKind: SlideKind, title = "", fallbackSource = "", acceptedNarration = "") {
   const fromValue = Array.isArray(value) ? value.map(sanitizeScreenText).filter(Boolean) : [];
   const fromBlocks = blocks.flatMap((block) => (block.type === "bullets" ? block.items : splitIntoSentences("content" in block ? block.content : "")));
   const items = uniqueShortItems([...fromValue, ...fromBlocks])
@@ -429,12 +453,16 @@ export function normalizeBullets(value: unknown, blocks: SlideBlock[], project: 
     return items.slice(0, 5);
   }
 
+  // Sparse accepted speech is a valid compact projection. Do not manufacture
+  // bullets from project-level fallback templates merely to fill a layout.
+  if (acceptedNarration.trim()) return items.slice(0, 3);
+
   const minimum = slideKind === "summary" ? 3 : 2;
   const fallback = buildFallbackBulletItems(project, order, fallbackSource);
   return ensureRange(items, fallback, minimum, 5);
 }
 
-export function ensureSlideSentenceDensity(items: string[], thesis: string, project: ProjectInput, order: number, slideKind: SlideKind, fallbackSource = "") {
+export function ensureSlideSentenceDensity(items: string[], thesis: string, project: ProjectInput, order: number, slideKind: SlideKind, fallbackSource = "", acceptedNarration = "") {
   const existing = uniqueShortItems(items).filter((item) => !looksLikeSentenceFragment(item)).slice(0, slideKind === "summary" ? 5 : 3);
   const visibleSentenceCount = splitIntoSentences([thesis, ...existing].join(" ")).length;
   const minimum = slideKind === "summary" ? 3 : 2;
@@ -442,6 +470,8 @@ export function ensureSlideSentenceDensity(items: string[], thesis: string, proj
   if (visibleSentenceCount >= minimum) {
     return existing;
   }
+
+  if (acceptedNarration.trim()) return existing;
 
   const fallback = buildFallbackBulletItems(project, order, fallbackSource).filter((item) => item.toLowerCase() !== thesis.toLowerCase());
   return uniqueShortItems([...existing, ...fallback]).slice(0, slideKind === "summary" ? 5 : 3);
@@ -471,11 +501,12 @@ export function normalizeVisual(
   slideKind: SlideKind,
   project: ProjectInput,
   order: number,
+  acceptedFallbackDescription = "",
 ): SlideVisual {
   const candidate = value && typeof value === "object" ? (value as Partial<SlideVisual>) : {};
   const requestedType = normalizeVisualType(candidate.type);
   const description = shortenSentence(
-    sanitizeScreenText(candidate.description) || imageConcept(project, order, title, thesis, bullets, slideKind),
+    sanitizeScreenText(candidate.description) || acceptedFallbackDescription || imageConcept(project, order, title, thesis, bullets, slideKind),
     260,
   );
   const rows = Array.isArray(candidate.rows)
@@ -707,10 +738,21 @@ export function buildFallbackSlide(order: number, project: ProjectInput, sources
   const source = sources[(order - 1) % sources.length];
   const slideKind = normalizeSlideKind(undefined, order, project.slideCount);
   const title = narrationSection?.title || fallbackTitle(project, order);
-  const thesis = normalizeThesis("", [], project, order, slideKind);
-  const bullets = ensureSlideSentenceDensity(normalizeBullets([], [], project, order, slideKind), thesis, project, order, slideKind);
+  const acceptedNarration = narrationSection?.text || "";
+  const thesis = normalizeThesis("", [], project, order, slideKind, title, acceptedNarration);
+  const bullets = ensureSlideSentenceDensity(
+    normalizeBullets([], [], project, order, slideKind, title, acceptedNarration, acceptedNarration),
+    thesis,
+    project,
+    order,
+    slideKind,
+    acceptedNarration,
+    acceptedNarration,
+  );
   const definition = null;
-  const visual = fallbackVisual(order, title, thesis, bullets, slideKind, project);
+  const visual = acceptedNarration
+    ? { ...emptyVisual(), description: thesis }
+    : fallbackVisual(order, title, thesis, bullets, slideKind, project);
   const blocks = buildFallbackBlocks(project, order, thesis, bullets, slideKind);
   return {
     id: `slide-${order}`,
@@ -808,6 +850,7 @@ export function normalizeSlideBlocks(
   thesis: string,
   bullets: string[],
   slideKind: SlideKind,
+  acceptedNarration = "",
 ): SlideBlock[] {
   if (blocks.length) {
     const normalized = blocks.slice(0, 3);
@@ -815,6 +858,7 @@ export function normalizeSlideBlocks(
     if (splitIntoSentences([thesis, text].filter(Boolean).join(" ")).length >= 2) {
       return normalized;
     }
+    if (acceptedNarration.trim()) return normalized;
     const fallbackItems = ensureSlideSentenceDensity([], thesis, project, order, slideKind).slice(0, 2);
     return [...normalized, { type: "bullets" as const, items: fallbackItems }].slice(0, 3);
   }

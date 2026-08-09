@@ -790,15 +790,15 @@ export function buildGenerationPrompt(
     storyText ? `Use this deckStory as the deck-level content spine. Do not show it as a separate UI field:\n${storyText}` : "",
     designText ? `Use this designBrief for deck-level visual direction:\n${designText}` : "",
     blueprintText ? `Use these slideBlueprints as per-slide intent. Match slide order, purpose, layout candidate, visual strategy, and text density where possible:\n${blueprintText}` : "",
-    textPlanText ? `Use these slideTextPlans as per-slide text structure. Build each slide from slideQuestion, coreClaim, evidenceOrExample, listenerTakeaway, title, thesis, bullets, and speakerNotes:\n${textPlanText}` : "",
+    textPlanText ? `Use these slideTextPlans as compact projections of the matching accepted speech sections. They are constraints, not an additional story: title, thesis, bullets, blocks, definitions, and visible visual labels may only paraphrase the matching generatedText section. Do not use slideQuestion, narrative-plan fields, sources, or the project request as text donors:\n${textPlanText}` : "",
     fixedNarration
       ? `Use this fixed speech narration as the only source of truth. Copy it exactly into generatedText and do not rewrite its meaning:\n${fixedNarration}`
       : "Use generatedText as the single source of truth for the deck, divided exactly as `Слайд 1: ...` through the requested slide count.",
-    "Build title, thesis, bullets, blocks, visual.description, speakerNotes, and speechScript from the matching generatedText section and the matching narrativePlan item.",
+    "Build title, thesis, bullets, blocks, definition, speakerNotes, speechScript, and visible visual labels only from the matching generatedText section. The matching narrativePlan controls structure only and must never donate visible text.",
     "Each slide has one distinct story job and audience question. Do not reuse a conclusion or chapter label as a second slide's job.",
     "For a date, model, number, biography, legal or scientific claim, use only a matching source excerpt and structured sourceRefs. If support is absent, use a cautious general explanation; never guess an entity category, period, or relation.",
     "Do not merge model families or names: for example BMW 328 is not a BMW M model, and BMW 8 Series is not automatically an M model.",
-    "Treat the slideTextPlans as the compression layer: visible text comes from title, thesis, and bullets; speakerNotes remain the richer 2-7 sentence report text.",
+    "Treat slideTextPlans as a bounded compression layer: keep one supported thesis and zero to three distinct supported bullets. If the speech section has no additional concrete support, omit bullets instead of filling the layout.",
     "Do not generate a separate second story outside generatedText or narrativePlan.",
     "Do not put slidePurpose or transitionToNext on the slide as visible text.",
     "Visual theme rules:",

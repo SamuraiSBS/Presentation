@@ -230,7 +230,7 @@ describe("ProjectsService generation", () => {
     );
   });
 
-  it("reuses an exhausted presentation attempt group instead of granting a retry a new cap", async () => {
+  it("reuses an exhausted presentation attempt group and rebinds it to the retry job without granting a new cap", async () => {
     const { service, tx } = createHarness();
     const originalProvider = process.env.AI_PROVIDER;
     process.env.AI_PROVIDER = "aitunnel";
@@ -242,6 +242,7 @@ describe("ProjectsService generation", () => {
       status: "exhausted",
       presentationJobId: "failed-presentation-job",
     }]);
+    tx.costEnvelope.update.mockResolvedValueOnce({ id: "attempt-group-1" });
 
     try {
       await expect((service as any).createAitunnelEnvelope("project-1", "presentation"))
@@ -252,7 +253,19 @@ describe("ProjectsService generation", () => {
     }
 
     expect(tx.costEnvelope.create).not.toHaveBeenCalled();
-    expect(tx.costEnvelope.update).not.toHaveBeenCalled();
+    expect(tx.costEnvelope.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        projectId: "project-1",
+        OR: [
+          { narrationJob: { is: { status: "completed" } } },
+          { presentationJob: { is: { status: "failed" } } },
+        ],
+      },
+    }));
+    expect(tx.costEnvelope.update).toHaveBeenCalledWith({
+      where: { id: "attempt-group-1" },
+      data: { presentationJobId: "presentation-retry-job" },
+    });
   });
 });
 
