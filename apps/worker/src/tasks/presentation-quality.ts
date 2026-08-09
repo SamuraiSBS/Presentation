@@ -1114,6 +1114,26 @@ export function applyVisualPlanFallbacks(presentation: PresentationDocument, iss
   });
 }
 
+/**
+ * A design brief is only a plan. Materialize its diagram directions into
+ * slide data so the canvas builder, editor, and exporter all receive an
+ * actual visual rather than a direction that they cannot render.
+ */
+export function materializePlannedVisuals(
+  presentation: PresentationDocument,
+  options: { refreshDiagramFallbacks?: boolean } = {},
+): PresentationDocument {
+  const directions = new Map((presentation.designBrief?.slideDirections || []).map((direction) => [direction.slideOrder, direction]));
+  let changed = false;
+  const slides = presentation.slides.map((slide) => {
+    const direction = directions.get(slide.order);
+    if (slide.visual.image || (isSemanticDiagram(slide) && !options.refreshDiagramFallbacks) || direction?.imageStrategy !== "diagram") return slide;
+    changed = true;
+    return withGroundedDiagramFallback(slide);
+  });
+  return changed ? presentationSchema.parse({ ...presentation, slides }) : presentation;
+}
+
 function isSemanticDiagram(slide: Slide | undefined) {
   return Boolean(slide && ["process_diagram", "comparison_diagram", "cause_effect_diagram", "timeline", "mind_map", "schema"].includes(slide.visual.type));
 }
@@ -1152,7 +1172,9 @@ function withGroundedDiagramFallback(slide: Slide): Slide {
 }
 
 function mermaidFallbackText(value: string) {
-  return cleanText(value).replace(/[<>{}[\]|"`]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "Идея";
+  // Mermaid flowchart nodes render as compact labels in both the web canvas
+  // and PPTX fallback. Keep them short enough to avoid clipped text.
+  return cleanText(value).replace(/[<>{}[\]|"`]/g, " ").replace(/\s+/g, " ").trim().slice(0, 36) || "Идея";
 }
 
 function isConcreteVisualTopic(presentation: PresentationDocument, project?: QualityProjectInput) {

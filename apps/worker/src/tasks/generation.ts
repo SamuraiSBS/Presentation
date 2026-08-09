@@ -8,7 +8,7 @@ import {
   type PresentationDocument,
   type Source,
 } from "@studydeck/shared";
-import { productionQualityReleaseResult } from "./presentation-quality.js";
+import { materializePlannedVisuals, productionQualityReleaseResult } from "./presentation-quality.js";
 import { captureGenerationError, errorLogFields, logger, type TraceCarrier, withTraceSpan } from "../observability.js";
 import { getPrisma } from "../prisma.js";
 import { readObjectBuffer } from "../storage.js";
@@ -25,6 +25,7 @@ import {
 import { buildLocalPresentationFromAcceptedNarration, generateNarrationDraft, generatePresentationFromNarration } from "./presentation.js";
 import { assessFullNarrationDocument } from "./presentation/narration/processing.js";
 import { searchWebSources } from "./web-search.js";
+import { enrichPresentationImages } from "./image-search.js";
 import { runWithUsageContext } from "../usage-ledger.js";
 import { failCostEnvelope, finalizeFailedCostEnvelope, reserveCostEnvelope, settleCostEnvelope } from "../cost-envelope.js";
 import { EconomicReleaseGateError, evaluateEconomicReleaseGate } from "../economic-release-gate.js";
@@ -251,10 +252,19 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     const groundedPresentation = defenseBundle
       ? applyDefenseGroundingToPresentation(generatedPresentation, defenseBundle, project.sources)
       : generatedPresentation;
-    // This job begins with accepted narration and a fixed source snapshot.
-    // Keep retries local: post-acceptance image search would make the same
-    // presentation spend again and change between attempts.
-    const presentationWithImages = groundedPresentation;
+    // Directions are not display data. Turn each planned local diagram into a
+    // real slide visual before the canvas is built, including local recovery
+    // documents which do not pass through the provider quality orchestrator.
+    const presentationWithPlannedVisuals = materializePlannedVisuals(groundedPresentation);
+    // A fresh presentation attempt may make its bounded, idempotent photo
+    // lookups once. Recovery and retry paths stay entirely local: they reuse
+    // only persisted narration/sources and diagram fallbacks, never Tavily.
+    let presentationWithImages = presentationWithPlannedVisuals;
+    if (!usedLocalPresentationRecovery) {
+      await setStage("selecting_visuals");
+      presentationWithImages = await enrichPresentationImages(generationProject, presentationWithPlannedVisuals);
+      finishStage("selecting_visuals");
+    }
     await setStage("polishing");
     // The model may return a schema-valid but geometrically unsafe canvas. A
     // generated presentation is not user-edited yet, so rebuild its canvas
