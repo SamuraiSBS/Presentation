@@ -1,0 +1,447 @@
+# Выполнить implementation prompt
+
+> [00-implementation-prompt.md](plans/slide-text-speech-grounded-quality/00-implementation-prompt.md)
+> Работай в D:\presentation. Прочитай и выполни приложенный
+> plans/slide-text-speech-grounded-quality/00-implementation-prompt.md целиком.
+>
+> Это implementation-задача. Сначала прочитай AGENTS.md, проверь git status и
+> diff целевых файлов. В рабочем дереве есть чужие незакоммиченные изменения:
+> не затирай и не форматируй их. Если нужные строки пересекаются с ними —
+> остановись и дай точный отчёт о конфликте.
+>
+> Не запускай платные AI-вызовы, Docker rebuild/deploy и не создавай коммит без
+> моего отдельного разрешения. После реализации выполни только детерминированные
+> тесты и typecheck, затем дай отчёт с изменёнными файлами, результатами тестов
+> и непроверенным runtime.
+
+<details><summary>12 previous messages</summary>
+
+> Сначала сверю инструкции, состояние дерева и целевые файлы из приложенного implementation-пrompt. Платные вызовы, Docker-операции и коммит выполнять не буду.
+>
+> <details><summary>Ran 9 commands</summary>
+>
+> - Ran `$ErrorActionPreference = 'Stop'
+> Get-Content -Raw AGENTS.md`
+> - Ran `Get-Content -Raw plans\slide-text-speech-grounded-quality\00-implementation-prompt.md`
+> - Ran `rg -n -i -C 2 "slide-text-speech-grounded-quality|grounded-quality|speech grounded|slide text" "C:\Users\Борис.BORIS\.codex\memories\MEMORY.md"`
+> - Ran `git -c safe.directory=D:/presentation status --short`
+> - Ran `$text = Get-Content -Raw -Encoding utf8 plans\slide-text-speech-grounded-quality\00-implementation-prompt.md
+> $text.Length`
+> - Ran `$text = Get-Content -Raw -Encoding utf8 plans\slide-text-speech-grounded-quality\00-implementation-prompt.md
+> $text.Substring(0, 4200)`
+> - Ran `$text = Get-Content -Raw -Encoding utf8 plans\slide-text-speech-grounded-quality\00-implementation-prompt.md
+> $text.Substring(4200, 4200)`
+> - Ran `$text = Get-Content -Raw -Encoding utf8 plans\slide-text-speech-grounded-quality\00-implementation-prompt.md
+> $text.Substring(8400, 4125)`
+> - Ran `$targets = @(
+>   'apps/worker/src/tasks/presentation/planning/builders.ts',
+>   'packages/shared/src/generation/schemas.ts',
+>   'apps/worker/src/tasks/presentation/prompts/builders.ts',
+>   'apps/worker/src/tasks/presentation-quality.ts',
+>   'apps/worker/src/tasks/presentation/quality/orchestration.ts',
+>   'apps/worker/src/tasks/presentation/providers/generation.ts',
+>   'apps/worker/src/tasks/presentation-quality.test.ts'
+> )
+> git -c safe.directory=D:/presentation diff -- @targets`
+>
+> </details>
+>
+> В целевых файлах незакоммиченных изменений нет: присутствуют только чужое удаление `.audit-bmw/tmpw120oeib/enlarged.pptx` и неотслеживаемая `.worktrees/`, их не затрагиваю. Сейчас сопоставляю фактический путь генерации и существующие тестовые точки перед узким изменением.
+>
+> <details><summary>Ran 19 commands</summary>
+>
+> - Ran `rg -n -C 3 "findSlideSpeechAlignmentIssues|findGenericTextIssues|applyVisibleTextIntegrityFallbacks|applySlideSpeechAlignmentFallbacks|improvePresentationQuality|productionQualityReleaseResult" apps/worker/src/tasks/presentation-quality.ts apps/worker/src/tasks/presentation/quality/orchestration.ts apps/worker/src/tasks/presentation/providers/generation.ts`
+> - Ran `rg -l "buildSlideTextPlans|findSlideSpeechAlignmentIssues|applyVisibleTextIntegrityFallbacks|productionQualityReleaseResult|slide_text_repair" apps/worker/src --glob "*.test.ts" | Sort-Object`
+> - Ran `rg -n -C 3 "buildSlideTextPlans|SlideTextPlan|sourceEvidenceForSlide|audienceQuestion|slidePurpose|coreClaim" apps/worker/src/tasks/presentation/planning/builders.ts packages/shared/src/generation/schemas.ts apps/worker/src/tasks/presentation/prompts/builders.ts`
+> - Ran `Get-Content packages/shared/src/generation/schemas.ts | Select-Object -Skip 84 -First 24
+> Get-Content apps/worker/src/tasks/presentation/prompts/builders.ts | Select-Object -Skip 770 -First 41`
+> - Ran `Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 700 -First 140
+> Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 1900 -First 285`
+> - Ran `Get-Content apps/worker/src/tasks/presentation/planning/builders.ts | Select-Object -Skip 672 -First 65`
+> - Ran `rg -n -C 2 "function (acceptedNarrationSentences|uniqueCompactSentences|compactSentence|compactTitle|parseAcceptedNarrationSections|buildSlideSemanticContracts|collectSlideTextEntries|isCompleteScreenSentence|hasGenericOrMetaScreenText)|const (acceptedNarrationSentences|uniqueCompactSentences)" apps/worker/src/tasks/presentation-quality.ts apps/worker/src/tasks/presentation/planning/builders.ts`
+> - Ran `rg -n -C 2 "slideLayoutSchema|SlideLayout|layout: z|slideKindSchema|SlideKind" packages/shared/src/generation/schemas.ts packages/shared/src/generation/*.ts`
+> - Ran `rg -n -C 2 "slide_text_repair|QualityRepairResponse|repair" apps/worker/src/tasks/presentation/providers/generation.ts apps/worker/src/tasks/presentation/quality/orchestration.ts apps/worker/src/tasks/presentation/prompts/builders.ts`
+> - Ran `rg -n -C 2 "slide_text_repair|QualityRepairResponse|repair" apps/worker/src/tasks/presentation/providers/generation.ts apps/worker/src/tasks/presentation/quality/orchestration.ts apps/worker/src/tasks/presentation/prompts/builders.ts`
+> - Ran `rg -n -C 2 "function (acceptedNarrationSentences|uniqueCompactSentences|compactSentence|compactTitle|parseAcceptedNarrationSections|buildSlideSemanticContracts|collectSlideTextEntries|isCompleteScreenSentence|hasGenericOrMetaScreenText)|const (acceptedNarrationSentences|uniqueCompactSentences)" apps/worker/src/tasks/presentation-quality.ts apps/worker/src/tasks/presentation/planning/builders.ts`
+> - Ran `rg -n -C 2 "slideLayoutSchema|SlideLayout|slideKindSchema|SlideKind" packages/shared/src --glob "*.ts"`
+> - Ran `Get-Content apps/worker/src/tasks/presentation/quality/orchestration.ts | Select-Object -Skip 150 -First 200`
+> - Ran `rg -n -C 2 "slide speech|speech alignment|visible text integrity|text plan|generic_text|contentContract|release result|editor-ready|repairReleaseCandidate|accepted narration" apps/worker/src/tasks/presentation-quality.test.ts apps/worker/src/tasks/presentation.test.ts apps/worker/src/tasks/generation.test.ts apps/worker/src/tasks/generation-recovery-actual-gate.test.ts apps/worker/src/tasks/presentation/orchestrator.editable-draft.test.ts`
+> - Ran `Get-Content apps/worker/src/tasks/presentation/quality/orchestration.ts | Select-Object -Skip 400 -First 105`
+> - Ran `Get-Content apps/worker/src/tasks/presentation-quality.test.ts | Select-Object -Skip 350 -First 130
+> Get-Content apps/worker/src/tasks/presentation-quality.test.ts | Select-Object -Skip 990 -First 125`
+> - Ran `rg -n -C 4 "function buildSlideTextRepairPrompt|function applySlideTextRepairs|slideTextRepairSchema" apps/worker/src/tasks/presentation/quality/orchestration.ts apps/worker/src/tasks/presentation/prompts/builders.ts apps/worker/src/tasks/presentation/schemas.ts`
+> - Ran `Get-Content apps/worker/src/tasks/presentation-quality.test.ts | Select-Object -Skip 1 -First 225`
+> - Ran `Get-Content apps/worker/src/tasks/presentation/quality/orchestration.ts | Select-Object -Skip 585 -First 200
+> Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 650 -First 86
+> Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 2180 -First 80
+> Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 2475 -First 62`
+>
+> </details>
+>
+> Путь подтверждён: принятая речь → `buildSlideTextPlans` → provider JSON → `finalizeGeneratedPresentation`/детерминированный аудит → `repairReleaseCandidate`. Минимальный diff ограничу планированием, prompt-ограничениями и локальными fallback/audit-ветками: они будут брать видимую проекцию только из section того же номера, а при недостатке опор уменьшать её, а не дописывать текст из plan/source.
+>
+> <details><summary>Created a file, edited 6 files, ran 9 commands</summary>
+>
+> - Ran `rg -n -C 3 "function findContentSlideContractIssues|function visibleSlideText\(|function hasGenericOrMetaScreenText|function isGeneric.*Text|function rebuildGeneratedCanvases" apps/worker/src/tasks/presentation-quality.ts
+> Get-Content apps/worker/src/tasks/presentation/quality/orchestration.ts | Select-Object -Skip 714 -First 180`
+> - Ran `Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 435 -First 78
+> Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 2452 -First 23
+> Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 2310 -First 60`
+> - Ran `Get-ChildItem apps/worker/src/tasks/presentation/planning -Filter *.test.ts | Select-Object -ExpandProperty FullName
+> Get-ChildItem apps/worker/src/tasks/presentation/prompts -Filter *.test.ts | Select-Object -ExpandProperty FullName`
+> - Ran `Get-Content apps/worker/src/tasks/presentation/prompts/builders.test.ts | Select-Object -First 180`
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+20 -4)
+> - Wrote `./apps/worker/src/tasks/presentation/planning/builders.ts` (+15 -14)
+> - Wrote `./apps/worker/src/tasks/presentation/prompts/builders.ts` (+3 -3)
+> - Wrote `./packages/shared/src/generation/schemas.ts` (+3 -1)
+> - Ran `Select-String -Path apps/worker/src/tasks/presentation/planning/builders.ts -Pattern '_narrativePlan|narrativePlan: SlideNarrative' | Select-Object LineNumber,Line
+> Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 1960 -First 100`
+> - Ran `Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 2060 -First 115`
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+9 -23)
+> - Wrote `./apps/worker/src/tasks/presentation/planning/builders.ts` (+2 -2)
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+3 -7)
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+18 -3)
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+6 -17)
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+9 -2)
+> - Ran `rg -n "blockContent|function rebuildVisibleContentFromAcceptedNarration|project\." apps/worker/src/tasks/presentation-quality.ts | Select-Object -Last 20
+> rg -n "fallbackSlideText|fallbackTitle|buildFallbackBulletItems|ensureRange|sentenceFragment|shortenCompleteSentence" apps/worker/src/tasks/presentation/quality/orchestration.ts`
+> - Ran `git -c safe.directory=D:/presentation diff --stat
+> git -c safe.directory=D:/presentation diff --check
+> git -c safe.directory=D:/presentation diff -- apps/worker/src/tasks/presentation/planning/builders.ts packages/shared/src/generation/schemas.ts apps/worker/src/tasks/presentation/prompts/builders.ts apps/worker/src/tasks/presentation-quality.ts apps/worker/src/tasks/presentation/quality/orchestration.ts`
+> - Ran `Get-Content apps/worker/package.json -Raw
+> Get-Content package.json -Raw`
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+4 -3)
+> - Wrote `./apps/worker/src/tasks/presentation/planning/builders.test.ts` (+45 -0)
+> - Wrote `./apps/worker/src/tasks/presentation-quality.test.ts` (+2 -1)
+> - Wrote `./apps/worker/src/tasks/presentation-quality.test.ts` (+1 -1)
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+5 -1)
+> - Wrote `./apps/worker/src/tasks/presentation-quality.test.ts` (+27 -0)
+>
+> </details>
+>
+> Изменения внесены, включая новые детерминированные тесты для изоляции речи от narrative/source и для безопасного удаления слабых bullets. Запускаю только worker Vitest и typecheck; внешние API и Docker не задействуются.
+>
+> <details><summary>Edited 5 files, ran 11 commands</summary>
+>
+> - Ran `npm run test -w @studydeck/worker -- --runInBand apps/worker/src/tasks/presentation/planning/builders.test.ts apps/worker/src/tasks/presentation-quality.test.ts`
+> - Ran `npm run test -w @studydeck/worker -- apps/worker/src/tasks/presentation/planning/builders.test.ts apps/worker/src/tasks/presentation-quality.test.ts`
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation/planning/builders.test.ts src/tasks/presentation-quality.test.ts`
+> - Ran `rg -n -C 3 "function hasGenericOrMetaScreenText|GENERIC_SCREEN_TEXT_PHRASES|GENERIC_NARRATION_PHRASES" apps/worker/src/tasks/presentation-quality.ts apps/worker/src/tasks/presentation/constants.ts`
+> - Ran `rg -n -C 5 "hasGenericOrMetaScreenText" apps/worker/src/tasks/presentation-quality.ts
+> Get-Content apps/worker/src/tasks/presentation/constants.ts | Select-Object -Skip 300 -First 75`
+> - Ran `rg -n -C 4 "export function hasGenericOrMetaScreenText" apps/worker/src/tasks/presentation/quality/orchestration.ts`
+> - Ran `Get-Content apps/worker/src/tasks/presentation/quality/orchestration.ts | Select-Object -Skip 924 -First 65`
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+7 -3)
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+1 -0)
+> - Wrote `./apps/worker/src/tasks/presentation/planning/builders.test.ts` (+2 -2)
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation/planning/builders.test.ts src/tasks/presentation-quality.test.ts`
+> - Wrote `./apps/worker/src/tasks/presentation-quality.test.ts` (+1 -1)
+> - Wrote `./apps/worker/src/tasks/presentation/planning/builders.test.ts` (+1 -0)
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation/planning/builders.test.ts src/tasks/presentation-quality.test.ts`
+> - Wrote `./apps/worker/src/tasks/presentation/planning/builders.test.ts` (+1 -1)
+> - Wrote `./apps/worker/src/tasks/presentation/planning/builders.ts` (+3 -1)
+> - Wrote `./packages/shared/src/generation/schemas.ts` (+1 -3)
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation/planning/builders.test.ts src/tasks/presentation-quality.test.ts`
+> - Ran `npm run typecheck -w @studydeck/worker`
+>
+> </details>
+>
+> Узкие проверки прошли: 52 Vitest-теста и worker typecheck. Дополнительно запускаю связанные deterministic-регрессии для генерации/фактического release gate; это по-прежнему без AI, сети и Docker.
+>
+> <details><summary>Edited 3 files, ran 8 commands</summary>
+>
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation.test.ts src/tasks/generation-recovery-actual-gate.test.ts src/tasks/presentation/orchestrator.editable-draft.test.ts`
+> - Ran `Get-Content apps/worker/src/tasks/presentation.test.ts | Select-Object -Skip 2380 -First 105
+> Get-Content apps/worker/src/tasks/presentation.test.ts | Select-Object -Skip 2615 -First 105
+> Get-Content apps/worker/src/tasks/presentation.test.ts | Select-Object -Skip 3000 -First 130`
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+10 -0)
+> - Wrote `./apps/worker/src/tasks/presentation.test.ts` (+1 -1)
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation.test.ts src/tasks/generation-recovery-actual-gate.test.ts src/tasks/presentation/orchestrator.editable-draft.test.ts`
+> - Ran `Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 1455 -First 95
+> Get-Content apps/worker/src/tasks/presentation/quality/orchestration.ts | Select-Object -Skip 300 -First 60`
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+6 -0)
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation.test.ts -t "hides weak visual blocks|uses slide speaker notes as the narration fallback"`
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+7 -0)
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation.test.ts -t "hides weak visual blocks|uses slide speaker notes as the narration fallback"`
+> - Wrote `./apps/worker/src/tasks/presentation.test.ts` (+1 -1)
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+0 -11)
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation.test.ts -t "hides weak visual blocks|uses slide speaker notes as the narration fallback"`
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+1 -1)
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation.test.ts -t "hides weak visual blocks|uses slide speaker notes as the narration fallback"`
+>
+> </details>
+>
+> Расширенный набор выявил два старых integration-like сценария в `presentation.test.ts`, которые теперь доходят до release gate с `bad_narration`/`schema_risk`; узкие новые тесты и actual release-gate recovery остаются зелёными. Завершаю проверку типов и фиксирую точный статус без запуска runtime.
+>
+> <details><summary>Ran 3 commands</summary>
+>
+> - Ran `npm run typecheck -w @studydeck/worker`
+> - Ran `git -c safe.directory=D:/presentation diff --check
+> git -c safe.directory=D:/presentation status --short`
+> - Ran `git -c safe.directory=D:/presentation diff --name-only`
+>
+> </details>
+</details>
+
+Реализация внесена, но приёмку пока блокируют 2 deterministic-регрессии release path.
+
+Изменено:
+
+- [builders.ts](./apps/worker/src/tasks/presentation/planning/builders.ts) — slide text plan строится только из section N принятой речи; исключены narrative/source donors.
+- [builders.ts](./apps/worker/src/tasks/presentation/prompts/builders.ts) — provider явно ограничен section N для видимых полей.
+- [presentation-quality.ts](./apps/worker/src/tasks/presentation-quality.ts) — аудит слабых проекций, 0–3 bullets, локальная безопасная проекция из принятой речи.
+- [orchestration.ts](./apps/worker/src/tasks/presentation/quality/orchestration.ts) — repair prompt получает точную речь, тип и layout слайда.
+- [presentation-quality.test.ts](./apps/worker/src/tasks/presentation-quality.test.ts), [builders.test.ts](./apps/worker/src/tasks/presentation/planning/builders.test.ts) — новые детерминированные проверки.
+
+Проверки:
+
+- `npm run test -w @studydeck/worker -- src/tasks/presentation/planning/builders.test.ts src/tasks/presentation-quality.test.ts` — 52 passed.
+- `npm run typecheck -w @studydeck/worker` — passed.
+- Расширенный набор: 110 passed, 2 failed в `presentation.test.ts`:
+  - `hides weak visual blocks and keeps useful structured visuals` — release gate: `bad_narration`;
+  - `uses slide speaker notes as the narration fallback for each concrete slide` — release gate: `schema_risk`.
+
+Не запускал платные AI-вызовы, Docker rebuild/deploy, runtime и коммит. Чужие `.audit-bmw/.../enlarged.pptx` и `.worktrees/` не затронуты.
+
+Следующий шаг: устранить эти две детерминированные регрессии и повторить worker suite; только после зелёных тестов имеет смысл отдельно разрешать Docker/runtime-проверку.
+
+> делай
+
+<details><summary>8 previous messages</summary>
+
+> Исправляю две детерминированные регрессии release path и повторю связанные worker-тесты. Платные вызовы, Docker и коммит по-прежнему не запускаю.
+>
+> <details><summary>Edited a file, ran 4 commands</summary>
+>
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+1 -1)
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation.test.ts -t "hides weak visual blocks|uses slide speaker notes as the narration fallback"`
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+1 -1)
+> - Ran `rg -n -C 3 "function findShortNarrationIssues|speakerNotes.*bad_narration|category: \"bad_narration\"" apps/worker/src/tasks/presentation-quality.ts`
+> - Ran `rg -n -C 3 "findShortNarrationIssues|bad_narration" apps/worker/src/tasks/presentation-quality.ts`
+> - Ran `Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 1240 -First 65
+> Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 1378 -First 45`
+>
+> </details>
+>
+> Причины локализованы: один сценарий блокируется только слабостью accepted `speakerNotes`, второй — рассинхроном generated canvas после безопасной проекции. Исправляю release policy так, чтобы диагностировать эти text-only случаи, но выпускать канонически синхронизированный документ; schema/factual/provider defects останутся блокирующими.
+>
+> <details><summary>Edited 2 files, ran 8 commands</summary>
+>
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+4 -2)
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+1 -0)
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+1 -1)
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation.test.ts -t "hides weak visual blocks|uses slide speaker notes as the narration fallback"`
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+1 -1)
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation.test.ts -t "uses slide speaker notes as the narration fallback"`
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+5 -1)
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation.test.ts -t "uses slide speaker notes as the narration fallback"`
+> - Ran `rg -n -C 3 "function hasCustomSlideCanvas|hasCustomSlideCanvas" apps/worker/src/tasks/presentation-quality.ts packages/shared/src --glob "*.ts"`
+> - Ran `Get-Content packages/shared/src/presentation/canvas-builder.ts | Select-Object -Skip 1250 -First 62
+> Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 1415 -First 55`
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+8 -1)
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+1 -5)
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation.test.ts -t "hides weak visual blocks|uses slide speaker notes as the narration fallback"`
+> - Ran `Get-Content apps/worker/src/tasks/presentation/quality/orchestration.ts | Select-Object -First 55`
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+11 -2)
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation.test.ts -t "uses slide speaker notes as the narration fallback"`
+>
+> </details>
+
+> Исправь только подтверждённые пробелы задачи «visible text strictly grounded in matching accepted speech section».
+>
+> 1. В findSlideSpeechAlignmentIssues исключи narrative keyMessage из положительной семантической поддержки visible text: section N accepted narration — единственный текстовый донор. Narrative plan допускается только для диагностики/структуры, не для coverage, которое разрешает видимый текст.
+>
+> 2. Перепиши applyConclusionFallbacks: title, thesis, bullets, blocks и любые видимые подписи summary должны строиться только из parseAcceptedNarrationSections(generatedText) для того же slide.order. Удали narrative/earlierBeats/project-derived текстовые fallback-и и фабрикуемые выводы. При недостатке опор оставь компактный заголовок, один поддержанный тезис и ноль bullets. Не меняй accepted speech, source refs или custom canvas.
+>
+> 3. В applyNarrationFallbacks находи section по section.order === slide.order, а не по индексу массива; передавай тот же matching section в normalizeSlide. Добавь regression case без переноса между слайдами.
+>
+> 4. Добавь узкие тесты реального quality/release path:
+>    - narrative/source-only visible text при иной речи N обнаруживается и заменяется только проекцией section N;
+>    - summary не заимствует earlier beats, keyMessage или project text;
+>    - title, content, summary и один process/timeline/diagram layout соблюдают свои нормы плотности;
+>    - text-only defect выпускает editor-ready документ, а schema/factual defect остаётся блокирующим;
+>    - custom canvas, source refs, generatedText, speakerNotes и speechScript сохранены.
+>    Не делай положительное решение только по literal blacklist фраз: конкретная опора из речи должна сохраняться.
+>
+> После правок запусти только:
+> npm run test -w @studydeck/worker -- src/tasks/presentation/planning/builders.test.ts src/tasks/presentation-quality.test.ts src/tasks/presentation.test.ts src/tasks/generation-recovery-actual-gate.test.ts src/tasks/presentation/orchestrator.editable-draft.test.ts
+> npm run typecheck -w @studydeck/worker
+>
+> Не запускай AI/Tavily, Docker, runtime, deploy и не делай commit. Верни полный вывод команд, git diff --check, git diff --name-only, git status --short и явное подтверждение запретов.
+
+<details><summary>13 previous messages</summary>
+
+> Проверю текущий diff и подтверждённые точки перед узкими правками. Выполню только указанные worker-тесты и typecheck; AI/Tavily, Docker, runtime, deploy и commit не запускаю.
+>
+> <details><summary>Ran 2 commands</summary>
+>
+> - Ran `git -c safe.directory=D:/presentation status --short
+> git -c safe.directory=D:/presentation diff -- apps/worker/src/tasks/presentation-quality.ts apps/worker/src/tasks/presentation/quality/orchestration.ts apps/worker/src/tasks/presentation-quality.test.ts`
+> - Ran `rg -n -i -C 2 "slide-text-speech-grounded-quality|accepted speech|visible text" "C:\Users\Борис.BORIS\.codex\memories\MEMORY.md"`
+>
+> </details>
+>
+> Context compaction
+>
+> Source: automatic
+> Status: completed
+>
+> Продолжаю с уже подтверждённого diff: исправляю только три обозначенные точки и узкие регрессии, без запуска внешних или runtime-процессов.
+>
+> <details><summary>Edited 3 files, ran 10 commands</summary>
+>
+> - Ran `rg -n -C 18 "findSlideSpeechAlignmentIssues|applyConclusionFallbacks|applyNarrationFallbacks|function normalizeSlide" apps/worker/src/tasks/presentation-quality.ts apps/worker/src/tasks/presentation/quality/orchestration.ts; rg -n -C 8 "applyConclusionFallbacks|applyNarrationFallbacks|speech alignment|summary" apps/worker/src/tasks/presentation-quality.test.ts`
+> - Ran `Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 725 -First 95; Get-Content apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 1964 -First 175; Get-Content apps/worker/src/tasks/presentation/quality/orchestration.ts | Select-Object -Skip 780 -First 85; Get-Content apps/worker/src/tasks/presentation-quality.test.ts | Select-Object -Skip 1 -First 175; Get-Content apps/worker/src/tasks/presentation-quality.test.ts | Select-Object -Skip 304 -First 90`
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+6 -2)
+> - Ran `$OutputEncoding = [System.Text.UTF8Encoding]::new(); Get-Content -Encoding utf8 apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 1972 -First 145`
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+26 -81)
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+5 -4)
+> - Ran `$OutputEncoding = [System.Text.UTF8Encoding]::new(); Get-Content -Encoding utf8 apps/worker/src/tasks/presentation-quality.test.ts | Select-Object -Skip 850 -First 120; Get-Content -Encoding utf8 apps/worker/src/tasks/presentation-quality.test.ts | Select-Object -Skip 1060 -First 170; Get-Content -Encoding utf8 apps/worker/src/tasks/presentation/quality/orchestration.ts | Select-Object -Skip 740 -First 95`
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+4 -3)
+> - Ran `$OutputEncoding = [System.Text.UTF8Encoding]::new(); Get-Content -Encoding utf8 apps/worker/src/tasks/presentation/quality/orchestration.ts | Select-Object -Skip 750 -First 130; rg -n "ensureTopicAnchoredConclusion|ensureConclusionSupportingPoints|isCompleteConclusionStatement|acceptedNarrationSentences" apps/worker/src/tasks/presentation-quality.ts`
+> - Ran `rg -n -C 18 "repairs leaked|applySlideSpeechAlignmentFallbacks|repairReleaseCandidate\(" apps/worker/src/tasks/presentation-quality.test.ts; rg -n -C 10 "type SlideTextIssue|interface SlideTextIssue|export type SlideTextIssue" apps/worker/src/tasks/presentation/quality/orchestration.ts`
+> - Ran `$OutputEncoding = [System.Text.UTF8Encoding]::new(); rg -n -A 85 "export function applySlideSpeechAlignmentFallbacks" apps/worker/src/tasks/presentation-quality.ts; rg -n -A 80 "export function repairReleaseCandidate" apps/worker/src/tasks/presentation/quality/orchestration.ts`
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+3 -4)
+> - Ran `rg -n -C 6 "density|плотност|process|timeline|diagram|title slide|summary" plans/slide-text-speech-grounded-quality/00-implementation-prompt.md apps/worker/src/tasks/presentation-quality.ts apps/worker/src/tasks/presentation/prompts/builders.ts`
+> - Ran `$OutputEncoding = [System.Text.UTF8Encoding]::new(); Get-Content -Encoding utf8 plans/slide-text-speech-grounded-quality/00-implementation-prompt.md`
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+7 -6)
+> - Ran `rg -n -i -C 10 "editor.ready|text.only|text-only|factual|finalDisposition.*ready|acceptedNarrationRecovery" apps/worker/src/tasks/presentation-quality.test.ts apps/worker/src/tasks/generation-recovery-actual-gate.test.ts apps/worker/src/tasks/presentation/orchestrator.editable-draft.test.ts`
+> - Wrote `./apps/worker/src/tasks/presentation-quality.test.ts` (+94 -1)
+> - Wrote `./apps/worker/src/tasks/presentation-quality.test.ts` (+39 -0)
+> - Wrote `./apps/worker/src/tasks/presentation-quality.test.ts` (+1 -1)
+> - Wrote `./apps/worker/src/tasks/presentation-quality.test.ts` (+1 -1)
+>
+> </details>
+>
+> Изменения внесены: ключевая поддержка теперь идёт только от речи N, summary больше не берёт текст из плана/ранних слайдов/проекта, а narration fallback сопоставляет section по `order`. Запускаю только согласованный worker-набор и typecheck.
+>
+> <details><summary>Ran a command</summary>
+>
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation/planning/builders.test.ts src/tasks/presentation-quality.test.ts src/tasks/presentation.test.ts src/tasks/generation-recovery-actual-gate.test.ts src/tasks/presentation/orchestrator.editable-draft.test.ts`
+>
+> </details>
+>
+> Первый прогон выявил две детерминированные регрессии: одно ожидание теперь должно отражать корректный заголовок из section N; новый order-тест использовал английские заголовки, которые parser narration не распознаёт. Исправляю только эти тестовые данные и повторяю тот же набор.
+>
+> <details><summary>Edited a file, ran 2 commands</summary>
+>
+> - Wrote `./apps/worker/src/tasks/presentation-quality.test.ts` (+2 -2)
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation/planning/builders.test.ts src/tasks/presentation-quality.test.ts src/tasks/presentation.test.ts src/tasks/generation-recovery-actual-gate.test.ts src/tasks/presentation/orchestrator.editable-draft.test.ts`
+> - Ran `npm run typecheck -w @studydeck/worker`
+>
+> </details>
+>
+> Проверки проходят: 5 файлов тестов, 168 тестов; typecheck без ошибок. Выполняю запрошенные финальные git-проверки без модификации дерева.
+>
+> <details><summary>Edited a file, ran 3 commands</summary>
+>
+> - Ran `git -c safe.directory=D:/presentation diff --check`
+> - Ran `git -c safe.directory=D:/presentation diff --name-only`
+> - Ran `git -c safe.directory=D:/presentation status --short`
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+3 -1)
+>
+> </details>
+>
+> Дополнительно закрыл видимые поля summary: описание visual и definition теперь тоже пересобираются из section N, а пустой список не оставляет пустой block. Повторяю ровно тот же согласованный набор проверок.
+>
+> <details><summary>Ran 5 commands</summary>
+>
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation/planning/builders.test.ts src/tasks/presentation-quality.test.ts src/tasks/presentation.test.ts src/tasks/generation-recovery-actual-gate.test.ts src/tasks/presentation/orchestrator.editable-draft.test.ts`
+> - Ran `npm run typecheck -w @studydeck/worker`
+> - Ran `git -c safe.directory=D:/presentation diff --check`
+> - Ran `git -c safe.directory=D:/presentation diff --name-only`
+> - Ran `git -c safe.directory=D:/presentation status --short`
+>
+> </details>
+</details>
+
+Исправил подтверждённые пробелы. Две детерминированные регрессии устранены; worker suite снова зелёный.
+
+- `findSlideSpeechAlignmentIssues` учитывает только accepted narration section N; `keyMessage` больше не даёт положительного coverage.
+- Summary fallback берёт title/thesis/bullets/blocks/definition/visual captions только из matching `generatedText` section N; без project, narrative и earlier beats.
+- `applyNarrationFallbacks` сопоставляет section по `order`, добавлен тест на непоследовательный порядок sections.
+- Добавлены проверки source/narrative-only текста, плотности title/content/process/summary и сохранения canonical полей/canvas.
+
+Изменённые файлы:
+
+- [presentation-quality.ts](./apps/worker/src/tasks/presentation-quality.ts)
+- [presentation-quality.test.ts](./apps/worker/src/tasks/presentation-quality.test.ts)
+- [orchestration.ts](./apps/worker/src/tasks/presentation/quality/orchestration.ts)
+- [builders.ts](./apps/worker/src/tasks/presentation/planning/builders.ts)
+- [builders.test.ts](./apps/worker/src/tasks/presentation/planning/builders.test.ts)
+- [builders.ts](./apps/worker/src/tasks/presentation/prompts/builders.ts)
+
+Результат тестов — полный вывод:
+
+```text
+> @studydeck/worker@1.0.0 test
+> vitest run --passWithNoTests src/tasks/presentation/planning/builders.test.ts src/tasks/presentation-quality.test.ts src/tasks/presentation.test.ts src/tasks/generation-recovery-actual-gate.test.ts src/tasks/presentation/orchestrator.editable-draft.test.ts
+
+ RUN  v2.1.9 D:/presentation/apps/worker
+
+ ✓ src/tasks/presentation/orchestrator.editable-draft.test.ts (6 tests) 13ms
+ ✓ src/tasks/presentation/planning/builders.test.ts (1 test) 39ms
+ ✓ src/tasks/generation-recovery-actual-gate.test.ts (5 tests) 2371ms
+   ✓ accepted narration local recovery with the actual production gate > recovers a provider failure to ready through the real release gate without a second provider or Tavily call 1036ms
+   ✓ accepted narration local recovery with the actual production gate > does not spend again when a retry inherits a terminal envelope 694ms
+   ✓ accepted narration local recovery with the actual production gate > rejects malformed, generic, and local-only artifacts before local recovery 632ms
+ ✓ src/tasks/presentation-quality.test.ts (55 tests) 844ms
+ ✓ src/tasks/presentation.test.ts (101 tests) 7036ms
+   ✓ Yandex narration full duration rewrite > builds a release-ready ten-slide local document from accepted narration without provider calls 591ms
+   ✓ Yandex narration full duration rewrite > keeps an accepted full narration with soft timing targets when the slide provider fails 483ms
+   ✓ generatePresentation fallback behavior > accepts a human study-story deck with semantic titles and concrete details 388ms
+   ✓ generatePresentation fallback behavior > asks the provider to rewrite the full speech after repeated template text 357ms
+   ✓ generatePresentation fallback behavior > rewrites the full narration when many slides repeat the same opening phrase 347ms
+   ✓ generatePresentation fallback behavior > hides weak visual blocks and keeps useful structured visuals 646ms
+   ✓ generatePresentation fallback behavior > repairs generic filler and fragments before saving production output 458ms
+   ✓ generatePresentation fallback behavior > repairs repeated generic slide titles from the generated outline 428ms
+
+ Test Files  5 passed (5)
+      Tests  168 passed (168)
+```
+
+```text
+> @studydeck/worker@1.0.0 typecheck
+> tsc --noEmit
+```
+
+`git diff --check` — exit 0; предупреждения только о CRLF и недоступном чужом удалённом `.pptx`:
+
+```text
+.audit-bmw/tmpw120oeib/enlarged.pptx: Permission denied
+warning: in the working copy of 'apps/worker/src/tasks/presentation-quality.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation-quality.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation/planning/builders.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation/prompts/builders.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation/quality/orchestration.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'packages/shared/src/generation/schemas.ts', LF will be replaced by CRLF the next time Git touches it
+```
+
+`git diff --name-only`:
+
+```text
+apps/worker/src/tasks/presentation-quality.test.ts
+apps/worker/src/tasks/presentation-quality.ts
+apps/worker/src/tasks/presentation/planning/builders.ts
+apps/worker/src/tasks/presentation/prompts/builders.ts
+apps/worker/src/tasks/presentation/quality/orchestration.ts
+.audit-bmw/tmpw120oeib/enlarged.pptx: Permission denied
+```
+
+`git status --short`:
+
+```text
+ D .audit-bmw/tmpw120oeib/enlarged.pptx
+ M apps/worker/src/tasks/presentation-quality.test.ts
+ M apps/worker/src/tasks/presentation-quality.ts
+ M apps/worker/src/tasks/presentation/planning/builders.ts
+ M apps/worker/src/tasks/presentation/prompts/builders.ts
+ M apps/worker/src/tasks/presentation/quality/orchestration.ts
+?? .worktrees/
+?? apps/worker/src/tasks/presentation/planning/builders.test.ts
+?? "plans/slide-text-speech-grounded-quality/\320\236\321\202\321\207\321\221\321\202 00-implementation-prompt.txt"
+warning: could not open directory '.audit-bmw/tmpw120oeib/': No such file or directory
+```
+
+AI/Tavily, Docker, runtime, deploy и commit не запускались. Runtime намеренно не проверялся.

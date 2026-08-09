@@ -1,0 +1,110 @@
+Ты — implementation/live-validation executor для StudyDeck AI в D:\presentation.
+
+Цель: выполнить отдельную live runtime-проверку принятой реализации
+«качественный видимый текст слайдов строго основан на речи section N».
+Это не задача на новую реализацию: не редактируй production-код, не рефактори
+и не исправляй найденные дефекты в этой задаче.
+
+Пользователь явно разрешил только этот этап:
+
+1. Узко пересобрать и перезапустить Docker service `worker` из текущего checkout.
+2. Выполнить ровно ОДИН provider-backed live generation job в существующих
+   лимитах CostEnvelope.
+3. Собрать доказательства из Docker, API/job, БД и итогового PresentationDocument.
+4. Создать repo-backed отчёт:
+   `plans/slide-text-speech-grounded-quality/02-live-runtime-validation-report.md`.
+
+Строгие запреты:
+
+- Не меняй TypeScript, схемы, тесты, env-файлы, миграции или compose-конфигурацию.
+- Не делай git add/commit/revert/reset/clean.
+- Не пересобирай `web`, `api`, `caddy` и не выполняй полный compose rebuild.
+- Не делай второй generation job, ручной retry, повторный paid вызов или
+  provider repair вне уже встроенной логики единственного job.
+- Не запускай Tavily/web search. Используй существующий no-search путь;
+  если его безопасно определить нельзя, остановись до создания job.
+- Не записывай в отчёт ключи, токены, пароли, полные `.env` или чувствительные данные.
+- Не удаляй и не форматируй чужие изменения, включая `.audit-bmw/...`,
+  `.worktrees/` и ранее созданные отчёты.
+
+Сначала полностью прочитай:
+
+- `AGENTS.md`
+- `plans/slide-text-speech-grounded-quality/00-implementation-prompt.md`
+- `plans/slide-text-speech-grounded-quality/01-read-only-coordinator-prompt.md`
+- `plans/slide-text-speech-grounded-quality/Пятый отчёт 00-implementation-prompt.txt`
+
+Фаза A — read-only preflight:
+
+1. Выполни `git status --short`, `git diff --name-only` и diff только target-файлов.
+2. Зафиксируй чужие изменения отдельно; не засчитывай их в результат.
+3. Убедись, что task-diff включает worker quality/planning/prompt/normalization
+   изменения и tests, а `packages/shared`, API и web не требуют rebuild.
+4. Проверь Docker engine, `docker compose ps` и API health.
+5. Определи текущий provider и наличие пригодного CostEnvelope без вывода секретов.
+   Если engine/API/CostEnvelope не готовы — не создавай job, запиши точную
+   блокировку в отчёт и остановись.
+
+Фаза B — узкий deploy worker:
+
+1. Выполни только:
+   - `docker compose build worker`
+   - `docker compose up -d worker`
+2. Подтверди, что новый worker container запущен, а API остаётся healthy.
+3. Не трогай остальные сервисы. Если worker не поднялся — собери логи и
+   остановись без code changes и без generation job.
+
+Фаза C — единственный live generation job:
+
+1. Найди в текущем коде/существующих runtime-процедурах штатный API/UI путь
+   создания presentation generation job без Tavily и без прямых DB-write.
+2. Используй короткий нейтральный русский учебный запрос, например:
+   «Как регулярная обратная связь помогает студенту исправлять ошибки:
+   механизм, условия и последствия».
+3. До отправки зафиксируй:
+   - provider/model без секретов;
+   - job/project identifier;
+   - CostEnvelope identifier и разрешённый лимит;
+   - что это первый и единственный job этой проверки.
+4. Отправь ровно один job. Не нажимай Retry и не создавай второй project/job.
+5. Дождись terminal state штатным polling-путём. При failure не исправляй код,
+   не перезапускай generation и не расходуй дополнительные средства.
+
+Фаза D — доказательства после job:
+
+Только если job завершился успешно, прочитай сохранённый документ и докажи:
+
+1. Worker действительно работал из обновлённого контейнера.
+2. Job и presentation дошли до `ready`/успешного terminal state.
+3. Для каждого slide order N:
+   - section N из `generatedText`;
+   - `speakerNotes`;
+   - `speechScript[N]`;
+   связаны с тем же N и не смещены на соседний слайд.
+4. В итоговом документе присутствует production quality gate; нет terminal
+   text-only failure.
+5. Сохранены source refs и generated/custom canvas согласно фактическому
+   контракту документа.
+6. Итоговый ledger/CostEnvelope не превысил установленный лимит и не содержит
+   ручного повторного расхода.
+7. Не использовались Tavily/web search, Docker rebuild кроме worker,
+   ручные retries, deploy или commit.
+
+Для DB-доказательств используй только read-only SQL через существующий
+`docker compose exec -T postgres psql` подход. Не создавай и не изменяй данные
+напрямую через БД.
+
+Отчёт `02-live-runtime-validation-report.md` должен содержать:
+
+- scope и список фактически выполненных команд;
+- preflight и container/image evidence;
+- provider/model, job/project/presentation/CostEnvelope IDs без секретов;
+- результат job и состояние затрат;
+- компактную таблицу `slide N -> accepted section N -> speakerNotes -> speechScript`;
+- ссылку/идентификатор сохранённого документа и quality gate;
+- runtime gaps;
+- явное подтверждение отсутствия повторов, Tavily, лишних rebuild, deploy и commit;
+- финальный вердикт только `LIVE ACCEPTED` или `LIVE NOT ACCEPTED`.
+
+Если доказательства неполные или job неуспешен, верни `LIVE NOT ACCEPTED`,
+приложи точную причину и остановись. Не выполняй исправления самостоятельно.

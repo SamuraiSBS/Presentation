@@ -1,0 +1,127 @@
+> Закрой два оставшихся provider-repair обхода section-N-only.
+>
+> 1. В buildQualityRepairPrompt убери разрешение использовать matching narrative-plan item и требование narrative-plan takeaway для видимого текста. Для каждого repair передавай точную accepted section N (включая title/text), затронутые поля, slideKind и layout; явно запрети narrative plan, sources, project request и другой section как текстовые доноры. Narrative plan допустим только для выбора существующей структуры.
+>
+> 2. В applySlideTextRepairs создай narrationByOrder и передавай в normalizeSlide section только по slide.order, не по индексу массива. Добавь прямой regression test: sections стоят в обратном порядке, provider repair затрагивает слайд 1, а fallback title/text не получает Anchor слайда 2.
+>
+> 3. Обнови устаревший комментарий applyTopicRelevanceFallbacks: никакого narrative fallback там нет.
+>
+> Добавь/обнови тест prompt-builder-а, доказывающий, что provider repair получает только section N и явный запрет на narrative/source/project donors. Затем повтори согласованный набор из пяти test-файлов и worker typecheck.
+>
+> Не запускай AI/Tavily, Docker, runtime, deploy и не делай commit. В отчёте приложи полный вывод команд, git diff --check, git diff --name-only и git status --short.
+
+<details><summary>6 previous messages</summary>
+
+> Проверю текущие provider-repair prompt и normalizer, затем внесу только эти два обхода и узкие тесты. Внешние provider, Docker и runtime не запускаю.
+>
+> <details><summary>Edited 3 files, ran 6 commands</summary>
+>
+> - Ran `rg -n -C 8 "buildQualityRepairPrompt|applySlideTextRepairs|applyTopicRelevanceFallbacks" apps/worker/src/tasks/presentation-quality.ts apps/worker/src/tasks/presentation/quality/orchestration.ts apps/worker/src/tasks/presentation-quality.test.ts apps/worker/src/tasks/presentation.test.ts; rg -n -C 2 "section N|narrative plan|provider repair|quality repair" C:\Users\Борис.BORIS\.codex\memories\MEMORY.md`
+> - Ran `$OutputEncoding = [System.Text.UTF8Encoding]::new(); Get-Content -Encoding utf8 apps/worker/src/tasks/presentation/quality/orchestration.ts | Select-Object -Skip 620 -First 190; Get-Content -Encoding utf8 apps/worker/src/tasks/presentation-quality.ts | Select-Object -Skip 1918 -First 40; rg -n -C 8 "buildQualityRepairPrompt|applySlideTextRepairs" apps/worker/src/tasks/presentation/quality/*.test.ts apps/worker/src/tasks/*test.ts`
+> - Wrote `./apps/worker/src/tasks/presentation-quality.ts` (+2 -2)
+> - Wrote `./apps/worker/src/tasks/presentation/quality/orchestration.ts` (+26 -30)
+> - Ran `rg -n -C 6 "buildQualityRepairPrompt|applySlideTextRepairs" apps/worker/src/tasks`
+> - Ran `Get-Content apps/worker/src/tasks/presentation/orchestrator.editable-draft.test.ts -Encoding utf8 | Select-Object -First 260`
+> - Ran `rg -n -C 6 "function normalizeSlide|export function normalizeSlide" apps/worker/src/tasks/presentation/quality/orchestration.ts apps/worker/src/tasks/presentation/normalization/presentation.ts`
+> - Ran `Get-Content apps/worker/src/tasks/presentation/normalization/presentation.ts -Encoding utf8 | Select-Object -Skip 330 -First 55`
+> - Wrote `./apps/worker/src/tasks/presentation-quality.test.ts` (+35 -1)
+>
+> </details>
+>
+> Provider-repair prompt теперь передаёт только `acceptedSection { order, title, text }` для каждого repair и список затронутых полей; narrative/source/project/current text исключены как доноры. Добавил regression на reverse-order sections для `applySlideTextRepairs`. Запускаю согласованный набор.
+>
+> <details><summary>Ran 2 commands</summary>
+>
+> - Ran `npm run test -w @studydeck/worker -- src/tasks/presentation/planning/builders.test.ts src/tasks/presentation-quality.test.ts src/tasks/presentation.test.ts src/tasks/generation-recovery-actual-gate.test.ts src/tasks/presentation/orchestrator.editable-draft.test.ts`
+> - Ran `npm run typecheck -w @studydeck/worker`
+>
+> </details>
+>
+> Тесты: 5/5 файлов, 169/169 тестов; worker typecheck прошёл. Снимаю финальные git-проверки без изменения файлов.
+>
+> <details><summary>Ran 3 commands</summary>
+>
+> - Ran `git -c safe.directory=D:/presentation diff --check`
+> - Ran `git -c safe.directory=D:/presentation diff --name-only`
+> - Ran `git -c safe.directory=D:/presentation status --short`
+>
+> </details>
+</details>
+
+Закрыл provider-repair обходы section-N-only.
+
+- `buildQualityRepairPrompt` передаёт exact `acceptedSection { order, title, text }`, поля, `slideKind` и `layout`; явно запрещает narrative plan, sources, project request, current text и другие sections как текстовые доноры.
+- `applySlideTextRepairs` теперь сопоставляет narration section по `slide.order`.
+- Устаревший комментарий topic fallback исправлен: donor только matching accepted section.
+- Добавлен regression на reverse-order sections для prompt и provider-repair normalization.
+
+Затронуты:
+
+- [orchestration.ts](./apps/worker/src/tasks/presentation/quality/orchestration.ts)
+- [presentation-quality.ts](./apps/worker/src/tasks/presentation-quality.ts)
+- [presentation-quality.test.ts](./apps/worker/src/tasks/presentation-quality.test.ts)
+
+Полный вывод тестов:
+
+```text
+> @studydeck/worker@1.0.0 test
+> vitest run --passWithNoTests src/tasks/presentation/planning/builders.test.ts src/tasks/presentation-quality.test.ts src/tasks/presentation.test.ts src/tasks/generation-recovery-actual-gate.test.ts src/tasks/presentation/orchestrator.editable-draft.test.ts
+
+ RUN  v2.1.9 D:/presentation/apps/worker
+
+ ✓ src/tasks/presentation/orchestrator.editable-draft.test.ts (6 tests) 20ms
+ ✓ src/tasks/generation-recovery-actual-gate.test.ts (5 tests) 2109ms
+ ✓ src/tasks/presentation/planning/builders.test.ts (1 test) 43ms
+ ✓ src/tasks/presentation-quality.test.ts (56 tests) 815ms
+ ✓ src/tasks/presentation.test.ts (101 tests) 7096ms
+
+ Test Files  5 passed (5)
+      Tests  169 passed (169)
+```
+
+```text
+> @studydeck/worker@1.0.0 typecheck
+> tsc --noEmit
+```
+
+`git diff --check` — exit 0:
+
+```text
+.audit-bmw/tmpw120oeib/enlarged.pptx: Permission denied
+warning: in the working copy of 'apps/worker/src/tasks/presentation-quality.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation-quality.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation/planning/builders.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation/prompts/builders.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/worker/src/tasks/presentation/quality/orchestration.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'packages/shared/src/generation/schemas.ts', LF will be replaced by CRLF the next time Git touches it
+```
+
+`git diff --name-only`:
+
+```text
+apps/worker/src/tasks/presentation-quality.test.ts
+apps/worker/src/tasks/presentation-quality.ts
+apps/worker/src/tasks/presentation/planning/builders.ts
+apps/worker/src/tasks/presentation/prompts/builders.ts
+apps/worker/src/tasks/presentation/quality/orchestration.ts
+.audit-bmw/tmpw120oeib/enlarged.pptx: Permission denied
+```
+
+`git status --short`:
+
+```text
+ D .audit-bmw/tmpw120oeib/enlarged.pptx
+ M apps/worker/src/tasks/presentation-quality.test.ts
+ M apps/worker/src/tasks/presentation-quality.ts
+ M apps/worker/src/tasks/presentation/planning/builders.ts
+ M apps/worker/src/tasks/presentation/prompts/builders.ts
+ M apps/worker/src/tasks/presentation/quality/orchestration.ts
+?? .worktrees/
+?? apps/worker/src/tasks/presentation/planning/builders.test.ts
+?? "plans/slide-text-speech-grounded-quality/\320\222\321\202\320\276\321\200\320\276\320\271 \320\276\321\202\321\207\321\221\321\202 00-implementation-prompt.txt"
+?? "plans/slide-text-speech-grounded-quality/\320\236\321\202\321\207\321\221\321\202 00-implementation-prompt.txt"
+warning: could not open directory '.audit-bmw/tmpw120oeib/': No such file or directory
+```
+
+AI/Tavily, Docker, runtime, deploy и commit не запускались.

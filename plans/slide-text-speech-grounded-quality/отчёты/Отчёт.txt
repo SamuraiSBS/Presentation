@@ -1,0 +1,163 @@
+# Обновить prompt качества слайдов
+
+> [Промт.txt](plans/slide-text-speech-grounded-quality/Промт.txt)
+> AGENTS.md
+> plans/slide-text-speech-grounded-quality/00-implementation-prompt.md
+> plans/slide-text-speech-grounded-quality/Пятый отчёт 00-implementation-prompt.txt
+
+<details><summary>17 previous messages</summary>
+
+> Сначала сверю приложенный промт с инструкциями пакета и текущим состоянием репозитория, чтобы выполнить ровно заданный этап и не выйти за его границы.
+>
+> <details><summary>Ran 3 commands</summary>
+>
+> - Ran `rg -n -i -C 2 "slide-text-speech-grounded-quality|Промт 00|implementation-prompt" "C:\Users\Борис.BORIS\.codex\memories\MEMORY.md"`
+> - Ran ``$paths = @('plans/slide-text-speech-grounded-quality/Промт.txt','AGENTS.md','plans/slide-text-speech-grounded-quality/00-implementation-prompt.md','plans/slide-text-speech-grounded-quality/Пятый отчёт 00-implementation-prompt.txt'); foreach ($path in $paths) { "`n===== $path ====="; Get-Content -LiteralPath $path -Raw -Encoding UTF8 }; "`n===== git status ====="; git -c safe.directory=D:/presentation status --short``
+> - Ran `$files = @('plans/slide-text-speech-grounded-quality/00-implementation-prompt.md','plans/slide-text-speech-grounded-quality/01-read-only-coordinator-prompt.md'); foreach ($file in $files) { "===== $file ====="; Get-Content -LiteralPath $file -Raw -Encoding UTF8 }; "===== DIFF NAMES ====="; git -c safe.directory=D:/presentation diff --name-only; "===== TARGET DIFF STAT ====="; git -c safe.directory=D:/presentation diff --stat -- apps/worker/src/tasks/presentation-quality.ts apps/worker/src/tasks/presentation-quality.test.ts apps/worker/src/tasks/presentation/normalization/presentation.ts apps/worker/src/tasks/presentation/normalization/presentation.test.ts apps/worker/src/tasks/presentation/planning/builders.ts apps/worker/src/tasks/presentation/planning/builders.test.ts apps/worker/src/tasks/presentation/prompts/builders.ts apps/worker/src/tasks/presentation/quality/orchestration.ts packages/shared/src/generation/schemas.ts; "===== TARGET DIFF CHECK ====="; git -c safe.directory=D:/presentation diff --check -- apps/worker/src/tasks/presentation-quality.ts apps/worker/src/tasks/presentation-quality.test.ts apps/worker/src/tasks/presentation/normalization/presentation.ts apps/worker/src/tasks/presentation/planning/builders.ts apps/worker/src/tasks/presentation/prompts/builders.ts apps/worker/src/tasks/presentation/quality/orchestration.ts`
+>
+> </details>
+>
+> Preflight показывает изолированный worker-diff; `packages/shared`, API и web в текущем diff не менялись. Теперь проверяю готовность контейнеров, API и штатного no-search API-пути до единственного разрешённого запуска.
+>
+> <details><summary>Ran a command</summary>
+>
+> - Ran ``docker info --format '{{.ServerVersion}} {{.OSType}} {{.Architecture}}'; docker compose ps; curl.exe -s --max-time 10 http://localhost:4000/v1/health; "`n===== provider flags (redacted) ====="; $worker = docker compose ps -q worker; if ($worker) { docker inspect $worker --format '{{range .Config.Env}}{{if or (eq (split . "=")._0 "AI_PROVIDER") (eq (split . "=")._0 "OPENAI_MODEL") (eq (split . "=")._0 "YANDEX_MODEL_NAME") (eq (split . "=")._0 "ALLOW_DEMO_GENERATION") (eq (split . "=")._0 "WEB_SEARCH_PROVIDER") (eq (split . "=")._0 "PRESENTATION_IMAGES_ENABLED")}}{{.}}{{"`n"}}{{end}}{{end}}' }``
+>
+> </details>
+>
+> API отвечает healthy, но доступ к Docker engine из песочницы ограничен политикой. Запрашиваю разрешение на read-only проверку Docker; без неё нельзя безопасно подтвердить worker или переходить к job.
+>
+> <details><summary>Ran 6 commands</summary>
+>
+> - Ran ``docker info --format '{{.ServerVersion}} {{.OSType}} {{.Architecture}}'; docker compose ps; $worker = docker compose ps -q worker; if ($worker) { docker inspect $worker --format '{{range .Config.Env}}{{if or (eq (split . "=")._0 "AI_PROVIDER") (eq (split . "=")._0 "OPENAI_MODEL") (eq (split . "=")._0 "YANDEX_MODEL_NAME") (eq (split . "=")._0 "ALLOW_DEMO_GENERATION") (eq (split . "=")._0 "WEB_SEARCH_PROVIDER") (eq (split . "=")._0 "PRESENTATION_IMAGES_ENABLED")}}{{.}}{{"`n"}}{{end}}{{end}}' }``
+> - Auto-review: approved
+> - Auto-review risk: low
+> - Auto-review rationale: Auto-review returned a low-risk allow decision.
+> - Ran `rg -n -i -C 2 "CostEnvelope|cost envelope|costEnvelope|webSearch|with_sources|withSources|generate.*presentation|presentation.*generate" apps/api apps/web apps/worker prisma packages/shared --glob '!**/node_modules/**'`
+> - Ran `rg -n -C 3 "@(Post|Get)\(|create.*project|create.*generation|generateNarration|generatePresentation|generation.*queue|refreshWeb" apps/api/src/projects apps/api/src --glob '*.controller.ts' --glob '*.service.ts'; "===== relevant DTOs ====="; rg -n -C 2 "class CreateProject|CreateProjectDto|Generate.*Dto|refreshWeb" apps/api/src --glob '*.ts'; "===== env flags ====="; rg -n "^(AI_PROVIDER|OPENAI_MODEL|YANDEX_MODEL_NAME|ALLOW_DEMO_GENERATION|WEB_SEARCH_PROVIDER|PRESENTATION_IMAGES_ENABLED)=" .env .env.example 2>$null | ForEach-Object { $parts=$_.Split('=',2); "$($parts[0])=<configured>" }`
+> - Ran `Get-Content apps/api/src/projects/projects.service.ts | Select-Object -Skip 400 -First 170; "===== shared creation/generation schemas ====="; rg -n -C 8 "createProjectInputSchema|generatePresentationInputSchema" packages/shared/src apps/api/src --glob '*.ts'; "===== worker no-search behavior ====="; Get-Content apps/worker/src/tasks/generation.ts | Select-Object -Skip 620 -First 235`
+> - Ran `rg -n -C 4 "collectSources\(|refreshWeb:" apps/worker/src/tasks/generation.ts apps/worker/src/tasks -g '*.ts'; "===== project creation workflow ====="; Get-Content apps/api/src/projects/projects.service.ts | Select-Object -First 180; "===== cost policy ====="; Get-Content packages/shared/src/generation/cost-envelope.ts -Raw`
+> - Ran `$worker = docker compose ps -q worker; $envs = (docker inspect $worker | ConvertFrom-Json)[0].Config.Env; $envs | Where-Object { $_ -match '^(AI_PROVIDER|OPENAI_MODEL|YANDEX_MODEL_NAME|ALLOW_DEMO_GENERATION|WEB_SEARCH_PROVIDER|PRESENTATION_IMAGES_ENABLED)=' }; @'
+> SELECT p.id AS project_id, p.title, p.status AS project_status, p.mode, left(replace(replace(coalesce(p."speechDraft", ''), E'\n', ' '), E'\r', ' '), 90) AS speech_preview, e.id AS envelope_id, e."policyVersion", e."limitRub", e."reservedRub", e."settledRub", e.status AS envelope_status, e."narrationJobId", e."presentationJobId", CASE WHEN e."sourceSnapshot" IS NULL THEN false ELSE true END AS has_source_snapshot
+> FROM "Project" p
+> JOIN "CostEnvelope" e ON e."projectId" = p.id
+> JOIN "GenerationJob" n ON n.id = e."narrationJobId" AND n.status = 'completed'
+> WHERE p."speechDraft" IS NOT NULL AND length(trim(p."speechDraft")) > 0
+>   AND p."presentationId" IS NULL
+>   AND e."presentationJobId" IS NULL
+>   AND e.status = 'active'
+>   AND e."sourceSnapshot" IS NOT NULL
+> ORDER BY e."updatedAt" DESC
+> LIMIT 10;
+> '@ | docker compose exec -T postgres psql -U studydeck -d studydeck -v ON_ERROR_STOP=1 -P pager=off`
+> - Auto-review: approved
+> - Auto-review risk: low
+> - Auto-review rationale: Read-only inspection of local Docker configuration and narrowly filtered CostEnvelope/project metadata is explicitly authorized as preflight evidence for the single live validation job.
+>
+> </details>
+>
+> Provider — AITunnel (demo отключён); обычный presentation-job действительно не запускает web search. Первая SQL-проверка выявила только несовпадение имени relation-колонки со схемой, данных не меняла; уточняю кандидатов через таблицу `Presentation`.
+>
+> <details><summary>Ran 3 commands</summary>
+>
+> - Ran `@'
+> SELECT p.id AS project_id, p.title, p.status AS project_status, p.mode, left(replace(replace(coalesce(p."speechDraft", ''), E'\n', ' '), E'\r', ' '), 90) AS speech_preview, e.id AS envelope_id, e."policyVersion", e."limitRub", e."reservedRub", e."settledRub", e.status AS envelope_status, e."narrationJobId", e."presentationJobId", CASE WHEN e."sourceSnapshot" IS NULL THEN false ELSE true END AS has_source_snapshot
+> FROM "Project" p
+> JOIN "CostEnvelope" e ON e."projectId" = p.id
+> JOIN "GenerationJob" n ON n.id = e."narrationJobId" AND n.status = 'completed'
+> LEFT JOIN "Presentation" pr ON pr."projectId" = p.id
+> WHERE p."speechDraft" IS NOT NULL AND length(trim(p."speechDraft")) > 0
+>   AND pr.id IS NULL
+>   AND e."presentationJobId" IS NULL
+>   AND e.status = 'active'
+>   AND e."sourceSnapshot" IS NOT NULL
+> ORDER BY e."updatedAt" DESC
+> LIMIT 10;
+> '@ | docker compose exec -T postgres psql -U studydeck -d studydeck -v ON_ERROR_STOP=1 -P pager=off`
+> - Auto-review: approved
+> - Auto-review risk: low
+> - Auto-review rationale: This is a narrowly scoped read-only SQL query correcting the prior column name to identify an eligible existing CostEnvelope, explicitly authorized for the live validation preflight.
+> - Ran `@'
+> SELECT p.id AS project_id, p.title, p.status AS project_status, p.mode, e.id AS envelope_id, e."policyVersion", e."limitRub", e."reservedRub", e."settledRub", e.status AS envelope_status, e."narrationJobId", e."presentationJobId", CASE WHEN e."sourceSnapshot" IS NULL THEN false ELSE true END AS has_source_snapshot, n.status AS narration_status, g.status AS presentation_status
+> FROM "Project" p
+> JOIN "CostEnvelope" e ON e."projectId" = p.id
+> LEFT JOIN "GenerationJob" n ON n.id = e."narrationJobId"
+> LEFT JOIN "GenerationJob" g ON g.id = e."presentationJobId"
+> WHERE e."policyVersion" = 'standard-generation-cost-envelope-v10'
+> ORDER BY e."updatedAt" DESC
+> LIMIT 20;
+> '@ | docker compose exec -T postgres psql -U studydeck -d studydeck -v ON_ERROR_STOP=1 -P pager=off`
+> - Auto-review: approved
+> - Auto-review risk: low
+> - Auto-review rationale: The action is a read-only, narrowly scoped query of local CostEnvelope/job metadata to select a safe existing validation target, within the explicitly authorized live-validation workflow.
+> - Ran `Get-Content apps/api/src/projects/projects.service.ts | Select-Object -Skip 540 -First 120; "===== failed job detail ====="; @'
+> SELECT g.id AS job_id, g.kind, g.status, g."progressStage", g."progressLabel", left(coalesce(g.error, ''), 300) AS error, g."queueJobId", g."createdAt", g."updatedAt", e.id AS envelope_id, e."limitRub", e."reservedRub", e."settledRub", e.status AS envelope_status,
+>   (SELECT count(*) FROM "CostEnvelopeReservation" r WHERE r."envelopeId"=e.id) AS reservation_count,
+>   (SELECT string_agg(DISTINCT r.bucket || ':' || r.status, ', ' ORDER BY r.bucket || ':' || r.status) FROM "CostEnvelopeReservation" r WHERE r."envelopeId"=e.id) AS reservation_statuses
+> FROM "GenerationJob" g JOIN "CostEnvelope" e ON e."presentationJobId"=g.id
+> WHERE g.id='cmses5fvm0009s40jd7docdd1';
+> '@ | docker compose exec -T postgres psql -U studydeck -d studydeck -v ON_ERROR_STOP=1 -P pager=off`
+> - Auto-review: approved
+> - Auto-review risk: low
+> - Auto-review rationale: The command only reads local source code and narrowly scoped job/envelope status data to validate reuse safety; it performs no mutation and is authorized by the requested live-validation workflow.
+>
+> </details>
+>
+> Нашёл корректный no-search кандидат: проект `Live generation smoke` имеет принятую речь, сохранённый source snapshot и ещё не имел presentation-job. Для текущего v10 кода API создаст один новый v10 envelope, сохранив этот snapshot, без Tavily; это не retry. Подтверждаю историю и затем узко обновлю только `worker`.
+>
+> <details><summary>Ran a command</summary>
+>
+> - Ran `@'
+> SELECT p.id AS project_id, p.title, p.status AS project_status, p.mode, length(trim(p."speechDraft")) AS speech_length,
+>        e.id AS prior_envelope_id, e."policyVersion", e."limitRub", e."settledRub", e.status AS prior_envelope_status,
+>        CASE WHEN e."sourceSnapshot" IS NULL THEN false ELSE true END AS immutable_source_snapshot,
+>        string_agg(j.kind || ':' || j.status, ', ' ORDER BY j."createdAt") AS job_history
+> FROM "Project" p
+> JOIN "CostEnvelope" e ON e."projectId" = p.id
+> LEFT JOIN "GenerationJob" j ON j."projectId" = p.id
+> WHERE p.id = 'cmsbowv7a000zrk0it59j4e57'
+> GROUP BY p.id, p.title, p.status, p.mode, p."speechDraft", e.id, e."policyVersion", e."limitRub", e."settledRub", e.status, e."sourceSnapshot";
+> '@ | docker compose exec -T postgres psql -U studydeck -d studydeck -v ON_ERROR_STOP=1 -P pager=off`
+> - Auto-review: approved
+> - Auto-review risk: low
+> - Auto-review rationale: This final query is read-only and narrowly verifies the explicitly selected project's history and source snapshot before the single authorized live job.
+>
+> </details>
+>
+> Preflight принят: единственный ранее выполненный job — narration; source snapshot есть, сумма старого envelope 9.05208 из лимита 20 RUB. Запускаю разрешённую узкую пересборку и перезапуск только `worker`.
+>
+> <details><summary>Ran 2 commands</summary>
+>
+> - Ran `docker compose build worker; docker compose up -d worker; docker compose ps worker; curl.exe -s --max-time 10 http://localhost:4000/v1/health`
+> - Ran `docker compose build worker; docker compose up -d worker; docker compose ps worker; curl.exe -s --max-time 10 http://localhost:4000/v1/health`
+>
+> </details>
+>
+> Сборка worker ещё выполняется; другие сервисы не затрагиваются. После запуска зафиксирую новый image/container ID и только затем создам один presentation-job через штатный API.
+>
+> Узкая сборка не завершилась в отведённое время, поэтому я не создаю job. По заданной границе сейчас соберу только статус и логи worker, после чего оформлю `LIVE NOT ACCEPTED` без повторной сборки или повторного платного вызова.
+>
+> <details><summary>Ran a command</summary>
+>
+> - Ran `docker compose ps worker; docker compose logs --tail 100 worker; $worker = docker compose ps -q worker; if ($worker) { docker inspect $worker --format 'container={{.Id}} image={{.Image}} started={{.State.StartedAt}} status={{.State.Status}}' }; docker image inspect presentation-worker --format 'image={{.Id}} created={{.Created}}'`
+> - Auto-review: approved
+> - Auto-review risk: medium
+> - Auto-review rationale: The command is read-only and limited to worker status, recent local logs, and image/container metadata after the authorized worker build timed out; it does not mutate services or start a job.
+>
+> </details>
+>
+> Worker остался прежним контейнером (`started 19:15 UTC`); новый образ не появился. Генерация, Tavily, retry, deploy и commit не выполнялись. Оформляю требуемый отчёт с единственным допустимым вердиктом.
+>
+> <details><summary>Created a file, ran a command</summary>
+>
+> - Wrote `./plans/slide-text-speech-grounded-quality/02-live-runtime-validation-report.md` (+79 -0)
+> - Ran ``Get-Content -LiteralPath 'plans/slide-text-speech-grounded-quality/02-live-runtime-validation-report.md' -Raw -Encoding UTF8; "`n===== STATUS AFTER REPORT ====="; git -c safe.directory=D:/presentation status --short``
+>
+> </details>
+</details>
+
+LIVE NOT ACCEPTED: worker build timed out, so I did not create a paid generation job on the old image.
+
+Report: [02-live-runtime-validation-report.md](./plans/slide-text-speech-grounded-quality/02-live-runtime-validation-report.md)
+
+Verified: API healthy; no Tavily, retry, deploy, commit, or direct DB writes. A fresh authorization is required to retry the worker build and proceed with the one live job.
