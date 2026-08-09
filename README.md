@@ -53,4 +53,20 @@ restart it after changing the shared contract.
 Use `docker compose build web` only when validating the production image or
 before deployment.
 
+## Production deployment
+
+Production uses a separate compose definition and never reads `.env.example`.
+Copy [`.env.production.example`](.env.production.example) to `.env.production`
+on the deployment host, replace every placeholder through the secret manager,
+then validate and launch it:
+
+```powershell
+npm run validate:production-config
+docker compose --env-file .env.production -f compose.production.yml config --quiet
+docker compose --env-file .env.production -f compose.production.yml up -d --build
+```
+
+Only Caddy publishes ports 80/443 in this topology. PostgreSQL, Redis, MinIO,
+and the API remain on the internal Docker network.
+
 The legacy MVP is still available with `npm run legacy:start`.

@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Request } from "express";
+import { devAuthAllowed } from "@studydeck/shared";
 
 export type InternalRequest = Request & {
   userId: string;
@@ -12,7 +13,10 @@ export class InternalAuthGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<InternalRequest>();
-    const devAuthEnabled = this.config.get<string>("ALLOW_DEV_AUTH") === "true";
+    const devAuthEnabled = devAuthAllowed({
+      ALLOW_DEV_AUTH: this.config.get<string>("ALLOW_DEV_AUTH"),
+      DEPLOYMENT_ENV: this.config.get<string>("DEPLOYMENT_ENV"),
+    });
     const expected = this.config.get<string>("INTERNAL_API_TOKEN");
     const actual = request.header("x-internal-token");
     const userId = request.header("x-user-id");

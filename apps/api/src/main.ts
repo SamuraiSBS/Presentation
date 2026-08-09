@@ -6,7 +6,9 @@ import { AppModule } from "./app.module.js";
 import { initSentry, initTracing, logger } from "./observability.js";
 import { SentryExceptionFilter } from "./sentry-exception.filter.js";
 import { PrismaService } from "./prisma/prisma.service.js";
+import { assertProductionConfiguration } from "@studydeck/shared";
 
+assertProductionConfiguration();
 initTracing();
 initSentry();
 

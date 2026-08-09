@@ -1,8 +1,9 @@
 import { getToken } from "next-auth/jwt";
 import { NextResponse, type NextRequest } from "next/server";
+import { devAuthAllowed } from "@studydeck/shared";
 
 export async function middleware(request: NextRequest) {
-  if (process.env.ALLOW_DEV_AUTH === "true") {
+  if (devAuthAllowed()) {
     return NextResponse.next();
   }
 

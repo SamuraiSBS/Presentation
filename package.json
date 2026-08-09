@@ -20,6 +20,7 @@
     "smoke:generation:live": "tsx scripts/live-generation-smoke.ts",
     "smoke:generation:dry-run": "tsx scripts/live-generation-smoke.ts --dry-run",
     "typecheck:smoke:generation": "tsc -p scripts/tsconfig.json",
+    "validate:production-config": "tsx scripts/validate-production-config.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
