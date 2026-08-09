@@ -572,6 +572,9 @@ function addEditorialSequenceVisual(slide: Slide, theme: PresentationTheme, elem
   const startX = 492;
   safeItems.forEach((item, index) => {
     const x = startX + index * (columnWidth + EDITORIAL_GUTTER);
+    // Sequence columns are intentionally narrow. Keep their labels as short
+    // visual anchors so a recovery deck preserves readable editorial type.
+    const label = compactEditorialPoint(item, 2, columnWidth, 176) || compactSummaryPoint(item, 2);
     elements.push(
       textElement(`${slide.id}-editorial-step-${index}-number`, String(index + 1).padStart(2, "0"), x, 226, columnWidth, 46, 5, {
         role: "body",
@@ -583,7 +586,7 @@ function addEditorialSequenceVisual(slide: Slide, theme: PresentationTheme, elem
         groupId,
       }),
       shapeElement(`${slide.id}-editorial-step-${index}-rule`, "rect", x, 292, columnWidth, 3, 4, theme.colors.line, theme.colors.line, 0, 1),
-      textElement(`${slide.id}-editorial-step-${index}-text`, compactSummaryPoint(item, 11), x, 326, columnWidth, 176, 5, {
+      textElement(`${slide.id}-editorial-step-${index}-text`, label, x, 326, columnWidth, 176, 5, {
         role: "body",
         typographyRole: "supporting",
         fontSize: 23,

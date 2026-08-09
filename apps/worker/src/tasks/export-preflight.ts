@@ -15,6 +15,7 @@ import {
   improvePresentationQuality,
   type QualityProjectInput,
 } from "./presentation-quality.js";
+import { parseNarrationSections } from "./presentation/narration/processing.js";
 
 export type ExportPreflightResult = {
   document: PresentationDocument;
@@ -96,8 +97,19 @@ async function collectIssues(document: PresentationDocument, options: ExportPref
   const quality = isLegacyNoCanvas
     ? { issues: [] }
     : critiquePresentationDeterministically(document, document.sources, options.project);
+  const releasedCanonicalNarration = hasReleasedCanonicalNarration(document);
 
   for (const qualityIssue of quality.issues) {
+    // The production gate has already accepted the canonical long-form
+    // narration. Export must verify the stored projection, but it must not
+    // reapply a conclusion heuristic to the same synchronized speaker notes.
+    if (
+      releasedCanonicalNarration
+      && (qualityIssue.category === "generic_text" || qualityIssue.category === "bad_narration")
+      && qualityIssue.field === "speakerNotes"
+    ) {
+      continue;
+    }
     const slideId = qualityIssue.slideId;
     if (!slideId) continue;
     const category = qualityIssue.category === "schema_risk" ? "canvas" : qualityIssue.category;
@@ -157,6 +169,24 @@ async function collectIssues(document: PresentationDocument, options: ExportPref
   return dedupeIssues(issues.map((issue) => document.productionQualityGate
     ? { ...issue, blocking: true }
     : issue));
+}
+
+function hasReleasedCanonicalNarration(document: PresentationDocument) {
+  if (!document.productionQualityGate) return false;
+  const sections = parseNarrationSections(document.generatedText);
+  if (sections.length !== document.slides.length) return false;
+
+  const sectionByOrder = new Map(sections.map((section) => [section.order, section]));
+  return document.slides.every((slide) => {
+    const section = sectionByOrder.get(slide.order);
+    const script = document.speechScript.find((item) => item.slideOrder === slide.order);
+    return Boolean(
+      section?.text.trim()
+      && script?.slideTitle === slide.title
+      && script.text.trim() === section.text.trim()
+      && slide.speakerNotes.trim() === section.text.trim(),
+    );
+  });
 }
 
 function removeUnavailableGeneratedImages(document: PresentationDocument, issues: Issue[]): PresentationDocument {

@@ -378,15 +378,22 @@ export function buildLocalPresentationFromAcceptedNarration(
   if (!acceptedFullNarration) assertPresentationQuality(concise, project, "local");
   return ensureEditableCanvas({
     ...concise,
-    presentationTheme: acceptedFullNarration ? PREMIUM_PRESENTATION_THEMES.academicClean : concise.presentationTheme,
-    designBrief: acceptedFullNarration ? undefined : concise.designBrief,
-    slides: concise.slides.map((slide) => acceptedFullNarration
-      // A summary canvas reserves a narrow conclusion slot.  The accepted
-      // narration's final thesis can legitimately be longer, so retain the
-      // final-slide semantic check by order while rendering it in a roomy
-      // content canvas selected for the actual visible text capacity.
-      ? { ...slide, slideKind: slide.order === project.slideCount ? "content" : slide.slideKind, layout: (["statement", "hero", "definition"] as const)[(slide.order - 1) % 3], bullets: [], blocks: [], visual: { type: "schema", title: slide.title, description: slide.thesis, leftLabel: "", rightLabel: "", items: slide.bullets.slice(0, 2).map((label) => ({ label: shortLocalVisualLabel(label), text: "" })), rows: [] }, canvas: undefined }
-      : { ...slide, canvas: undefined }),
+    // Recovery is a content-safety operation, not a reason to replace the
+    // product's presentation identity. The deterministic design brief and
+    // editorial canvas already constrain their visible text independently of
+    // the accepted long-form narration kept in speaker notes.
+    presentationTheme: concise.presentationTheme,
+    designBrief: concise.designBrief,
+    slides: concise.slides.map((slide) => ({
+      ...slide,
+      // The accepted narration remains the canonical speech. Secondary
+      // visible support points are compact projections and may otherwise
+      // repeat generic wording from the local extractor, so do not retain
+      // them merely to fill an editorial composition.
+      bullets: acceptedFullNarration ? [] : slide.bullets,
+      blocks: acceptedFullNarration ? [] : slide.blocks,
+      canvas: undefined,
+    })),
   });
 }
 
