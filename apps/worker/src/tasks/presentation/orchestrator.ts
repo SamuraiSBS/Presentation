@@ -1,53 +1,14 @@
-import crypto from "node:crypto";
-import OpenAI from "openai";
-import { generateText, Output } from "ai";
-import { z } from "zod";
-import { captureGenerationError, errorLogFields, logger } from "../../observability.js";
-import { currentUsageContext, normalizeOpenAIUsage, recordAiUsage } from "../../usage-ledger.js";
-import { aitunnelConfig, createAitunnelClient, createOpenAIClient } from "../../openai-client.js";
 import {
-  type DesignBrief,
-  type DeckStory,
-  type GenerationPipelineArtifacts,
-  type Highlight,
-  type KeyConcept,
-  type PresentationDocument,
-  type QualityCritique,
-  type QualityIssue,
-  type ResearchBrief,
-  type Slide,
-  type SlideBlock,
-  type SlideBlueprint,
-  type SlideDefinition,
-  type SlideKind,
-  type SlideLayout,
-  type SlideNarrative,
-  type SlideTextPlan,
-  type SlideVisual,
-  type MermaidDiagramSpec,
-  type Source,
-  ensureEditableCanvas,
-  sourceRefFromSource,
-  presentationSchema,
-  PREMIUM_PRESENTATION_THEMES,
-  PREMIUM_PRESENTATION_THEME_IDS,
-  SLIDE_LAYOUT_DEFINITIONS,
-  deckStorySchema,
-  designBriefSchema,
-  generationPipelineArtifactsSchema,
-  hasMeasurableValue,
-  qualityCritiqueSchema,
-  researchBriefSchema,
-  resolvePresentationTheme,
-  mermaidDiagramSpecSchema,
-  slideBlueprintSchema,
-  slideNarrativeSchema,
-  slideTextPlanSchema,
+    ensureEditableCanvas,
+    generationPipelineArtifactsSchema,
+    presentationSchema,
+    sourceRefFromSource,
+    type PresentationDocument,
+    type Source
 } from "@studydeck/shared";
-import {
-  improvePresentationQuality,
-  type QualityRepairResponse,
-} from "../presentation-quality.js";
+import { captureGenerationError, errorLogFields, logger } from "../../observability.js";
+import { aitunnelConfig, createAitunnelClient, createOpenAIClient } from "../../openai-client.js";
+import { currentUsageContext } from "../../usage-ledger.js";
 
 type ProjectInput = {
   id: string;
@@ -57,67 +18,6 @@ type ProjectInput = {
   level: string;
   mode: string;
   slideCount: number;
-};
-
-type AiGenerationMode = "openai" | "yandex" | "aitunnel" | "local";
-type FallbackGenerationMode = "demo" | "demo-fallback";
-type EnvLike = Record<string, string | undefined>;
-
-type NarrationSection = {
-  order: number;
-  title: string;
-  text: string;
-};
-
-type SlideTextIssue = {
-  slideOrder: number;
-  fields: string[];
-  reasons: string[];
-};
-
-type SlideTextRepair = {
-  slideOrder: number;
-  title?: unknown;
-  thesis?: unknown;
-  bullets?: unknown;
-  blocks?: unknown;
-  definition?: unknown;
-  visual?: unknown;
-};
-
-type SlideTextRepairResponse = {
-  slides?: SlideTextRepair[];
-};
-
-type QualityModelCallbacks = {
-  critique?: (presentation: PresentationDocument, deterministic: QualityCritique) => Promise<unknown>;
-  repair?: (presentation: PresentationDocument, issues: QualityIssue[], attempt: number) => Promise<unknown>;
-};
-
-type GenerateStructuredOptions<T> = {
-  provider: AiGenerationMode;
-  system: string;
-  prompt: string;
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>;
-  schemaName: string;
-  parse?: (value: unknown) => T;
-  openAIClient?: OpenAI;
-  openAIGenerateText?: typeof generateText;
-  yandexApiKey?: string;
-  jsonSchema?: Record<string, unknown>;
-  strict?: boolean;
-  maxAttempts?: number;
-  temperature?: number;
-};
-
-type GenerateAndValidateOptions<T> = {
-  call: (attempt: number, repairPrompt?: string) => Promise<unknown>;
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>;
-  schemaName: string;
-  provider?: AiGenerationMode;
-  parse?: (value: unknown) => T;
-  repair?: (error: unknown, previousValue: unknown, attempt: number) => string;
-  maxAttempts?: number;
 };
 
 export class StructuredGenerationError extends Error {
@@ -131,25 +31,14 @@ export class StructuredGenerationError extends Error {
   }
 }
 
-type YandexTextOptions = {
-  jsonObject?: boolean;
-  jsonSchema?: unknown;
-  temperature?: number;
-  maxTokens?: number;
-};
-
-type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief" | "deckStory" | "designBrief" | "slideBlueprints" | "slideTextPlans">>;
-
-import type { YandexCompletionResponse } from "./constants.js";
-import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "./constants.js";
-import { selectAiProviders } from "./providers/provider-selection.js";
-import { generateWithAitunnel, generateWithOpenAI, generateAitunnelPresentationFromNarration, generateOpenAIPresentationFromNarration, generateAitunnelNarration, generateAitunnelFullNarrationOutcome, generateOpenAINarration, generateWithYandex, generateYandexPresentationFromNarration, generateYandexNarration, generateNarrativePlanWithProvider } from "./providers/generation.js";
-import { buildResearchBrief, buildDesignBrief, buildDeckStory, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "./planning/builders.js";
+import { AitunnelProjectBudget, runWithAitunnelProjectBudget } from "../../aitunnel-narration-budget.js";
 import { assessFullNarrationDocument, normalizeNarrationText, parseNarrationSections } from "./narration/processing.js";
 import { normalizePresentation } from "./normalization/presentation.js";
+import { buildDeckStory, buildDesignBrief, buildResearchBrief, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "./planning/builders.js";
+import { generateAitunnelFullNarrationOutcome, generateAitunnelNarration, generateAitunnelPresentationFromNarration, generateNarrativePlanWithProvider, generateOpenAINarration, generateOpenAIPresentationFromNarration, generateWithAitunnel, generateWithOpenAI, generateWithYandex, generateYandexNarration, generateYandexPresentationFromNarration } from "./providers/generation.js";
+import { selectAiProviders } from "./providers/provider-selection.js";
 import { assertPresentationQuality, isDemoGenerationAllowed } from "./quality/orchestration.js";
 import { buildFallbackGeneratedText, demoPresentation } from "./utilities.js";
-import { AitunnelProjectBudget, runWithAitunnelProjectBudget } from "../../aitunnel-narration-budget.js";
 
 export async function generatePresentation(project: ProjectInput, sources: Source[]): Promise<PresentationDocument> {
   const providers = selectAiProviders();
@@ -406,15 +295,6 @@ function localNarrativeFields(sectionText: string) {
 function shortLocalBullet(value: string) {
   const words = value.split(/\s+/).filter(Boolean);
   return words.length <= 5 ? value : `${words.slice(0, 4).join(" ")}.`;
-}
-
-function shortLocalVisualLabel(value: string) {
-  const completeClause = value.split(/[,;:—]/u)
-    .map((part) => part.trim())
-    .find((part) => part.length >= 12 && part.length <= 96);
-  if (completeClause) return completeClause;
-  const words = value.split(/\s+/).filter(Boolean);
-  return words.slice(0, 9).join(" ").replace(/[,:;—-]+$/u, "");
 }
 
 function localSectionBullets(sectionText: string, fallback: string[]) {

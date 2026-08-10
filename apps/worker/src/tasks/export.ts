@@ -39,8 +39,16 @@ const PptxGenConstructor = require("pptxgenjs") as new () => {
   theme: Record<string, unknown>;
   ShapeType: Record<string, string>;
   defineLayout: (layout: { name: string; width: number; height: number }) => void;
-  addSlide: () => any;
+  addSlide: () => PptxSlide;
   write: (options: { outputType: "nodebuffer" }) => Promise<Buffer>;
+};
+
+type PptxSlide = {
+  background?: { color: string };
+  addImage: (...args: unknown[]) => void;
+  addNotes: (notes: string) => void;
+  addShape: (...args: unknown[]) => void;
+  addText: (...args: unknown[]) => void;
 };
 
 const WIDE_LAYOUT = { name: "STUDYDECK_WIDE", width: 40 / 3, height: 7.5 };
@@ -252,7 +260,7 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
 }
 
 function renderPptxAttribution(
-  slide: any,
+  slide: PptxSlide,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   theme: ExportTheme,
 ) {
@@ -273,7 +281,7 @@ function renderPptxAttribution(
 
 function renderPptxPlaceholders(
   pptx: InstanceType<typeof PptxGenConstructor>,
-  slide: any,
+  slide: PptxSlide,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   theme: ExportTheme,
 ) {
@@ -310,7 +318,7 @@ function renderPptxPlaceholders(
 
 async function renderContentSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
-  slide: any,
+  slide: PptxSlide,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   imageData: string | null,
   theme: ExportTheme,
@@ -343,7 +351,7 @@ async function renderContentSlide(
 
 async function renderCanvasSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
-  slide: any,
+  slide: PptxSlide,
   canvas: SlideCanvas,
   theme: ExportTheme,
 ) {
@@ -367,7 +375,7 @@ async function renderCanvasSlide(
   }
 }
 
-function renderCanvasText(slide: any, element: CanvasTextElement, theme: ExportTheme) {
+function renderCanvasText(slide: PptxSlide, element: CanvasTextElement, theme: ExportTheme) {
   const runs = element.runs.length
     ? element.runs.map((run) => ({
         text: run.text,
@@ -404,7 +412,7 @@ function renderCanvasText(slide: any, element: CanvasTextElement, theme: ExportT
 
 function renderCanvasShape(
   pptx: InstanceType<typeof PptxGenConstructor>,
-  slide: any,
+  slide: PptxSlide,
   element: CanvasShapeElement,
 ) {
   const shapeType =
@@ -431,7 +439,7 @@ function renderCanvasShape(
   slide.addShape(shapeType, options);
 }
 
-async function renderCanvasImage(slide: any, element: CanvasImageElement) {
+async function renderCanvasImage(slide: PptxSlide, element: CanvasImageElement) {
   const data = await imageDataForCanvasElement(element);
   if (!data) return;
   const box = canvasBox(element);
@@ -444,7 +452,7 @@ async function renderCanvasImage(slide: any, element: CanvasImageElement) {
 }
 
 async function addFittedImage(
-  slide: any,
+  slide: PptxSlide,
   data: string,
   box: { x: number; y: number; w: number; h: number },
   options: {
@@ -530,7 +538,7 @@ function opacityToTransparency(opacity: number) {
   return Math.max(0, Math.min(100, Math.round((1 - opacity) * 100)));
 }
 
-function renderSlideTitle(slide: any, title: string, theme: ExportTheme, options: { centered?: boolean; width?: number; fontSize?: number } = {}) {
+function renderSlideTitle(slide: PptxSlide, title: string, theme: ExportTheme, options: { centered?: boolean; width?: number; fontSize?: number } = {}) {
   slide.addText(title, {
     x: options.centered ? 1.05 : 0.72,
     y: 0.58,
@@ -548,7 +556,7 @@ function renderSlideTitle(slide: any, title: string, theme: ExportTheme, options
 
 function renderSlideBackground(
   pptx: InstanceType<typeof PptxGenConstructor>,
-  slide: any,
+  slide: PptxSlide,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   theme: ExportTheme,
   transparencyOffset = 0,
@@ -618,7 +626,7 @@ function slideBackgroundVariant(item: ReturnType<typeof presentationSchema.parse
   return `v${(item.order - 1) % 6}`;
 }
 
-function renderStatementSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number], theme: ExportTheme) {
+function renderStatementSlide(slide: PptxSlide, item: ReturnType<typeof presentationSchema.parse>["slides"][number], theme: ExportTheme) {
   renderSlideTitle(slide, item.title, theme, { centered: true, fontSize: 30 });
   slide.addText(slideBodyText(item), {
     x: 1.35,
@@ -635,7 +643,7 @@ function renderStatementSlide(slide: any, item: ReturnType<typeof presentationSc
   });
 }
 
-function renderQuoteSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number], theme: ExportTheme) {
+function renderQuoteSlide(slide: PptxSlide, item: ReturnType<typeof presentationSchema.parse>["slides"][number], theme: ExportTheme) {
   renderSlideTitle(slide, item.title, theme);
   slide.addText(`"${quoteText(item)}"`, {
     x: 1.1,
@@ -668,7 +676,7 @@ function renderQuoteSlide(slide: any, item: ReturnType<typeof presentationSchema
 
 function renderDefinitionSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
-  slide: any,
+  slide: PptxSlide,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   theme: ExportTheme,
 ) {
@@ -708,7 +716,7 @@ function renderDefinitionSlide(
 
 function renderSequenceSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
-  slide: any,
+  slide: PptxSlide,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   theme: ExportTheme,
 ) {
@@ -767,7 +775,7 @@ function renderSequenceSlide(
 
 function renderComparisonSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
-  slide: any,
+  slide: PptxSlide,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   theme: ExportTheme,
 ) {
@@ -791,7 +799,7 @@ function renderComparisonSlide(
   });
 }
 
-async function renderImageFocusSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number], imageData: string, theme: ExportTheme) {
+async function renderImageFocusSlide(slide: PptxSlide, item: ReturnType<typeof presentationSchema.parse>["slides"][number], imageData: string, theme: ExportTheme) {
   renderSlideTitle(slide, item.title, theme, { width: 5.5, fontSize: 28 });
   slide.addText(item.thesis || slideBodyText(item), {
     x: 0.82,
@@ -811,7 +819,7 @@ async function renderImageFocusSlide(slide: any, item: ReturnType<typeof present
 
 function renderThreePanelSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
-  slide: any,
+  slide: PptxSlide,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   labels: string[],
   theme: ExportTheme,
@@ -829,7 +837,7 @@ function renderThreePanelSlide(
 
 function renderQuestionAnswerSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
-  slide: any,
+  slide: PptxSlide,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   theme: ExportTheme,
 ) {
@@ -846,7 +854,7 @@ function renderQuestionAnswerSlide(
 
 function renderMythFactSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
-  slide: any,
+  slide: PptxSlide,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   theme: ExportTheme,
 ) {
@@ -869,7 +877,7 @@ function renderMythFactSlide(
 
 function renderMetricsSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
-  slide: any,
+  slide: PptxSlide,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   theme: ExportTheme,
 ) {
@@ -886,7 +894,7 @@ function renderMetricsSlide(
 
 function renderEvidenceSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
-  slide: any,
+  slide: PptxSlide,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   theme: ExportTheme,
 ) {
@@ -906,7 +914,7 @@ function renderEvidenceSlide(
 
 function renderProblemSolutionSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
-  slide: any,
+  slide: PptxSlide,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   theme: ExportTheme,
 ) {
@@ -923,7 +931,7 @@ function renderProblemSolutionSlide(
 
 function renderExplainExampleSlide(
   pptx: InstanceType<typeof PptxGenConstructor>,
-  slide: any,
+  slide: PptxSlide,
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   theme: ExportTheme,
 ) {
@@ -939,7 +947,7 @@ function renderExplainExampleSlide(
   slide.addText(items[2] || item.bullets[1] || "Пример помогает понять идею, но не заменяет точное определение.", { x: 6.0, y: 4.5, w: 5.3, h: 1.05, fontFace: theme.fonts.body, fontSize: 14, color: theme.pptx.muted, fit: "shrink" });
 }
 
-async function renderDefaultContentSlide(slide: any, item: ReturnType<typeof presentationSchema.parse>["slides"][number], imageData: string | null, theme: ExportTheme) {
+async function renderDefaultContentSlide(slide: PptxSlide, item: ReturnType<typeof presentationSchema.parse>["slides"][number], imageData: string | null, theme: ExportTheme) {
   const hasSideImage = Boolean(imageData);
   renderSlideTitle(slide, item.title, theme, { centered: !hasSideImage, width: hasSideImage ? 5.5 : 11.9, fontSize: hasSideImage ? 28 : 34 });
 

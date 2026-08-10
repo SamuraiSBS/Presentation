@@ -66,6 +66,13 @@
 
 Критерий закрытия: один commit/tag и один digest образов имеют полностью зелёный CI; тот же digest проходит smoke/E2E в staging.
 
+**Нужно доделать:**
+
+- Восстановить локальный Docker Desktop/daemon: и BuildKit, и legacy builder зависают до создания `studydeck-worker` image. После восстановления обязательно выполнить сборку Alpine worker и реальный PDF smoke внутри образа: `renders editable canvas to a real pdf` не должен быть skipped.
+- Зафиксировать согласованный P0-2 набор отдельным commit и отправить его в GitHub, чтобы впервые выполнить `release-gates.yml` на фактическом SHA.
+- После первого зелёного workflow проверить и включить для `main` четыре required checks: `Quality, migrations, and dependencies`, `Secret scan`, `Playwright desktop and mobile`, `Immutable images and staging smoke`.
+- Подтвердить в CI полный immutable путь: publish трёх GHCR image, migration, health/smoke именно по опубликованным `@sha256` references и release manifest с SHA текущего commit. До этого критерий «тот же digest разворачивается» не доказан.
+
 ### P0-3. Есть подтверждённая регрессия export preflight
 
 Worker test падает на сценарии legacy no-canvas deck: `preparePresentationForExport` не ремонтирует фрагмент `Porsche 911 показал.`. Это затрагивает основной продуктовый результат — пользователь может скачать презентацию с оборванной фразой, хотя preflight обязан был её исправить.

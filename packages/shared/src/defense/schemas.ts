@@ -19,9 +19,7 @@ export const defenseJsonValueSchema: z.ZodType<DefenseJsonValue> = z.lazy(() =>
   ]),
 );
 
-const identifierSchema = z.string().trim().min(1).max(128);
-const shortTextSchema = z.string().trim().min(1).max(240);
-const isoDateTimeSchema = z.string().datetime({ offset: true });
+const identifierSchema = z.string().trim().min(1).max(128);const isoDateTimeSchema = z.string().datetime({ offset: true });
 const hexColorSchema = z
   .string()
   .regex(/^#[0-9a-fA-F]{6}$/)

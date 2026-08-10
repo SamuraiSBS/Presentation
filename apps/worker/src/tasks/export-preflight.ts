@@ -15,6 +15,7 @@ import {
   improvePresentationQuality,
   type QualityProjectInput,
 } from "./presentation-quality.js";
+import { findSlideTextIssues } from "./presentation/quality/orchestration.js";
 import { parseNarrationSections } from "./presentation/narration/processing.js";
 
 export type ExportPreflightResult = {
@@ -99,6 +100,21 @@ async function collectIssues(document: PresentationDocument, options: ExportPref
     : critiquePresentationDeterministically(document, document.sources, options.project);
   const releasedCanonicalNarration = hasReleasedCanonicalNarration(document);
 
+  // The export preflight must use the same sentence-integrity detector as the
+  // normal presentation path. Otherwise a legacy generated canvas can carry
+  // a short predicate fragment (for example, "Porsche 911 показал.") past
+  // the derived-artifact repair even though the editor would reject it.
+  for (const textIssue of findSlideTextIssues(document)) {
+    const slide = document.slides.find((candidate) => candidate.order === textIssue.slideOrder);
+    if (!slide) continue;
+    issues.push({
+      slideId: slide.id,
+      category: "canonical_content",
+      repairable: !customById.get(slide.id),
+      blocking: Boolean(document.productionQualityGate),
+    });
+  }
+
   for (const qualityIssue of quality.issues) {
     // The production gate has already accepted the canonical long-form
     // narration. Export must verify the stored projection, but it must not
@@ -130,7 +146,7 @@ async function collectIssues(document: PresentationDocument, options: ExportPref
       }
     }
 
-    for (const message of auditCanonicalSlideCanvas(slide)) {
+    if (auditCanonicalSlideCanvas(slide).length) {
       issues.push({
         slideId: slide.id,
         category: "canonical_content",
@@ -139,7 +155,6 @@ async function collectIssues(document: PresentationDocument, options: ExportPref
       });
       // The report is category-oriented; one canonicality entry per slide is
       // enough to route the document back through the persisted repair path.
-      break;
     }
 
     for (const objectKey of imageObjectKeys(slide)) {

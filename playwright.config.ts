@@ -33,8 +33,14 @@ function findInstalledPlaywrightChrome(): string | undefined {
 
 export default defineConfig({
   testDir: "./e2e",
+  // Keep the multi-page flows in each spec ordered while still running two
+  // independent spec files at a time. Concurrent first compilation of every
+  // admin route makes the short UI assertions flaky on Windows.
   fullyParallel: false,
-  workers: process.env.CI ? 2 : 1,
+  // A single local Next dev compiler becomes non-deterministic when two
+  // browser workers trigger cold route compilation together on Windows.
+  // The focused mobile matrix keeps this serial release run under ten minutes.
+  workers: 1,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
   reporter: [["list"]],
@@ -47,7 +53,7 @@ export default defineConfig({
   },
   webServer: skipWebServer ? undefined : {
     command: "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-web-fast.ps1 -Port 3020 -DemoPreview -E2E",
-    url: baseURL,
+    url: `${baseURL}/api/internal-health`,
     reuseExistingServer: false,
     timeout: 120_000,
   },
@@ -58,6 +64,11 @@ export default defineConfig({
     },
     {
       name: "mobile",
+      // The admin suite exercises the responsive drawer, touch targets, and
+      // 320/390px data tables. Other specs either set their own viewports or
+      // cover desktop behavior, so rerunning every file on Pixel only doubles
+      // release-gate time without adding mobile-specific assertions.
+      testMatch: /admin-dashboard\.spec\.ts/,
       use: { ...devices["Pixel 5"] },
     },
   ],

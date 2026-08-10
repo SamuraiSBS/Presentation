@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import JSZip from "jszip";
 import sharp from "sharp";
 import { ensureEditableCanvas, PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS, presentationSchema } from "@studydeck/shared";
@@ -447,12 +446,12 @@ describe("createPptx", () => {
     }
   });
 
-  it.skipIf(!hasChromium())("renders editable canvas to a real pdf", async () => {
+  it("renders editable canvas to a real pdf", async () => {
     const buffer = await createPdf(canvasDeck());
 
     expect(buffer.subarray(0, 5).toString("utf8")).toBe("%PDF-");
     expect(buffer.length).toBeGreaterThan(1000);
-  });
+  }, 60_000);
 });
 
 describe("export preflight", () => {
@@ -591,10 +590,15 @@ describe("export preflight", () => {
     await expect(renderPdfHtml(legacyResult.document)).resolves.toContain("template-slide");
 
     const source = generatedPreflightDeck();
+    const acceptedNarration = "Porsche 911 стал символом спортивного автомобиля благодаря сочетанию заднемоторной компоновки, инженерной эволюции и узнаваемого силуэта. Эта модель показывает, как последовательные технические изменения сохраняют характер автомобиля и расширяют его возможности на дороге и на треке.";
     const corrupted = presentationSchema.parse({
       ...source,
+      generatedText: `Slide 1: Porsche 911\n${acceptedNarration}`,
+      speechScript: [{ slideOrder: 1, slideTitle: "Porsche 911", text: acceptedNarration }],
       slides: source.slides.map((slide) => ({
         ...slide,
+        title: "Porsche 911",
+        speakerNotes: acceptedNarration,
         thesis: "Porsche 911 показал.",
         bullets: ["Международный конфликт меняет границы государств."],
       })),
@@ -841,16 +845,4 @@ function legacyImageDeck() {
       },
     ],
   };
-}
-
-function hasChromium() {
-  return [
-    process.env.CHROMIUM_PATH,
-    process.env.PUPPETEER_EXECUTABLE_PATH,
-    "/usr/bin/chromium-browser",
-    "/usr/bin/chromium",
-    "/usr/bin/google-chrome-stable",
-  ]
-    .filter(Boolean)
-    .some((candidate) => existsSync(candidate as string));
 }

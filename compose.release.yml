@@ -1,0 +1,12 @@
+# Immutable release overlay. Every service image must be supplied as a full
+# registry reference with an @sha256 digest from release-manifest.json.
+services:
+  api:
+    image: ${STUDYDECK_API_IMAGE:?set from the accepted release manifest}
+    pull_policy: always
+  worker:
+    image: ${STUDYDECK_WORKER_IMAGE:?set from the accepted release manifest}
+    pull_policy: always
+  web:
+    image: ${STUDYDECK_WEB_IMAGE:?set from the accepted release manifest}
+    pull_policy: always

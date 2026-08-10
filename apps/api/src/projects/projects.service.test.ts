@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
 import type { ConfigService } from "@nestjs/config";
 import type { Queue } from "bullmq";
+import { describe, expect, it, vi } from "vitest";
 import type { ProjectAccessService } from "../access/project-access.service.js";
 import type { PrismaService } from "../prisma/prisma.service.js";
 import type { ProjectStorageService } from "../storage/project-storage.service.js";

@@ -1,9 +1,17 @@
 import type { NextConfig } from "next";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { withSentryConfig } from "@sentry/nextjs";
+
+const webRoot = dirname(fileURLToPath(import.meta.url));
+const workspaceRoot = resolve(webRoot, "../..");
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  outputFileTracingRoot: process.cwd() + "/../..",
+  // npm workspace scripts can preserve the repository as process.cwd().
+  // Derive from this config file instead, otherwise `../..` resolves to D:\\
+  // on Windows and Watchpack scans the entire drive during local E2E.
+  outputFileTracingRoot: process.env.E2E_TEST_MODE === "true" ? webRoot : workspaceRoot,
   transpilePackages: ["@studydeck/shared"],
 };
 

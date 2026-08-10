@@ -1,0 +1,177 @@
+name: Release gates
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: release-gates-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+
+jobs:
+  quality:
+    name: Quality, migrations, and dependencies
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run prisma:generate
+      - run: npm run prisma:validate
+      - run: npm run lint
+      - run: npm run check
+      - run: npx playwright install --with-deps chromium
+      - run: CHROMIUM_PATH="$(node -e \"console.log(require('@playwright/test').chromium.executablePath())\")" npm test
+      - run: npm audit --omit=dev --audit-level=high
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  browser:
+    name: Playwright desktop and mobile
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+
+  immutable-image-smoke:
+    name: Immutable images and staging smoke
+    needs: [quality, secrets, browser]
+    runs-on: ubuntu-24.04
+    env:
+      STUDYDECK_IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release images
+        run: |
+          docker build --tag studydeck-api:${STUDYDECK_IMAGE_TAG} --file Dockerfile.api .
+          docker build --tag studydeck-worker:${STUDYDECK_IMAGE_TAG} --file Dockerfile.worker .
+          docker build --tag studydeck-web:${STUDYDECK_IMAGE_TAG} --file Dockerfile.web .
+      - name: Smoke PDF export in the Alpine worker image
+        run: >
+          docker run --rm --entrypoint npm studydeck-worker:${STUDYDECK_IMAGE_TAG}
+          run test -w @studydeck/worker -- src/tasks/export.test.ts
+          -t "renders editable canvas to a real pdf"
+      - name: Validate compose and migrate the staging database
+        run: |
+          docker compose -f docker-compose.yml -f compose.ci.yml config --quiet
+          docker compose -f docker-compose.yml -f compose.ci.yml up -d --no-build postgres redis minio create-bucket
+          docker compose -f docker-compose.yml -f compose.ci.yml run --rm --no-deps api npm run prisma:deploy
+      - name: Start and smoke the exact release images
+        run: |
+          docker compose -f docker-compose.yml -f compose.ci.yml up -d --no-build api worker web
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://localhost:4000/v1/health; then exit 0; fi
+            sleep 2
+          done
+          docker compose -f docker-compose.yml -f compose.ci.yml logs --no-color
+          exit 1
+      - name: Collect staging logs
+        if: always()
+        run: docker compose -f docker-compose.yml -f compose.ci.yml logs --no-color
+
+  publish-release:
+    name: Publish immutable release and verify registry digests
+    if: github.event_name == 'push'
+    needs: [quality, secrets, browser, immutable-image-smoke]
+    runs-on: ubuntu-24.04
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAMESPACE: ${{ github.repository_owner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.api
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/studydeck-api:${{ github.sha }}
+      - id: worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.worker
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/studydeck-worker:${{ github.sha }}
+      - id: web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.web
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/studydeck-web:${{ github.sha }}
+      - name: Pin image references to the published digests
+        run: |
+          echo "STUDYDECK_API_IMAGE=${REGISTRY}/${IMAGE_NAMESPACE}/studydeck-api@${{ steps.api.outputs.digest }}" >> "$GITHUB_ENV"
+          echo "STUDYDECK_WORKER_IMAGE=${REGISTRY}/${IMAGE_NAMESPACE}/studydeck-worker@${{ steps.worker.outputs.digest }}" >> "$GITHUB_ENV"
+          echo "STUDYDECK_WEB_IMAGE=${REGISTRY}/${IMAGE_NAMESPACE}/studydeck-web@${{ steps.web.outputs.digest }}" >> "$GITHUB_ENV"
+      - name: Pull and validate the exact registry images
+        run: |
+          docker pull "$STUDYDECK_API_IMAGE"
+          docker pull "$STUDYDECK_WORKER_IMAGE"
+          docker pull "$STUDYDECK_WEB_IMAGE"
+          docker compose -f docker-compose.yml -f compose.release.yml config --quiet
+          docker compose -f docker-compose.yml -f compose.release.yml up -d --no-build postgres redis minio create-bucket
+          docker compose -f docker-compose.yml -f compose.release.yml run --rm --no-deps --no-build api npm run prisma:deploy
+          docker compose -f docker-compose.yml -f compose.release.yml up -d --no-build api worker web
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://localhost:4000/v1/health; then exit 0; fi
+            sleep 2
+          done
+          docker compose -f docker-compose.yml -f compose.release.yml logs --no-color
+          exit 1
+      - name: Write deployable release manifest
+        run: |
+          printf '{\n  "gitSha": "%s",\n  "releaseGate": "passed",\n  "images": {\n' "$GITHUB_SHA" > release-manifest.json
+          printf '    "api": "%s",\n' "$STUDYDECK_API_IMAGE" >> release-manifest.json
+          printf '    "worker": "%s",\n' "$STUDYDECK_WORKER_IMAGE" >> release-manifest.json
+          printf '    "web": "%s"\n' "$STUDYDECK_WEB_IMAGE" >> release-manifest.json
+          printf '  }\n}\n' >> release-manifest.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest-${{ github.sha }}
+          path: release-manifest.json
+      - name: Collect registry-smoke logs
+        if: always()
+        run: docker compose -f docker-compose.yml -f compose.release.yml logs --no-color

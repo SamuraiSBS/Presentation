@@ -1796,6 +1796,10 @@ export async function improvePresentationQuality(
     const releaseTextIssuesBefore = [
       ...findGenericTextIssues(best),
       ...findLongSlideTextIssues(best),
+      ...findVisibleTextIntegrityIssues(best),
+      ...findContentSlideContractIssues(best),
+      ...findIntraSlideDuplicateIssues(best),
+      ...findDeckWideDuplicateIssues(best).filter((issue) => issue.severity === "blocker"),
     ];
     const affectedSlideIds = new Set(contentIssues
       .map((issue) => issue.slideId)

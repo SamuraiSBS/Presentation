@@ -12,6 +12,7 @@ const serverAndTestFiles = [
   "packages/**/*.ts",
   "e2e/**/*.ts",
 ];
+const testFiles = ["**/*.test.ts", "**/*.test.tsx"];
 
 export default [
   {
@@ -53,6 +54,15 @@ export default [
           caughtErrorsIgnorePattern: "^_",
         },
       ],
+    },
+  },
+  {
+    files: testFiles,
+    rules: {
+      // Test fixtures intentionally exercise malformed provider and canvas
+      // payloads; keep production code strict without forcing unsafe fixture
+      // casts through invented application types.
+      "@typescript-eslint/no-explicit-any": "off",
     },
   },
 ];

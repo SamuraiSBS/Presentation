@@ -98,7 +98,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
   useEffect(() => {
     const selection = sectionSelections[activeSectionIndex];
     if (selection && activeTextareaRef.current) activeTextareaRef.current.setSelectionRange(selection.start, selection.end);
-  }, [activeSectionIndex]);
+  }, [activeSectionIndex, sectionSelections]);
 
   useEffect(() => {
     if (!dirty) return;

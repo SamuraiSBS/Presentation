@@ -310,6 +310,16 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
         slides: recoveredPresentation.slides.map((slide) => ({ ...slide, canvas: undefined })),
       });
       release = productionQualityReleaseResult(presentation, presentation.sources, { ...generationProject, mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId), acceptedNarrationRecovery: true });
+      if (release.finalDisposition !== "released") {
+        // The first local projection keeps the usual editorial design.  If it
+        // still contains provider-shaped generic text or an unfulfillable
+        // visual, release the same accepted narration through the intentionally
+        // plain, self-contained canvas. This is fully deterministic: no second
+        // provider call, source search, or invented claim is allowed here.
+        logger.warn({ projectId, jobId: job.id, fallback: "accepted_narration_emergency_readable", issueCategories: release.issueCategories }, "local presentation projection still failed quality gate; applying emergency readable recovery");
+        presentation = buildEmergencyReadablePresentation(presentation);
+        release = productionQualityReleaseResult(presentation, presentation.sources, { ...generationProject, mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId), acceptedNarrationRecovery: true });
+      }
       if (release.finalDisposition !== "released") throw new Error(`Production quality gate rejected generated presentation: ${release.issueCategories.join(", ") || "unspecified quality issue"}`);
     }
     if (job.data.costEnvelopeId) {
@@ -547,7 +557,7 @@ export function repairPresentationLayout(presentation: PresentationDocument): Pr
  * visuals, so a faulty provider response or a theme-specific geometry cannot
  * send the user back to the script-review failure state.
  */
-function buildEmergencyReadablePresentation(presentation: PresentationDocument): PresentationDocument {
+export function buildEmergencyReadablePresentation(presentation: PresentationDocument): PresentationDocument {
   const compactVisibleText = (value: string, maximum: number, fallback: string) => {
     const text = String(value || "").replace(/\s+/g, " ").trim();
     if (!text) return fallback;
@@ -562,14 +572,6 @@ function buildEmergencyReadablePresentation(presentation: PresentationDocument):
     return compact || fallback;
   };
   const fallbackLayouts = ["statement", "two-column", "comparison", "process"] as const;
-  const supportPoints = (slide: PresentationDocument["slides"][number], thesis: string) => {
-    const candidates = String(slide.speakerNotes || "")
-      .match(/[^.!?]+[.!?]+/g)
-      ?.map((sentence) => compactVisibleText(sentence.trim(), 130, ""))
-      .filter((sentence) => sentence && sentence !== thesis) || [];
-    return [...new Set(candidates)].slice(1, 3);
-  };
-
   return {
     ...presentation,
     presentationTheme: PREMIUM_PRESENTATION_THEMES.academicClean,
@@ -580,17 +582,22 @@ function buildEmergencyReadablePresentation(presentation: PresentationDocument):
     speechScript: presentation.slides.map((slide) => ({ slideOrder: slide.order, slideTitle: slide.title, text: slide.speakerNotes })),
     slides: presentation.slides.map((slide) => {
       const title = compactVisibleText(slide.title, 90, `Слайд ${slide.order}`);
-      const thesis = compactVisibleText(slide.thesis || slide.speakerNotes, 180, title);
-      const bullets = supportPoints(slide, thesis);
+      // The provider/local projection may contain a weak thesis even when the
+      // accepted narration is sound. Always derive this visible claim from the
+      // canonical narration, not from the rejected presentation text.
+      const thesis = compactVisibleText(slide.speakerNotes || slide.thesis, 180, title);
       const background = "#F8FAFC";
       return {
         ...slide,
         title,
         layout: fallbackLayouts[(slide.order - 1) % fallbackLayouts.length],
         thesis,
-        bullets: bullets.length >= 2 ? bullets : slide.bullets.slice(0, 2),
+        // The emergency canvas renders one complete claim per slide. Optional
+        // bullets are more likely to become fragments when projected from a
+        // long narration; the full evidence remains in speaker notes.
+        bullets: [],
         blocks: [],
-        visual: { type: "schema", title: `Schema: ${title}`, description: `A diagram explaining ${thesis}`, leftLabel: "", rightLabel: "", items: [], rows: [] },
+        visual: { type: "schema", title: `Схема: ${title}`, description: `Схема показывает: ${thesis}`, leftLabel: "", rightLabel: "", items: [], rows: [] },
         canvas: {
           version: 2,
           width: 1280,

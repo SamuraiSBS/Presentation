@@ -1,68 +1,37 @@
-import crypto from "node:crypto";
-import OpenAI from "openai";
-import { generateText, Output } from "ai";
-import { z } from "zod";
-import { captureGenerationError, errorLogFields, logger } from "../../../observability.js";
-import { calculateProviderCost, currentUsageContext, normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
-import { failCostEnvelope, releaseCostEnvelope, reserveCostEnvelope, reserveCostEnvelopeBatch, settleCostEnvelope } from "../../../cost-envelope.js";
-import { getPrisma } from "../../../prisma.js";
-import { aitunnelConfig, createAitunnelClient, createOpenAIClient, createOpenAIProvider } from "../../../openai-client.js";
 import {
-  aitunnelNarrationBudgetConfig,
-  reserveAitunnelStageCall,
-  AitunnelProjectBudget,
-  aitunnelModelForStage,
-  aitunnelStagePolicy,
-  currentAitunnelProjectBudget,
-  runWithAitunnelProjectBudget,
-  type AitunnelNarrationSectionStage,
-  type AitunnelStage,
-} from "../../../aitunnel-narration-budget.js";
-import {
-  type DesignBrief,
-  type CostEnvelopeBucket,
-  type DeckStory,
-  type GenerationPipelineArtifacts,
-  type Highlight,
-  type KeyConcept,
-  type PresentationDocument,
-  type QualityCritique,
-  type QualityIssue,
-  type ResearchBrief,
-  type Slide,
-  type SlideBlock,
-  type SlideBlueprint,
-  type SlideDefinition,
-  type SlideKind,
-  type SlideLayout,
-  type SlideNarrative,
-  type SlideTextPlan,
-  type SlideVisual,
-  type MermaidDiagramSpec,
-  type Source,
-  PREMIUM_PRESENTATION_THEMES,
-  PREMIUM_PRESENTATION_THEME_IDS,
-  SLIDE_LAYOUT_DEFINITIONS,
-  deckStorySchema,
-  designBriefSchema,
-  generationPipelineArtifactsSchema,
-  hasMeasurableValue,
-  presentationSchema,
-  russianSpeechMinutesFromWords,
-  getRussianStudentSpeechTimingBudget,
-  getFloorAwareSpeechTimingSectionBounds,
-  qualityCritiqueSchema,
-  researchBriefSchema,
-  resolvePresentationTheme,
-  mermaidDiagramSpecSchema,
-  slideBlueprintSchema,
-  slideNarrativeSchema,
-  slideTextPlanSchema,
+    designBriefSchema,
+    getFloorAwareSpeechTimingSectionBounds,
+    getRussianStudentSpeechTimingBudget,
+    russianSpeechMinutesFromWords,
+    slideNarrativeSchema,
+    type CostEnvelopeBucket,
+    type DeckStory,
+    type DesignBrief,
+    type GenerationPipelineArtifacts,
+    type ResearchBrief,
+    type SlideNarrative,
+    type SlideTextPlan,
+    type Source
 } from "@studydeck/shared";
+import { Output, generateText } from "ai";
+import OpenAI from "openai";
+import { z } from "zod";
 import {
-  improvePresentationQuality,
-  type QualityRepairResponse,
-} from "../../presentation-quality.js";
+    AitunnelProjectBudget,
+    aitunnelModelForStage,
+    aitunnelNarrationBudgetConfig,
+    aitunnelStagePolicy,
+    currentAitunnelProjectBudget,
+    reserveAitunnelStageCall,
+    runWithAitunnelProjectBudget,
+    type AitunnelNarrationSectionStage,
+    type AitunnelStage,
+} from "../../../aitunnel-narration-budget.js";
+import { failCostEnvelope, releaseCostEnvelope, reserveCostEnvelope, reserveCostEnvelopeBatch, settleCostEnvelope } from "../../../cost-envelope.js";
+import { errorLogFields, logger } from "../../../observability.js";
+import { aitunnelConfig, createAitunnelClient, createOpenAIClient, createOpenAIProvider } from "../../../openai-client.js";
+import { getPrisma } from "../../../prisma.js";
+import { calculateProviderCost, currentUsageContext, normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
 
 type ProjectInput = {
   id: string;
@@ -75,39 +44,6 @@ type ProjectInput = {
 };
 
 type AiGenerationMode = "openai" | "yandex" | "aitunnel";
-type FallbackGenerationMode = "demo" | "demo-fallback";
-type EnvLike = Record<string, string | undefined>;
-
-type NarrationSection = {
-  order: number;
-  title: string;
-  text: string;
-};
-
-type SlideTextIssue = {
-  slideOrder: number;
-  fields: string[];
-  reasons: string[];
-};
-
-type SlideTextRepair = {
-  slideOrder: number;
-  title?: unknown;
-  thesis?: unknown;
-  bullets?: unknown;
-  blocks?: unknown;
-  definition?: unknown;
-  visual?: unknown;
-};
-
-type SlideTextRepairResponse = {
-  slides?: SlideTextRepair[];
-};
-
-type QualityModelCallbacks = {
-  critique?: (presentation: PresentationDocument, deterministic: QualityCritique) => Promise<unknown>;
-  repair?: (presentation: PresentationDocument, issues: QualityIssue[], attempt: number) => Promise<unknown>;
-};
 
 type GenerateStructuredOptions<T> = {
   provider: AiGenerationMode;
@@ -149,13 +85,6 @@ export class StructuredGenerationError extends Error {
   }
 }
 
-type YandexTextOptions = {
-  jsonObject?: boolean;
-  jsonSchema?: unknown;
-  temperature?: number;
-  maxTokens?: number;
-};
-
 type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief" | "deckStory" | "designBrief" | "slideBlueprints" | "slideTextPlans">>;
 
 // Narration has one initial text call and, after any validation failure, one
@@ -167,17 +96,15 @@ export const MAX_AITUNNEL_NARRATION_TEXT_CALLS = 3;
 const OPENAI_NARRATION_MAX_PROVIDER_ATTEMPTS = 4;
 export const PRESENTATION_RECOVERY_CHUNK_COUNT = 3;
 
-import type { YandexCompletionResponse } from "../constants.js";
-import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
-import { buildResearchBrief, buildDesignBrief, logStructuredGenerationValidationFailure, buildDeckStory, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "../planning/builders.js";
-import { shouldRetryNarration, requestYandexText, normalizeNarrationText, parseNarrationSections, findSpokenNarrationIssues, assessFullNarrationDocument, isFullNarrationTargetedRepairEligible, selectBestFullNarrationAttempt, type FullNarrationAttempt, type FullNarrationSafeDiagnostics, type NarrationGenerationOutcome, type NarrationRecoveryStage } from "../narration/processing.js";
-import { speechSentences } from "../normalization/presentation.js";
-import { buildNarrativePlanPrompt, buildDesignBriefPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildFullNarrationDurationRewritePrompt, buildAitunnelFullNarrationRewritePrompt, buildAitunnelFullNarrationCandidatePrompt, buildAitunnelFullNarrationRewriteWithDraftPrompt, buildAitunnelTargetedNarrationRepairPrompt, aitunnelTargetedNarrationRepairResponseSchema, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt, buildAitunnelNarrationGlobalRewritePrompt, buildGenerationPrompt, buildYandexPresentationRecoveryPrompt, getYandexModelConfig } from "../prompts/builders.js";
+import { AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT } from "../constants.js";
+import { assessFullNarrationDocument, findSpokenNarrationIssues, isFullNarrationTargetedRepairEligible, normalizeNarrationText, parseNarrationSections, requestYandexText, selectBestFullNarrationAttempt, shouldRetryNarration, type FullNarrationAttempt, type FullNarrationSafeDiagnostics, type NarrationGenerationOutcome } from "../narration/processing.js";
+import { ensureDesignBriefDirections, speechSentences } from "../normalization/presentation.js";
+import { buildDeckStory, buildDesignBrief, buildResearchBrief, buildSlideBlueprints, buildSlideTextPlans, logStructuredGenerationValidationFailure, normalizeNarrativePlan } from "../planning/builders.js";
 import type { NarrationRewriteFailureCategory, YandexModelTier } from "../prompts/builders.js";
-import { ensureDesignBriefDirections } from "../normalization/presentation.js";
-import { finalizeGeneratedPresentation, repairSlideTextWithOpenAI, repairSlideTextWithYandex, critiquePresentationQualityWithOpenAI, critiquePresentationQualityWithYandex, repairPresentationQualityWithOpenAI, repairPresentationQualityWithYandex } from "../quality/orchestration.js";
+import { aitunnelTargetedNarrationRepairResponseSchema, buildAitunnelFullNarrationCandidatePrompt, buildAitunnelFullNarrationRewriteWithDraftPrompt, buildAitunnelNarrationGlobalRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt, buildAitunnelTargetedNarrationRepairPrompt, buildDesignBriefPrompt, buildFullNarrationDurationRewritePrompt, buildGenerationPrompt, buildNarrationPrompt, buildNarrationRepairPrompt, buildNarrativePlanPrompt, buildYandexPresentationRecoveryPrompt, getYandexModelConfig } from "../prompts/builders.js";
+import { critiquePresentationQualityWithOpenAI, critiquePresentationQualityWithYandex, finalizeGeneratedPresentation, repairPresentationQualityWithOpenAI, repairPresentationQualityWithYandex, repairSlideTextWithOpenAI, repairSlideTextWithYandex } from "../quality/orchestration.js";
+import { designBriefJsonSchema, jsonSchema, narrativePlanJsonSchema } from "../schemas.js";
 import { parseJsonText } from "../utilities.js";
-import { jsonSchema, narrativePlanJsonSchema, designBriefJsonSchema } from "../schemas.js";
 
 export async function generateWithOpenAI(project: ProjectInput, sources: Source[]) {
   const client = createOpenAIClient();
@@ -495,7 +422,7 @@ async function generateLegacyAitunnelNarration(client: OpenAI, model: string, pr
   }
 }
 
-function maximumFullNarrationDraft(project: ProjectInput) {
+function maximumFullNarrationDraft(_project: ProjectInput) {
   return Array.from({ length: 10 }, (_, index) => {
     // `слово` is a representative Russian spoken-word fixture, not user text.
     // The envelope additionally budgets a 15% token safety margin.
@@ -1234,7 +1161,7 @@ export async function generateYandexNarration(apiKey: string, project: ProjectIn
   let initialText = "";
   try {
     initialText = await requestYandexText(apiKey, NARRATION_SYSTEM_PROMPT, buildNarrationPrompt(project, sources, narrativePlan, researchBrief), { jsonObject: false, modelTier: "narration", narrationTextCall: 1, maxNarrationTextCalls: MAX_YANDEX_NARRATION_TEXT_CALLS });
-  } catch (error) {
+  } catch (_error) {
     logNarrationCall(project.id, 1, "none", { failureCategory: "provider_error" });
     throw narrationFailure("provider");
   }
@@ -1263,7 +1190,7 @@ async function rewriteInvalidYandexNarration(
       buildFullNarrationDurationRewritePrompt(project, sources, narrativePlan, previousText, error, researchBrief),
       { jsonObject: false, modelTier: "narration", narrationTextCall: 2, maxNarrationTextCalls: MAX_YANDEX_NARRATION_TEXT_CALLS },
     );
-  } catch (rewriteError) {
+  } catch (_rewriteError) {
     logNarrationCall(project.id, 2, "full_narration_rewrite", { failureCategory: "provider_error" });
     throw narrationFailure("provider");
   }

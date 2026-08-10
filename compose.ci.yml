@@ -1,0 +1,9 @@
+# CI-only image override. `docker compose ... up --no-build` makes the smoke
+# test consume exactly the images built in the release-gates workflow.
+services:
+  api:
+    image: studydeck-api:${STUDYDECK_IMAGE_TAG:?set by the release-gates workflow}
+  worker:
+    image: studydeck-worker:${STUDYDECK_IMAGE_TAG:?set by the release-gates workflow}
+  web:
+    image: studydeck-web:${STUDYDECK_IMAGE_TAG:?set by the release-gates workflow}

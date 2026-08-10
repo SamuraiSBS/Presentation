@@ -1,37 +1,36 @@
-import type { SourceRef } from "../projects/schemas.js";
 import type { DesignBriefSlideDirection, SceneTextMode } from "../generation/schemas.js";
-import { resolvePresentationTheme } from "./themes.js";
-import { presentationLayoutCapacity } from "./layouts.js";
-import type {
-  CanvasBackgroundStyle,
-  CanvasElement,
-  CanvasImageElement,
-  CanvasShapeElement,
-  CanvasTextElement,
-  PresentationTheme,
-  Slide,
-  SlideBlock,
-  SlideCanvas,
-  SlideVisual,
-} from "./schemas.js";
-import type { PresentationDocument } from "./document.js";
+import type { SourceRef } from "../projects/schemas.js";
+import { formatSlideAttribution } from "./attribution.js";
 import { repairUnsafeGeneratedElements } from "./canvas-audit.js";
 import { slideBackgroundStyle } from "./canvas-background.js";
 import {
-  CANVAS_SAFE_BOTTOM,
-  cleanCanvasText,
-  compactCanvasTextToFit,
-  estimatedCharactersPerLine,
-  elementsVisuallyOverlap,
-  estimatedTextHeight,
-  MIN_GENERATED_BODY_FONT_SIZE,
-  MIN_GENERATED_CAPTION_FONT_SIZE,
-  minimumReadableFontSize,
-  sortCanvasElements,
-  STUDYDECK_EDITORIAL_THEME_ID,
+    CANVAS_SAFE_BOTTOM,
+    cleanCanvasText,
+    compactCanvasTextToFit,
+    elementsVisuallyOverlap,
+    estimatedCharactersPerLine,
+    estimatedTextHeight,
+    MIN_GENERATED_BODY_FONT_SIZE,
+    MIN_GENERATED_CAPTION_FONT_SIZE,
+    minimumReadableFontSize,
+    sortCanvasElements,
+    STUDYDECK_EDITORIAL_THEME_ID,
 } from "./canvas-helpers.js";
+import type { PresentationDocument } from "./document.js";
+import { presentationLayoutCapacity } from "./layouts.js";
+import type {
+    CanvasElement,
+    CanvasImageElement,
+    CanvasShapeElement,
+    CanvasTextElement,
+    PresentationTheme,
+    Slide,
+    SlideBlock,
+    SlideCanvas,
+    SlideVisual
+} from "./schemas.js";
+import { resolvePresentationTheme } from "./themes.js";
 import { presentationTypography, typographyForCanvasText } from "./typography.js";
-import { formatSlideAttribution } from "./attribution.js";
 
 const READABLE_BODY_FONT_SIZE = presentationTypography.body.preferredPx;
 const READABLE_PLAQUE_FONT_SIZE = presentationTypography.label.preferredPx;

@@ -1,37 +1,32 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { z } from "zod";
 import { auditSlideCanvas, getRussianStudentSpeechTimingBudget, presentationSchema } from "@studydeck/shared";
-import {
-  buildGenerationPrompt,
-  buildLocalPresentationFromAcceptedNarration,
-  buildSafePresentationFromNarration,
-  findSlideTextIssues,
-  generateNarrationDraft,
-  generatePresentation,
-  generatePresentationFromNarration,
-  generateStructuredWithProvider,
-  inferContentLayout,
-  normalizeLayout,
-  normalizeNarrativePlan,
-  selectAiProviders,
-} from "./presentation.js";
-import { generatePresentation as generatePresentationFromOrchestrator, generatePresentationFromNarrationWithProviders } from "./presentation/orchestrator.js";
-import { buildGenerationPrompt as buildGenerationPromptFromLayer } from "./presentation/prompts/builders.js";
-import { buildAitunnelFullNarrationRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt, buildFullNarrationDurationRewritePrompt, buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
-import { buildFallbackNarrativeItem, normalizeNarrativePlan as normalizeNarrativePlanFromLayer } from "./presentation/planning/builders.js";
-import { classifyAitunnelNarrationRewriteFailure, generateAitunnelNarration, generateYandexNarration, MAX_AITUNNEL_NARRATION_TEXT_CALLS, MAX_YANDEX_NARRATION_TEXT_CALLS, isRecoverableYandexStructuredPresentationError, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
+import { readFileSync } from "node:fs";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { AitunnelProjectBudget, estimateInputTokens, reserveAitunnelStageCall, runWithAitunnelProjectBudget } from "../aitunnel-narration-budget.js";
-import { AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT, NARRATION_SYSTEM_PROMPT } from "./presentation/constants.js";
-import { sourceEvidenceForSlide } from "./presentation/planning/builders.js";
-import { findSlideTextIssues as findSlideTextIssuesFromLayer } from "./presentation/quality/orchestration.js";
 import { logger } from "../observability.js";
-import { applyNarrationFallbacks } from "./presentation/quality/orchestration.js";
-import { looksLikeSentenceFragment } from "./presentation/quality/orchestration.js";
-import { normalizeLayout as normalizeLayoutFromLayer, normalizeVisual } from "./presentation/normalization/presentation.js";
-import { findAitunnelNarrationTimingReasons, findSpokenNarrationIssues, normalizeNarrationText, parseNarrationSections, validateNarrationSections, yandexNarrationCompletionTelemetry } from "./presentation/narration/processing.js";
-import { shortenSentence } from "./presentation/utilities.js";
 import { productionQualityReleaseResult } from "./presentation-quality.js";
+import {
+    buildGenerationPrompt,
+    buildLocalPresentationFromAcceptedNarration,
+    buildSafePresentationFromNarration,
+    findSlideTextIssues,
+    generateNarrationDraft,
+    generatePresentation,
+    generateStructuredWithProvider,
+    inferContentLayout,
+    normalizeLayout,
+    normalizeNarrativePlan,
+    selectAiProviders
+} from "./presentation.js";
+import { AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT, NARRATION_SYSTEM_PROMPT } from "./presentation/constants.js";
+import { findAitunnelNarrationTimingReasons, normalizeNarrationText, parseNarrationSections, validateNarrationSections, yandexNarrationCompletionTelemetry } from "./presentation/narration/processing.js";
+import { normalizeLayout as normalizeLayoutFromLayer, normalizeVisual } from "./presentation/normalization/presentation.js";
+import { generatePresentationFromNarrationWithProviders, generatePresentation as generatePresentationFromOrchestrator } from "./presentation/orchestrator.js";
+import { buildFallbackNarrativeItem, normalizeNarrativePlan as normalizeNarrativePlanFromLayer, sourceEvidenceForSlide } from "./presentation/planning/builders.js";
+import { buildAitunnelFullNarrationRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt, buildFullNarrationDurationRewritePrompt, buildGenerationPrompt as buildGenerationPromptFromLayer, buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
+import { classifyAitunnelNarrationRewriteFailure, generateAitunnelNarration, generateYandexNarration, isRecoverableYandexStructuredPresentationError, MAX_AITUNNEL_NARRATION_TEXT_CALLS, MAX_YANDEX_NARRATION_TEXT_CALLS, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
+import { applyNarrationFallbacks, findSlideTextIssues as findSlideTextIssuesFromLayer, looksLikeSentenceFragment } from "./presentation/quality/orchestration.js";
+import { shortenSentence } from "./presentation/utilities.js";
 
 const originalEnv = { ...process.env };
 const forbiddenNarrationFragments = [
@@ -219,18 +214,7 @@ describe("presentation compatibility facade", () => {
       .toContainEqual(expect.stringContaining("[planning_formula]"));
     expect(() => normalizeNarrationText(narration, project, plan)).toThrow("contains template narration");
   });
-  it("caps narration at one initial call and one full replacement", () => {
-    const project = {
-      id: "narration-recovery-budget",
-      title: "Saturn",
-      prompt: "Explain Saturn",
-      scenario: "university_report",
-      level: "university_student",
-      mode: "with_sources",
-      slideCount: 10,
-    };
-
-    expect(MAX_YANDEX_NARRATION_TEXT_CALLS).toBe(2);
+  it("caps narration at one initial call and one full replacement", () => {    expect(MAX_YANDEX_NARRATION_TEXT_CALLS).toBe(2);
   });
 
   it("accepts a nine-minute ten-slide narration and flags text below that duration", () => {
@@ -509,18 +493,7 @@ describe("Yandex narration full duration rewrite", () => {
 
   function completeNarration(contentWords = 155) {
     return Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, index === 0 ? 105 : index === 9 ? 130 : contentWords)).join("\n\n");
-  }
-
-
-
-  function narrationPart(start: number, end: number, contentWords = 155) {
-    return Array.from({ length: end - start + 1 }, (_, index) => {
-      const order = start + index;
-      return narrationSection(order, order === 1 ? 105 : order === 10 ? 130 : contentWords);
-    }).join("\n\n");
-  }
-
-  it("builds a release-ready ten-slide local document from accepted narration without provider calls", async () => {
+  }  it("builds a release-ready ten-slide local document from accepted narration without provider calls", async () => {
     const accepted = readFileSync(new URL("../../../../e2e-237-accepted-speech.txt", import.meta.url), "utf8");
     const originalFetch = global.fetch;
     global.fetch = async () => { throw new Error("provider access is forbidden in the local presentation path"); };
@@ -2213,14 +2186,7 @@ describe("generatePresentation fallback behavior", () => {
     process.env.ALLOW_DEMO_GENERATION = "false";
 
     const titles = Array.from({ length: 14 }, (_, index) => `Repair topic ${index + 1}`);
-    const overlongText = overlongNarrationForSlides(titles);
-    const rewrittenText = titles
-      .map((title, index) => [
-        `Слайд ${index + 1}: ${title}`,
-        `Openingpoint${index + 1} explains a concrete part of the report with enough context for the listener. The supporting example for item ${index + 1} shows how this point works in practice. Closingpoint${index + 1} preserves the evidence while keeping the spoken explanation concise and distinct.`,
-      ].join("\n"))
-      .join("\n\n");
-    const rewrittenNarration = narrationForSlides(titles);
+    const overlongText = overlongNarrationForSlides(titles);    const rewrittenNarration = narrationForSlides(titles);
     const originalFetch = global.fetch;
     mockYandexNarrationRewrite(overlongText, rewrittenNarration);
 
@@ -3312,17 +3278,4 @@ function expectNoForbiddenSlideText(text: string) {
 
 function sentenceCount(text: string) {
   return text.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean).length;
-}
-
-function firstSentence(text: string) {
-  return text.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean)[0] || "";
-}
-
-function lastSentence(text: string) {
-  const sentences = text.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean);
-  return sentences[sentences.length - 1] || "";
-}
-
-function sentenceStartKey(text: string) {
-  return text.toLowerCase().replace(/[«»"“”'`.,!?;:()[\]{}<>]/g, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 3).join(" ");
 }

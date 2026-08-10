@@ -1,5 +1,5 @@
-import { afterEach, expect, it, vi } from "vitest";
 import { COST_ENVELOPE_POLICY_VERSION, historicalStandardGenerationCostPolicyV5, standardGenerationCostPolicy, type Source } from "@studydeck/shared";
+import { afterEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   findUniqueOrThrow: vi.fn(),
@@ -25,14 +25,14 @@ vi.mock("../../../cost-envelope.js", async (importOriginal) => ({
   settleCostEnvelope: mocks.settleCostEnvelope,
 }));
 
+import { getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
 import { AitunnelProjectBudget, reserveAitunnelStageCall, runWithAitunnelProjectBudget, type AitunnelNarrationSectionStage } from "../../../aitunnel-narration-budget.js";
 import { logger } from "../../../observability.js";
 import { runWithUsageContext } from "../../../usage-ledger.js";
 import { AITUNNEL_NARRATION_SECTION_SYSTEM_PROMPT, NARRATION_SYSTEM_PROMPT } from "../constants.js";
-import { buildAitunnelFullNarrationRewriteWithDraftPrompt, buildAitunnelNarrationGlobalRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt } from "../prompts/builders.js";
 import { assessFullNarrationDocument } from "../narration/processing.js";
+import { buildAitunnelFullNarrationRewriteWithDraftPrompt, buildAitunnelNarrationGlobalRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt } from "../prompts/builders.js";
 import { generateAitunnelNarration, generateNarrativePlanWithProvider, MAX_AITUNNEL_NARRATION_TEXT_CALLS } from "./generation.js";
-import { getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
 
 const project = {
   id: "persisted-envelope-project",
@@ -332,7 +332,7 @@ it("logs no quality reason and makes no fallback call when every Lite section is
     logged.push(payload);
     return logger;
   });
-  const create = vi.fn().mockImplementation(async (request: { model: string }) => {
+  const create = vi.fn().mockImplementation(async (_request) => {
     const call = create.mock.calls.length;
     const words = call === 1 ? 72 : call === 10 ? 90 : 126;
     const firstSentenceWords = Math.floor(words / 2);

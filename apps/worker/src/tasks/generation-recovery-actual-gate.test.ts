@@ -1,16 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { handleGenerationJob, hasAcceptedNarrationRecoveryArtifacts } from "./generation.js";
+import { buildEmergencyReadablePresentation, handleGenerationJob, hasAcceptedNarrationRecoveryArtifacts } from "./generation.js";
+import { buildLocalPresentationFromAcceptedNarration } from "./presentation.js";
 import { productionQualityReleaseResult } from "./presentation-quality.js";
 import { searchWebSources } from "./web-search.js";
 
-const { generatePresentationFromNarration, prismaMock, costEnvelope, reserveCostEnvelope, settleCostEnvelope, captureGenerationError } = vi.hoisted(() => {
+const { generatePresentationFromNarration, enrichPresentationImages, prismaMock, costEnvelope, reserveCostEnvelope, settleCostEnvelope, captureGenerationError } = vi.hoisted(() => {
   const costEnvelope = { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn(), create: vi.fn() };
   const reserveCostEnvelope = vi.fn();
   const settleCostEnvelope = vi.fn();
   const captureGenerationError = vi.fn();
+  const enrichPresentationImages = vi.fn();
   return {
     generatePresentationFromNarration: vi.fn(),
+    enrichPresentationImages,
     costEnvelope,
     reserveCostEnvelope,
     settleCostEnvelope,
@@ -30,7 +33,7 @@ const { generatePresentationFromNarration, prismaMock, costEnvelope, reserveCost
 
 vi.mock("../prisma.js", () => ({ getPrisma: () => prismaMock }));
 vi.mock("./web-search.js", () => ({ searchWebSources: vi.fn() }));
-vi.mock("./image-search.js", () => ({ enrichPresentationImages: vi.fn() }));
+vi.mock("./image-search.js", () => ({ enrichPresentationImages }));
 vi.mock("./presentation.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("./presentation.js")>(),
   generatePresentationFromNarration,
@@ -70,7 +73,18 @@ describe("accepted narration local recovery with the actual production gate", ()
       limitRub: { toString: () => "10" }, reservedRub: { toString: () => "0" }, settledRub: { toString: () => "0" }, status: "active",
       sourceSnapshot, reservations: [{ status: "settled", reason: null }], _count: { costEvents: 0 },
     });
+    enrichPresentationImages.mockImplementation(async (_project, presentation) => presentation);
     generatePresentationFromNarration.mockRejectedValue(new Error("structured presentation response was malformed"));
+  });
+
+  it("runs the bounded image enrichment exactly once on a fresh successful presentation", async () => {
+    generatePresentationFromNarration.mockResolvedValue(buildLocalPresentationFromAcceptedNarration(project, sources, acceptedNarration));
+
+    await expect(handleGenerationJob(job())).resolves.toBeUndefined();
+
+    expect(enrichPresentationImages).toHaveBeenCalledTimes(1);
+    expect(enrichPresentationImages).toHaveBeenCalledWith(expect.objectContaining({ id: project.id }), expect.any(Object));
+    expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "ready" }) }));
   });
 
   it("recovers a provider failure to ready through the real release gate without a second provider or Tavily call", async () => {
@@ -79,8 +93,34 @@ describe("accepted narration local recovery with the actual production gate", ()
     const release = productionQualityReleaseResult(document, sources, { ...project, mandatorySourceSnapshot: true, acceptedNarrationRecovery: true });
     expect(release).toMatchObject({ finalDisposition: "released", issueCategories: [], issues: [] });
     expect(generatePresentationFromNarration).toHaveBeenCalledTimes(1);
+    expect(enrichPresentationImages).not.toHaveBeenCalled();
     expect(searchWebSources).not.toHaveBeenCalled();
     expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "ready" }) }));
+  });
+
+  it("releases the emergency readable deck when the editorial local projection remains generic", () => {
+    const local = buildLocalPresentationFromAcceptedNarration(project, sources, acceptedNarration);
+    const rejectedEditorialProjection = {
+      ...local,
+      slides: local.slides.map((slide, index) => index === 0
+        ? { ...slide, thesis: "Общая информация", visual: { ...slide.visual, description: "Общая схема" } }
+        : slide),
+    };
+
+    expect(productionQualityReleaseResult(rejectedEditorialProjection, sources, {
+      ...project,
+      mandatorySourceSnapshot: true,
+      acceptedNarrationRecovery: true,
+    }).finalDisposition).toBe("rejected");
+
+    const emergency = buildEmergencyReadablePresentation(rejectedEditorialProjection);
+    const emergencyRelease = productionQualityReleaseResult(emergency, sources, {
+      ...project,
+      mandatorySourceSnapshot: true,
+      acceptedNarrationRecovery: true,
+    });
+    expect(emergencyRelease.issues).toEqual([]);
+    expect(emergencyRelease).toMatchObject({ finalDisposition: "released", issueCategories: [] });
   });
 
   it("does not spend again when a retry inherits a terminal envelope", async () => {
