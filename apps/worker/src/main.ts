@@ -5,7 +5,9 @@ import { createRedisConnection } from "./queue.js";
 import { handleExportJob } from "./tasks/export.js";
 import { handleGenerationJob } from "./tasks/generation.js";
 import { handleAdminMaintenance } from "./tasks/admin-maintenance.js";
+import { assertProductionConfiguration } from "@studydeck/shared";
 
+assertProductionConfiguration();
 initTracing();
 initSentry();
 

@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getServerSession } from "next-auth";
 import { TelegramSignInButton } from "@/components/telegram-sign-in-button";
-import { authOptions, isTelegramAuthConfigured } from "@/lib/auth-options";
+import { isTelegramAuthConfigured } from "@/auth.config";
+import { auth } from "@/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +23,7 @@ export default async function LoginPage({
 }) {
   const query = await searchParams;
   const callbackUrl = safeCallbackUrl(firstQueryValue(query.callbackUrl));
-  const session = await getServerSession(authOptions);
+  const session = await auth();
   if (session?.user?.id) redirect(callbackUrl);
 
   const telegramConfigured = isTelegramAuthConfigured();

@@ -1,37 +1,36 @@
-import type { SourceRef } from "../projects/schemas.js";
 import type { DesignBriefSlideDirection, SceneTextMode } from "../generation/schemas.js";
-import { resolvePresentationTheme } from "./themes.js";
-import { presentationLayoutCapacity } from "./layouts.js";
-import type {
-  CanvasBackgroundStyle,
-  CanvasElement,
-  CanvasImageElement,
-  CanvasShapeElement,
-  CanvasTextElement,
-  PresentationTheme,
-  Slide,
-  SlideBlock,
-  SlideCanvas,
-  SlideVisual,
-} from "./schemas.js";
-import type { PresentationDocument } from "./document.js";
+import type { SourceRef } from "../projects/schemas.js";
+import { formatSlideAttribution } from "./attribution.js";
 import { repairUnsafeGeneratedElements } from "./canvas-audit.js";
 import { slideBackgroundStyle } from "./canvas-background.js";
 import {
-  CANVAS_SAFE_BOTTOM,
-  cleanCanvasText,
-  compactCanvasTextToFit,
-  estimatedCharactersPerLine,
-  elementsVisuallyOverlap,
-  estimatedTextHeight,
-  MIN_GENERATED_BODY_FONT_SIZE,
-  MIN_GENERATED_CAPTION_FONT_SIZE,
-  minimumReadableFontSize,
-  sortCanvasElements,
-  STUDYDECK_EDITORIAL_THEME_ID,
+    CANVAS_SAFE_BOTTOM,
+    cleanCanvasText,
+    compactCanvasTextToFit,
+    elementsVisuallyOverlap,
+    estimatedCharactersPerLine,
+    estimatedTextHeight,
+    MIN_GENERATED_BODY_FONT_SIZE,
+    MIN_GENERATED_CAPTION_FONT_SIZE,
+    minimumReadableFontSize,
+    sortCanvasElements,
+    STUDYDECK_EDITORIAL_THEME_ID,
 } from "./canvas-helpers.js";
+import type { PresentationDocument } from "./document.js";
+import { presentationLayoutCapacity } from "./layouts.js";
+import type {
+    CanvasElement,
+    CanvasImageElement,
+    CanvasShapeElement,
+    CanvasTextElement,
+    PresentationTheme,
+    Slide,
+    SlideBlock,
+    SlideCanvas,
+    SlideVisual
+} from "./schemas.js";
+import { resolvePresentationTheme } from "./themes.js";
 import { presentationTypography, typographyForCanvasText } from "./typography.js";
-import { formatSlideAttribution } from "./attribution.js";
 
 const READABLE_BODY_FONT_SIZE = presentationTypography.body.preferredPx;
 const READABLE_PLAQUE_FONT_SIZE = presentationTypography.label.preferredPx;
@@ -572,6 +571,9 @@ function addEditorialSequenceVisual(slide: Slide, theme: PresentationTheme, elem
   const startX = 492;
   safeItems.forEach((item, index) => {
     const x = startX + index * (columnWidth + EDITORIAL_GUTTER);
+    // Sequence columns are intentionally narrow. Keep their labels as short
+    // visual anchors so a recovery deck preserves readable editorial type.
+    const label = compactEditorialPoint(item, 2, columnWidth, 176) || compactSummaryPoint(item, 2);
     elements.push(
       textElement(`${slide.id}-editorial-step-${index}-number`, String(index + 1).padStart(2, "0"), x, 226, columnWidth, 46, 5, {
         role: "body",
@@ -583,7 +585,7 @@ function addEditorialSequenceVisual(slide: Slide, theme: PresentationTheme, elem
         groupId,
       }),
       shapeElement(`${slide.id}-editorial-step-${index}-rule`, "rect", x, 292, columnWidth, 3, 4, theme.colors.line, theme.colors.line, 0, 1),
-      textElement(`${slide.id}-editorial-step-${index}-text`, compactSummaryPoint(item, 11), x, 326, columnWidth, 176, 5, {
+      textElement(`${slide.id}-editorial-step-${index}-text`, label, x, 326, columnWidth, 176, 5, {
         role: "body",
         typographyRole: "supporting",
         fontSize: 23,

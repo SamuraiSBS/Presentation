@@ -52,6 +52,7 @@ if ($DemoPreview) {
 }
 
 if ($E2E) {
+  $env:E2E_TEST_MODE = 'true'
   $env:ALLOW_DEV_AUTH = 'true'
   $env:ALLOW_DEV_ADMIN = 'true'
   $env:TEMP_USER_ID = 'playwright-user'
@@ -69,5 +70,12 @@ Write-Host 'UI changes under apps/web will appear without a Docker rebuild.'
 Write-Host 'Keep the API available at http://localhost:4000.'
 Write-Host ""
 
-npm run dev -w @studydeck/web -- -p $Port
-exit $LASTEXITCODE
+Push-Location (Join-Path $repoRoot 'apps\web')
+try {
+  # npm workspace commands otherwise preserve the repository as cwd. Next
+  # treats that as its project root and Watchpack scans D:\\ on this host.
+  npm run dev -- -p $Port
+  exit $LASTEXITCODE
+} finally {
+  Pop-Location
+}

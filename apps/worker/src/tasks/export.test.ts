@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import JSZip from "jszip";
 import sharp from "sharp";
 import { ensureEditableCanvas, PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS, presentationSchema } from "@studydeck/shared";
@@ -447,12 +446,12 @@ describe("createPptx", () => {
     }
   });
 
-  it.skipIf(!hasChromium())("renders editable canvas to a real pdf", async () => {
+  it("renders editable canvas to a real pdf", async () => {
     const buffer = await createPdf(canvasDeck());
 
     expect(buffer.subarray(0, 5).toString("utf8")).toBe("%PDF-");
     expect(buffer.length).toBeGreaterThan(1000);
-  });
+  }, 60_000);
 });
 
 describe("export preflight", () => {
@@ -517,6 +516,27 @@ describe("export preflight", () => {
     expect(result.document).toEqual(released);
   });
 
+  it("does not re-report synchronized accepted narration during released export validation", async () => {
+    const source = generatedPreflightDeck();
+    const acceptedNarration = "Материал связывает ключевые наблюдения с темой и показывает, как проверяемые примеры помогают сделать вывод понятным для аудитории без потери исходного смысла и без повторения общих формулировок. Он объясняет практическое значение каждого примера для самостоятельной подготовки к выступлению на занятии.";
+    const released = presentationSchema.parse({
+      ...source,
+      generatedText: `Слайд 1: ${source.slides[0]!.title}\n${acceptedNarration}`,
+      productionQualityGate: { version: 1, capability: "silent-production-quality-gate" },
+      speechScript: [{ slideOrder: 1, slideTitle: source.slides[0]!.title, text: acceptedNarration }],
+      slides: source.slides.map((slide) => ({ ...slide, speakerNotes: acceptedNarration })),
+    });
+    const result = await preparePresentationForExport(released, {
+      format: "pptx",
+      project: { ...project, title: "Canvas deck", prompt: "Материал связывает ключевые наблюдения с темой.", slideCount: 1 },
+      readObject: readAvailableObject,
+    });
+
+    expect(result.report).toMatchObject({ repaired: false });
+    expect(result.report.slideIssues.flatMap((issue) => issue.categories)).not.toContain("bad_narration");
+    expect(result.document).toEqual(released);
+  });
+
   it("uses a safe generated fallback for a missing binary image without changing custom canvas", async () => {
     const source = generatedPreflightDeck();
     const withMissingImage = presentationSchema.parse({
@@ -570,10 +590,15 @@ describe("export preflight", () => {
     await expect(renderPdfHtml(legacyResult.document)).resolves.toContain("template-slide");
 
     const source = generatedPreflightDeck();
+    const acceptedNarration = "Porsche 911 стал символом спортивного автомобиля благодаря сочетанию заднемоторной компоновки, инженерной эволюции и узнаваемого силуэта. Эта модель показывает, как последовательные технические изменения сохраняют характер автомобиля и расширяют его возможности на дороге и на треке.";
     const corrupted = presentationSchema.parse({
       ...source,
+      generatedText: `Slide 1: Porsche 911\n${acceptedNarration}`,
+      speechScript: [{ slideOrder: 1, slideTitle: "Porsche 911", text: acceptedNarration }],
       slides: source.slides.map((slide) => ({
         ...slide,
+        title: "Porsche 911",
+        speakerNotes: acceptedNarration,
         thesis: "Porsche 911 показал.",
         bullets: ["Международный конфликт меняет границы государств."],
       })),
@@ -820,16 +845,4 @@ function legacyImageDeck() {
       },
     ],
   };
-}
-
-function hasChromium() {
-  return [
-    process.env.CHROMIUM_PATH,
-    process.env.PUPPETEER_EXECUTABLE_PATH,
-    "/usr/bin/chromium-browser",
-    "/usr/bin/chromium",
-    "/usr/bin/google-chrome-stable",
-  ]
-    .filter(Boolean)
-    .some((candidate) => existsSync(candidate as string));
 }

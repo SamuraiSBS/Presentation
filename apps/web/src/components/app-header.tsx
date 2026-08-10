@@ -3,7 +3,7 @@
 import Link from "next/link";
 import NextImage from "next/image";
 import { usePathname } from "next/navigation";
-import { signOut, useSession } from "next-auth/react";
+import { signOut, useSession } from "@studydeck/auth/react";
 import {
   Folder,
   Gauge,

@@ -6,6 +6,7 @@ import {
   applySlideSpeechAlignmentFallbacks,
   applyTopicRelevanceFallbacks,
   applyVisualPlanFallbacks,
+  materializePlannedVisuals,
   applyVisibleTextIntegrityFallbacks,
   buildSlideSemanticContracts,
   findDeckWideDuplicateIssues,
@@ -855,6 +856,34 @@ describe("presentation quality checks", () => {
     expect(contentDirections.filter((direction) => direction.imageStrategy === "diagram" || direction.imageStrategy === "real_photo")).toHaveLength(3);
     expect(repaired.designBrief!.slideDirections.at(-1)).toMatchObject({ imageStrategy: "none", layoutIntent: "summary" });
     expect(findVisualPlanIssues(repaired, project)).toHaveLength(0);
+  });
+
+  it("materializes planned diagrams into renderable slide visuals", () => {
+    const slides = [1, 2, 3].map((order) => ({
+      ...makeSlide(order, `Neural-network topic ${order}`, `A distinct explanation ${order} links evidence to a conclusion.`, [`Grounded point ${order}`]),
+      slideKind: "content" as const,
+      visual: { type: "none" as const, title: "", description: "Text-led placeholder", leftLabel: "", rightLabel: "", items: [], rows: [] },
+    }));
+    const presentation = makePresentation({
+      slides: slides as any,
+      designBrief: {
+        ...makePresentation().designBrief!,
+        slideDirections: slides.map((slide) => ({
+          slideOrder: slide.order,
+          visualRole: "explain" as const,
+          layoutIntent: slide.order === 2 ? "diagram" as const : "cards" as const,
+          imageStrategy: slide.order === 2 ? "diagram" as const : "none" as const,
+          sceneTextMode: slide.order === 2 ? "visual_labels" as const : "talk_sentences" as const,
+          visualPrompt: `Explanation for ${slide.title}`,
+        })),
+      },
+    });
+
+    const materialized = materializePlannedVisuals(presentation);
+
+    expect(materialized.slides[1]).toMatchObject({ layout: "process", visual: { type: "process_diagram" } });
+    expect(materialized.slides[0].visual.type).toBe("none");
+    expect(materialized.slides[2].visual.type).toBe("none");
   });
 
   it("accepts a ten-slide visual fixture with six sourced photos and three semantic diagrams", () => {

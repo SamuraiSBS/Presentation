@@ -1,7 +1,7 @@
 import "server-only";
 
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth-options";
+import { auth } from "@/auth";
+import { devAuthAllowed } from "@studydeck/shared";
 
 export type ApiErrorBody = {
   code: string;
@@ -28,12 +28,12 @@ export type InternalApiResponse<T> = {
 };
 
 export async function requireUserId(): Promise<string> {
-  const session = await getServerSession(authOptions);
+  const session = await auth();
   if (session?.user?.id) return session.user.id;
 
   // This is deliberately server-only. It is useful for a local production-like
   // container too, but can only be enabled by the exact private env flag.
-  if (process.env.ALLOW_DEV_AUTH === "true") {
+  if (devAuthAllowed()) {
     return process.env.TEMP_USER_ID?.trim() || "local-user";
   }
 

@@ -4,6 +4,7 @@ dist/
 coverage/
 .turbo/
 .env
+.env.production
 .env.local
 .env.*.local
 .DS_Store

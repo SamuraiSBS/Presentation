@@ -4,6 +4,7 @@ import { planLimits } from "@studydeck/shared";
 import type { DashboardSummary } from "@/lib/account-types";
 import { internalFetch } from "@/lib/internal-api";
 import { CreationModePicker } from "@/components/defense/creation-mode-picker";
+import { ScrollToTop } from "@/components/scroll-to-top";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,7 @@ export default async function NewProjectPage() {
 
   return (
     <main className="page new-page">
+      <ScrollToTop />
       <CreationModePicker active="standard" />
       <p className="new-page-kicker">Одна тема → готовое выступление</p>
       <h1 className="page-title">О чём будешь выступать?</h1>

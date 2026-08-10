@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { COST_ENVELOPE_BUCKETS, COST_ENVELOPE_LIMIT_RUB, COST_ENVELOPE_POLICY_VERSION, aitunnelCatalogSnapshot, costEnvelopePolicyIsValid, standardGenerationCostPolicy, type CostEnvelopeBucket, type CostEnvelopePolicy } from "@studydeck/shared";
+import { aitunnelCatalogSnapshot, costEnvelopePolicyIsValid, standardGenerationCostPolicy, type CostEnvelopeBucket, type CostEnvelopePolicy } from "@studydeck/shared";
 import { getPrisma } from "./prisma.js";
 export { COST_ENVELOPE_BUCKETS, COST_ENVELOPE_LIMIT_RUB, COST_ENVELOPE_POLICY_VERSION, costEnvelopePolicyIsValid, standardGenerationCostPolicy } from "@studydeck/shared";
 export type { CostEnvelopeBucket, CostEnvelopePolicy } from "@studydeck/shared";

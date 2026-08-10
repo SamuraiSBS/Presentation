@@ -1,17 +1,16 @@
-import { getServerSession } from "next-auth";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { CircleAlert } from "lucide-react";
 import { InvitationView } from "@/components/invitations/invitation-view";
 import type { InvitationPreview } from "@/lib/account-types";
-import { authOptions } from "@/lib/auth-options";
+import { auth } from "@/auth";
 import { InternalApiError, internalFetch } from "@/lib/internal-api";
 
 export const dynamic = "force-dynamic";
 
 export default async function InvitationPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const session = await getServerSession(authOptions);
+  const session = await auth();
   if (!session?.user?.id && process.env.ALLOW_DEV_AUTH !== "true") {
     redirect(`/login?callbackUrl=${encodeURIComponent(`/invite/${token}`)}`);
   }

@@ -16,7 +16,7 @@ const mandatorySourceSnapshot = {
   ],
 };
 
-const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, finalizeFailedCostEnvelope, captureGenerationError, generateNarrationDraft, generatePresentationFromNarration, buildLocalPresentationFromAcceptedNarration, productionQualityReleaseResult, costEnvelope, prismaMock } = vi.hoisted(() => ({
+const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, finalizeFailedCostEnvelope, captureGenerationError, generateNarrationDraft, generatePresentationFromNarration, buildLocalPresentationFromAcceptedNarration, enrichPresentationImages, materializePlannedVisuals, productionQualityReleaseResult, costEnvelope, prismaMock } = vi.hoisted(() => ({
   reserveCostEnvelope: vi.fn(),
   settleCostEnvelope: vi.fn(),
   failCostEnvelope: vi.fn(),
@@ -25,6 +25,8 @@ const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, finalizeFaile
   generateNarrationDraft: vi.fn(),
   generatePresentationFromNarration: vi.fn(),
   buildLocalPresentationFromAcceptedNarration: vi.fn(),
+  enrichPresentationImages: vi.fn(),
+  materializePlannedVisuals: vi.fn((presentation) => presentation),
   productionQualityReleaseResult: vi.fn(),
   costEnvelope: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
   prismaMock: {
@@ -54,7 +56,7 @@ vi.mock("./extract.js", () => ({
 }));
 
 vi.mock("./image-search.js", () => ({
-  enrichPresentationImages: vi.fn(),
+  enrichPresentationImages,
 }));
 
 vi.mock("./web-search.js", () => ({
@@ -68,6 +70,7 @@ vi.mock("./presentation.js", () => ({
 }));
 
 vi.mock("./presentation-quality.js", () => ({
+  materializePlannedVisuals,
   productionQualityReleaseResult,
   findSpeechTimingIssues: () => [],
   findFactualRiskIssues: () => [],
@@ -100,6 +103,9 @@ describe("prepareGenerationSources", () => {
     generateNarrationDraft.mockReset();
     generatePresentationFromNarration.mockReset();
     buildLocalPresentationFromAcceptedNarration.mockReset();
+    enrichPresentationImages.mockReset();
+    materializePlannedVisuals.mockReset();
+    materializePlannedVisuals.mockImplementation((presentation) => presentation);
     costEnvelope.findUnique.mockReset();
     costEnvelope.findUniqueOrThrow.mockReset();
     costEnvelope.update.mockReset();
@@ -745,6 +751,9 @@ describe("handleGenerationJob failed narration envelope finalization", () => {
     generateNarrationDraft.mockReset();
     generatePresentationFromNarration.mockReset();
     buildLocalPresentationFromAcceptedNarration.mockReset();
+    enrichPresentationImages.mockReset();
+    materializePlannedVisuals.mockReset();
+    materializePlannedVisuals.mockImplementation((presentation) => presentation);
     prismaMock.project.update.mockResolvedValue({});
     prismaMock.project.findUnique.mockResolvedValue({ speechDraft: null });
     prismaMock.project.findUniqueOrThrow.mockResolvedValue(narrationProject());

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Send } from "lucide-react";
-import { signIn } from "next-auth/react";
+import { signIn } from "@studydeck/auth/react";
 
 export function TelegramSignInButton({
   callbackUrl,

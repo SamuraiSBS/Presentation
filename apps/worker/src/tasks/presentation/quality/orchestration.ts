@@ -1,63 +1,35 @@
-import crypto from "node:crypto";
-import OpenAI from "openai";
-import { generateText, Output } from "ai";
-import { createOpenAI } from "@ai-sdk/openai";
-import { z } from "zod";
-import { captureGenerationError, errorLogFields, logger } from "../../../observability.js";
-import { calculateProviderCost, currentUsageContext, normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
-import { aitunnelModelForStage, aitunnelStagePolicy, currentAitunnelProjectBudget, type AitunnelStage } from "../../../aitunnel-narration-budget.js";
-import { failCostEnvelope, reserveCostEnvelope, settleCostEnvelope } from "../../../cost-envelope.js";
-import { getPrisma } from "../../../prisma.js";
 import {
-  type DesignBrief,
-  type DeckStory,
-  type GenerationPipelineArtifacts,
-  type Highlight,
-  type KeyConcept,
-  type PresentationDocument,
-  type QualityCritique,
-  type QualityIssue,
-  type ResearchBrief,
-  type Slide,
-  type SlideBlock,
-  type SlideBlueprint,
-  type SlideDefinition,
-  type SlideKind,
-  type SlideLayout,
-  type SlideNarrative,
-  type SlideTextPlan,
-  type SlideVisual,
-  type MermaidDiagramSpec,
-  type Source,
-  type CostEnvelopeBucket,
-  PREMIUM_PRESENTATION_THEMES,
-  PREMIUM_PRESENTATION_THEME_IDS,
-  SLIDE_LAYOUT_DEFINITIONS,
-  deckStorySchema,
-  designBriefSchema,
-  generationPipelineArtifactsSchema,
-  hasCustomSlideCanvas,
-  hasMeasurableValue,
-  presentationSchema,
-  qualityCritiqueSchema,
-  researchBriefSchema,
-  resolvePresentationTheme,
-  mermaidDiagramSpecSchema,
-  slideBlueprintSchema,
-  slideNarrativeSchema,
-  slideTextPlanSchema,
+    hasCustomSlideCanvas,
+    presentationSchema,
+    qualityCritiqueSchema,
+    resolvePresentationTheme,
+    type CostEnvelopeBucket,
+    type DesignBrief,
+    type PresentationDocument,
+    type QualityCritique,
+    type QualityIssue,
+    type Slide,
+    type SlideNarrative,
+    type SlideVisual,
+    type Source
 } from "@studydeck/shared";
+import OpenAI from "openai";
+import { aitunnelModelForStage, aitunnelStagePolicy, currentAitunnelProjectBudget } from "../../../aitunnel-narration-budget.js";
+import { failCostEnvelope, reserveCostEnvelope, settleCostEnvelope } from "../../../cost-envelope.js";
+import { errorLogFields, logger } from "../../../observability.js";
+import { getPrisma } from "../../../prisma.js";
+import { calculateProviderCost, currentUsageContext, normalizeOpenAIUsage } from "../../../usage-ledger.js";
 import {
-  applyTopicRelevanceFallbacks,
-  applySlideSpeechAlignmentFallbacks,
-  applyVisualPlanFallbacks,
-  findContentSlideContractIssues,
-  applyVisibleTextIntegrityFallbacks,
-  critiquePresentationDeterministically,
-  improvePresentationQuality,
-  productionQualityReleaseResult,
-  rebuildGeneratedCanvases,
-  type QualityRepairResponse,
+    applySlideSpeechAlignmentFallbacks,
+    applyTopicRelevanceFallbacks,
+    applyVisibleTextIntegrityFallbacks,
+    applyVisualPlanFallbacks,
+    critiquePresentationDeterministically,
+    findContentSlideContractIssues,
+    improvePresentationQuality,
+    productionQualityReleaseResult,
+    rebuildGeneratedCanvases,
+    type QualityRepairResponse,
 } from "../../presentation-quality.js";
 
 type ProjectInput = {
@@ -72,7 +44,6 @@ type ProjectInput = {
 
 type AiGenerationMode = "openai" | "yandex" | "aitunnel" | "local";
 type FallbackGenerationMode = "demo" | "demo-fallback";
-type EnvLike = Record<string, string | undefined>;
 
 type NarrationSection = {
   order: number;
@@ -105,32 +76,6 @@ type QualityModelCallbacks = {
   repair?: (presentation: PresentationDocument, issues: QualityIssue[], attempt: number) => Promise<unknown>;
 };
 
-type GenerateStructuredOptions<T> = {
-  provider: AiGenerationMode;
-  system: string;
-  prompt: string;
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>;
-  schemaName: string;
-  parse?: (value: unknown) => T;
-  openAIClient?: OpenAI;
-  openAIGenerateText?: typeof generateText;
-  yandexApiKey?: string;
-  jsonSchema?: Record<string, unknown>;
-  strict?: boolean;
-  maxAttempts?: number;
-  temperature?: number;
-};
-
-type GenerateAndValidateOptions<T> = {
-  call: (attempt: number, repairPrompt?: string) => Promise<unknown>;
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>;
-  schemaName: string;
-  provider?: AiGenerationMode;
-  parse?: (value: unknown) => T;
-  repair?: (error: unknown, previousValue: unknown, attempt: number) => string;
-  maxAttempts?: number;
-};
-
 export class StructuredGenerationError extends Error {
   constructor(
     public readonly schemaName: string,
@@ -142,23 +87,13 @@ export class StructuredGenerationError extends Error {
   }
 }
 
-type YandexTextOptions = {
-  jsonObject?: boolean;
-  jsonSchema?: unknown;
-  temperature?: number;
-  maxTokens?: number;
-};
-
-type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief" | "deckStory" | "designBrief" | "slideBlueprints" | "slideTextPlans">>;
-
-import type { YandexCompletionResponse } from "../constants.js";
-import { STUDENT_CREATION_BRIEF_LINES, NARRATION_SYSTEM_PROMPT, SYSTEM_PROMPT, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, TEMPLATE_TEXT_PATTERNS, GENERIC_TITLES, STOP_WORDS, REMOVED_SLIDE_LAYOUTS, SLIDE_LAYOUTS, CONTENT_LAYOUT_CYCLE } from "../constants.js";
+import { GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, GENERIC_TITLES, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, STOP_WORDS, TEMPLATE_TEXT_PATTERNS } from "../constants.js";
+import { assessFullNarrationDocument, formatNarrationSection, isUsableNarrationSentence, parseNarrationSections, requestYandexText, validateNarrationSections } from "../narration/processing.js";
+import { isDuplicateDisplayText, normalizePresentation, normalizeSlide, normalizeTitleKey, sentenceCount, speechSentences, splitIntoSentences, uniqueShortItems } from "../normalization/presentation.js";
+import { buildQualityCritique, shortenVisibleTitle } from "../planning/builders.js";
 import { recordOpenAIResponse } from "../providers/generation.js";
-import { shortenVisibleTitle, buildQualityCritique } from "../planning/builders.js";
-import { requestYandexText, parseNarrationSections, validateNarrationSections, assessFullNarrationDocument, isUsableNarrationSentence, formatNarrationSection } from "../narration/processing.js";
-import { normalizePresentation, normalizeSlide, fallbackTitle, sentenceCount, speechSentences, sentenceFragment, buildFallbackBulletItems, ensureRange, uniqueShortItems, splitIntoSentences, normalizeTitleKey, isDuplicateDisplayText, fallbackSlideText } from "../normalization/presentation.js";
-import { parseJsonText, cleanGeneratedText, cleanMultilineText, cleanText, sanitizeSpeechText, shortenWords } from "../utilities.js";
-import { jsonSchema, slideTextRepairSchema, qualityCritiqueJsonSchema, qualityRepairJsonSchema } from "../schemas.js";
+import { qualityCritiqueJsonSchema, qualityRepairJsonSchema, slideTextRepairSchema } from "../schemas.js";
+import { cleanGeneratedText, cleanMultilineText, cleanText, parseJsonText, sanitizeSpeechText, shortenWords } from "../utilities.js";
 
 export async function finalizeGeneratedPresentation(
   raw: unknown,
@@ -274,7 +209,7 @@ export async function finalizeGeneratedPresentation(
     }, "polishing regressed a validated presentation; restoring the last valid candidate");
     return preserveAcceptedNarration(lastValidCandidate, generatedText, project);
   }
-  let released = repairReleaseCandidate(
+  const released = repairReleaseCandidate(
     rebuildGeneratedCanvases(preserveAcceptedNarration(finalPresentation, generatedText, project)),
     sources,
     project,
@@ -988,6 +923,7 @@ export function looksLikeSentenceFragment(value: string) {
   if (words.length < 2) return true;
   if (/(?:…|\.\.\.)\s*$/.test(text)) return true;
   if (/[,;:\-–—]$/.test(text)) return true;
+  if (/(?:\b(?:shows|showed|demonstrates|demonstrated|explains|explained|allows|allowed|remains|became|becomes|is|are|was|were|will|can|could|may|might|should|has|have|had)|(?:показал|показывает|объясняет|позволит|позволяет|остается|остался|стал|стала|является))[.!?…]*$/iu.test(text)) return true;
   if (hasDanglingPredicateModifier(text)) return true;
   return /^(\u043a\u043e\u0442\u043e\u0440\u044b\u0439|\u043a\u043e\u0442\u043e\u0440\u0430\u044f|\u043a\u043e\u0442\u043e\u0440\u043e\u0435|\u043a\u043e\u0442\u043e\u0440\u044b\u0435|\u043f\u043e\u0442\u043e\u043c\u0443 \u0447\u0442\u043e)\b/iu.test(text);
 }

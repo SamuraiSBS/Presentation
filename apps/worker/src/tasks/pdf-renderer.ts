@@ -13,7 +13,10 @@ export async function renderHtmlToPdf(
   const puppeteer = await import("puppeteer-core");
   const browser = await puppeteer.default.launch({
     executablePath: chromiumExecutablePath(),
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+    // Headless Chromium in the Alpine worker has no usable Vulkan/EGL
+    // surface. Disabling GPU initialization avoids repeated renderer crashes
+    // and makes the same PDF path reliable in Docker and CI.
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-software-rasterizer"],
     headless: true,
   });
 

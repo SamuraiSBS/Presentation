@@ -4,5 +4,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["live-generation-smoke.ts", "live-generation-smoke.test.ts"]
+  "include": ["live-generation-smoke.ts", "live-generation-smoke.test.ts", "validate-production-config.ts"]
 }

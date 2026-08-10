@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
 import { AITUNNEL_PROVIDER_CATALOG, aitunnelPriceForApprovedModel } from "./aitunnel-provider-catalog.js";
 
 type EnvLike = Record<string, string | undefined>;
@@ -160,9 +159,7 @@ function estimateInputTokensForStage(stage: AitunnelStage, payload: unknown) { r
 function isFullNarrationStage(stage: AitunnelStage): stage is AitunnelFullNarrationStage { return stage === "narration_full_candidate" || stage === "narration_full_rewrite" || stage === "narration_targeted_repair"; }
 function estimateInputTokensWithBytes(payload: unknown, bytesPerToken: number) { const bytes = Buffer.byteLength(JSON.stringify(payload), "utf8"); return Math.ceil(Math.ceil(bytes / bytesPerToken) * (100 + INPUT_TOKEN_SAFETY_PERCENT) / 100); }
 function costRub(inputTokens: number, outputTokens: number, price: typeof AITUNNEL_NARRATION_PRICE | typeof AITUNNEL_ECONOMY_PRICE) { const total = BigInt(inputTokens) * decimalToScaled(price.inputRubPerMillion) + BigInt(outputTokens) * decimalToScaled(price.outputRubPerMillion); return scaledToDecimal(total / MILLION); }
-function positiveDecimal(value: string | undefined) { if (!value || !/^\d+(?:\.\d+)?$/.test(value.trim())) return undefined; return decimalToScaled(value) > 0n ? value.trim() : undefined; }
-function positiveInteger(value: string | undefined) { if (!value || !/^\d+$/.test(value.trim())) return undefined; const parsed = Number(value); return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined; }
-function nonNegativeInteger(value: number) { return Number.isSafeInteger(value) && value >= 0 ? value : 0; }
+function positiveDecimal(value: string | undefined) { if (!value || !/^\d+(?:\.\d+)?$/.test(value.trim())) return undefined; return decimalToScaled(value) > 0n ? value.trim() : undefined; }function nonNegativeInteger(value: number) { return Number.isSafeInteger(value) && value >= 0 ? value : 0; }
 function isTokenCount(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0; }
 function decimalToScaled(value: string) { const [whole, fraction = ""] = value.split("."); return BigInt(whole) * SCALE + BigInt(`${fraction}00000000`.slice(0, 8)); }
 function scaledToDecimal(value: bigint) { const sign = value < 0n ? "-" : ""; const absolute = value < 0n ? -value : value; return `${sign}${absolute / SCALE}.${(absolute % SCALE).toString().padStart(8, "0")}`; }

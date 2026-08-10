@@ -1,13 +1,13 @@
 import "server-only";
 
-import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/auth-options";
+import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { InternalApiError } from "@/lib/internal-api";
+import { devAuthAllowed } from "@studydeck/shared";
 
 export function devAdminAllowed() {
-  return process.env.ALLOW_DEV_ADMIN === "true" && process.env.DEPLOYMENT_ENV !== "production";
+  return process.env.ALLOW_DEV_ADMIN === "true" && process.env.DEPLOYMENT_ENV?.toLowerCase() !== "production";
 }
 
 export async function canAccessAdmin(userId?: string | null) {
@@ -20,8 +20,8 @@ export async function canAccessAdmin(userId?: string | null) {
 }
 
 export async function requireAdminSession(options: { redirectToLogin?: boolean } = {}) {
-  const session = await getServerSession(authOptions);
-  const userId = session?.user?.id || (process.env.ALLOW_DEV_AUTH === "true" ? process.env.TEMP_USER_ID || "local-user" : null);
+  const session = await auth();
+  const userId = session?.user?.id || (devAuthAllowed() ? process.env.TEMP_USER_ID || "local-user" : null);
   if (!userId && options.redirectToLogin) redirect("/login?callbackUrl=/admin");
   if (!userId || !(await canAccessAdmin(userId))) {
     throw new InternalApiError(403, { code: "ADMIN_ACCESS_DENIED", message: "Доступ к административной панели запрещён" });
