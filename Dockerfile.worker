@@ -21,4 +21,7 @@ RUN npm run build -w @studydeck/worker
 ENV NODE_ENV=production
 ENV CHROMIUM_PATH=/usr/bin/chromium-browser
 RUN apk add --no-cache chromium font-noto ttf-dejavu poppler-utils
+# This fixture is imported during Vitest discovery, including targeted export
+# smokes run inside the immutable worker image.
+COPY e2e-237-accepted-speech.txt ./e2e-237-accepted-speech.txt
 CMD ["npm", "run", "start", "-w", "@studydeck/worker"]

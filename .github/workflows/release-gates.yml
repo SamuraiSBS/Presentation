@@ -87,6 +87,12 @@ jobs:
           docker build --tag studydeck-api:${STUDYDECK_IMAGE_TAG} --file Dockerfile.api .
           docker build --tag studydeck-worker:${STUDYDECK_IMAGE_TAG} --file Dockerfile.worker .
           docker build --tag studydeck-web:${STUDYDECK_IMAGE_TAG} --file Dockerfile.web .
+      - name: Render a real PDF in the Alpine worker image
+        run: >
+          GOLDEN_EXPORT_TIMINGS=1 docker run --rm --entrypoint npm studydeck-worker:${STUDYDECK_IMAGE_TAG}
+          run test -w @studydeck/worker -- src/tasks/export.test.ts
+          -t "renders editable canvas to a real pdf"
+          --pool=threads --poolOptions.threads.singleThread=true
       - name: Smoke golden export in the Alpine worker image
         run: >
           GOLDEN_EXPORT_TIMINGS=1 docker run --rm --entrypoint npm studydeck-worker:${STUDYDECK_IMAGE_TAG}
