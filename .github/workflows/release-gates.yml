@@ -37,6 +37,7 @@ jobs:
       - run: npm run lint
       - run: npm run check
       - run: npx playwright install --with-deps chromium
+      - run: sudo apt-get update && sudo apt-get install --yes poppler-utils
       - run: CHROMIUM_PATH="$(node -e "console.log(require('@playwright/test').chromium.executablePath())")" npm test
       - run: npm audit --omit=dev --audit-level=high
 
