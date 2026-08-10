@@ -20,5 +20,5 @@ RUN npm run build -w @studydeck/worker
 
 ENV NODE_ENV=production
 ENV CHROMIUM_PATH=/usr/bin/chromium-browser
-RUN apk add --no-cache chromium font-noto ttf-dejavu
+RUN apk add --no-cache chromium font-noto ttf-dejavu poppler-utils
 CMD ["npm", "run", "start", "-w", "@studydeck/worker"]
