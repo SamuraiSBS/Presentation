@@ -5,6 +5,9 @@ import { join } from "node:path";
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3020";
 const skipWebServer = process.env.PLAYWRIGHT_SKIP_WEBSERVER === "true";
 const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || findInstalledPlaywrightChrome();
+const webServerCommand = process.platform === "win32"
+  ? "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-web-fast.ps1 -Port 3020 -DemoPreview -E2E"
+  : "npm run build -w @studydeck/shared && E2E_TEST_MODE=true ALLOW_DEV_AUTH=true ALLOW_DEV_ADMIN=true TEMP_USER_ID=playwright-user NEXT_PUBLIC_DEMO_PREVIEW=true INTERNAL_API_URL=http://localhost:4000 NEXTAUTH_URL=http://localhost:3020 PUBLIC_APP_URL=http://localhost:3020 npm run dev -w @studydeck/web -- -p 3020";
 
 function findInstalledPlaywrightChrome(): string | undefined {
   const localAppData = process.env.LOCALAPPDATA;
@@ -52,7 +55,7 @@ export default defineConfig({
     video: "off",
   },
   webServer: skipWebServer ? undefined : {
-    command: "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-web-fast.ps1 -Port 3020 -DemoPreview -E2E",
+    command: webServerCommand,
     url: `${baseURL}/api/internal-health`,
     reuseExistingServer: false,
     timeout: 120_000,

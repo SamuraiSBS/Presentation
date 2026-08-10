@@ -1,0 +1,12 @@
+# These exact strings are instructional placeholders from the production
+# environment template. They are not credentials and remain blocked from
+# matching the generic API-key rule, including in this branch's history.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Safe production-template placeholders"
+regexes = [
+  '''REPLACE_WITH_A_UNIQUE_32_PLUS_CHARACTER_SECRET''',
+  '''REPLACE_WITH_A_SECOND_UNIQUE_32_PLUS_CHARACTER_SECRET''',
+]

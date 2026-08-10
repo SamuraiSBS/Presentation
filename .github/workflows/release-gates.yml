@@ -37,7 +37,7 @@ jobs:
       - run: npm run lint
       - run: npm run check
       - run: npx playwright install --with-deps chromium
-      - run: CHROMIUM_PATH="$(node -e \"console.log(require('@playwright/test').chromium.executablePath())\")" npm test
+      - run: CHROMIUM_PATH="$(node -e "console.log(require('@playwright/test').chromium.executablePath())")" npm test
       - run: npm audit --omit=dev --audit-level=high
 
   secrets:
@@ -50,6 +50,7 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
 
   browser:
     name: Playwright desktop and mobile
