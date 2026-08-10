@@ -1,10 +1,19 @@
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { performance } from "node:perf_hooks";
+import { promisify } from "node:util";
 import JSZip from "jszip";
 import sharp from "sharp";
-import { ensureEditableCanvas, PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS, presentationSchema } from "@studydeck/shared";
+import { auditSlideCanvas, ensureEditableCanvas, PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS, presentationSchema } from "@studydeck/shared";
 import { describe, expect, it, vi } from "vitest";
 // @ts-expect-error Vitest must use the TypeScript source, not a stale local JS emit.
 import { createPdf, createPptx, fitPptxImage, renderPdfHtml } from "./export.ts";
 import { preparePresentationForExport } from "./export-preflight.js";
+import { chromiumExecutablePath } from "./pdf-renderer.js";
+
+const execFileAsync = promisify(execFile);
 
 vi.mock("../storage.js", () => ({
   readObjectBuffer: vi.fn(async () => Buffer.from(
@@ -452,6 +461,35 @@ describe("createPptx", () => {
     expect(buffer.subarray(0, 5).toString("utf8")).toBe("%PDF-");
     expect(buffer.length).toBeGreaterThan(1000);
   }, 60_000);
+
+  it("keeps the golden deck visually aligned across preview, PPTX, and rasterized PDF", async () => {
+    const timings: Record<string, number> = {};
+    const golden = goldenExportDeck();
+    const canvasIssues = await measureGoldenStage(timings, "canvas-audit", () => golden.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!)));
+    expect(canvasIssues).toEqual([]);
+
+    const html = await measureGoldenStage(timings, "html", () => renderPdfHtml(golden));
+    expect(html).toContain("Golden export evidence");
+    expect(html).toContain("Golden source");
+
+    const pptx = await measureGoldenStage(timings, "pptx", async () => JSZip.loadAsync(await createPptx(golden)));
+    const slideXml = await pptx.file("ppt/slides/slide1.xml")?.async("string");
+    expect(slideXml).toContain("Golden export evidence");
+    expect(slideXml).toContain("Golden source");
+
+    const pdf = await measureGoldenStage(timings, "pdf-chromium", () => createPdf(golden));
+    const { preview, pdfPage } = await measureGoldenStage(timings, "preview-and-raster", () => renderGoldenExportPages(html, pdf));
+    await expect(sharp(preview).metadata()).resolves.toMatchObject({ width: 1280, height: 720, format: "png" });
+    await expect(sharp(pdfPage).metadata()).resolves.toMatchObject({ width: 1280, height: 720, format: "png" });
+    const difference = await measureGoldenStage(timings, "raster-comparison", () => meanPixelDifference(preview, pdfPage));
+    expect(difference).toBeLessThan(12);
+
+    if (process.env.GOLDEN_EXPORT_TIMINGS === "1") {
+      console.info(`[golden-export] ${Object.entries(timings).map(([stage, duration]) => `${stage}=${duration}ms`).join(" ")}`);
+    }
+  // Alpine Chromium startup and PDF rendering exceeded the former 60 s limit by 43 ms in the worker image.
+  // Keep the bound local to this end-to-end golden smoke while preserving stage-level evidence in CI.
+  }, 120_000);
 });
 
 describe("export preflight", () => {
@@ -719,6 +757,76 @@ function generatedPreflightDeck() {
     ...source,
     slides: source.slides.map(({ canvas: _canvas, ...slide }) => slide),
   }));
+}
+
+function goldenExportDeck() {
+  const source = canvasDeck();
+  return ensureEditableCanvas(presentationSchema.parse({
+    ...source,
+    title: "Golden export evidence",
+    sources: [{ id: "golden-source", label: "Golden source", type: "WEB", excerpt: "Verified source attribution." }],
+    slides: source.slides.map(({ canvas: _canvas, ...slide }) => ({
+      ...slide,
+      title: "Golden export evidence",
+      thesis: "The golden deck keeps preview and exported artifacts aligned.",
+      bullets: ["One checked layout", "One visible attribution"],
+      blocks: [{ type: "bullets" as const, items: ["One checked layout", "One visible attribution"] }],
+      sourceRefs: [{ sourceId: "golden-source", label: "Golden source", excerpt: "Verified source attribution.", page: null }],
+    })),
+  }));
+}
+
+async function renderGoldenExportPages(html: string, pdf: Buffer) {
+  const puppeteer = await import("puppeteer-core");
+  const browser = await puppeteer.default.launch({
+    executablePath: chromiumExecutablePath(),
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-software-rasterizer"],
+    headless: true,
+  });
+  let preview: Buffer;
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 720, deviceScaleFactor: 1 });
+    await page.setContent(html, { waitUntil: "domcontentloaded" });
+    preview = Buffer.from(await page.screenshot({ type: "png" }));
+  } finally {
+    await browser.close();
+  }
+
+  const directory = await mkdtemp(join(tmpdir(), "studydeck-export-golden-"));
+  const pdfPath = join(directory, "golden.pdf");
+  const imageBasePath = join(directory, "golden-page");
+  try {
+    await writeFile(pdfPath, pdf);
+    await execFileAsync("pdftoppm", ["-png", "-singlefile", "-scale-to-x", "1280", "-scale-to-y", "720", pdfPath, imageBasePath]);
+    return { preview: preview!, pdfPage: await readFile(`${imageBasePath}.png`) };
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+}
+
+async function measureGoldenStage<T>(timings: Record<string, number>, stage: string, action: () => T | Promise<T>) {
+  const startedAt = performance.now();
+  try {
+    return await action();
+  } finally {
+    timings[stage] = Math.round(performance.now() - startedAt);
+  }
+}
+
+async function meanPixelDifference(left: Buffer, right: Buffer) {
+  const [leftPixels, rightPixels] = await Promise.all([
+    sharp(left).ensureAlpha().raw().toBuffer(),
+    sharp(right).ensureAlpha().raw().toBuffer(),
+  ]);
+  expect(leftPixels.length).toBe(rightPixels.length);
+  let difference = 0;
+  for (let index = 0; index < leftPixels.length; index += 4) {
+    difference += Math.abs(leftPixels[index]! - rightPixels[index]!);
+    difference += Math.abs(leftPixels[index + 1]! - rightPixels[index + 1]!);
+    difference += Math.abs(leftPixels[index + 2]! - rightPixels[index + 2]!);
+  }
+  return difference / (leftPixels.length / 4 * 3);
 }
 
 function customCanvasMarker(slideId: string) {

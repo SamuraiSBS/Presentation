@@ -16,6 +16,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { cors: false, rawBody: true });
   const config = app.get(ConfigService);
   const httpAdapter = app.get(HttpAdapterHost);
+  app.enableShutdownHooks(["SIGTERM", "SIGINT"]);
   app.setGlobalPrefix("v1");
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.useGlobalFilters(new SentryExceptionFilter(httpAdapter.httpAdapter, app.get(PrismaService)));

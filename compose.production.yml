@@ -32,13 +32,19 @@ services:
     command: server /data --console-address ":9001"
     volumes:
       - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   create-bucket:
     image: minio/mc:RELEASE.2025-01-17T23-25-50Z
     restart: "no"
     env_file: ${PRODUCTION_ENV_FILE:-.env.production}
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     entrypoint:
       - /bin/sh
       - -ec
@@ -52,6 +58,7 @@ services:
       context: .
       dockerfile: Dockerfile.api
     restart: unless-stopped
+    stop_grace_period: 45s
     env_file: ${PRODUCTION_ENV_FILE:-.env.production}
     environment:
       NODE_ENV: production
@@ -65,13 +72,22 @@ services:
       redis:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
+      create-bucket:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "node -e 'fetch(\"http://127.0.0.1:4000/v1/health/ready\").then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))'"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   worker:
     build:
       context: .
       dockerfile: Dockerfile.worker
     restart: unless-stopped
+    stop_grace_period: 15m
     env_file: ${PRODUCTION_ENV_FILE:-.env.production}
     environment:
       NODE_ENV: production
@@ -84,7 +100,15 @@ services:
       redis:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
+      create-bucket:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "node apps/worker/src/healthcheck.cjs"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   web:
     build:
@@ -100,17 +124,25 @@ services:
       ALLOW_DEV_ADMIN: "false"
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e 'fetch(\"http://127.0.0.1:3000\").then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))'"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
     env_file: ${PRODUCTION_ENV_FILE:-.env.production}
     depends_on:
-      - web
-      - api
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
     ports:
       - "80:80"
       - "443:443"

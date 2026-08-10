@@ -16,6 +16,7 @@ import { PrismaModule } from "./prisma/prisma.module.js";
 import { ProjectsModule } from "./projects/projects.module.js";
 import { SourcesModule } from "./sources/sources.module.js";
 import { UsersModule } from "./users/users.module.js";
+import { ObservabilityShutdownService } from "./observability-shutdown.service.js";
 
 @Module({
   imports: [
@@ -44,5 +45,6 @@ import { UsersModule } from "./users/users.module.js";
     CollaborationModule,
     UsersModule,
   ],
+  providers: [ObservabilityShutdownService],
 })
 export class AppModule {}
