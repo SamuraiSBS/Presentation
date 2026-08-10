@@ -2,7 +2,7 @@
   encode gzip
 
   handle /api/internal-health {
-    rewrite * /v1/health
+    rewrite * /v1/health/ready
     reverse_proxy api:4000
   }
 

@@ -46,14 +46,16 @@
 
 ### P0-2. Release gates красные и не автоматизированы
 
-Текущий результат проверок:
+**Статус на 10 августа 2026: реализовано, ожидается CI acceptance.** В репозитории добавлен `.github/workflows/release-gates.yml`: он проверяет lockfile/Prisma/lint/typecheck/unit, secrets, Playwright desktop/mobile, собирает API/worker/web, выполняет migration и golden export smoke в Alpine worker, а после push публикует immutable GHCR images по `@sha256`, проверяет их в compose и формирует release manifest. Deploy и manifest validation также запрещают dirty tree и неполный/неimmutable набор образов.
+
+Старый срез проверок на момент аудита:
 
 - TypeScript: проходит во всех четырёх workspace.
 - Production build: проходит, но с предупреждениями.
 - Lint: **падает — 647 проблем (1 error, 646 warnings) при лимите 57**.
 - Unit/integration: shared 100/100, API 55/55, web 34/34; worker **377 passed, 1 failed, 1 skipped**.
 - Chromium E2E против текущего `localhost:3010`: **19 passed, 12 failed, 5 skipped**.
-- `.github/workflows` отсутствует, поэтому ни одна из этих проверок не блокирует deploy автоматически.
+- На момент исходной проверки `.github/workflows` отсутствовал; это утверждение больше не является текущим состоянием.
 
 Особенно важно: большая часть lint-шума появилась в незавершённой декомпозиции worker-модулей (`presentation/constants.ts`, `quality/orchestration.ts`, `utilities.ts`). При сотнях предупреждений новый дефект теряется в шуме. В E2E часть падений вызвана рассинхронизацией текущего production-like контейнера и тестового/demo окружения, но это само по себе означает, что release gate невоспроизводим.
 
@@ -64,20 +66,20 @@
 - Тестировать именно immutable image, который затем разворачивается, а не другой dev/container build.
 - Запретить deploy при dirty tree, красном gate или неполном release manifest.
 
-Критерий закрытия: один commit/tag и один digest образов имеют полностью зелёный CI; тот же digest проходит smoke/E2E в staging.
+Критерий acceptance: один опубликованный commit/tag и один digest образов имеют полностью зелёный CI; тот же digest проходит smoke/E2E в staging.
 
-**Нужно доделать:**
+**Нужно доделать для acceptance:**
 
 - Восстановить локальный Docker Desktop/daemon: и BuildKit, и legacy builder зависают до создания `studydeck-worker` image. После восстановления обязательно выполнить сборку Alpine worker и реальный PDF smoke внутри образа: `renders editable canvas to a real pdf` не должен быть skipped.
 - Зафиксировать согласованный P0-2 набор отдельным commit и отправить его в GitHub, чтобы впервые выполнить `release-gates.yml` на фактическом SHA.
 - После первого зелёного workflow проверить и включить для `main` четыре required checks: `Quality, migrations, and dependencies`, `Secret scan`, `Playwright desktop and mobile`, `Immutable images and staging smoke`.
 - Подтвердить в CI полный immutable путь: publish трёх GHCR image, migration, health/smoke именно по опубликованным `@sha256` references и release manifest с SHA текущего commit. До этого критерий «тот же digest разворачивается» не доказан.
 
-### P0-3. Есть подтверждённая регрессия export preflight
+### P0-3. Регрессия export preflight — закрыто
 
-Worker test падает на сценарии legacy no-canvas deck: `preparePresentationForExport` не ремонтирует фрагмент `Porsche 911 показал.`. Это затрагивает основной продуктовый результат — пользователь может скачать презентацию с оборванной фразой, хотя preflight обязан был её исправить.
+**Закрыто 10 августа 2026:** `preparePresentationForExport` использует общий детектор целостности текста и исправляет фрагменты наподобие `Porsche 911 показал.` до экспорта. Точечный regression-тест `keeps legacy no-canvas decks on the template fallback and repairs Porsche-like fragments in generated slides` проходит.
 
-Дополнительно real-PDF тест условно пропускается, если Chromium не найден. В текущем прогоне был один skipped test, поэтому успешная структура PPTX не доказывает визуальную корректность PDF.
+В release gates добавлен обязательный golden smoke в Alpine worker: canvas audit, preview HTML, PPTX, реальный Chromium PDF и rasterized-PDF сравниваются в одном сценарии. Образ содержит Chromium и Poppler, а отсутствие Chromium приводит к ошибке, а не к условному пропуску.
 
 Что изменить:
 
@@ -85,7 +87,7 @@ Worker test падает на сценарии legacy no-canvas deck: `preparePr
 - Сделать Chromium обязательной частью CI export job; отсутствие браузера должно падать, а не превращаться в skip.
 - Добавить golden-deck smoke: web preview → PPTX/PDF render → изображения страниц → проверка переполнений, отсутствующих картинок, шрифтов и source attribution.
 
-Критерий закрытия: worker suite полностью зелёный без пропущенного PDF smoke; тестовый PPTX/PDF открывается и визуально совпадает с preview.
+Критерий закрытия выполнен на уровне кода и CI-конфигурации. Фактический запуск golden smoke на опубликованном immutable image остаётся частью CI acceptance P0-2.
 
 ## 3. Высокий приоритет P1
 
@@ -104,14 +106,16 @@ Worker test падает на сценарии legacy no-canvas deck: `preparePr
 
 ### P1-2. Health endpoint проверяет только факт работы Node.js
 
-`/v1/health` всегда возвращает `ok: true` и не проверяет PostgreSQL, Redis, MinIO, BullMQ и критические настройки. В compose healthcheck есть только у PostgreSQL и Redis; web/API/worker/MinIO не имеют полноценной readiness-модели.
+**Реализовано 10 августа 2026:** `/v1/health/live` проверяет только жизнь API-процесса, а `/v1/health/ready` возвращает `503`, пока не готовы PostgreSQL, отсутствие незавершённых Prisma migrations, S3/MinIO bucket, BullMQ/Redis, worker heartbeat или обязательная runtime-конфигурация. Старый `/v1/health` оставлен как совместимый liveness endpoint. `/v1/health/workers` показывает heartbeat worker и queue lag (`waiting`, `active`, `delayed`, возраст старой ожидающей job) отдельно от обычного liveness.
 
-Нужно разделить:
+Worker публикует TTL heartbeat в Redis, а `compose.production.yml` и local/CI compose получили healthchecks для MinIO, API readiness, worker heartbeat и web; `create-bucket` ждёт healthy MinIO, API/worker — завершения bucket setup, а Caddy — healthy API/web. Release gates и `/api/internal-health` теперь используют readiness, а не безусловный `200`.
 
-- `/health/live` — процесс жив;
-- `/health/ready` — DB, Redis, storage, migrations, queue connectivity и обязательная конфигурация готовы;
-- отдельный worker heartbeat/queue lag;
-- startup/readiness probes в production orchestration.
+Критерий закрытия: staging/release smoke получает `200` от `/v1/health/ready` только после migration, bucket setup и запуска worker; отключение любой зависимости возвращает `503`, тогда как `/v1/health/live` остаётся `200` до остановки процесса.
+
+**Нужно доделать:**
+
+- Выполнить staging smoke на собранных immutable образах и зафиксировать ответы live/ready/workers и Docker health states. Сейчас это блокируется известным зависанием Docker Desktop/BuildKit из P0-2.
+- Подключить monitoring/alerting к `503` readiness, stale worker heartbeat и согласованным SLO-порогам queue lag; сам endpoint метрики отдаёт, но канал оповещения в репозитории пока отсутствует.
 
 ### P1-3. Нет graceful shutdown фоновых задач
 

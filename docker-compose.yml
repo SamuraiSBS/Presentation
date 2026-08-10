@@ -39,11 +39,17 @@ services:
     ports:
       - "9000:9000"
       - "9001:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   create-bucket:
     image: minio/mc:RELEASE.2025-01-17T23-25-50Z
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     entrypoint: >
       /bin/sh -c "
       sleep 5;
@@ -73,9 +79,17 @@ services:
       redis:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
+      create-bucket:
+        condition: service_completed_successfully
     ports:
       - "4000:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e 'fetch(\"http://127.0.0.1:4000/v1/health/ready\").then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))'"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   worker:
     build:
@@ -97,7 +111,15 @@ services:
       redis:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
+      create-bucket:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "node apps/worker/src/healthcheck.cjs"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   web:
     build:
@@ -122,18 +144,26 @@ services:
       TEMP_USER_ID: ${TEMP_USER_ID:-local-user}
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
       postgres:
         condition: service_healthy
     ports:
       - "${WEB_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e 'fetch(\"http://127.0.0.1:3000\").then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))'"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
     depends_on:
-      - web
-      - api
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
     ports:
       - "80:80"
       - "443:443"

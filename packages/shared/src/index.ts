@@ -49,3 +49,4 @@ export * from "./defense/presets.js";
 export * from "./defense/compliance.js";
 export { assertProductionConfiguration, devAuthAllowed, productionConfigurationErrors } from "./runtime/production-config.js";
 export type { RuntimeEnvironment } from "./runtime/production-config.js";
+export { workerHeartbeatIntervalMs, workerHeartbeatKey, workerHeartbeatMaxAgeMs, workerHeartbeatTtlMs } from "./runtime/health.js";

@@ -5,7 +5,7 @@ import { createRedisConnection } from "./queue.js";
 import { handleExportJob } from "./tasks/export.js";
 import { handleGenerationJob } from "./tasks/generation.js";
 import { handleAdminMaintenance } from "./tasks/admin-maintenance.js";
-import { assertProductionConfiguration } from "@studydeck/shared";
+import { assertProductionConfiguration, workerHeartbeatIntervalMs, workerHeartbeatKey, workerHeartbeatTtlMs } from "@studydeck/shared";
 
 assertProductionConfiguration();
 initTracing();
@@ -32,6 +32,17 @@ const maintenanceWorker = new Worker("admin-maintenance", handleAdminMaintenance
   concurrency: 1,
 });
 const maintenanceQueue = new Queue("admin-maintenance", { connection });
+async function reportHeartbeat() {
+  const redis = await maintenanceQueue.client;
+  await redis.set(workerHeartbeatKey, Date.now().toString(), { PX: workerHeartbeatTtlMs });
+}
+
+await reportHeartbeat();
+const heartbeatTimer = setInterval(() => {
+  void reportHeartbeat().catch((error) => logger.warn({ errorName: error instanceof Error ? error.name : typeof error }, "worker heartbeat could not be recorded"));
+}, workerHeartbeatIntervalMs);
+heartbeatTimer.unref();
+
 void maintenanceQueue.add("reconcile", {}, {
   jobId: "admin-maintenance-schedule",
   repeat: { pattern: "*/15 * * * *" },
