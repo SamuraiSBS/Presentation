@@ -12,7 +12,10 @@ const nextConfig: NextConfig = {
   // Derive from this config file instead, otherwise `../..` resolves to D:\\
   // on Windows and Watchpack scans the entire drive during local E2E.
   outputFileTracingRoot: process.env.E2E_TEST_MODE === "true" ? webRoot : workspaceRoot,
-  transpilePackages: ["@studydeck/shared"],
+  // `@studydeck/shared` is built to its ESM entry point before the web build.
+  // Let Next resolve that entry point directly: transpiling this workspace in
+  // Turbopack 16 can turn runtime re-exports into undefined during page-data
+  // collection.
 };
 
 export default withSentryConfig(nextConfig, {
