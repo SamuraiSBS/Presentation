@@ -46,7 +46,7 @@
 
 ### P0-2. Release gates красные и не автоматизированы
 
-**Статус на 10 августа 2026: локальная часть acceptance выполнена, ожидается GitHub CI acceptance.** В репозитории добавлен `.github/workflows/release-gates.yml`: он проверяет lockfile/Prisma/lint/typecheck/unit, secrets, Playwright desktop/mobile, собирает API/worker/web, выполняет migration и golden export smoke в Alpine worker, а после push публикует immutable GHCR images по `@sha256`, проверяет их в compose и формирует release manifest. Deploy и manifest validation также запрещают dirty tree и неполный/неimmutable набор образов. Локально собран Alpine worker, а реальный PDF smoke `renders editable canvas to a real pdf` прошёл внутри образа (10.39 s).
+**Статус на 10 августа 2026: локальная часть acceptance выполнена, P0-2 набор зафиксирован и отправлен в GitHub, ожидается GitHub CI acceptance.** В репозитории добавлен `.github/workflows/release-gates.yml`: он проверяет lockfile/Prisma/lint/typecheck/unit, secrets, Playwright desktop/mobile, собирает API/worker/web, выполняет migration и golden export smoke в Alpine worker, а после push публикует immutable GHCR images по `@sha256`, проверяет их в compose и формирует release manifest. Deploy и manifest validation также запрещают dirty tree и неполный/неimmutable набор образов. Локально собран Alpine worker, а реальный PDF smoke `renders editable canvas to a real pdf` прошёл внутри образа (10.39 s).
 
 Старый срез проверок на момент аудита:
 
@@ -70,7 +70,6 @@
 
 **Нужно доделать для acceptance:**
 
-- Зафиксировать согласованный P0-2 набор отдельным commit и отправить его в GitHub, чтобы впервые выполнить `release-gates.yml` на фактическом SHA.
 - После первого зелёного workflow проверить и включить для `main` четыре required checks: `Quality, migrations, and dependencies`, `Secret scan`, `Playwright desktop and mobile`, `Immutable images and staging smoke`.
 - Подтвердить в CI полный immutable путь: publish трёх GHCR image, migration, health/smoke именно по опубликованным `@sha256` references и release manifest с SHA текущего commit. До этого критерий «тот же digest разворачивается» не доказан.
 
