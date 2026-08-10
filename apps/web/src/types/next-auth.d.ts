@@ -1,6 +1,6 @@
-import type { DefaultSession } from "next-auth";
+import type { DefaultSession } from "@studydeck/auth";
 
-declare module "next-auth" {
+declare module "@studydeck/auth" {
   interface Session {
     user: DefaultSession["user"] & {
       id: string;
@@ -8,7 +8,7 @@ declare module "next-auth" {
   }
 }
 
-declare module "next-auth/jwt" {
+declare module "@studydeck/auth/jwt" {
   interface JWT {
     userId?: string;
   }

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useSession } from "next-auth/react";
+import { useSession } from "@studydeck/auth/react";
 import { ArrowUpRight, GraduationCap, LayoutDashboard, LogIn } from "lucide-react";
 
 const landingLinks = [

@@ -30,7 +30,7 @@ import {
 import { preparePresentationForExport } from "./export-preflight.js";
 
 const require = createRequire(import.meta.url);
-const PptxGenConstructor = require("pptxgenjs") as new () => {
+const PptxGenConstructor = require("@studydeck/pptxgenjs") as new () => {
   layout: string;
   author: string;
   subject: string;

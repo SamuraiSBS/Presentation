@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { COST_ENVELOPE_BUCKETS, type DesignBriefSlideDirection, type PresentationDocument, type SlideVisualImage } from "@studydeck/shared";
-import sharp from "sharp";
+import sharp, { type Metadata } from "sharp";
 import { captureGenerationError, errorLogFields, logger } from "../observability.js";
 import { putObjectBuffer } from "../storage.js";
 import { currentUsageContext, recordCostEvent } from "../usage-ledger.js";
@@ -606,7 +606,7 @@ export async function processPresentationImage(
     const format = hasAlpha ? "png" : "jpeg";
     const attempts = format === "jpeg" ? [82, 72, 62, 52] : [undefined];
     let best: Buffer | null = null;
-    let bestMetadata: sharp.Metadata | null = null;
+    let bestMetadata: Metadata | null = null;
 
     for (const quality of attempts) {
       const candidate = format === "jpeg"

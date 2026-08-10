@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import NextImage from "next/image";
-import { signOut } from "next-auth/react";
+import { signOut } from "@studydeck/auth/react";
 import { CalendarDays, LogOut, ShieldCheck, Tags, Trash2, UserRound } from "lucide-react";
 import { useState } from "react";
 import type { ProfileSummary } from "@/lib/account-types";

@@ -1,8 +1,7 @@
 import "server-only";
 
-import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/auth-options";
+import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { InternalApiError } from "@/lib/internal-api";
 import { devAuthAllowed } from "@studydeck/shared";
@@ -21,7 +20,7 @@ export async function canAccessAdmin(userId?: string | null) {
 }
 
 export async function requireAdminSession(options: { redirectToLogin?: boolean } = {}) {
-  const session = await getServerSession(authOptions);
+  const session = await auth();
   const userId = session?.user?.id || (devAuthAllowed() ? process.env.TEMP_USER_ID || "local-user" : null);
   if (!userId && options.redirectToLogin) redirect("/login?callbackUrl=/admin");
   if (!userId || !(await canAccessAdmin(userId))) {
