@@ -119,14 +119,13 @@ Worker публикует TTL heartbeat в Redis, а `compose.production.yml` и
 
 ### P1-3. Нет graceful shutdown фоновых задач
 
-Worker создаёт три BullMQ worker, Queue и Redis connection, но не обрабатывает SIGTERM/SIGINT и не закрывает их. API не включает Nest shutdown hooks. Во время deploy это повышает риск дублей, stalled jobs, незавершённых экспортов и потерянной телеметрии.
+**Реализовано 10 августа 2026:** worker обрабатывает `SIGTERM`/`SIGINT` ровно один раз: снимает heartbeat, прекращает получение новых задач через `pause(true)`, ждёт завершения active jobs до `WORKER_SHUTDOWN_TIMEOUT_MS` (по умолчанию 14 минут), затем при необходимости force-close оставшиеся jobs для безопасного BullMQ retry. После этого закрываются queue/Redis connections, Prisma и tracing/Sentry. API включает Nest shutdown hooks, поэтому останавливает HTTP listener и lifecycle providers, включая Prisma; отдельный lifecycle service flushes tracing/Sentry. В local и production Compose API получает 45 секунд, worker — 15 минут `stop_grace_period`, то есть больше заданного worker deadline.
 
-Нужно:
+Критерий закрытия: controlled `docker compose restart api worker` во время активной generation/export job не принимает новых jobs после SIGTERM, завершает текущую job либо оставляет её для штатного BullMQ retry после timeout, удаляет worker heartbeat и завершает контейнеры в их grace period без stalled/double execution.
 
-- Остановить приём новых jobs на SIGTERM.
-- Дождаться ограниченное время активных jobs.
-- Закрыть workers, queues, Redis, Prisma, tracing/Sentry.
-- Настроить stop grace period больше ожидаемого безопасного этапа.
+**Нужно доделать:**
+
+- Выполнить controlled restart на staging/immutable worker image во время реальных generation и PDF export jobs, сохранить логи shutdown и проверить отсутствие дублей/stalled jobs после retry. Локальная проверка сейчас зависит от восстановления Docker Desktop/BuildKit из P0-2.
 
 ### P1-4. Billing и удаление аккаунта не образуют завершённый lifecycle
 

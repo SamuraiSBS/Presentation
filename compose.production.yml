@@ -58,6 +58,7 @@ services:
       context: .
       dockerfile: Dockerfile.api
     restart: unless-stopped
+    stop_grace_period: 45s
     env_file: ${PRODUCTION_ENV_FILE:-.env.production}
     environment:
       NODE_ENV: production
@@ -86,6 +87,7 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     restart: unless-stopped
+    stop_grace_period: 15m
     env_file: ${PRODUCTION_ENV_FILE:-.env.production}
     environment:
       NODE_ENV: production

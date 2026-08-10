@@ -1,7 +1,9 @@
 import "dotenv/config";
 import { Queue, Worker } from "bullmq";
-import { captureExportError, captureGenerationError, initSentry, initTracing, logger } from "./observability.js";
+import { captureExportError, captureGenerationError, initSentry, initTracing, logger, shutdownObservability } from "./observability.js";
+import { disconnectPrisma } from "./prisma.js";
 import { createRedisConnection } from "./queue.js";
+import { createWorkerShutdown, workerShutdownTimeoutMs } from "./shutdown.js";
 import { handleExportJob } from "./tasks/export.js";
 import { handleGenerationJob } from "./tasks/generation.js";
 import { handleAdminMaintenance } from "./tasks/admin-maintenance.js";
@@ -73,5 +75,18 @@ exportWorker.on("failed", (job, error) => {
 maintenanceWorker.on("failed", (_job, error) => {
   logger.error({ errorName: error.name }, "admin maintenance job failed");
 });
+
+const shutdown = createWorkerShutdown({
+  workers: [generationWorker, exportWorker, maintenanceWorker],
+  maintenanceQueue,
+  heartbeatTimer,
+  heartbeatKey: workerHeartbeatKey,
+  timeoutMs: workerShutdownTimeoutMs(),
+  disconnectPrisma,
+  shutdownObservability,
+  logger,
+});
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
+process.once("SIGINT", () => void shutdown("SIGINT"));
 
 logger.info({ queues: ["generation", "exports", "admin-maintenance"], concurrency: 2 }, "studydeck worker started");

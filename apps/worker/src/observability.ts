@@ -91,6 +91,21 @@ export function tracingEnabled() {
   return ["1", "true", "yes"].includes(String(process.env.OTEL_TRACING_ENABLED || "").toLowerCase());
 }
 
+export async function shutdownObservability() {
+  const results = await Promise.allSettled([
+    tracingSdk?.shutdown() ?? Promise.resolve(),
+    initialized ? Sentry.close(2_000) : Promise.resolve(),
+  ]);
+  tracingSdk = undefined;
+  tracingInitialized = false;
+  initialized = false;
+  for (const result of results) {
+    if (result.status === "rejected") {
+      logger.warn({ ...errorLogFields(result.reason) }, "observability shutdown failed");
+    }
+  }
+}
+
 export async function withTraceSpan<T>(
   name: string,
   attributes: TraceAttributes,
