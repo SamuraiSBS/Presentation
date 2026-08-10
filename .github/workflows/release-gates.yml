@@ -29,6 +29,11 @@ jobs:
       - run: npm ci
       - run: npm run prisma:generate
       - run: npm run prisma:validate
+        env:
+          # Validation parses the Prisma schema but does not connect to this
+          # database. CI still needs a syntactically valid URL because the
+          # schema references DATABASE_URL.
+          DATABASE_URL: postgresql://studydeck:studydeck@localhost:5432/studydeck?schema=public
       - run: npm run lint
       - run: npm run check
       - run: npx playwright install --with-deps chromium

@@ -16,7 +16,9 @@ test("client-side переход к созданию оставляет един
   });
   await expect(create).toHaveCount(1);
   await Promise.all([
-    page.waitForURL("**/new"),
+    // App Router uses a client-side transition here, so there is no second
+    // document `load` event to wait for.
+    page.waitForURL("**/new", { waitUntil: "commit" }),
     create.click(),
   ]);
   await expect(page.locator(".motion-page")).toHaveCount(1);
