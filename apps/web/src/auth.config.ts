@@ -44,7 +44,10 @@ export function isTelegramAuthConfigured() {
 }
 
 const authConfig = {
-  providers: [telegramProvider()],
+  // Auth.js v5 validates every configured OAuth provider at request time.
+  // Keep the Telegram entry out of local/E2E environments until both required
+  // credentials are supplied; the login UI already reflects this same state.
+  providers: isTelegramAuthConfigured() ? [telegramProvider()] : [],
   pages: { signIn: "/login" },
   callbacks: {
     async jwt({ token, user }) {
