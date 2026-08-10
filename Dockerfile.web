@@ -5,6 +5,9 @@ COPY apps/web/package.json apps/web/package.json
 COPY apps/api/package.json apps/api/package.json
 COPY apps/worker/package.json apps/worker/package.json
 COPY packages/shared/package.json packages/shared/package.json
+COPY packages/authjs/package.json packages/authjs/package.json
+COPY packages/authjs-core/package.json packages/authjs-core/package.json
+COPY packages/pptxgenjs/package.json packages/pptxgenjs/package.json
 RUN --mount=type=cache,target=/root/.npm npm ci
 
 # Prisma generation only depends on the schema. Keeping it before application
@@ -14,6 +17,8 @@ RUN npm run prisma:generate
 
 COPY tsconfig.base.json ./
 COPY packages/shared ./packages/shared
+COPY packages/authjs ./packages/authjs
+COPY packages/authjs-core ./packages/authjs-core
 RUN npm run build -w @studydeck/shared
 COPY apps/web ./apps/web
 
