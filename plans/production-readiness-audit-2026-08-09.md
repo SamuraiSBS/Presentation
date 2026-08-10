@@ -70,6 +70,7 @@
 
 **Нужно доделать для acceptance:**
 
+- Открыть или обновить PR из `codex/release-gates-automation` для фактического SHA и дождаться первого зелёного `release-gates.yml`: workflow запускается на `pull_request` и push в `main`, поэтому обычный push в feature-ветку сам по себе CI не запускает.
 - После первого зелёного workflow проверить и включить для `main` четыре required checks: `Quality, migrations, and dependencies`, `Secret scan`, `Playwright desktop and mobile`, `Immutable images and staging smoke`.
 - Подтвердить в CI полный immutable путь: publish трёх GHCR image, migration, health/smoke именно по опубликованным `@sha256` references и release manifest с SHA текущего commit. До этого критерий «тот же digest разворачивается» не доказан.
 
