@@ -15,8 +15,8 @@ export class BillingController {
 
   @UseGuards(InternalAuthGuard, BlockedUserGuard)
   @Post("checkout")
-  createCheckout(@Req() request: InternalRequest, @Body() body: { plan?: "student" | "pro" }) {
-    return this.billing.createCheckoutSession(request.userId, body?.plan || "student");
+  createCheckout(@Req() request: InternalRequest, @Body() body: { plan?: "student" | "pro"; idempotencyKey?: string }) {
+    return this.billing.createCheckoutSession(request.userId, body?.plan || "student", body?.idempotencyKey);
   }
 
   @UseGuards(InternalAuthGuard, BlockedUserGuard)

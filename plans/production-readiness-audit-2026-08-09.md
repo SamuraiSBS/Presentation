@@ -216,9 +216,11 @@ Editor сериализует PATCH-запросы через `saveQueueRef`, н
 
 ### P2-2. Checkout имеет слабый error UX
 
-Checkout button устанавливает busy, вызывает `fetch`, затем ожидает JSON, но не имеет `try/catch/finally` и видимого сообщения об ошибке. Network failure может оставить кнопку в busy-state без понятного восстановления.
+**Реализовано 11 августа 2026:** checkout теперь сбрасывает busy-state через `finally` при сетевой ошибке, ошибочном HTTP-ответе и не-JSON ответе. Пользователь получает доступный error alert и может сразу повторить запрос кнопкой; повтор сохраняет session-scoped idempotency key. API передаёт этот key в Stripe, поэтому retry не создаёт вторую checkout session. Неуспешная попытка также записывается как Sentry breadcrumb без платежных данных. Добавлен unit-тест передачи retry key в Stripe.
 
-Рекомендация: `finally`, error alert с retry, Sentry breadcrumb и идемпотентность создания checkout session.
+Статус: закрыто на уровне кода.
+
+**Live E2E (11 августа 2026): не принято.** В локальном `.env` отсутствуют `STRIPE_SECRET_KEY` и `STRIPE_PRICE_STUDENT`, поэтому Stripe test-mode session создать нельзя. Дополнительно текущая `/pricing` отображает только free-plan и не рендерит `CheckoutButton`, так что error alert/retry недоступны для browser-сценария. Для acceptance сначала вернуть checkout CTA в продуктовый flow и предоставить Stripe test-mode конфигурацию; затем искусственно оборвать checkout-запрос, увидеть alert и доступный retry, а в Stripe Dashboard подтвердить, что два запроса с одним ключом вернули одну checkout session.
 
 ### P2-3. Frontend bundle и CSS слишком глобальны
 

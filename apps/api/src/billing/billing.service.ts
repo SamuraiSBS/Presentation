@@ -47,21 +47,24 @@ export class BillingService {
     return { received: true };
   }
 
-  async createCheckoutSession(userId: string, plan: "student" | "pro") {
+  async createCheckoutSession(userId: string, plan: "student" | "pro", idempotencyKey?: string) {
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
     const priceId = plan === "pro" ? this.config.get<string>("STRIPE_PRICE_PRO") : this.config.get<string>("STRIPE_PRICE_STUDENT");
     if (!priceId) throw new Error(`Stripe price for ${plan} is not configured`);
 
     const appUrl = this.config.get<string>("PUBLIC_APP_URL") || "http://localhost:3000";
-    const session = await this.getStripe().checkout.sessions.create({
-      mode: "subscription",
-      customer: user.stripeCustomerId || undefined,
-      customer_email: user.stripeCustomerId ? undefined : user.email || undefined,
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${appUrl}/billing?checkout=success`,
-      cancel_url: `${appUrl}/pricing?checkout=cancelled`,
-      metadata: { userId, plan },
-    });
+    const session = await this.getStripe().checkout.sessions.create(
+      {
+        mode: "subscription",
+        customer: user.stripeCustomerId || undefined,
+        customer_email: user.stripeCustomerId ? undefined : user.email || undefined,
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: `${appUrl}/billing?checkout=success`,
+        cancel_url: `${appUrl}/pricing?checkout=cancelled`,
+        metadata: { userId, plan },
+      },
+      idempotencyKey ? { idempotencyKey } : undefined,
+    );
 
     return { url: session.url };
   }

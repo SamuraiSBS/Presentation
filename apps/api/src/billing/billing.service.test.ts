@@ -9,6 +9,21 @@ function fixture() {
 }
 
 describe("BillingService customer self-service", () => {
+  it("passes the client retry key to Stripe when creating a checkout session", async () => {
+    const { service, prisma, config } = fixture();
+    prisma.user.findUniqueOrThrow.mockResolvedValue({ email: "student@example.test", stripeCustomerId: null });
+    config.get.mockImplementation((key: string) => key === "STRIPE_PRICE_STUDENT" ? "price_student" : "https://studydeck.example");
+    const create = vi.fn().mockResolvedValue({ url: "https://checkout.stripe.test/session" });
+    (service as unknown as { stripe: unknown }).stripe = { checkout: { sessions: { create } } };
+
+    await expect(service.createCheckoutSession("user-1", "student", "checkout:student:retry-1"))
+      .resolves.toEqual({ url: "https://checkout.stripe.test/session" });
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ metadata: { userId: "user-1", plan: "student" } }), {
+      idempotencyKey: "checkout:student:retry-1",
+    });
+  });
+
   it("creates a Stripe billing-portal session that returns to the profile", async () => {
     const { service, prisma, config } = fixture();
     prisma.user.findUniqueOrThrow.mockResolvedValue({ stripeCustomerId: "cus-1" });
