@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily StudyDeck encrypted backup
+
+[Timer]
+OnCalendar=*-*-* 02:17:00 UTC
+Persistent=true
+Unit=studydeck-backup.service
+
+[Install]
+WantedBy=timers.target

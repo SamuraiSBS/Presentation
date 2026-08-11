@@ -69,4 +69,9 @@ docker compose --env-file .env.production -f compose.production.yml up -d --buil
 Only Caddy publishes ports 80/443 in this topology. PostgreSQL, Redis, MinIO,
 and the API remain on the internal Docker network.
 
+Production backup, restore-drill, incident and rollback procedures are in
+[docs/operations/production-recovery.md](docs/operations/production-recovery.md).
+The production config validator now requires the dedicated off-site backup and
+operational ownership values before an application process may start.
+
 The legacy MVP is still available with `npm run legacy:start`.

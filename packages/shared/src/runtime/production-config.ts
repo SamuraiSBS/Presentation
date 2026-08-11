@@ -42,6 +42,10 @@ function publicHttpsHost(candidate: string) {
   }
 }
 
+function positiveInteger(candidate: string) {
+  return /^[1-9]\d*$/.test(candidate) ? Number(candidate) : null;
+}
+
 /**
  * Validates the small set of values that must never inherit local defaults in
  * a public deployment. It intentionally does nothing outside production so
@@ -103,6 +107,37 @@ export function productionConfigurationErrors(env: RuntimeEnvironment = process.
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value(env, "SUPPORT_EMAIL"))) {
     errors.push("SUPPORT_EMAIL must be a valid public support address");
   }
+
+  if (value(env, "BACKUP_ENABLED").toLowerCase() !== "true") {
+    errors.push("BACKUP_ENABLED must be true in production");
+  }
+  if (!/^age1[0-9a-z]+$/.test(value(env, "BACKUP_AGE_RECIPIENT"))) {
+    errors.push("BACKUP_AGE_RECIPIENT must be an age public recipient");
+  }
+  const backupEndpoint = value(env, "BACKUP_S3_ENDPOINT");
+  if (!publicHttpsHost(backupEndpoint) || backupEndpoint === value(env, "S3_ENDPOINT")) {
+    errors.push("BACKUP_S3_ENDPOINT must be a separate public HTTPS object-storage endpoint");
+  }
+  if (!value(env, "BACKUP_S3_BUCKET") || value(env, "BACKUP_S3_BUCKET") === value(env, "S3_BUCKET")) {
+    errors.push("BACKUP_S3_BUCKET must be set and separate from S3_BUCKET");
+  }
+  if (isUnsafeSecret(value(env, "BACKUP_S3_SECRET_ACCESS_KEY")) || value(env, "BACKUP_S3_SECRET_ACCESS_KEY").length < 32) {
+    errors.push("BACKUP_S3_SECRET_ACCESS_KEY must be a unique non-default secret of at least 32 characters");
+  }
+  if (isUnsafeSecret(value(env, "BACKUP_S3_ACCESS_KEY_ID"))) {
+    errors.push("BACKUP_S3_ACCESS_KEY_ID must be a non-default dedicated credential");
+  }
+  const retentionDays = positiveInteger(value(env, "BACKUP_RETENTION_DAYS"));
+  const objectLockDays = positiveInteger(value(env, "BACKUP_OBJECT_LOCK_RETENTION_DAYS"));
+  if (!retentionDays || retentionDays < 7) errors.push("BACKUP_RETENTION_DAYS must be at least 7");
+  if (!objectLockDays || (retentionDays && objectLockDays < retentionDays)) {
+    errors.push("BACKUP_OBJECT_LOCK_RETENTION_DAYS must be at least BACKUP_RETENTION_DAYS");
+  }
+  if (!positiveInteger(value(env, "BACKUP_RPO_HOURS"))) errors.push("BACKUP_RPO_HOURS must be a positive integer");
+  if (!positiveInteger(value(env, "BACKUP_RTO_HOURS"))) errors.push("BACKUP_RTO_HOURS must be a positive integer");
+  if (!positiveInteger(value(env, "BACKUP_DRILL_MAX_AGE_DAYS"))) errors.push("BACKUP_DRILL_MAX_AGE_DAYS must be a positive integer");
+  if (!value(env, "OPERATIONS_OWNER")) errors.push("OPERATIONS_OWNER must identify the incident owner");
+  if (!value(env, "OPERATIONS_ALERT_CHANNEL")) errors.push("OPERATIONS_ALERT_CHANNEL must identify the incident notification channel");
 
   return errors;
 }
