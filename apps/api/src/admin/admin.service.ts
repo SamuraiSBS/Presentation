@@ -228,6 +228,9 @@ export class AdminService {
         { id: "daily-cost", label: "Дневной бюджет", enabled: Boolean(process.env.ADMIN_DAILY_COST_ALERT_RUB), threshold: process.env.ADMIN_DAILY_COST_ALERT_RUB || null },
         { id: "error-burst", label: "Всплеск одинаковых ошибок", enabled: Boolean(process.env.ADMIN_ERROR_BURST_THRESHOLD), threshold: process.env.ADMIN_ERROR_BURST_THRESHOLD || null },
         { id: "unknown-price", label: "Неизвестная цена модели", enabled: true, threshold: null },
+        { id: "health-readiness", label: "Readiness 503", enabled: true, threshold: null },
+        { id: "health-worker-heartbeat", label: "Heartbeat worker", enabled: true, threshold: "45s" },
+        { id: "health-queue-lag", label: "Очереди", enabled: true, threshold: `${process.env.HEALTH_QUEUE_WAITING_MAX || 20} jobs / ${process.env.HEALTH_QUEUE_LAG_MAX_AGE_MS || 300_000}ms` },
       ],
     };
   }

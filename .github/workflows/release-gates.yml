@@ -135,6 +135,29 @@ jobs:
       - name: Collect staging logs
         if: always()
         run: docker compose -f docker-compose.yml -f compose.ci.yml logs --no-color
+      - name: Capture staging readiness evidence
+        if: always()
+        run: |
+          {
+            echo "== docker compose ps =="
+            docker compose -f docker-compose.yml -f compose.ci.yml ps
+            echo "== /v1/health/live =="
+            curl --silent --show-error http://localhost:4000/v1/health/live || true
+            echo
+            echo "== /v1/health/ready =="
+            curl --silent --show-error http://localhost:4000/v1/health/ready || true
+            echo
+            echo "== /v1/health/workers =="
+            curl --silent --show-error http://localhost:4000/v1/health/workers || true
+            echo
+          } | tee staging-health-evidence.txt
+      - name: Upload staging readiness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-health-evidence-${{ github.sha }}
+          path: staging-health-evidence.txt
+          if-no-files-found: error
 
   publish-release:
     name: Publish immutable release and verify registry digests
@@ -208,3 +231,26 @@ jobs:
       - name: Collect registry-smoke logs
         if: always()
         run: docker compose -f docker-compose.yml -f compose.release.yml logs --no-color
+      - name: Capture registry readiness evidence
+        if: always()
+        run: |
+          {
+            echo "== docker compose ps =="
+            docker compose -f docker-compose.yml -f compose.release.yml ps
+            echo "== /v1/health/live =="
+            curl --silent --show-error http://localhost:4000/v1/health/live || true
+            echo
+            echo "== /v1/health/ready =="
+            curl --silent --show-error http://localhost:4000/v1/health/ready || true
+            echo
+            echo "== /v1/health/workers =="
+            curl --silent --show-error http://localhost:4000/v1/health/workers || true
+            echo
+          } | tee registry-health-evidence.txt
+      - name: Upload registry readiness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: registry-health-evidence-${{ github.sha }}
+          path: registry-health-evidence.txt
+          if-no-files-found: error

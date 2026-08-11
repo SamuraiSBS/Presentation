@@ -105,12 +105,14 @@
 
 Worker публикует TTL heartbeat в Redis, а `compose.production.yml` и local/CI compose получили healthchecks для MinIO, API readiness, worker heartbeat и web; `create-bucket` ждёт healthy MinIO, API/worker — завершения bucket setup, а Caddy — healthy API/web. Release gates и `/api/internal-health` теперь используют readiness, а не безусловный `200`.
 
+**Дополнено 11 августа 2026:** API-side монитор (то есть независимый от worker процесс) при включённых production Telegram alerts периодически проверяет readiness и отправляет дедуплицированные уведомления о `503`, stale worker heartbeat и нарушении SLO очередей. CI сохраняет ответы live/ready/workers и `docker compose ps` в artifacts `staging-health-evidence-<sha>` и `registry-health-evidence-<sha>`.
+
 Критерий закрытия: staging/release smoke получает `200` от `/v1/health/ready` только после migration, bucket setup и запуска worker; отключение любой зависимости возвращает `503`, тогда как `/v1/health/live` остаётся `200` до остановки процесса.
 
-**Нужно доделать:**
+**Нужно доделать для acceptance:**
 
-- Выполнить staging smoke на собранных immutable образах и зафиксировать ответы live/ready/workers и Docker health states. Сейчас это блокируется известным зависанием Docker Desktop/BuildKit из P0-2.
-- Подключить monitoring/alerting к `503` readiness, stale worker heartbeat и согласованным SLO-порогам queue lag; сам endpoint метрики отдаёт, но канал оповещения в репозитории пока отсутствует.
+- Выполнить release-gates для commit SHA и принять CI-artifact `staging-health-evidence-<sha>`; после публикации digest принять также `registry-health-evidence-<sha>`. Они должны показать `200` live/ready/workers и healthy API/worker/web. Локально 11 августа Docker Desktop доступен, но запущены только PostgreSQL и MinIO, поэтому это не заменяет staging/release acceptance.
+- В production secret manager задать `ADMIN_ALERTS_ENABLED=true`, Telegram token/chat ID и согласованные SLO-пороги `HEALTH_QUEUE_WAITING_MAX` / `HEALTH_QUEUE_LAG_MAX_AGE_MS`; API-side монитор уже отправляет Telegram-уведомления для `503` readiness, stale worker heartbeat и нарушений queue-lag и не зависит от работающего worker.
 
 ### P1-3. Нет graceful shutdown фоновых задач
 
