@@ -212,7 +212,7 @@ Editor сериализует PATCH-запросы через `saveQueueRef`, н
 
 Статус: закрыто на уровне editor-кода. До live-acceptance остаётся пройти browser E2E: внести правку, начать искусственно задержанный PATCH, убедиться в предупреждении при закрытии/переходе, затем проверить retry после сетевой ошибки.
 
-**Live E2E (11 августа 2026): не принято.** Попытка проверки на локальном demo-editor не дошла до сценария: production web build не завершился за 5 минут, а fast preview завис на первом editor-запросе; единственный доступный in-app browser изолирован от host `localhost`. Повторить после восстановления local web runtime или из браузера с доступом к `localhost`, не снимая отметку о требуемом задержанном PATCH и сетевой ошибке.
+**Live E2E (11 августа 2026): не принято.** Добавлен scoped Playwright test `e2e/editor-autosave.spec.ts`: он задерживает PATCH и подтверждает native `beforeunload`, затем моделирует 500 и успешный retry. Spec компилируется и регистрирует оба сценария, но не выполнен live: production web build не завершился за 5 минут; clean Next preview сообщает `Ready`, но возвращает `000` даже на `/` и `/api/projects/demo`; единственный in-app browser изолирован от host `localhost`. Повторить `npm run test:e2e -- e2e/editor-autosave.spec.ts --project=chromium` после восстановления local web runtime.
 
 ### P2-2. Checkout имеет слабый error UX
 

@@ -16,6 +16,18 @@ import type { DragState, ElementPatch, ProjectPayload, SimpleEditorTab, Tool, Vi
 import { ObjectFloatingMenu } from "./object-floating-menu";
 import { SimplePropertiesPanel } from "./simple-properties-panel";
 import { DefenseCompliancePanel } from "@/components/defense/defense-compliance-panel";
+import { createUnsavedChangesBeforeUnloadHandler } from "./editor-save-guard";
+
+type SlideSavePatch = {
+  title?: string;
+  thesis?: string;
+  bullets?: string[];
+  layout?: SlideLayout;
+  visual?: SlideVisual;
+  blocks?: Slide["blocks"];
+  canvas?: SlideCanvas;
+  speakerNotes?: string;
+};
 
 export function ProjectEditor({
   initialProject,
@@ -50,6 +62,9 @@ export function ProjectEditor({
   const revisionRef = useRef(initialProject.presentationRevision || 0);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const conflictRef = useRef(false);
+  const hasUnsavedChangesRef = useRef(false);
+  const saveSequenceRef = useRef(0);
+  const latestSaveRef = useRef<{ patch: SlideSavePatch; sequence: number } | null>(null);
 
   const presentation = project.presentation?.document
     ? ensureEditableCanvas(project.presentation.document)
@@ -139,6 +154,24 @@ export function ProjectEditor({
     return () => observer.disconnect();
   }, [canvasHeight, canvasWidth, showObjectCanvas]);
 
+  useEffect(() => {
+    const warnBeforeUnload = createUnsavedChangesBeforeUnloadHandler(
+      () => hasUnsavedChangesRef.current,
+    );
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, []);
+
+  useEffect(() => {
+    const showOfflineSaveError = () => {
+      if (!hasUnsavedChangesRef.current) return;
+      setSaveStatus("error");
+      setActionError("Нет соединения. Изменения не потеряны: восстановите сеть и повторите сохранение.");
+    };
+    window.addEventListener("offline", showOfflineSaveError);
+    return () => window.removeEventListener("offline", showOfflineSaveError);
+  }, []);
+
   async function refresh() {
     const response = await fetch(`/api/projects/${project.id}`);
     if (!response.ok) throw new Error(await response.text());
@@ -149,21 +182,16 @@ export function ProjectEditor({
     setProject(next);
   }
 
-  function saveSlide(next: {
-    title?: string;
-    thesis?: string;
-    bullets?: string[];
-    layout?: SlideLayout;
-    visual?: SlideVisual;
-    blocks?: Slide["blocks"];
-    canvas?: SlideCanvas;
-    speakerNotes?: string;
-  }) {
+  function saveSlide(next: SlideSavePatch) {
     if (!slide || !canEdit || conflictRef.current) return Promise.resolve();
     const slideId = slide.id;
+    const sequence = ++saveSequenceRef.current;
+    latestSaveRef.current = { patch: next, sequence };
+    hasUnsavedChangesRef.current = true;
     const run = async () => {
       if (conflictRef.current) return;
       setSaveStatus("saving");
+      try {
       const response = await fetch(`/api/projects/${project.id}/slides/${slideId}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -187,10 +215,26 @@ export function ProjectEditor({
       } else {
         revisionRef.current += 1;
       }
-      setSaveStatus("saved");
+      if (latestSaveRef.current?.sequence === sequence) {
+        hasUnsavedChangesRef.current = false;
+        setSaveStatus("saved");
+      }
+      } catch (error) {
+        if (latestSaveRef.current?.sequence === sequence) {
+          setSaveStatus("error");
+          setActionError(editorError(error, "Не получилось сохранить изменения. Проверьте соединение и повторите попытку."));
+        }
+      }
     };
     saveQueueRef.current = saveQueueRef.current.then(run, run);
     return saveQueueRef.current;
+  }
+
+  function retryLatestSave() {
+    const latestSave = latestSaveRef.current;
+    if (!latestSave || conflictRef.current) return;
+    setActionError("");
+    void saveSlide(latestSave.patch);
   }
 
   function updateLocalSlide(patch: Partial<Slide>) {
@@ -814,7 +858,10 @@ export function ProjectEditor({
         <div>
           <h1>{presentation.title}</h1>
         </div>
-        <SaveIndicator status={saveStatus} />
+        <SaveIndicator
+          status={saveStatus}
+          onRetry={revisionConflict ? undefined : retryLatestSave}
+        />
       </div>
 
       {project.workflow === "requirements_driven" ? <DefenseCompliancePanel projectId={project.id} presentationRevision={project.presentationRevision || 0} slides={presentation.slides} canEdit={canEdit} onSelectSlide={(index) => { setActive(index); setMobileSection("preview"); }} /> : null}
