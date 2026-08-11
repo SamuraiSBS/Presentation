@@ -9,6 +9,7 @@ import sharp from "sharp";
 import { ProjectAccessService } from "../access/project-access.service.js";
 import { conflict } from "../errors/api-error.js";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { MalwareScanService } from "../security/malware-scan.service.js";
 
 @Injectable()
 export class SourcesService {
@@ -18,6 +19,7 @@ export class SourcesService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly access: ProjectAccessService,
+    private readonly malwareScanner: MalwareScanService,
   ) {}
 
   async upload(userId: string, projectId: string, files: Express.Multer.File[]) {
@@ -30,6 +32,7 @@ export class SourcesService {
     const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
     const limit = planLimits[project.user.planCode].maxProjectBytes;
     if (totalBytes > limit) throw new BadRequestException("Project upload limit exceeded");
+    await this.scanFiles(files);
 
     const created = [];
     for (const file of files) {
@@ -132,6 +135,7 @@ export class SourcesService {
     if ((stored._sum.size ?? 0) + incoming > limit) {
       throw new BadRequestException("Project upload limit exceeded");
     }
+    await this.scanFiles(files);
 
     // Validate every file before the first external write, so a bad second
     // file cannot leave a partially accepted upload behind.
@@ -241,6 +245,12 @@ export class SourcesService {
     }
 
     return this.s3Client;
+  }
+
+  private async scanFiles(files: readonly Express.Multer.File[]) {
+    // Do this before any S3 write. A scanner outage is deliberately fail-closed
+    // in production, so unverified content never reaches the shared bucket.
+    await Promise.all(files.map((file) => this.malwareScanner.scan(file.buffer, file.originalname || "upload")));
   }
 }
 

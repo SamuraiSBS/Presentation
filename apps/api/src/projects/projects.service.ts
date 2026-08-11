@@ -40,6 +40,7 @@ import { generationJobOptions, narrationJobOptions } from "../jobs/job-options.j
 import { errorLogFields, injectTraceContext, logger, withTraceSpan } from "../observability.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { ProjectStorageService, rewriteProjectDocument } from "../storage/project-storage.service.js";
+import { MalwareScanService } from "../security/malware-scan.service.js";
 import { UsageService } from "../usage/usage.service.js";
 import { projectSummarySelect, toProjectSummary } from "./project-summary.js";
 
@@ -56,6 +57,7 @@ export class ProjectsService {
     private readonly access: ProjectAccessService,
     private readonly usage: UsageService,
     private readonly storage: ProjectStorageService,
+    private readonly malwareScanner: MalwareScanService,
   ) {}
 
   async list(userId: string, query: ProjectListQuery) {
@@ -697,6 +699,9 @@ export class ProjectsService {
     if (file.size > planLimits[project.user.planCode].maxProjectBytes) {
       throw new BadRequestException("Image upload limit exceeded");
     }
+    // Object storage is shared with workers and exports, so scan before the
+    // first external write rather than relying on later asynchronous cleanup.
+    await this.malwareScanner.scan(file.buffer, file.originalname || "slide-image");
 
     const document = ensureEditableCanvas(presentationSchema.parse(project.presentation.document) as PresentationDocument);
     const slide = document.slides.find((item) => item.id === slideId);

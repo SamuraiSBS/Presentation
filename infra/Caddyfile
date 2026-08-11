@@ -1,6 +1,20 @@
 {$SITE_DOMAIN:localhost} {
   encode gzip
 
+  # Keep this policy at the public edge so it protects both the Next.js app and
+  # API responses. Next.js requires inline bootstrap scripts/styles; Telegram
+  # OAuth is a top-level redirect, while its remote profile images remain
+  # allowed through img-src.
+  header {
+    -Server
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), usb=()"
+    Strict-Transport-Security "max-age={$HSTS_MAX_AGE:0}; includeSubDomains"
+    Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.ingest.sentry.io; media-src 'self' blob:; worker-src 'self' blob:; frame-src 'none'; upgrade-insecure-requests"
+  }
+
   handle /api/internal-health {
     rewrite * /v1/health/ready
     reverse_proxy api:4000

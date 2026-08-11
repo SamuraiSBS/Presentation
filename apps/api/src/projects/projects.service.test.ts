@@ -5,6 +5,7 @@ import type { ProjectAccessService } from "../access/project-access.service.js";
 import type { PrismaService } from "../prisma/prisma.service.js";
 import type { ProjectStorageService } from "../storage/project-storage.service.js";
 import type { UsageService } from "../usage/usage.service.js";
+import type { MalwareScanService } from "../security/malware-scan.service.js";
 import { ProjectsService } from "./projects.service.js";
 
 const speechDraft = "Слайд 1: Введение\nЭто достаточно длинный текст выступления для проверки запуска презентации.";
@@ -107,6 +108,7 @@ function createHarness() {
     access as unknown as ProjectAccessService,
     usage as unknown as UsageService,
     storage as unknown as ProjectStorageService,
+    { scan: vi.fn().mockResolvedValue(undefined) } as unknown as MalwareScanService,
   );
 
   return { access, prisma, queue, service, storage, tx, usage };

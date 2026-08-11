@@ -36,6 +36,11 @@ const productionEnvironment = {
   BACKUP_DRILL_MAX_AGE_DAYS: "7",
   OPERATIONS_OWNER: "studydeck-on-call",
   OPERATIONS_ALERT_CHANNEL: "telegram:123456789",
+  HSTS_MAX_AGE: "31536000",
+  TRUST_PROXY_HOPS: "1",
+  MALWARE_SCAN_ENABLED: "true",
+  CLAMAV_HOST: "clamav",
+  CLAMAV_PORT: "3310",
 };
 
 describe("production configuration", () => {
@@ -53,12 +58,18 @@ describe("production configuration", () => {
       NEXTAUTH_URL: "http://localhost:3010",
       SITE_DOMAIN: "localhost",
       ADMIN_TELEGRAM_IDS: "",
+      HSTS_MAX_AGE: "0",
+      TRUST_PROXY_HOPS: "2",
+      MALWARE_SCAN_ENABLED: "false",
     });
     expect(errors.join("\n")).toMatch(/NEXTAUTH_SECRET/);
     expect(errors.join("\n")).toMatch(/ALLOW_DEV_AUTH/);
     expect(errors.join("\n")).toMatch(/TEMP_USER_ID/);
     expect(errors.join("\n")).toMatch(/NEXTAUTH_URL/);
     expect(errors.join("\n")).toMatch(/ADMIN_TELEGRAM_IDS/);
+    expect(errors.join("\n")).toMatch(/HSTS_MAX_AGE/);
+    expect(errors.join("\n")).toMatch(/TRUST_PROXY_HOPS/);
+    expect(errors.join("\n")).toMatch(/MALWARE_SCAN_ENABLED/);
   });
 
   it("never enables dev auth when deployment is production", () => {

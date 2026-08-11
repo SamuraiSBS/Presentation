@@ -139,6 +139,19 @@ export function productionConfigurationErrors(env: RuntimeEnvironment = process.
   if (!value(env, "OPERATIONS_OWNER")) errors.push("OPERATIONS_OWNER must identify the incident owner");
   if (!value(env, "OPERATIONS_ALERT_CHANNEL")) errors.push("OPERATIONS_ALERT_CHANNEL must identify the incident notification channel");
 
+  const hstsMaxAge = positiveInteger(value(env, "HSTS_MAX_AGE"));
+  if (!hstsMaxAge || hstsMaxAge < 31_536_000) {
+    errors.push("HSTS_MAX_AGE must be at least 31536000 after the public HTTPS domain is ready");
+  }
+  if (value(env, "TRUST_PROXY_HOPS") !== "1") {
+    errors.push("TRUST_PROXY_HOPS must be 1 for the single trusted Caddy hop");
+  }
+  if (value(env, "MALWARE_SCAN_ENABLED").toLowerCase() !== "true") {
+    errors.push("MALWARE_SCAN_ENABLED must be true in production");
+  }
+  if (!value(env, "CLAMAV_HOST")) errors.push("CLAMAV_HOST must identify the malware scanner");
+  if (!positiveInteger(value(env, "CLAMAV_PORT"))) errors.push("CLAMAV_PORT must be a positive integer");
+
   return errors;
 }
 

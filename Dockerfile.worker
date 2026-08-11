@@ -1,4 +1,4 @@
-FROM node:22-alpine
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS base
 WORKDIR /app
 COPY package*.json ./
 COPY apps/web/package.json apps/web/package.json
@@ -17,11 +17,21 @@ COPY apps/worker ./apps/worker
 RUN npm run prisma:generate
 RUN npm run build -w @studydeck/shared
 RUN npm run build -w @studydeck/worker
+RUN npm prune --omit=dev
 
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS runner
+WORKDIR /app
 ENV NODE_ENV=production
 ENV CHROMIUM_PATH=/usr/bin/chromium-browser
 RUN apk add --no-cache chromium font-noto ttf-dejavu poppler-utils
+COPY --chown=node:node --from=base /app/package*.json ./
+COPY --chown=node:node --from=base /app/node_modules ./node_modules
+COPY --chown=node:node --from=base /app/prisma ./prisma
+COPY --chown=node:node --from=base /app/packages/shared ./packages/shared
+COPY --chown=node:node --from=base /app/packages/pptxgenjs ./packages/pptxgenjs
+COPY --chown=node:node --from=base /app/apps/worker ./apps/worker
 # This fixture is imported during Vitest discovery, including targeted export
 # smokes run inside the immutable worker image.
-COPY e2e-237-accepted-speech.txt ./e2e-237-accepted-speech.txt
+COPY --chown=node:node e2e-237-accepted-speech.txt ./e2e-237-accepted-speech.txt
+USER node
 CMD ["node", "apps/worker/dist/main.js"]

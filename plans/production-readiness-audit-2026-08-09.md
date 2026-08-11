@@ -169,15 +169,20 @@ mirror, восстанавливает их в новые временные Doc
 
 ### P1-6. Недостаёт perimeter security
 
-Не найдены rate limiting/throttling и явные security headers: CSP, HSTS, `frame-ancestors`, `Referrer-Policy`, `Permissions-Policy`. Caddy сейчас только сжимает и проксирует. Docker runtime работает от root; базовые образы используют mutable tags, API/worker runner копируют весь root `node_modules`.
+**Реализовано в репозитории 11 августа 2026:**
 
-Нужно:
+- API теперь применяет Redis-backed throttling одновременно по хэшированным user и IP ключам. Общий лимит и отдельные лимиты для upload, generation, export, invitation и billing задаются через `API_RATE_LIMIT_*`; при недоступном Redis защищённые запросы получают `503`, а не обходят защиту. Health endpoints исключены, чтобы не замаскировать отказ Redis.
+- Caddy добавляет CSP для Next.js/Auth.js/Telegram OAuth, `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy` и HSTS. Production startup validation требует публичный HTTPS домен и `HSTS_MAX_AGE >= 31536000`, поэтому HSTS не включается случайно в local окружении.
+- API, worker и web runner теперь запускаются как unprivileged `node`; production compose задаёт read-only rootfs с отдельными tmpfs, `no-new-privileges`, dropped capabilities, PIDs и CPU/RAM limits. Caddy работает UID 1000 с единственным `NET_BIND_SERVICE`; разовый `caddy-init` с root нужен только для миграции прав уже существующих Caddy volumes. Stateful PostgreSQL/Redis/MinIO и ClamAV не переведены в read-only режим, так как им нужны persistent writes.
+- Все production runtime и Node base images закреплены `@sha256` digest-ами. API/worker удаляют dev dependencies перед переносом runtime `node_modules`. CI генерирует SBOM/provenance для публикуемых образов и останавливает release при fixable HIGH/CRITICAL уязвимостях Trivy scan.
+- В production compose добавлен private ClamAV daemon с persistent signature volume. `MalwareScanService` stream-сканирует обычные uploads, defense uploads и пользовательские slide assets **до** первого S3 write; сигнатура или недоступный scanner отклоняют файл. Readiness API также проверяет ClamAV `PING`, а production config не разрешает запуск без включённого scanner и его host/port.
 
-- Добавить API throttling по user/IP и отдельные лимиты для upload, generation, export, invite и billing endpoints.
-- Настроить CSP с учётом Next/Auth/Telegram, HSTS после готовности домена, clickjacking/referrer/permissions policies.
-- Запускать контейнеры от non-root пользователя, добавить read-only filesystem там, где возможно, ограничить capabilities/resources/PIDs.
-- Закрепить base images digest-ами, добавить SBOM и image scan.
-- Добавить антивирусную/малварь-проверку загружаемых файлов. Текущие magic bytes и ZIP limits защищают формат и ресурсы, но не содержимое.
+**Нужно доделать для live-acceptance:**
+
+- На staging/prod выделить ClamAV минимум 4 GiB RAM, дождаться первого обновления signature database и сохранить evidence: `ready` с успешным scanner check, разрешённый чистый upload, отклонённый EICAR-тест (только изолированная staging-среда) и отказ upload при остановленном scanner.
+- Проверить с публичного HTTPS домена фактические headers/CSP, Telegram OAuth, Sentry transport и `429` для каждого специального bucket. Если Sentry использует не `*.ingest.sentry.io`, добавить его точный HTTPS ingest host в `connect-src` до запуска.
+- Настроить на уровне cloud firewall/WAF только 80/443 и наблюдение за signature-update/ClamAV health; application compose не заменяет сетевой perimeter провайдера.
+- Результат Trivy/SBOM должен быть принят владельцем release: triage найденных fixable HIGH/CRITICAL CVE, обновление закреплённых digest-ов по расписанию и документированный exception только для явно неприменимых уязвимостей.
 
 ### P1-7. Юридический и support-минимум отсутствует
 
@@ -201,9 +206,13 @@ mirror, восстанавливает их в новые временные Doc
 
 ### P2-1. Editor autosave не защищён при закрытии страницы
 
+**Реализовано 11 августа 2026:** editor помечает изменения как несохранённые до подтверждения последнего PATCH-ответа и ставит нативный `beforeunload` guard для закрытия/перехода. Ошибка сети теперь выводит явный статус и кнопку retry; конфликт ревизий по-прежнему открывает отдельный conflict-flow. Добавлен unit-тест guard для сохранённого и pending состояний.
+
 Editor сериализует PATCH-запросы через `saveQueueRef`, но в нём нет `beforeunload`/navigation guard, аналогичного script review. Если пользователь закроет вкладку сразу после редактирования, queued save может не завершиться.
 
-Рекомендация: dirty/pending-save guard, явный статус офлайн/ошибки, retry и тест закрытия/перехода во время сохранения.
+Статус: закрыто на уровне editor-кода. До live-acceptance остаётся пройти browser E2E: внести правку, начать искусственно задержанный PATCH, убедиться в предупреждении при закрытии/переходе, затем проверить retry после сетевой ошибки.
+
+**Live E2E (11 августа 2026): не принято.** Попытка проверки на локальном demo-editor не дошла до сценария: production web build не завершился за 5 минут, а fast preview завис на первом editor-запросе; единственный доступный in-app browser изолирован от host `localhost`. Повторить после восстановления local web runtime или из браузера с доступом к `localhost`, не снимая отметку о требуемом задержанном PATCH и сетевой ошибке.
 
 ### P2-2. Checkout имеет слабый error UX
 

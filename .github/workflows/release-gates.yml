@@ -8,6 +8,8 @@ on:
 permissions:
   contents: read
   packages: write
+  attestations: write
+  id-token: write
 
 concurrency:
   group: release-gates-${{ github.workflow }}-${{ github.ref }}
@@ -95,6 +97,33 @@ jobs:
           docker build --tag studydeck-api:${STUDYDECK_IMAGE_TAG} --file Dockerfile.api .
           docker build --tag studydeck-worker:${STUDYDECK_IMAGE_TAG} --file Dockerfile.worker .
           docker build --tag studydeck-web:${STUDYDECK_IMAGE_TAG} --file Dockerfile.web .
+      - name: Scan API release image for fixable high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: studydeck-api:${{ env.STUDYDECK_IMAGE_TAG }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Scan worker release image for fixable high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: studydeck-worker:${{ env.STUDYDECK_IMAGE_TAG }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Scan web release image for fixable high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: studydeck-web:${{ env.STUDYDECK_IMAGE_TAG }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
       - name: Render a real PDF in the Alpine worker image
         run: >
           GOLDEN_EXPORT_TIMINGS=1 docker run --rm --entrypoint npm studydeck-worker:${STUDYDECK_IMAGE_TAG}
@@ -196,6 +225,8 @@ jobs:
           file: Dockerfile.api
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/studydeck-api:${{ github.sha }}
+          sbom: true
+          provenance: mode=max
       - id: worker
         uses: docker/build-push-action@v6
         with:
@@ -203,6 +234,8 @@ jobs:
           file: Dockerfile.worker
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/studydeck-worker:${{ github.sha }}
+          sbom: true
+          provenance: mode=max
       - id: web
         uses: docker/build-push-action@v6
         with:
@@ -210,6 +243,8 @@ jobs:
           file: Dockerfile.web
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/studydeck-web:${{ github.sha }}
+          sbom: true
+          provenance: mode=max
       - name: Pin image references to the published digests
         run: |
           echo "STUDYDECK_API_IMAGE=${REGISTRY}/${IMAGE_NAMESPACE}/studydeck-api@${{ steps.api.outputs.digest }}" >> "$GITHUB_ENV"

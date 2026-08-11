@@ -17,10 +17,12 @@ import { ProjectsModule } from "./projects/projects.module.js";
 import { SourcesModule } from "./sources/sources.module.js";
 import { UsersModule } from "./users/users.module.js";
 import { ObservabilityShutdownService } from "./observability-shutdown.service.js";
+import { SecurityModule } from "./security/security.module.js";
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    SecurityModule,
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
