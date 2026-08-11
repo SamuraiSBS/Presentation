@@ -168,7 +168,7 @@ jobs:
           docker pull "$STUDYDECK_WEB_IMAGE"
           docker compose -f docker-compose.yml -f compose.release.yml config --quiet
           docker compose -f docker-compose.yml -f compose.release.yml up -d --no-build postgres redis minio create-bucket
-          docker compose -f docker-compose.yml -f compose.release.yml run --rm --no-deps --no-build api npm run prisma:deploy
+          docker compose -f docker-compose.yml -f compose.release.yml run --rm --no-deps api npm run prisma:deploy
           docker compose -f docker-compose.yml -f compose.release.yml up -d --no-build api worker web
           for attempt in $(seq 1 30); do
             if curl --fail --silent --show-error http://localhost:4000/v1/health/ready; then exit 0; fi
