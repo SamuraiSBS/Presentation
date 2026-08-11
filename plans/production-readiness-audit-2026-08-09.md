@@ -118,11 +118,14 @@ Worker публикует TTL heartbeat в Redis, а `compose.production.yml` и
 
 **Реализовано 10 августа 2026:** worker обрабатывает `SIGTERM`/`SIGINT` ровно один раз: снимает heartbeat, прекращает получение новых задач через `pause(true)`, ждёт завершения active jobs до `WORKER_SHUTDOWN_TIMEOUT_MS` (по умолчанию 14 минут), затем при необходимости force-close оставшиеся jobs для безопасного BullMQ retry. После этого закрываются queue/Redis connections, Prisma и tracing/Sentry. API включает Nest shutdown hooks, поэтому останавливает HTTP listener и lifecycle providers, включая Prisma; отдельный lifecycle service flushes tracing/Sentry. В local и production Compose API получает 45 секунд, worker — 15 минут `stop_grace_period`, то есть больше заданного worker deadline.
 
+**Локально подтверждено 11 августа 2026:** worker image был пересобран с прямым Node entrypoint (`node apps/worker/dist/main.js`), чтобы `SIGTERM` попадал в обработчик worker, а не в обёртку `npm`. Controlled stop/start idle worker завершился за 3,98 секунды; логи содержат `worker graceful shutdown started` и `worker graceful shutdown completed`, heartbeat удалён до остановки (`TTL=-2`) и восстановлен после запуска (`TTL=58`).
+
 Критерий закрытия: controlled `docker compose restart api worker` во время активной generation/export job не принимает новых jobs после SIGTERM, завершает текущую job либо оставляет её для штатного BullMQ retry после timeout, удаляет worker heartbeat и завершает контейнеры в их grace period без stalled/double execution.
 
-**Нужно доделать:**
+**Нужно доделать для acceptance:**
 
-- Выполнить controlled restart на staging/immutable worker image во время реальных generation и PDF export jobs, сохранить логи shutdown и проверить отсутствие дублей/stalled jobs после retry. Локальная проверка сейчас зависит от восстановления Docker Desktop/BuildKit из P0-2.
+- Выполнить controlled restart на staging с immutable worker image во время реальных generation и PDF export jobs. Сохранить shutdown-логи, состояния BullMQ до и после retry и время завершения контейнеров; принять только при отсутствии дублей и stalled jobs. Локальный restart не заменяет этот staging acceptance.
+- Для запуска этой проверки нужны SSH-доступ к staging, принятый `release-manifest.json` с digest-образами API/worker/web и чистый commit: `scripts/deploy.ps1` отказывается разворачивать dirty tree и не содержит реального staging host.
 
 ### P1-4. Billing и удаление аккаунта не образуют завершённый lifecycle
 
