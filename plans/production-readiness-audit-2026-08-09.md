@@ -46,7 +46,7 @@
 
 ### P0-2. Release gates красные и не автоматизированы
 
-**Статус на 10 августа 2026: локальная часть acceptance выполнена, P0-2 набор зафиксирован и отправлен в GitHub, ожидается GitHub CI acceptance.** В репозитории добавлен `.github/workflows/release-gates.yml`: он проверяет lockfile/Prisma/lint/typecheck/unit, secrets, Playwright desktop/mobile, собирает API/worker/web, выполняет migration и golden export smoke в Alpine worker, а после push публикует immutable GHCR images по `@sha256`, проверяет их в compose и формирует release manifest. Deploy и manifest validation также запрещают dirty tree и неполный/неimmutable набор образов. Локально собран Alpine worker, а реальный PDF smoke `renders editable canvas to a real pdf` прошёл внутри образа (10.39 s).
+**Закрыто 11 августа 2026: P0-2 прошёл GitHub CI acceptance.** Release run [#25](https://github.com/SamuraiSBS/Presentation/actions/runs/31516748337) для `main` commit `ed07252` успешно выполнил все required checks, опубликовал immutable API/worker/web images в GHCR, закрепил их `@sha256`, выполнил migration и readiness/compose smoke именно по опубликованным digest references и сохранил release manifest. В репозитории добавлен `.github/workflows/release-gates.yml`: он проверяет lockfile/Prisma/lint/typecheck/unit, secrets, Playwright desktop/mobile, собирает API/worker/web и выполняет migration и golden export smoke в Alpine worker. Deploy и manifest validation также запрещают dirty tree и неполный/неimmutable набор образов.
 
 Старый срез проверок на момент аудита:
 
@@ -66,13 +66,9 @@
 - Тестировать именно immutable image, который затем разворачивается, а не другой dev/container build.
 - Запретить deploy при dirty tree, красном gate или неполном release manifest.
 
-Критерий acceptance: один опубликованный commit/tag и один digest образов имеют полностью зелёный CI; тот же digest проходит smoke/E2E в staging.
+Критерий acceptance выполнен: один опубликованный commit и один digest-набор образов имеют полностью зелёный CI; тот же digest прошёл migration, readiness и compose smoke.
 
-**Нужно доделать для acceptance:**
-
-- Открыть или обновить PR из `codex/release-gates-automation` для фактического SHA и дождаться первого зелёного `release-gates.yml`: workflow запускается на `pull_request` и push в `main`, поэтому обычный push в feature-ветку сам по себе CI не запускает.
-- После первого зелёного workflow проверить и включить для `main` четыре required checks: `Quality, migrations, and dependencies`, `Secret scan`, `Playwright desktop and mobile`, `Immutable images and staging smoke`.
-- Подтвердить в CI полный immutable путь: publish трёх GHCR image, migration, health/smoke именно по опубликованным `@sha256` references и release manifest с SHA текущего commit. До этого критерий «тот же digest разворачивается» не доказан.
+**Нужно доделать для acceptance:** ничего — критерий подтверждён release run #25.
 
 ### P0-3. Регрессия export preflight — закрыто
 
