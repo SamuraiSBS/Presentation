@@ -88,16 +88,15 @@
 
 ### P1-1. Deploy неатомарный, без rollback и post-deploy проверки
 
-`scripts/deploy.ps1` архивирует `HEAD` прямо в постоянный каталог, затем на сервере выполняет build, migration и `up -d`. Нет release directory, registry digest, backup, lock от параллельного deploy, `docker compose config`, health wait, smoke test, automatic rollback или сохранения предыдущего набора образов.
+**Реализовано 11 августа 2026:** `scripts/deploy.ps1` принимает только принятый CI `release-manifest.json` с immutable API/worker/web `@sha256` references, запрещает dirty tree и передаёт commit archive в отдельный каталог `/releases/<sha>-<timestamp>`. Remote `scripts/deploy-release.sh` сериализует deploy через `flock`, запускает `docker compose config --quiet` и pull digest-образов, создаёт защищённый pre-migration PostgreSQL dump, запускает Prisma и ждёт не более 180 секунд healthy API/worker/web и `/v1/health/ready`. Затем обязательный smoke проверяет API readiness, web и публичный Caddy `/api/internal-health`; `docker compose ps` и ответ readiness сохраняются в `deploy-evidence.txt` релиза.
 
-Текущий рабочий tree также не является release-кандидатом: есть незакоммиченные изменения в generation-коде и `.worktrees/`. Поскольку скрипт архивирует только `HEAD`, незакоммиченные исправления не попадут в релиз, даже если локальные тесты запускались на них.
+При неуспешном deploy скрипт не меняет `current`, сохраняет failed release/evidence и автоматически поднимает предыдущий accepted source/manifest/image set. Предыдущий release хранится как `/previous`; ручной возврат — одна команда: `./scripts/deploy.ps1 -HostName <host> -RemotePath <path> -Rollback`. CI в текущей политике блокирует публикацию release с изменением `prisma/migrations`, пока не появится отдельная проверяемая политика forward-fix/rollback compatibility; поэтому обычный rollout не может незаметно внести schema change.
 
-Нужно:
+**Нужно доделать для полного закрытия:**
 
-- Собирать подписанные/versioned images в CI и разворачивать по digest.
-- Перед миграцией делать backup и проверять совместимость migration rollback/forward fix.
-- Добавить staging, smoke, health timeout и переключение трафика только после readiness.
-- Хранить предыдущий release manifest и одну команду rollback.
+- Развернуть отдельный staging host и принять реальный deploy/rollback drill с сохранёнными backup, `deploy-evidence.txt` и проверкой восстановления в изолированной БД.
+- Спроектировать blue/green (или иной proxy-level) traffic switch: текущий Compose обновляет сервисы in-place, поэтому rollback автоматизирован, но нулевой перерыв трафика до readiness ещё не гарантирован.
+- Для будущих Prisma migrations добавить CI-проверяемый контракт backward compatibility и forward-fix/restore procedure; снять сознательный запрет migration changes только после такого drill.
 
 ### P1-2. Health endpoint проверяет только факт работы Node.js
 
