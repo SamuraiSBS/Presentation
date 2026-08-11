@@ -66,6 +66,40 @@ export class BillingService {
     return { url: session.url };
   }
 
+  async createPortalSession(userId: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { stripeCustomerId: true },
+    });
+    if (!user.stripeCustomerId) {
+      throw new Error("Billing portal is unavailable because this account has no Stripe customer");
+    }
+
+    const appUrl = this.config.get<string>("PUBLIC_APP_URL") || "http://localhost:3000";
+    const session = await this.getStripe().billingPortal.sessions.create({
+      customer: user.stripeCustomerId,
+      return_url: `${appUrl}/profile`,
+    });
+    return { url: session.url };
+  }
+
+  /**
+   * Stripe must be cancelled before data cleanup starts.  The caller persists
+   * the returned timestamp in AccountDeletion, making a safe retry possible
+   * when the HTTP request or worker is interrupted between steps.
+   */
+  async cancelSubscriptionForAccountDeletion(user: {
+    stripeSubscriptionId: string | null;
+    subscriptionStatus: string | null;
+  }) {
+    if (!user.stripeSubscriptionId || ["canceled", "incomplete_expired"].includes(user.subscriptionStatus || "")) {
+      return { subscriptionId: user.stripeSubscriptionId, cancelledAt: new Date() };
+    }
+
+    const subscription = await this.getStripe().subscriptions.cancel(user.stripeSubscriptionId);
+    return { subscriptionId: subscription.id, cancelledAt: new Date() };
+  }
+
   private async syncCheckoutSession(session: Stripe.Checkout.Session) {
     const userId = session.metadata?.userId;
     if (!userId || !session.customer) return;

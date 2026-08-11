@@ -32,6 +32,14 @@ enum JobStatus {
   failed
 }
 
+enum AccountDeletionStatus {
+  cancellation_pending
+  queued
+  processing
+  completed
+  failed
+}
+
 enum GenerationJobKind {
   narration
   presentation
@@ -255,12 +263,30 @@ model User {
   adminActions          AdminAuditLog[]      @relation("AdminAuditActor")
   activityEvents        UserActivityEvent[]  @relation("ActivityUser")
   activityActions       UserActivityEvent[]  @relation("ActivityActor")
+  accountDeletion       AccountDeletion?
   factConfirmations     FactEvidence[]       @relation("FactEvidenceConfirmer")
   conflictResolutions   ProjectConflict[]    @relation("ConflictResolver")
 
   @@index([createdAt])
   @@index([lastSeenAt])
   @@index([blockedAt])
+}
+
+model AccountDeletion {
+  id                       String                @id @default(cuid())
+  userId                   String?               @unique
+  status                   AccountDeletionStatus @default(cancellation_pending)
+  stripeSubscriptionId     String?
+  subscriptionCancelledAt  DateTime?
+  queueJobId               String?
+  storageDeletedAt         DateTime?
+  completedAt              DateTime?
+  error                    String?               @db.Text
+  requestedAt              DateTime              @default(now())
+  updatedAt                DateTime              @updatedAt
+  user                     User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status, requestedAt])
 }
 
 model Account {

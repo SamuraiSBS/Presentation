@@ -128,25 +128,44 @@ Worker публикует TTL heartbeat в Redis, а `compose.production.yml` и
 
 ### P1-4. Billing и удаление аккаунта не образуют завершённый lifecycle
 
-Stripe webhook и синхронизация статусов существуют — это плюс. Но не найден customer billing portal/cancel flow. `removeMe` удаляет storage prefixes и запись User, не отменяя активную Stripe subscription и не координируя фоновые jobs. Возможен orphan subscription: аккаунт удалён, а списания продолжаются. Последовательное удаление storage → DB также неатомарно.
+**Реализовано 11 августа 2026:** добавлен Stripe Billing Portal: платный пользователь открывает self-service из профиля и возвращается в `/profile`. Удаление аккаунта больше не выполняется в HTTP-запросе. Подтверждённый запрос создаёт durable `AccountDeletion`, сразу блокирует аккаунт (`ACCOUNT_DELETION_PENDING`) и тем самым запрещает новые jobs, затем отменяет активную Stripe subscription. Только сохранённый `subscriptionCancelledAt` позволяет поставить идемпотентную BullMQ maintenance-задачу на очистку. При ошибке Stripe операция остаётся в `failed`, storage и DB не трогаются, а повтор подтверждения безопасно повторяет lifecycle.
 
-Нужно:
+Worker при удалении снимает queued generation/export jobs, запрашивает отмену active generation jobs и ждёт завершения active generation/export до destructive phase. Затем удаляет project prefixes из MinIO и удаляет User вместе с каскадными данными; `AccountDeletion` остаётся audit trail со статусом, датами отмены billing/storage/completion и ошибкой. В профиле до запуска очистки явно показаны необратимые последствия, момент принятия и текущий статус; пользователь не получает ложного сообщения об успешном удалении, если billing cancellation не прошла.
 
-- Добавить Stripe Billing Portal или собственные cancel/change-plan endpoints.
-- Перед удалением аккаунта отменять/планировать отмену подписки и фиксировать результат.
-- Перевести удаление в идемпотентный background workflow: tombstone, запрет новых jobs, отмена/дожидание активных jobs, удаление storage, anonymization/deletion DB, audit trail.
-- Показать пользователю последствия, срок удаления и статус операции.
+Критерий закрытия: тестовый Stripe customer с активной subscription проходит Portal и account deletion: subscription отменена до удаления данных, новые/queued jobs не исполняются, active jobs штатно заканчиваются или отменяются, MinIO и DB очищены, а в `AccountDeletion` остаётся completed audit record без orphan subscription.
+
+**Нужно доделать для acceptance:**
+
+- На staging выполнить E2E с Stripe test mode: checkout → Portal (смена/отмена плана) → account deletion, проверить Stripe Dashboard/webhook, Postgres `AccountDeletion`, BullMQ и MinIO. Локальные unit/typecheck не подтверждают реальную Stripe-конфигурацию.
+- Согласовать с legal/support срок и политику retention для audit record/платёжных транзакций, а также текст письма/тикета пользователю после завершения удаления. Текущий UI показывает статус в открытом профиле, но email/in-app delivery ещё не реализован.
+- Настроить Stripe Billing Portal configuration (разрешённые тарифы, cancel behavior, invoices) и production `PUBLIC_APP_URL`/Stripe secrets в secret manager.
 
 ### P1-5. Нет backup/restore, DR и эксплуатационного runbook
 
-В репозитории не найдено автоматизации `pg_dump`/restore и проверяемого backup для PostgreSQL/MinIO. Нет RPO/RTO, инструкции инцидента, восстановления очередей, ротации секретов или действий при недоступности AI/search provider.
+**Реализовано в репозитории (2026-08-11):** production config теперь не
+принимается без отдельного off-site backup target, age recipient, retention,
+RPO/RTO, owner и incident channel. `scripts/backup-production.sh` создаёт
+custom `pg_dump`, шифрует его age до выгрузки, сохраняет checksum/metadata и
+зеркалирует MinIO в отдельный S3-compatible bucket. Скрипт требует versioning,
+SSE-S3 и Object Lock `COMPLIANCE`; ошибка прав или policy завершает backup с
+ошибкой. `scripts/restore-drill.sh` получает latest encrypted dump и MinIO
+mirror, восстанавливает их в новые временные Docker volumes, проверяет таблицы
+и объектное хранилище, затем удаляет только drill-resources. Systemd timers
+задают ежедневный backup и еженедельный restore drill. Полный порядок
+настройки, DB/Redis/MinIO/BullMQ/Stripe/AI/Sentry incident paths и rollback
+описан в `docs/operations/production-recovery.md`.
 
-Нужно:
+**До live-acceptance ещё нужно:**
 
-- Автоматические зашифрованные backups PostgreSQL и versioned/object-lock policy для MinIO.
-- Регулярный restore drill в отдельном окружении.
-- Runbook по DB/Redis/MinIO, очередям, Stripe webhook, AI provider, Sentry и rollback.
-- Определить RPO/RTO, ответственного и канал уведомления.
+- Provisioning: создать отдельный off-site S3-compatible account/bucket с
+  Object Lock, versioning и SSE, выпустить dedicated backup credentials и age
+  recovery key; private age identity хранить только в recovery secret store.
+- На production host заполнить новые `BACKUP_*`/owner/channel values, установить
+  `age`, включить systemd units и успешно выполнить первый backup + isolated
+  restore drill. Сохранить evidence и фактические RPO/RTO.
+- Подтвердить доступность incident channel и назначение реального on-call owner;
+  повторять drill минимум еженедельно и закрывать release gate при его
+  просрочке/ошибке.
 
 ### P1-6. Недостаёт perimeter security
 

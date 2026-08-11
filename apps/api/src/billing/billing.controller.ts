@@ -18,4 +18,10 @@ export class BillingController {
   createCheckout(@Req() request: InternalRequest, @Body() body: { plan?: "student" | "pro" }) {
     return this.billing.createCheckoutSession(request.userId, body?.plan || "student");
   }
+
+  @UseGuards(InternalAuthGuard, BlockedUserGuard)
+  @Post("portal")
+  createPortal(@Req() request: InternalRequest) {
+    return this.billing.createPortalSession(request.userId);
+  }
 }
