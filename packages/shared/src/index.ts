@@ -51,3 +51,5 @@ export * from "./defense/compliance.js";
 export { assertProductionConfiguration, devAuthAllowed, productionConfigurationErrors } from "./runtime/production-config.js";
 export type { RuntimeEnvironment } from "./runtime/production-config.js";
 export { workerHeartbeatIntervalMs, workerHeartbeatKey, workerHeartbeatMaxAgeMs, workerHeartbeatTtlMs } from "./runtime/health.js";
+export { productAnalyticsEventSchema, safeProductAnalyticsProperties, captureProductAnalytics, identifyProductAnalytics } from "./analytics/product-analytics.js";
+export type { ProductAnalyticsEvent, ProductAnalyticsProperties, ProductAnalyticsCapture } from "./analytics/product-analytics.js";

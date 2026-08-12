@@ -315,11 +315,13 @@ Editor сериализует PATCH-запросы через `saveQueueRef`, н
 
 ### P2-6. Нужна продуктовая аналитика полного пути
 
-В коде есть operational events/Sentry, но перед запуском нужен пользовательский funnel:
+**Закрыто в code scope 12 августа 2026.** Добавлен privacy-safe событийный контракт и отправка в PostHog Capture API без нового тяжёлого SDK. Доставка включается только через `POSTHOG_API_KEY`/`NEXT_PUBLIC_POSTHOG_API_KEY`; без ключей продукт работает как прежде. Общий фильтр отбрасывает поля с prompt/text/content/title/name/email/token/secret/password/url/excerpt/file, поэтому в события не попадают исходный текст презентации, материалы, имена файлов и секреты.
 
-`landing → login → new project → sources → generation → script approval → editor → export → download → paid conversion`.
+Полный funnel теперь собирает `landing_viewed → login_completed → project_created → sources_added → sources_reviewed → generation_requested → script_approved → generation_completed → editor_opened → export_requested → export_completed → export_downloaded → checkout_started → paid_conversion`, а `generation_failed`, `export_failed` и `subscription_churned` фиксируют потери. События создания/запуска/экспорта/оплаты идут с доверенного API, terminal generation/export — из worker, поэтому completion и failure не теряются при закрытии вкладки. В `Source.reviewedAt` фиксируется явная проверка источника владельцем; поэтому `unconfirmed_source_count` — именно число ещё не проверенных источников, а `excluded_source_count` — отдельно исключённые. В properties передаются только безопасные категории и счётчики: scenario/mode, тип операции, attempt/retry, duration, `time_to_ready_ms`, `unconfirmed_source_count`, а не пользовательское содержание.
 
-Нужно измерять completion/drop-off, время до первой готовой презентации, generation/export failure rate, повторные попытки, долю неподтверждённых источников, conversion и churn. События не должны содержать исходный текст презентаций или секреты.
+Это позволяет измерять completion/drop-off, время до первой готовой презентации, generation/export failure rate и повторные попытки, долю исключённых при review источников, conversion и churn.
+
+**Нужно доделать для P2-6:** завести production project в PostHog с событиями выше, записать `POSTHOG_API_KEY` только в API/worker secrets и `NEXT_PUBLIC_POSTHOG_API_KEY` в web runtime, настроить retention/roles и legal consent/cookie policy для целевых стран. До релиза выполнить один реальный тестовый путь и сверить в PostHog: события анонимного лендинга склеиваются с аккаунтом после login, нет запрещённых ключей/значений, а payment и cancellation приходят из Stripe webhook. В аналитическом проекте также нужно сохранить dashboard/alerts для funnel, p50/p95 `time_to_ready_ms`, generation/export failure rate, retry rate, source-review exclusion rate, conversion и churn по неделям.
 
 ### P2-7. Нужны route-level error/offline состояния
 

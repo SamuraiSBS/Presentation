@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { ConfigService } from "@nestjs/config";
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -13,6 +13,7 @@ import { conflict } from "../errors/api-error.js";
 import { enqueueOrRetryJob, needsQueueRecovery } from "../jobs/queue-recovery.js";
 import { injectTraceContext, withTraceSpan } from "../observability.js";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { ProductAnalyticsService } from "../analytics/product-analytics.service.js";
 
 @Injectable()
 export class ExportsService {
@@ -21,6 +22,7 @@ export class ExportsService {
     private readonly config: ConfigService,
     @InjectQueue("exports") private readonly exportsQueue: Queue,
     private readonly access: ProjectAccessService,
+    @Optional() private readonly productAnalytics?: ProductAnalyticsService,
   ) {}
 
   private s3Client?: S3Client;
@@ -127,7 +129,9 @@ export class ExportsService {
         });
         throw error;
       }
-      return this.prisma.export.update({ where: { id: created.id }, data: { queueJobId: queueJob.id } });
+      const queued = await this.prisma.export.update({ where: { id: created.id }, data: { queueJobId: queueJob.id } });
+      void this.productAnalytics?.capture(project.userId, "export_requested", { format: type, retry: Boolean(existing) });
+      return queued;
     });
   }
 
@@ -267,6 +271,7 @@ export class ExportsService {
       { expiresIn: 60 * 5 },
     );
 
+    void this.productAnalytics?.capture(userId, "export_downloaded", { format: item.type });
     return { url };
   }
 

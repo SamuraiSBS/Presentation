@@ -423,6 +423,7 @@ model Source {
   text           String               @default("") @db.Text
   metadata       Json?
   included       Boolean              @default(true)
+  reviewedAt     DateTime?
   createdAt      DateTime             @default(now())
   project        Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
   parentSource   Source?              @relation("SourceChildren", fields: [parentSourceId], references: [id], onDelete: Cascade)
@@ -433,6 +434,7 @@ model Source {
   @@index([projectId])
   @@index([parentSourceId])
   @@index([projectId, role])
+  @@index([projectId, reviewedAt])
   @@unique([projectId, role, url])
   @@unique([projectId, uploadRequestKey, uploadFieldName])
 }

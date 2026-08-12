@@ -46,6 +46,7 @@ import {
   updateProjectMemberInputSchema,
   updateSlideInputSchema,
   usageSummarySchema,
+  safeProductAnalyticsProperties,
 } from "./index";
 
 describe("shared contracts", () => {
@@ -67,10 +68,21 @@ describe("shared contracts", () => {
       "auditSlideCanvas",
       "hasCustomSlideCanvas",
       "canvasBackgroundCss",
+      "safeProductAnalyticsProperties",
     ]));
     expect("visibleSlideTextSchema" in publicSharedApi).toBe(false);
     expect("speakerNotesTextSchema" in publicSharedApi).toBe(false);
     expect("mermaidDiagramSourceSchema" in publicSharedApi).toBe(false);
+  });
+
+  it("removes presentation content and credentials from product analytics properties", () => {
+    expect(safeProductAnalyticsProperties({
+      mode: "with_sources",
+      slide_count: 8,
+      prompt: "private presentation request",
+      source_file: "private.pdf",
+      secret: "do-not-send",
+    })).toEqual({ mode: "with_sources", slide_count: 8 });
   });
 
   it("validates project input limits", () => {

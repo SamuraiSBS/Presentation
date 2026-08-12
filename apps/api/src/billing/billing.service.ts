@@ -1,8 +1,9 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Stripe from "stripe";
 import type { PaymentTransactionType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { ProductAnalyticsService } from "../analytics/product-analytics.service.js";
 
 @Injectable()
 export class BillingService {
@@ -11,6 +12,7 @@ export class BillingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    @Optional() private readonly productAnalytics?: ProductAnalyticsService,
   ) {}
 
   async handleStripeWebhook(rawBody: Buffer, signature: string) {
@@ -66,6 +68,7 @@ export class BillingService {
       idempotencyKey ? { idempotencyKey } : undefined,
     );
 
+    void this.productAnalytics?.capture(userId, "checkout_started", { plan });
     return { url: session.url };
   }
 
@@ -115,10 +118,17 @@ export class BillingService {
         subscriptionStatus: "checkout_completed",
       },
     });
+    const plan = session.metadata?.plan;
+    if (plan === "student" || plan === "pro") {
+      void this.productAnalytics?.capture(userId, "paid_conversion", { plan });
+    }
   }
 
   private async syncSubscription(subscription: Stripe.Subscription) {
     const planCode = this.planCodeForPrice(subscription.items.data[0]?.price.id);
+    const affectedUsers = subscription.status === "canceled"
+      ? await this.prisma.user.findMany({ where: { stripeCustomerId: String(subscription.customer) }, select: { id: true, planCode: true } })
+      : [];
     await this.prisma.user.updateMany({
       where: { stripeCustomerId: String(subscription.customer) },
       data: {
@@ -127,6 +137,9 @@ export class BillingService {
         planCode,
       },
     });
+    for (const user of affectedUsers) {
+      void this.productAnalytics?.capture(user.id, "subscription_churned", { plan: user.planCode });
+    }
   }
 
   private async recordPaidInvoice(event: Stripe.Event, invoice: Stripe.Invoice) {

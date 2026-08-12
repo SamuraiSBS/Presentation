@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import path from "node:path";
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { ConfigService } from "@nestjs/config";
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -42,6 +42,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { ProjectStorageService, rewriteProjectDocument } from "../storage/project-storage.service.js";
 import { MalwareScanService } from "../security/malware-scan.service.js";
 import { UsageService } from "../usage/usage.service.js";
+import { ProductAnalyticsService } from "../analytics/product-analytics.service.js";
 import { projectSummarySelect, toProjectSummary } from "./project-summary.js";
 
 const activePresentationJobStatuses = ["queued", "active"] as const;
@@ -58,6 +59,7 @@ export class ProjectsService {
     private readonly usage: UsageService,
     private readonly storage: ProjectStorageService,
     private readonly malwareScanner: MalwareScanService,
+    @Optional() private readonly productAnalytics?: ProductAnalyticsService,
   ) {}
 
   async list(userId: string, query: ProjectListQuery) {
@@ -105,7 +107,7 @@ export class ProjectsService {
   }
 
   async create(userId: string, input: CreateProjectInput) {
-    return withTraceSpan("api.project.create", {
+    const created = await withTraceSpan("api.project.create", {
       "studydeck.stage": "project_create",
       "studydeck.slide_count": input.slideCount,
       "studydeck.mode": input.mode,
@@ -134,6 +136,13 @@ export class ProjectsService {
         include: { sources: true, presentation: true },
       });
     }));
+    void this.productAnalytics?.capture(userId, "project_created", {
+      scenario: input.scenario,
+      mode: input.mode,
+      workflow: "standard",
+      slide_count: input.slideCount,
+    });
+    return created;
   }
 
   async getAccessible(userId: string, id: string) {
@@ -451,6 +460,7 @@ export class ProjectsService {
         narrationJobOptions(),
       );
       await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
+      void this.productAnalytics?.capture(access.project.userId, "generation_requested", { kind: "narration", retry: false });
       return { projectId: project.id, jobId: job.id, queueJobId: queueJob.id, status: "script_queued" };
     });
   }
@@ -471,6 +481,11 @@ export class ProjectsService {
     });
     if (!input.accept) return { ...updated, accessRole: (await this.access.resolve(userId, id)).role, presentationRevision: updated.presentation?.revision ?? 0 };
 
+    void this.productAnalytics?.capture(project.userId, "script_approved", {
+      workflow: project.workflow,
+      source_count: project.sources.length,
+      unconfirmed_source_count: project.sources.filter((source) => !source.reviewedAt).length,
+    });
     await this.enqueueGeneration(userId, id);
     return this.getAccessible(userId, id);
   }
@@ -542,6 +557,10 @@ export class ProjectsService {
         generationJobOptions(),
       );
       await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
+      void this.productAnalytics?.capture(access.project.userId, "generation_requested", {
+        kind: "presentation",
+        retry: Boolean(project.jobs.some((item) => item.kind === "presentation" && item.status === "failed")),
+      });
       return { projectId: project.id, jobId: job.id, queueJobId: queueJob.id, status: "queued" };
     });
   }
@@ -631,7 +650,14 @@ export class ProjectsService {
         throw new BadRequestException("Оставьте хотя бы один источник для презентации");
       }
     }
-    await this.prisma.source.update({ where: { id: sourceId }, data: { included: input.included } });
+    await this.prisma.source.update({ where: { id: sourceId }, data: { included: input.included, reviewedAt: new Date() } });
+    const sources = await this.prisma.source.findMany({ where: { projectId }, select: { included: true, reviewedAt: true } });
+    void this.productAnalytics?.capture(userId, "sources_reviewed", {
+      source_count: sources.length,
+      unconfirmed_source_count: sources.filter((item) => !item.reviewedAt).length,
+      excluded_source_count: sources.filter((item) => !item.included).length,
+      source_reviewed: true,
+    });
     return this.getAccessible(userId, projectId);
   }
 

@@ -28,6 +28,7 @@ import { addFittedPptxImage } from "./export/pptx-image.js";
 import { renderPdfCanvasElement } from "./export/pdf-canvas.js";
 import { renderPptxSlideBackground, slideBackgroundVariant } from "./export/pptx-background.js";
 import { exceedsExportStorageQuota, exportStoragePolicy } from "./export-storage-policy.js";
+import { captureWorkerProductAnalytics } from "../product-analytics.js";
 
 const require = createRequire(import.meta.url);
 const PptxGenConstructor = require("@studydeck/pptxgenjs") as new () => {
@@ -91,6 +92,7 @@ export async function handleExportJob(job: Job<ExportJobData | ComplianceReportE
 async function runExportJob(job: Job<ExportJobData>) {
   const prisma = getPrisma();
   const { exportId, projectId, type, presentationRevision } = job.data;
+  const startedAt = Date.now();
   await prisma.export.update({ where: { id: exportId }, data: { status: "processing" } });
 
   let uploadedKey: string | undefined;
@@ -177,6 +179,14 @@ async function runExportJob(job: Job<ExportJobData>) {
     }
     await prisma.export.updateMany({ where: { id: exportId, presentationRevision }, data: { status: "ready", objectKey: key, sizeBytes: buffer.length } });
     uploadedKey = undefined;
+    const owner = await prisma.project.findUnique({ where: { id: projectId }, select: { userId: true } });
+    if (owner) {
+      void captureWorkerProductAnalytics(owner.userId, "export_completed", {
+        format: type,
+        attempt: job.attemptsMade + 1,
+        duration_ms: Date.now() - startedAt,
+      });
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Export failed";
     captureExportError(error, {
@@ -194,6 +204,14 @@ async function runExportJob(job: Job<ExportJobData>) {
       }
     }
     await prisma.export.update({ where: { id: exportId }, data: { status: "failed", objectKey: null, sizeBytes: 0, error: message } });
+    const owner = await prisma.project.findUnique({ where: { id: projectId }, select: { userId: true } });
+    if (owner) {
+      void captureWorkerProductAnalytics(owner.userId, "export_failed", {
+        format: type,
+        attempt: job.attemptsMade + 1,
+        duration_ms: Date.now() - startedAt,
+      });
+    }
     throw error;
   }
 }
