@@ -17,17 +17,7 @@ import { ObjectFloatingMenu } from "./object-floating-menu";
 import { SimplePropertiesPanel } from "./simple-properties-panel";
 import { DefenseCompliancePanel } from "@/components/defense/defense-compliance-panel";
 import { createUnsavedChangesBeforeUnloadHandler } from "./editor-save-guard";
-
-type SlideSavePatch = {
-  title?: string;
-  thesis?: string;
-  bullets?: string[];
-  layout?: SlideLayout;
-  visual?: SlideVisual;
-  blocks?: Slide["blocks"];
-  canvas?: SlideCanvas;
-  speakerNotes?: string;
-};
+import { useEditorSaveQueue, type SlideSavePatch } from "./editor-save-queue";
 
 export function ProjectEditor({
   initialProject,
@@ -60,11 +50,6 @@ export function ProjectEditor({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const revisionRef = useRef(initialProject.presentationRevision || 0);
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const conflictRef = useRef(false);
-  const hasUnsavedChangesRef = useRef(false);
-  const saveSequenceRef = useRef(0);
-  const latestSaveRef = useRef<{ patch: SlideSavePatch; sequence: number } | null>(null);
 
   const presentation = project.presentation?.document
     ? ensureEditableCanvas(project.presentation.document)
@@ -84,6 +69,19 @@ export function ProjectEditor({
   const canUpload =
     project.id !== "demo" || process.env.NEXT_PUBLIC_DEMO_PREVIEW === "false";
   const canEdit = (project.accessRole || "owner") !== "viewer";
+  const { saveSlide, retryLatestSave, clearConflict, hasUnsavedChangesRef } = useEditorSaveQueue({
+    projectId: project.id,
+    canEdit,
+    getSlide: () => slide,
+    getRevision: () => revisionRef.current,
+    onRevision: (revision) => {
+      revisionRef.current = revision ?? revisionRef.current + 1;
+      setProject((current) => ({ ...current, presentationRevision: revisionRef.current }));
+    },
+    onStatus: setSaveStatus,
+    onError: (error) => setActionError(editorError(error, "Не получилось сохранить изменения. Проверьте соединение и повторите попытку.")),
+    onConflict: () => setRevisionConflict(true),
+  });
 
   useEffect(() => {
     setSelectedId("");
@@ -160,7 +158,7 @@ export function ProjectEditor({
     );
     window.addEventListener("beforeunload", warnBeforeUnload);
     return () => window.removeEventListener("beforeunload", warnBeforeUnload);
-  }, []);
+  }, [hasUnsavedChangesRef]);
 
   useEffect(() => {
     const showOfflineSaveError = () => {
@@ -170,71 +168,16 @@ export function ProjectEditor({
     };
     window.addEventListener("offline", showOfflineSaveError);
     return () => window.removeEventListener("offline", showOfflineSaveError);
-  }, []);
+  }, [hasUnsavedChangesRef]);
 
   async function refresh() {
     const response = await fetch(`/api/projects/${project.id}`);
     if (!response.ok) throw new Error(await response.text());
     const next = sanitizeProjectForDisplay(await response.json()) as ProjectPayload;
     revisionRef.current = next.presentationRevision || 0;
-    conflictRef.current = false;
+    clearConflict();
     setRevisionConflict(false);
     setProject(next);
-  }
-
-  function saveSlide(next: SlideSavePatch) {
-    if (!slide || !canEdit || conflictRef.current) return Promise.resolve();
-    const slideId = slide.id;
-    const sequence = ++saveSequenceRef.current;
-    latestSaveRef.current = { patch: next, sequence };
-    hasUnsavedChangesRef.current = true;
-    const run = async () => {
-      if (conflictRef.current) return;
-      setSaveStatus("saving");
-      try {
-      const response = await fetch(`/api/projects/${project.id}/slides/${slideId}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...next, expectedRevision: revisionRef.current }),
-      });
-      const payload = await response.json().catch(() => null) as ProjectPayload | { message?: string } | null;
-      if (response.status === 409) {
-        conflictRef.current = true;
-        setRevisionConflict(true);
-        setSaveStatus("error");
-        return;
-      }
-      if (!response.ok) {
-        setSaveStatus("error");
-        setActionError(editorError(new Error(payload && "message" in payload && payload.message || ""), "Не получилось сохранить изменения. Попробуй ещё раз."));
-        return;
-      }
-      if (payload && "presentationRevision" in payload && typeof payload.presentationRevision === "number") {
-        revisionRef.current = payload.presentationRevision;
-        setProject((current) => ({ ...current, presentationRevision: payload.presentationRevision }));
-      } else {
-        revisionRef.current += 1;
-      }
-      if (latestSaveRef.current?.sequence === sequence) {
-        hasUnsavedChangesRef.current = false;
-        setSaveStatus("saved");
-      }
-      } catch (error) {
-        if (latestSaveRef.current?.sequence === sequence) {
-          setSaveStatus("error");
-          setActionError(editorError(error, "Не получилось сохранить изменения. Проверьте соединение и повторите попытку."));
-        }
-      }
-    };
-    saveQueueRef.current = saveQueueRef.current.then(run, run);
-    return saveQueueRef.current;
-  }
-
-  function retryLatestSave() {
-    const latestSave = latestSaveRef.current;
-    if (!latestSave || conflictRef.current) return;
-    setActionError("");
-    void saveSlide(latestSave.patch);
   }
 
   function updateLocalSlide(patch: Partial<Slide>) {

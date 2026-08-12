@@ -20,7 +20,16 @@ import {
 import { errorLogFields, logger } from "../observability.js";
 import { STOP_WORDS } from "./presentation/constants.js";
 import { hasGenericOrMetaScreenText } from "./presentation/quality/orchestration.js";
+import {
+  findLongSlideTextIssues,
+  isVisibleTextTooLong,
+} from "./presentation/quality/visible-text-rules.js";
 import { normalizeVisual } from "./presentation/normalization/presentation.js";
+import { collectSemanticQualityIssues } from "./presentation/quality/semantic-rules.js";
+import { collectSourceGroundingIssues } from "./presentation/quality/source-grounding.js";
+import { applyInitialQualityRepairs } from "./presentation/quality/repair-orchestration.js";
+
+export { findLongSlideTextIssues, isVisibleTextTooLong } from "./presentation/quality/visible-text-rules.js";
 
 export type QualityProjectInput = {
   id: string;
@@ -276,22 +285,6 @@ function generalizeUnsupportedClaim(value: string) {
 const SOURCE_MATCH_STOP_WORDS = new Set([
   "about", "after", "before", "their", "there", "which", "these", "those", "этого", "также", "после", "среди", "когда", "который", "которые", "может", "важный",
 ]);
-
-export function isVisibleTextTooLong(slide: Slide) {
-  const visibleText = [slide.title, slide.thesis, ...slide.bullets, ...slide.blocks.flatMap((block) => block.type === "bullets" ? block.items : [block.content])].join(" ");
-  return wordCount(slide.title) > 12
-    || slide.title.length > 90
-    || sentenceCount(slide.thesis) > 1
-    || wordCount(slide.thesis) > 28
-    || slide.thesis.length > 220
-    || wordCount(visibleText) > 78
-    || sentenceCount(visibleText) > 7
-    || slide.bullets.some((bullet) => wordCount(bullet) > 18 || bullet.length > 130)
-    || slide.blocks.some((block) => {
-      const values = block.type === "bullets" ? block.items : [block.content];
-      return values.some((value) => wordCount(value) > 22 || value.length > 160);
-    });
-}
 
 export function hasWeakConclusion(slide: Slide, project: QualityProjectInput) {
   if (slide.order !== project.slideCount && slide.slideKind !== "summary") return false;
@@ -813,33 +806,6 @@ export function findRepeatedTitleIssues(presentation: PresentationDocument): Qua
         repairInstruction: "Give this slide its own topic-specific title that matches its speaker notes.",
       })),
     );
-}
-
-export function findLongSlideTextIssues(presentation: PresentationDocument): QualityIssue[] {
-  const issues: QualityIssue[] = [];
-  for (const slide of presentation.slides) {
-    if (!isVisibleTextTooLong(slide)) continue;
-    if (wordCount(slide.title) > 12 || slide.title.length > 90) {
-      issues.push(longIssue(slide, "title", "Slide title is too long."));
-    }
-    if (sentenceCount(slide.thesis) > 1 || wordCount(slide.thesis) > 28 || slide.thesis.length > 220) {
-      issues.push(longIssue(slide, "thesis", "Slide thesis must be one compact sentence."));
-    }
-    slide.bullets.forEach((bullet, index) => {
-      if (wordCount(bullet) > 18 || bullet.length > 130) {
-        issues.push(longIssue(slide, `bullets.${index}`, "Bullet is too long for slide text."));
-      }
-    });
-    slide.blocks.forEach((block, index) => {
-      const values = block.type === "bullets" ? block.items : [block.content];
-      values.forEach((value, itemIndex) => {
-        if (wordCount(value) > 22 || value.length > 160) {
-          issues.push(longIssue(slide, block.type === "bullets" ? `blocks.${index}.items.${itemIndex}` : `blocks.${index}.content`, "Block text is too dense."));
-        }
-      });
-    });
-  }
-  return issues;
 }
 
 export function findNarrationMetaIssues(presentation: PresentationDocument): QualityIssue[] {
@@ -1594,34 +1560,22 @@ export function critiquePresentationDeterministically(
   sources: Source[] = presentation.sources,
   project?: QualityProjectInput,
 ): QualityCritique {
-  const issues = dedupeIssues([
-    ...findGenericTextIssues(presentation),
-    ...findVisibleTextIntegrityIssues(presentation),
-    ...findContentSlideContractIssues(presentation),
-    ...findIntraSlideDuplicateIssues(presentation),
-    ...findRepeatedTitleIssues(presentation),
-    ...findLongSlideTextIssues(presentation),
-    ...findNarrationMetaIssues(presentation),
-    ...findLayoutRhythmIssues(presentation),
-    ...findVisualDescriptionIssues(presentation),
-    ...findVisualPlanIssues(presentation, project),
-    ...findDuplicateSlideIssues(presentation),
-    ...findDeckWideDuplicateIssues(presentation),
-    ...findRepeatedSentenceStartIssues(presentation),
-    ...findFactualRiskIssues(presentation, sources),
-    ...findMandatorySourceSnapshotIssues(presentation, sources, project),
-    ...findEntityCategoryMismatchIssues(presentation),
-    ...(project ? findWeakConclusionIssues(presentation, project) : []),
-    ...(project ? findTopicRelevanceIssues(presentation, project) : []),
-    ...(project ? findOffTopicVisualIssues(presentation, project) : []),
-    ...findSlideSpeechAlignmentIssues(presentation),
-    ...findUniversityToneIssues(presentation, project),
-    ...findShortNarrationIssues(presentation),
-    ...findSpeechTimingIssues(presentation, project),
-    ...findExportReadinessIssues(presentation),
-    ...findVisualFulfillmentIssues(presentation),
-    ...findCanvasCanonicalContentIssues(presentation),
+  const semanticIssues = collectSemanticQualityIssues(presentation, [
+    findGenericTextIssues, findVisibleTextIntegrityIssues, findContentSlideContractIssues,
+    findIntraSlideDuplicateIssues, findRepeatedTitleIssues, findLongSlideTextIssues,
+    findNarrationMetaIssues, findLayoutRhythmIssues, findVisualDescriptionIssues,
+    findDuplicateSlideIssues, findDeckWideDuplicateIssues, findRepeatedSentenceStartIssues,
+    findSlideSpeechAlignmentIssues, (document) => findUniversityToneIssues(document, project),
+    findShortNarrationIssues, (document) => findSpeechTimingIssues(document, project),
+    findExportReadinessIssues, findVisualFulfillmentIssues, findCanvasCanonicalContentIssues,
+    ...(project ? [(document: PresentationDocument) => findWeakConclusionIssues(document, project), (document: PresentationDocument) => findTopicRelevanceIssues(document, project), (document: PresentationDocument) => findOffTopicVisualIssues(document, project), (document: PresentationDocument) => findVisualPlanIssues(document, project)] : [(document: PresentationDocument) => findVisualPlanIssues(document)]),
   ]);
+  const sourceIssues = collectSourceGroundingIssues(presentation, sources, [
+    findFactualRiskIssues,
+    (document, availableSources) => findMandatorySourceSnapshotIssues(document, availableSources, project),
+    (document) => findEntityCategoryMismatchIssues(document),
+  ]);
+  const issues = dedupeIssues([...semanticIssues, ...sourceIssues]);
   return scorePresentationQuality(presentation, issues, sources, project);
 }
 
@@ -1640,7 +1594,11 @@ export async function improvePresentationQuality(
   provider: GenerationMode,
   options: ImprovePresentationQualityOptions = {},
 ): Promise<PresentationDocument> {
-  let best = rebuildGeneratedCanvases(applyEntityCategoryMismatchRepairs(applySourceGroundingRepairs(presentationSchema.parse(presentation), sources)));
+  let best = applyInitialQualityRepairs(presentationSchema.parse(presentation), [
+    (document) => applySourceGroundingRepairs(document, sources),
+    applyEntityCategoryMismatchRepairs,
+    rebuildGeneratedCanvases,
+  ]);
   let bestCritique = critiquePresentationDeterministically(best, sources, project);
   const initialCritique = bestCritique;
   let modelCritique = bestCritique;
@@ -2206,17 +2164,6 @@ function collectSlideTextEntries(presentation: PresentationDocument): QualityTex
   ]);
 }
 
-function longIssue(slide: Slide, field: string, message: string): QualityIssue {
-  return {
-    slideId: slide.id,
-    severity: field === "title" || field === "thesis" ? "major" : "minor",
-    category: "too_long",
-    field,
-    message,
-    repairInstruction: "Shorten this field without losing its concrete meaning.",
-  };
-}
-
 function parseQualityCritique(value: unknown): QualityCritique {
   const parsed = value && typeof value === "object" ? value as Partial<QualityCritique> : {};
   const issues = Array.isArray(parsed.issues) ? parsed.issues.filter(isQualityIssue) : [];
@@ -2622,10 +2569,6 @@ function isGenericRealPhotoPrompt(value: string) {
   if (/(?:РѕР±СЂР°Р·РѕРІР°С‚РµР»СЊРЅ|РїСЂРµР·РµРЅС‚Р°С†|СЃР»Р°Р№Рґ|РєР°С‡РµСЃС‚РІРµРЅРЅ|СЂРµР°Р»РёСЃС‚РёС‡РЅ)\s+(?:РёР·РѕР±СЂР°Р¶РµРЅ|С„РѕС‚Рѕ|РєР°СЂС‚РёРЅ|РІРёР·СѓР°Р»)/iu.test(normalized)) return true;
   const words = normalized.split(/\s+/).filter((word) => !/^(?:a|an|the|of|for|and|or|photo|image|visual|picture|documentary|authentic|real|realistic|clear|editorial)$/.test(word));
   return words.length < 3;
-}
-
-function sentenceCount(value: string) {
-  return cleanText(value).split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean).length;
 }
 
 function sentenceStarts(value: string) {

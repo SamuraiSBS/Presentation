@@ -31,14 +31,15 @@ import type {
 } from "./schemas.js";
 import { resolvePresentationTheme } from "./themes.js";
 import { presentationTypography, typographyForCanvasText } from "./typography.js";
-
-const READABLE_BODY_FONT_SIZE = presentationTypography.body.preferredPx;
-const READABLE_PLAQUE_FONT_SIZE = presentationTypography.label.preferredPx;
-const PLAQUE_PADDING_X = 18;
-const PLAQUE_PADDING_Y = 12;
-const EDITORIAL_MARGIN_X = 72;
-const EDITORIAL_CONTENT_WIDTH = 1136;
-const EDITORIAL_GUTTER = 24;
+import {
+    EDITORIAL_CONTENT_WIDTH,
+    EDITORIAL_GUTTER,
+    EDITORIAL_MARGIN_X,
+    PLAQUE_PADDING_X,
+    PLAQUE_PADDING_Y,
+    READABLE_BODY_FONT_SIZE,
+    READABLE_PLAQUE_FONT_SIZE,
+} from "./canvas-tokens.js";
 
 export function ensureEditableCanvas(document: PresentationDocument): PresentationDocument {
   const theme = resolvePresentationTheme({

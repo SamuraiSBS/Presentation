@@ -1,4 +1,3 @@
-import path from "node:path";
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { ConfigService } from "@nestjs/config";
@@ -24,7 +23,6 @@ import {
   type UpdateDefenseAssetInput,
   type UpdateFactInput,
   type UpdateRequirementInput,
-  complianceReportDocumentSchema,
   defensePlanSchema,
   planLimits,
 } from "@studydeck/shared";
@@ -35,6 +33,8 @@ import { enqueueOrRetryJob, needsQueueRecovery } from "../jobs/queue-recovery.js
 import { injectTraceContext, withTraceSpan } from "../observability.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UsageService } from "../usage/usage.service.js";
+import { isReportStale, reportDetail, reportSummary, safeReportName } from "./compliance-report-view.js";
+import { defenseAnalysisPlanJobSpec } from "./defense-analysis-plan-job.js";
 import { parsePublicRepositoryUrl } from "./repository-url.js";
 
 const activeJobStatuses = ["queued", "active"] as const;
@@ -297,7 +297,8 @@ export class DefenseService {
       this.assertAnalysisRevision(workspace, input.expectedAnalysisRevision);
       // An analysis is defined by the workspace input revision. A client retry after a
       // lost response must not create another job merely because it generated a new key.
-      const requestKey = defenseRequestKey("analysis", workspace.id, workspace.analysisRevision);
+      const jobSpec = defenseAnalysisPlanJobSpec({ scope: "analysis", workspaceId: workspace.id, analysisRevision: workspace.analysisRevision, planRevision: workspace.planRevision });
+      const requestKey = jobSpec.requestKey;
       const repeated = await this.prisma.generationJob.findUnique({
         where: { projectId_kind_requestKey: { projectId, kind: "requirements_analysis", requestKey } },
       });
@@ -334,8 +335,8 @@ export class DefenseService {
               queueJobId: null,
               error: null,
               cancelRequestedAt: null,
-              progressStage: "extracting_sources",
-              progressLabel: "Анализируем материалы защиты",
+              progressStage: jobSpec.progressStage,
+              progressLabel: jobSpec.progressLabel,
               progressPercent: 0,
               stageStartedAt: null,
             },
@@ -346,8 +347,8 @@ export class DefenseService {
               kind: "requirements_analysis",
               status: "queued",
               requestKey,
-              progressStage: "extracting_sources",
-              progressLabel: "Анализируем материалы защиты",
+              progressStage: jobSpec.progressStage,
+              progressLabel: jobSpec.progressLabel,
             },
           });
         return { job, shouldEnqueue: true };
@@ -365,7 +366,7 @@ export class DefenseService {
       try {
         queueJob = await enqueueOrRetryJob(
           this.generationQueue,
-          "analyze-defense-brief",
+          jobSpec.queueJobName,
           {
             projectId,
             userId: access.project.userId,
@@ -376,13 +377,13 @@ export class DefenseService {
             expectedPlanRevision: workspace.planRevision,
             traceContext: injectTraceContext(),
           },
-          { ...generationJobOptions(), jobId: `defense-analysis-${job.id}` },
+          { ...generationJobOptions(), jobId: `${jobSpec.queueJobIdPrefix}-${job.id}` },
         );
       } catch (error) {
         await this.prisma.$transaction([
           this.prisma.generationJob.update({
             where: { id: job.id },
-            data: { status: "failed", error: "Не удалось поставить анализ в очередь", progressStage: "failed" },
+            data: { status: "failed", error: jobSpec.queueFailureMessage, progressStage: "failed" },
           }),
           this.prisma.defenseWorkspace.updateMany({
             where: {
@@ -390,7 +391,7 @@ export class DefenseService {
               analysisRevision: workspace.analysisRevision,
               planRevision: workspace.planRevision,
             },
-            data: { analysisStatus: "failed", analysisError: "Не удалось поставить анализ в очередь" },
+            data: { analysisStatus: "failed", analysisError: jobSpec.queueFailureMessage },
           }),
         ]);
         throw error;
@@ -764,12 +765,8 @@ export class DefenseService {
     this.assertInputsEditable(workspace);
     this.assertAnalysisRevision(workspace, input.expectedAnalysisRevision);
     this.assertPlanRevision(workspace, input.expectedPlanRevision);
-    const requestKey = defenseRequestKey(
-      "plan",
-      workspace.id,
-      workspace.analysisRevision,
-      String(workspace.planRevision),
-    );
+    const jobSpec = defenseAnalysisPlanJobSpec({ scope: "plan", workspaceId: workspace.id, analysisRevision: workspace.analysisRevision, planRevision: workspace.planRevision });
+    const requestKey = jobSpec.requestKey;
     const prepared = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.generationJob.findUnique({
         where: { projectId_kind_requestKey: { projectId, kind: "requirements_analysis", requestKey } },
@@ -785,8 +782,8 @@ export class DefenseService {
             queueJobId: null,
             error: null,
             cancelRequestedAt: null,
-            progressStage: "building_defense_plan",
-            progressLabel: "Составляем план защиты",
+            progressStage: jobSpec.progressStage,
+            progressLabel: jobSpec.progressLabel,
             progressPercent: 0,
             stageStartedAt: null,
           },
@@ -797,8 +794,8 @@ export class DefenseService {
             kind: "requirements_analysis",
             status: "queued",
             requestKey,
-            progressStage: "building_defense_plan",
-            progressLabel: "Составляем план защиты",
+            progressStage: jobSpec.progressStage,
+            progressLabel: jobSpec.progressLabel,
           },
         });
       return { job, shouldEnqueue: true };
@@ -816,7 +813,7 @@ export class DefenseService {
     try {
       queueJob = await enqueueOrRetryJob(
         this.generationQueue,
-        "analyze-defense-brief",
+        jobSpec.queueJobName,
         {
           projectId,
           userId: access.project.userId,
@@ -827,12 +824,12 @@ export class DefenseService {
           expectedPlanRevision: input.expectedPlanRevision,
           traceContext: injectTraceContext(),
         },
-        { ...generationJobOptions(), jobId: `defense-plan-${job.id}` },
+        { ...generationJobOptions(), jobId: `${jobSpec.queueJobIdPrefix}-${job.id}` },
       );
     } catch (error) {
       await this.prisma.generationJob.update({
         where: { id: job.id },
-        data: { status: "failed", error: "Не удалось поставить построение плана в очередь", progressStage: "failed" },
+        data: { status: "failed", error: jobSpec.queueFailureMessage, progressStage: "failed" },
       });
       throw error;
     }
@@ -1508,82 +1505,4 @@ function narrationJobResult(job: {
         ? "script_generating"
         : "script_queued",
   };
-}
-
-type ReportRow = {
-  id: string;
-  workspaceId: string;
-  status: string;
-  presentationRevision: number;
-  analysisRevision: number;
-  planRevision: number;
-  document: Prisma.JsonValue;
-  requiredSatisfied: number;
-  requiredTotal: number;
-  recommendedSatisfied: number;
-  recommendedTotal: number;
-  preferenceSatisfied: number;
-  preferenceTotal: number;
-  pdfObjectKey: string | null;
-  pdfStatus: string | null;
-  error: string | null;
-  queueJobId?: string | null;
-  pdfQueueJobId?: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-};
-
-function reportDetail(report: ReportRow) {
-  const document = complianceReportDocumentSchema.safeParse(report.document);
-  return {
-    id: report.id,
-    workspaceId: report.workspaceId,
-    status: report.status,
-    presentationRevision: report.presentationRevision,
-    analysisRevision: report.analysisRevision,
-    planRevision: report.planRevision,
-    document: document.success ? document.data : null,
-    counts: document.success ? document.data.counts : null,
-    pdfStatus: report.pdfStatus ?? "not_requested",
-    pdfObjectKey: report.pdfObjectKey,
-    error: report.error,
-    createdAt: report.createdAt.toISOString(),
-    updatedAt: report.updatedAt.toISOString(),
-  };
-}
-
-function reportSummary(report: ReportRow, revisions: DefenseRevisions) {
-  const detail = reportDetail(report);
-  const items = detail.document?.items ?? [];
-  return {
-    id: detail.id,
-    status: detail.status,
-    presentationRevision: detail.presentationRevision,
-    analysisRevision: detail.analysisRevision,
-    planRevision: detail.planRevision,
-    checkedAt: detail.document?.checkedAt ?? null,
-    counts: detail.counts,
-    hasBlockingIssues: items.some((item) => (
-      item.priority === "required" && ["partial", "unsatisfied", "needs_review"].includes(item.result)
-    )) || Boolean(detail.document?.placeholders.some((item) => !item.resolved))
-      || Boolean(detail.document?.conflicts.some((item) => item.state === "unresolved")),
-    stale: isReportStale(report, revisions),
-    pdfStatus: detail.pdfStatus,
-  };
-}
-
-type DefenseRevisions = {
-  presentationRevision: number;
-  analysisRevision: number;
-  planRevision: number;
-};
-
-function isReportStale(report: ReportRow, revisions: DefenseRevisions) {
-  return report.presentationRevision !== revisions.presentationRevision
-    || report.analysisRevision !== revisions.analysisRevision
-    || report.planRevision !== revisions.planRevision;
-}
-
-function safeReportName(objectKey: string) {
-  return path.basename(objectKey).replace(/[^\w.-]+/g, "-") || "defense-compliance-report.pdf";
 }

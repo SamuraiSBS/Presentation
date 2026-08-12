@@ -268,9 +268,35 @@ Editor сериализует PATCH-запросы через `saveQueueRef`, н
 
 ### P2-4. Крупные модули затрудняют безопасные изменения
 
-Самые крупные production-файлы: `canvas-builder.ts` ~2797 строк, `presentation-quality.ts` ~2678, API defense service ~1589, export ~1491, project editor ~1051. Декомпозиция началась, но новые файлы пока содержат много неиспользуемого кода и сломали lint baseline.
+**Закрыто в коде 12 августа 2026.** Правила ограничений текста, видимого на слайде, и их детерминированная диагностика вынесены из `presentation-quality.ts` в `presentation/quality/visible-text-rules.ts`. Новый модуль не зависит от model critique, repair orchestration, БД или очередей; он владеет только renderer-facing лимитами и их `QualityIssue`. Фасад `presentation-quality.ts` сохраняет прежние exports, поэтому текущие потребители не меняют контракт, а целевые проверки импортируют новый модуль напрямую.
 
-Рекомендация: завершать декомпозицию вертикальными slices с ясным ownership и тестами, а не копированием больших наборов imports/types. Вынести export serializers, renderers и preflight; editor state/save/geometry; defense orchestration; quality rules.
+Из `export.ts` выделен `export/presentation-content.ts`: только общая семантическая проекция слайда и export theme для PPTX/HTML-PDF. В нём нет доступа к storage, Chromium, очередям или конкретному renderer API; этим исключена скрытая связь между двумя форматами и сохранено единое отображение title/body/quote/sequence/comparison.
+
+`export/pptx-image.ts` теперь владеет binary image fitting и embedding в PPTX: cover/contain geometry, rasterization и image metadata. Canvas/PPTX renderer передаёт только входные данные и не содержит логики `sharp`-обработки; прежний `fitPptxImage` сохранён через фасад для совместимости.
+
+`export/pptx-geometry.ts` изолирует единственный conversion boundary между canvas 96 DPI и PPTX: box coordinates, points и transparency. Это исключает разрозненные коэффициенты из renderer кода.
+
+`export/pptx-background.ts` владеет всеми вариантами декоративного фона PPTX (`title`, `section`, `summary`, `v1`–`v5`) и их transparency offsets. Основной export workflow теперь только выбирает renderer и передаёт slide/theme, не смешивая orchestration с визуальной геометрией.
+
+`export/pptx-content.ts` изолирует runtime-проекцию семантических template layouts PPTX (statement, definition, sequence, comparison, evidence и других) и их image placement от workflow/DB/storage boundary. `createPptx(...)` по-прежнему загружает данные, выбирает canvas/template path, добавляет attribution/notes и делегирует renderer через явный минимальный PPTX interface; API `createPptx` и формат результата не менялись.
+
+Из API `DefenseService` выделен чистый `compliance-report-view.ts`: serializer detail/summary, stale-check и безопасное имя PDF. Orchestration очередей, idempotency и revision-conflict остаются в сервисе; view не зависит от Nest, очередей, storage или доступа к данным.
+
+**Проверено:** worker/API typecheck, изолированный `presentation-quality.test.ts` — 59/59, целевой export contract test, cover/contain regression, `defense.service.test.ts` — 15/15 и полный `npm run lint` с нулевым baseline. Полный `export.test.ts` на host прошёл 18/20: два PDF-raster теста ожидаемо требуют Chromium, который доступен в worker image/CI, но отсутствует на Windows host. Историческое утверждение о сломанном lint baseline более не соответствует текущему состоянию.
+
+**12 August follow-up — canvas builder tokens:** the first planned safe `canvas-builder.ts` slice is now implemented in `presentation/canvas-tokens.ts`. Typography, plaque spacing, and editorial layout tokens are pure constants with a direct regression test; `buildSlideCanvas`, fallback/ID ownership, and the public shared barrel remain unchanged, so no builder-to-helper cycle was introduced. Shared typecheck passed and the repository lint gate passed. The isolated Vitest command remains host-blocked by Windows `spawn EPERM` before test collection.
+
+**12 August follow-up — PPTX renderers:** `createPptx` now delegates the semantic template projection to `export/pptx-content.ts` and saved canvas geometry to `export/pptx-canvas.ts`. The canvas renderer receives storage, content-type, and warning callbacks explicitly; it owns canvas text/shapes/images and gradient rasterization, while the export-job facade keeps preflight, persistence, notes, attribution, and placeholders. Worker typecheck and repository lint pass. The focused export suite is currently blocked before collection by the host's `spawn EPERM`, not an assertion failure.
+
+**12 August follow-up — defense analysis/plan identity:** `defense-analysis-plan-job.ts` now owns the pure retry identity, queue name/id prefix, progress metadata, and failure message for both analysis and plan requests. `DefenseService` retains access checks, transactions, idempotent DB lookup, revision-conflict handling, and queue effects, but consumes the shared spec for both paths. API typecheck and repository lint pass; the focused Vitest command is host-blocked before collection by `spawn EPERM`.
+
+**12 August follow-up — editor save state:** `editor-save-queue.ts` now owns serial slide writes, latest-patch retry, unsaved state, revision handoff, and conflict latching. `project-editor.tsx` remains the owner of UI state and local canvas/text projection, while before-unload/offline safeguards consume the extracted unsaved ref. Web typecheck and repository lint pass. The existing autosave/navigation-guard and geometry tests remain present but cannot collect on this host because Vite fails before collection with `spawn EPERM`.
+
+**12 August follow-up — quality pipeline boundaries:** deterministic collection is now split into `quality/semantic-rules.ts`, `quality/source-grounding.ts`, and `quality/repair-orchestration.ts`. These modules accept explicit checks/repairs rather than importing the facade, so semantic, source, and initial-repair phases cannot create a `facade -> rule -> facade` cycle. `presentation-quality.ts` remains the public compatibility surface while delegating its deterministic composition to the three boundaries. Worker typecheck and repository lint pass; focused worker Vitest remains blocked before collection by the same host `spawn EPERM`.
+
+**12 August follow-up — PDF canvas renderer:** saved-canvas HTML serialization now runs through `export/pdf-canvas.ts`, with object reads, content-type resolution, and warning logging injected by `renderPdfHtml`. This completes the canvas renderer split across PPTX and PDF/HTML while leaving semantic PDF templates and export-job lifecycle in the facade. Worker typecheck, repository lint, and scoped `git diff --check` pass; the focused export test command remains blocked before collection by the host `spawn EPERM`.
+
+**Нужно доделать для P2-4:** ничего в code scope. Финально подтверждены typecheck shared/worker/API/web, `npm run lint` и `git diff --check`. Целевые Vitest-команды на этом Windows host не доходят до collection из-за внешнего `spawn EPERM`; их нужно повторить в CI/worker image вместе с уже существующими PDF-raster проверками. Browser regression для autosave/navigation guard остаётся существующим acceptance test и не был ослаблен.
 
 ### P2-5. Экспорт требует визуальной и шрифтовой матрицы
 
