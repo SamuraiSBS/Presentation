@@ -41,6 +41,14 @@ test("editor warns before navigation while save is pending", async ({ page }) =>
   await expect(page.getByText("Сохранено", { exact: true })).toBeVisible();
 });
 
+test("editor preserves textarea fallback input through the TipTap handoff", async ({ page }) => {
+  await page.goto(editorRoute);
+  const fallback = page.getByTestId("slide-title-editor").locator("textarea.rich-text-content");
+  await expect(fallback).toBeVisible();
+  await fallback.fill("P2-3 fallback handoff check");
+  await expect(page.getByTestId("slide-title-editor").locator(".ProseMirror")).toHaveText("P2-3 fallback handoff check");
+});
+
 test("editor keeps failed edits and retries the latest save", async ({ page }) => {
   let patches = 0;
   await page.route("**/api/projects/demo/slides/**", async (route) => {
@@ -64,9 +72,9 @@ test("editor keeps failed edits and retries the latest save", async ({ page }) =
   await page.goto(editorRoute);
   await updateTitle(page, "Проверка повторного сохранения");
   await expect(page.getByText("Не удалось сохранить", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Повторить", exact: true })).toBeVisible();
+  await expect(page.locator(".save-retry")).toBeVisible();
 
-  await page.getByRole("button", { name: "Повторить", exact: true }).click();
+  await page.locator(".save-retry").click();
   await expect.poll(() => patches).toBe(2);
   await expect(page.getByText("Сохранено", { exact: true })).toBeVisible();
 });
