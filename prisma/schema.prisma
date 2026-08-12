@@ -614,6 +614,7 @@ model Export {
   requestKey           String?
   status               ExportStatus       @default(queued)
   objectKey            String?
+  sizeBytes            Int                @default(0)
   error                String?
   queueJobId           String?
   presentationRevision Int

@@ -300,13 +300,18 @@ Editor сериализует PATCH-запросы через `saveQueueRef`, н
 
 ### P2-5. Экспорт требует визуальной и шрифтовой матрицы
 
-Темы используют Arial, Aptos/Aptos Display, Georgia, Trebuchet MS и Verdana. Worker image устанавливает Chromium, Noto и DejaVu, но не весь набор theme fonts. Для PDF это может приводить к подстановке и изменению переносов; для PPTX результат зависит от компьютера пользователя.
+**Закрыто в code scope 12 августа 2026.** Все штатные themes теперь используют один утверждённый export family `Arial`; экспортёр дополнительно нормализует legacy/user canvas fonts к `Arial`, поэтому имя нестандартного font не попадает в PPTX. В worker image установлен `font-liberation`: PDF/Chromium использует явный fallback stack `Arial -> Liberation Sans -> Noto Sans -> DejaVu Sans`, а PPTX сохраняет Windows-совместимое имя Arial. Это устраняет случайную подстановку Aptos/Aptos Display, Georgia и Trebuchet MS в worker path, не требуя встраивать проприетарные файлы в репозиторий.
+
+Автоматическая матрица закреплена в `plans/export-visual-font-matrix.md` и export tests: все premium themes, canvas font normalization и HTML/PDF stack. Она использует уже существующие export fixtures для русского текста, диаграмм, tables, notes и source attribution.
+
+Для storage добавлены `Export.sizeBytes`, migration `20260812160000_export_retention_and_quota`, очистка ready/failed objects и DB records из maintenance worker после `EXPORT_RETENTION_DAYS` (default 30), а также pre-upload project quota `EXPORT_STORAGE_QUOTA_BYTES_PER_PROJECT` (default 512 MiB). Непубликованный stale/failed объект удаляется сразу и не остаётся в storage/quota.
 
 Рекомендация:
 
-- Либо встраивать/лицензировать утверждённые шрифты, либо ограничить themes гарантированно доступным набором.
-- Тестировать Windows PowerPoint, LibreOffice и PDF render на русском тексте, таблицах, диаграммах, notes и source attribution.
-- Добавить retention/cleanup старых export objects и storage quotas.
+- Ограничить themes гарантированно доступным набором — реализовано: Arial + worker fallback matrix.
+- Добавить retention/cleanup старых export objects и storage quotas — реализовано: managed cleanup и project byte quota.
+
+**Нужно доделать для P2-5:** один manual acceptance run в Windows PowerPoint, LibreOffice и PDF viewer на fixture из `plans/export-visual-font-matrix.md`, с сохранёнными screenshots/versions в release artifact. В CI/worker image также нужно принять focused export suite: текущий Windows host периодически блокирует Vitest до collection через внешний `spawn EPERM`, а host не содержит Chromium. При необходимости product может отдельно лицензировать/встраивать фирменный шрифт, но code больше не зависит от такого решения.
 
 ### P2-6. Нужна продуктовая аналитика полного пути
 

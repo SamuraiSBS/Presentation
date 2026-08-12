@@ -1,4 +1,4 @@
-import { canvasTextLineHeight, type CanvasElement, type CanvasImageElement, type CanvasShapeElement, type CanvasTextElement } from "@studydeck/shared";
+import { canvasTextLineHeight, exportPdfFontStack, type CanvasElement, type CanvasImageElement, type CanvasShapeElement, type CanvasTextElement } from "@studydeck/shared";
 
 export type PdfCanvasDependencies = {
   readObjectBuffer: (key: string) => Promise<Buffer>;
@@ -21,7 +21,7 @@ function renderPdfText(element: CanvasTextElement) {
 }
 
 function pdfTextStyle(element: CanvasTextElement) {
-  return [`color:${element.color}`, `font-family:${cssString(element.fontFamily)}, Arial, "Noto Sans", "DejaVu Sans", sans-serif`, `font-size:${element.fontSize}px`, `font-weight:${element.bold ? 800 : 400}`, `font-style:${element.italic ? "italic" : "normal"}`, `text-decoration:${element.underline ? "underline" : "none"}`, `text-align:${element.align}`, "display:flex", "flex-direction:column", `justify-content:${element.valign === "middle" ? "center" : element.valign === "bottom" ? "flex-end" : "flex-start"}`, `line-height:${canvasTextLineHeight(element)}`, "overflow-wrap:anywhere", "word-break:normal"].join(";");
+  return [`color:${element.color}`, `font-family:${exportPdfFontStack(element.fontFamily)}`, `font-size:${element.fontSize}px`, `font-weight:${element.bold ? 800 : 400}`, `font-style:${element.italic ? "italic" : "normal"}`, `text-decoration:${element.underline ? "underline" : "none"}`, `text-align:${element.align}`, "display:flex", "flex-direction:column", `justify-content:${element.valign === "middle" ? "center" : element.valign === "bottom" ? "flex-end" : "flex-start"}`, `line-height:${canvasTextLineHeight(element)}`, "overflow-wrap:anywhere", "word-break:normal"].join(";");
 }
 
 function pdfShapeStyle(element: CanvasShapeElement) {
@@ -41,4 +41,3 @@ async function pdfImageSrc(element: CanvasImageElement, dependencies: PdfCanvasD
 }
 
 function escapeHtml(value: string) { return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&#039;"); }
-function cssString(value: string) { return value.replace(/[;{}]/g, "").trim() || "Arial"; }

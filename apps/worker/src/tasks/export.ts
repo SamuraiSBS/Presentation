@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import {
   ensureEditableCanvas,
   canvasBackgroundCss,
+  exportPdfFontStack,
   formatSlideAttribution,
   hasMeasurableValue,
   metricLead,
@@ -13,7 +14,7 @@ import {
 } from "@studydeck/shared";
 import { captureExportError, errorLogFields, logger, type TraceCarrier, withTraceSpan } from "../observability.js";
 import { getPrisma } from "../prisma.js";
-import { putObjectBuffer, readObjectBuffer } from "../storage.js";
+import { deleteObject, putObjectBuffer, readObjectBuffer } from "../storage.js";
 import { recordCostEvent, runWithUsageContext } from "../usage-ledger.js";
 import { renderHtmlToPdf } from "./pdf-renderer.js";
 import {
@@ -26,6 +27,7 @@ import { renderPptxCanvasSlide } from "./export/pptx-canvas.js";
 import { addFittedPptxImage } from "./export/pptx-image.js";
 import { renderPdfCanvasElement } from "./export/pdf-canvas.js";
 import { renderPptxSlideBackground, slideBackgroundVariant } from "./export/pptx-background.js";
+import { exceedsExportStorageQuota, exportStoragePolicy } from "./export-storage-policy.js";
 
 const require = createRequire(import.meta.url);
 const PptxGenConstructor = require("@studydeck/pptxgenjs") as new () => {
@@ -91,6 +93,7 @@ async function runExportJob(job: Job<ExportJobData>) {
   const { exportId, projectId, type, presentationRevision } = job.data;
   await prisma.export.update({ where: { id: exportId }, data: { status: "processing" } });
 
+  let uploadedKey: string | undefined;
   try {
     const presentationRow = await prisma.presentation.findUniqueOrThrow({ where: { projectId } });
     if (presentationRow.revision !== presentationRevision) {
@@ -134,7 +137,18 @@ async function runExportJob(job: Job<ExportJobData>) {
         ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
         : "application/pdf";
 
+    const policy = exportStoragePolicy();
+    const currentStorage = await prisma.export.aggregate({
+      where: { projectId, status: "ready" },
+      _sum: { sizeBytes: true },
+    });
+    const usedBytes = Number(currentStorage._sum.sizeBytes || 0);
+    if (exceedsExportStorageQuota(usedBytes, buffer.length, policy)) {
+      throw new Error(`Export storage quota exceeded for this project (${policy.quotaBytesPerProject} bytes)`);
+    }
+
     await putObjectBuffer(key, buffer, contentType);
+    uploadedKey = key;
     await recordCostEvent({
       idempotencyKey: `export:${exportId}:compute`,
       category: "export_compute",
@@ -161,7 +175,8 @@ async function runExportJob(job: Job<ExportJobData>) {
     if (current.revision !== presentationRevision) {
       throw new Error("Presentation changed during export rendering; stale artifact was not published");
     }
-    await prisma.export.updateMany({ where: { id: exportId, presentationRevision }, data: { status: "ready", objectKey: key } });
+    await prisma.export.updateMany({ where: { id: exportId, presentationRevision }, data: { status: "ready", objectKey: key, sizeBytes: buffer.length } });
+    uploadedKey = undefined;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Export failed";
     captureExportError(error, {
@@ -171,7 +186,14 @@ async function runExportJob(job: Job<ExportJobData>) {
       exportType: type,
       stage: "render_or_upload",
     });
-    await prisma.export.update({ where: { id: exportId }, data: { status: "failed", error: message } });
+    if (uploadedKey) {
+      try {
+        await deleteObject(uploadedKey);
+      } catch (cleanupError) {
+        logger.error({ exportId, objectKey: uploadedKey, ...errorLogFields(cleanupError) }, "could not delete unpublished export artifact");
+      }
+    }
+    await prisma.export.update({ where: { id: exportId }, data: { status: "failed", objectKey: null, sizeBytes: 0, error: message } });
     throw error;
   }
 }
@@ -356,7 +378,7 @@ export async function renderPdfHtml(presentation: ReturnType<typeof presentation
 <style>
   @page { size: 1280px 720px; margin: 0; }
   * { box-sizing: border-box; }
-  body { margin: 0; background: #000; font-family: Arial, "Noto Sans", "DejaVu Sans", sans-serif; }
+  body { margin: 0; background: #000; font-family: ${exportPdfFontStack()}; }
   .slide { position: relative; width: 1280px; height: 720px; overflow: hidden; page-break-after: always; }
   .slide:last-child { page-break-after: auto; }
   .template-slide { display: grid; place-items: center; padding: 54px; color: var(--slide-text); font-family: var(--slide-body-font); }
@@ -607,8 +629,8 @@ function pdfThemeVars(theme: ExportTheme) {
     `--slide-accent:${theme.colors.accent}`,
     `--slide-accent-alt:${theme.colors.accentAlt}`,
     `--slide-line:${theme.colors.line}`,
-    `--slide-heading-font:${cssString(theme.fonts.heading)}, Georgia, Arial, sans-serif`,
-    `--slide-body-font:${cssString(theme.fonts.body)}, Arial, sans-serif`,
+    `--slide-heading-font:${exportPdfFontStack(theme.fonts.heading)}`,
+    `--slide-body-font:${exportPdfFontStack(theme.fonts.body)}`,
     `background:${theme.colors.background}`,
   ].join(";");
 }
@@ -734,8 +756,4 @@ function escapeHtml(value: string) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-}
-
-function cssString(value: string) {
-  return `"${String(value || "Arial").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }

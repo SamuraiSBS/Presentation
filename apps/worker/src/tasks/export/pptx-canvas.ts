@@ -1,6 +1,7 @@
 import sharp from "sharp";
 import {
   canvasTextLineHeight,
+  exportFontFamily,
   sortCanvasElements,
   type CanvasImageElement,
   type CanvasShapeElement,
@@ -47,7 +48,7 @@ export async function renderPptxCanvasSlide(
 
 function renderCanvasText(slide: PptxSlide, element: CanvasTextElement, theme: ExportTheme) {
   const runs = element.runs.length ? element.runs.map((run) => ({ text: run.text, options: { bold: run.bold ?? element.bold, italic: run.italic ?? element.italic, underline: run.underline ?? element.underline, color: pptxColor(run.color || element.color) } })) : element.text;
-  slide.addText(runs, { ...canvasBox(element), fontFace: element.fontFamily || theme.fonts.body, fontSize: pixelsToPoints(element.fontSize), bold: element.bold, italic: element.italic, underline: element.underline, color: pptxColor(element.color), align: element.align, valign: element.valign === "middle" ? "mid" : element.valign, rotate: element.rotation, fit: "none", lineSpacingMultiple: canvasTextLineHeight(element), margin: 0 });
+  slide.addText(runs, { ...canvasBox(element), fontFace: exportFontFamily(element.fontFamily || theme.fonts.body), fontSize: pixelsToPoints(element.fontSize), bold: element.bold, italic: element.italic, underline: element.underline, color: pptxColor(element.color), align: element.align, valign: element.valign === "middle" ? "mid" : element.valign, rotate: element.rotation, fit: "none", lineSpacingMultiple: canvasTextLineHeight(element), margin: 0 });
 }
 
 function renderCanvasShape(pptx: PptxApi, slide: PptxSlide, element: CanvasShapeElement) {

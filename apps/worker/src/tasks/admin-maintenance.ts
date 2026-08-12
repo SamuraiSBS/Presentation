@@ -4,7 +4,8 @@ import crypto from "node:crypto";
 import { getPrisma } from "../prisma.js";
 import { errorLogFields, logger } from "../observability.js";
 import { createRedisConnection } from "../queue.js";
-import { deleteProjectPrefix } from "../storage.js";
+import { deleteObject, deleteProjectPrefix } from "../storage.js";
+import { exportRetentionCutoff, exportStoragePolicy } from "./export-storage-policy.js";
 
 export async function handleAdminMaintenance(job: Job) {
   if (job.name === "delete-account") return handleAccountDeletion(job as Job<{ deletionId: string }>);
@@ -12,6 +13,7 @@ export async function handleAdminMaintenance(job: Job) {
   const prisma = getPrisma();
   const now = new Date();
   await prisma.operationalEvent.deleteMany({ where: { expiresAt: { lt: now } } });
+  await cleanupExpiredExports(now);
   await refreshCbrRates(now);
 
   const stuckBefore = new Date(now.getTime() - Number(process.env.ADMIN_STUCK_JOB_MINUTES || 30) * 60_000);
@@ -33,6 +35,27 @@ export async function handleAdminMaintenance(job: Job) {
   }
   await recoverQueuedAccountDeletions();
   await evaluateAlerts(now);
+}
+
+async function cleanupExpiredExports(now: Date) {
+  const prisma = getPrisma();
+  const expired = await prisma.export.findMany({
+    where: {
+      status: { in: ["ready", "failed"] },
+      updatedAt: { lt: exportRetentionCutoff(now, exportStoragePolicy()) },
+    },
+    select: { id: true, objectKey: true },
+    orderBy: { updatedAt: "asc" },
+    take: 100,
+  });
+  for (const item of expired) {
+    try {
+      if (item.objectKey) await deleteObject(item.objectKey);
+      await prisma.export.delete({ where: { id: item.id } });
+    } catch (error) {
+      logger.error({ exportId: item.id, objectKey: item.objectKey, ...errorLogFields(error) }, "could not clean up expired export artifact");
+    }
+  }
 }
 
 async function recoverQueuedAccountDeletions() {

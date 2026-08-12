@@ -1,4 +1,4 @@
-import { DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type { Readable } from "node:stream";
 
 let s3: S3Client | null = null;
@@ -32,6 +32,10 @@ export async function putObjectBuffer(key: string, buffer: Buffer, contentType: 
       ContentType: contentType,
     }),
   );
+}
+
+export async function deleteObject(key: string) {
+  await getS3().send(new DeleteObjectCommand({ Bucket: bucket(), Key: key }));
 }
 
 export async function deleteProjectPrefix(projectId: string) {

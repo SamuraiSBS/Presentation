@@ -18,7 +18,7 @@ export const PREMIUM_PRESENTATION_THEMES = {
       line: "#D7D4CE",
     },
     fonts: {
-      heading: "Georgia",
+      heading: "Arial",
       body: "Arial",
       tone: "bookish",
     },
@@ -38,7 +38,7 @@ export const PREMIUM_PRESENTATION_THEMES = {
       line: "#DED2C4",
     },
     fonts: {
-      heading: "Georgia",
+      heading: "Arial",
       body: "Arial",
       tone: "bookish",
     },
@@ -78,8 +78,8 @@ export const PREMIUM_PRESENTATION_THEMES = {
       line: "#303846",
     },
     fonts: {
-      heading: "Aptos Display",
-      body: "Aptos",
+      heading: "Arial",
+      body: "Arial",
       tone: "technical",
     },
   },
@@ -98,7 +98,7 @@ export const PREMIUM_PRESENTATION_THEMES = {
       line: "#D5C7B3",
     },
     fonts: {
-      heading: "Georgia",
+      heading: "Arial",
       body: "Arial",
       tone: "bookish",
     },
@@ -118,8 +118,8 @@ export const PREMIUM_PRESENTATION_THEMES = {
       line: "#CFE2DE",
     },
     fonts: {
-      heading: "Aptos Display",
-      body: "Aptos",
+      heading: "Arial",
+      body: "Arial",
       tone: "technical",
     },
   },
@@ -158,7 +158,7 @@ export const PREMIUM_PRESENTATION_THEMES = {
       line: "#EAD8C3",
     },
     fonts: {
-      heading: "Trebuchet MS",
+      heading: "Arial",
       body: "Arial",
       tone: "rounded",
     },

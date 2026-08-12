@@ -1948,6 +1948,7 @@ describe("shared contracts", () => {
       const theme = presentationThemeSchema.parse(PREMIUM_PRESENTATION_THEMES[themeId]);
 
       expect(theme.themeId).toBe(themeId);
+      expect(theme.fonts).toMatchObject({ heading: "Arial", body: "Arial" });
       for (const color of Object.values(theme.colors)) {
         expect(color).toMatch(/^#[0-9A-F]{6}$/);
       }
