@@ -20,6 +20,8 @@ const productionEnvironment = {
   TELEGRAM_CLIENT_ID: "telegram-client",
   TELEGRAM_CLIENT_SECRET: "telegram-secret",
   ADMIN_TELEGRAM_IDS: "123456789",
+  LEGAL_ENTITY_NAME: "StudyDeck AI LLC",
+  SUPPORT_EMAIL: "support@studydeck.example",
 };
 
 describe("production configuration", () => {
@@ -48,5 +50,15 @@ describe("production configuration", () => {
   it("never enables dev auth when deployment is production", () => {
     expect(devAuthAllowed({ DEPLOYMENT_ENV: "production", ALLOW_DEV_AUTH: "true" })).toBe(false);
     expect(devAuthAllowed({ DEPLOYMENT_ENV: "local", ALLOW_DEV_AUTH: "true" })).toBe(true);
+  });
+
+  it("requires public legal and support identities", () => {
+    const errors = productionConfigurationErrors({
+      ...productionEnvironment,
+      LEGAL_ENTITY_NAME: "",
+      SUPPORT_EMAIL: "not-an-email",
+    }).join("\n");
+    expect(errors).toMatch(/LEGAL_ENTITY_NAME/);
+    expect(errors).toMatch(/SUPPORT_EMAIL/);
   });
 });

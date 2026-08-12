@@ -4,6 +4,9 @@ import { classifyAppRoute, usesAccountNavigation } from "./app-route-classificat
 describe("app route classification", () => {
   it("keeps the landing public and login compact", () => {
     expect(classifyAppRoute("/")).toBe("public");
+    expect(classifyAppRoute("/privacy")).toBe("public");
+    expect(classifyAppRoute("/terms")).toBe("public");
+    expect(classifyAppRoute("/support")).toBe("public");
     expect(classifyAppRoute("/login")).toBe("auth");
     expect(usesAccountNavigation(classifyAppRoute("/"))).toBe(false);
   });

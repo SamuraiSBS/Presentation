@@ -99,6 +99,11 @@ export function productionConfigurationErrors(env: RuntimeEnvironment = process.
     errors.push("ADMIN_TELEGRAM_IDS must contain at least one numeric Telegram ID");
   }
 
+  if (!value(env, "LEGAL_ENTITY_NAME")) errors.push("LEGAL_ENTITY_NAME must identify the service operator");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value(env, "SUPPORT_EMAIL"))) {
+    errors.push("SUPPORT_EMAIL must be a valid public support address");
+  }
+
   return errors;
 }
 
