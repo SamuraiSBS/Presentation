@@ -18,6 +18,7 @@ import { SimplePropertiesPanel } from "./simple-properties-panel";
 import { DefenseCompliancePanel } from "@/components/defense/defense-compliance-panel";
 import { createUnsavedChangesBeforeUnloadHandler } from "./editor-save-guard";
 import { useEditorSaveQueue, type SlideSavePatch } from "./editor-save-queue";
+import { ConnectionStatus } from "@/components/connection-status";
 
 export function ProjectEditor({
   initialProject,
@@ -754,7 +755,9 @@ export function ProjectEditor({
       project.status === "draft" || project.status === "failed";
 
     return (
-      <section className="panel">
+      <>
+        <ConnectionStatus scope="editor" />
+        <section className="panel">
         <span className="status">{projectStatusLabel(project.status)}</span>
         <h1 className="page-title" style={{ fontSize: 44 }}>
           {project.title}
@@ -778,25 +781,38 @@ export function ProjectEditor({
             <Link className="button" href={`/projects/${project.id}/script`}>Проверить текст и запуск</Link>
           </div>
         ) : null}
-      </section>
+        </section>
+      </>
     );
   }
 
   if (!canEdit) {
     return (
-      <section className="editor-workspace viewer-workspace" data-testid="project-editor">
+      <>
+        <ConnectionStatus scope="editor" />
+        <section className="editor-workspace viewer-workspace" data-testid="project-editor">
         <div className="editor-top"><div><span className="status">Только просмотр</span><h1>{presentation.title}</h1></div><Link className="button" href={`/projects/${project.id}/export`}>Экспорт</Link></div>
         {project.workflow === "requirements_driven" ? <DefenseCompliancePanel projectId={project.id} presentationRevision={project.presentationRevision || 0} slides={presentation.slides} canEdit={false} onSelectSlide={setActive} /> : null}
         <section className="viewer-editor">
           <aside className="slide-rail"><strong>Слайды</strong><div className="slide-rail-list">{presentation.slides.map((item, index) => <button className={`slide-thumb ${index === active ? "slide-thumb-active" : ""}`} key={item.id} type="button" onClick={() => setActive(index)}><span>{String(index + 1).padStart(2, "0")}</span><strong>{item.title}</strong></button>)}</div></aside>
           <section className="canvas-shell viewer-canvas-shell" aria-label="Предпросмотр слайда"><div className="viewer-toolbar"><span>Редактирование доступно владельцу и редакторам</span><Link href={`/projects/${project.id}/export`}>PDF и PPTX</Link></div><TemplatePreviewFrame slide={slide} theme={theme} scale={canvasScale} frameRef={frameRef} onSelectElement={() => undefined} /></section>
         </section>
-      </section>
+        </section>
+      </>
     );
   }
 
   return (
-    <section className="editor-workspace" data-testid="project-editor">
+    <>
+      <ConnectionStatus
+        scope="editor"
+        onReconnect={() => {
+          if (!hasUnsavedChangesRef.current || revisionConflict) return;
+          setActionError("");
+          retryLatestSave();
+        }}
+      />
+      <section className="editor-workspace" data-testid="project-editor">
       <div className="editor-top">
         <div>
           <h1>{presentation.title}</h1>
@@ -1036,6 +1052,7 @@ export function ProjectEditor({
           if (section === "preview") setViewMode("preview");
         }}
       />
-    </section>
+      </section>
+    </>
   );
 }

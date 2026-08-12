@@ -327,6 +327,14 @@ Editor сериализует PATCH-запросы через `saveQueueRef`, н
 
 Есть global error и локальные ошибки на ряде экранов, но нет целостного offline/reconnect UX и единых route error boundaries для editor/export. Пользователь должен понимать, сохранены ли изменения, работает ли генерация в фоне и безопасно ли закрывать вкладку.
 
+**Закрыто в code scope 12 августа 2026.** Для `/projects/[id]/editor` и `/projects/[id]/export` добавлены отдельные Next route error boundaries с единым recovery UI, безопасным повтором загрузки, возвратом к списку проектов и Sentry-событием с route tag. Оба экрана показывают доступный offline/reconnect-баннер: редактор явно запрещает закрывать вкладку до статуса «Сохранено» и после reconnect повторно отправляет последнюю несохранённую правку; экспорт объясняет, что новые запросы и скачивание недоступны, но уже начатая серверная сборка продолжается в фоне и её статус обновится после reconnect. Существующие `beforeunload` guard, очередь автосохранения и polling job не ослаблены.
+
+**Проверено 12 августа 2026:** `npm run typecheck -w @studydeck/web` — успешно; isolated `npm run test -w @studydeck/web -- --pool=threads --poolOptions.threads.singleThread=true` — 12 файлов / 39 тестов успешно; `npm run build -w @studydeck/web` — успешно (Next production build распознал маршруты editor/export). В sandbox build не завершился за 5 минут без диагностики, но тот же build вне sandbox успешно завершился за 154 с; это ограничение локального sandbox, а не регрессия проекта.
+
+**Live browser acceptance 12 августа 2026: принято.** На production Next runtime Playwright физически отключил сеть в Chromium. В editor несохранённая правка показала offline warning, native `beforeunload` остановил закрытие вкладки, а после reconnect последняя правка автоматически сохранилась. Для отдельной копии готового проекта был запущен PDF export; во время active job показан offline warning, маршрут закрыт, после reconnect открыт заново, а API подтвердил `ready` именно для исходного job ID и UI показал «Скачать PDF». `e2e/offline-reconnect.spec.ts` — 2/2 успешно; screenshots и trace сохранены в `plans/release-artifacts/p2-7-offline-reconnect/`.
+
+**Нужно доделать для P2-7:** ничего — code scope и live browser acceptance закрыты.
+
 ## 5. Дизайн и доступность
 
 ### Оценка интерфейса: 15/20 — хороший фундамент, требуется hardening

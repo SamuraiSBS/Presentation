@@ -76,8 +76,8 @@ export function useEditorSaveQueue(options: UseEditorSaveQueueOptions) {
     saveSlide,
     retryLatestSave: () => {
       const latest = latestRef.current;
-      if (!latest || conflictRef.current) return;
-      void saveSlide(latest.patch);
+      if (!latest || conflictRef.current) return Promise.resolve();
+      return saveSlide(latest.patch);
     },
     clearConflict: () => { conflictRef.current = false; },
     hasUnsavedChangesRef,
