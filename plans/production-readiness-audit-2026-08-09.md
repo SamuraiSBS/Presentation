@@ -190,20 +190,42 @@ Checkout button устанавливает busy, вызывает `fetch`, за�
 
 ### P2-3. Frontend bundle и CSS слишком глобальны
 
-Production build показывает:
+**Исходный baseline production build:**
 
 - shared first-load JS: 187 KB;
 - landing: 320 KB;
 - editor: 456 KB.
 
-`globals.css` импортирует 18 файлов, включая admin, legacy pages, editor, defense и account для каждого маршрута. В результате landing несёт стили внутренних тяжёлых экранов. Build также предупреждает о больших сериализуемых строках.
+До исправления `globals.css` импортировал 18 файлов, включая admin, legacy pages, editor, defense и account для каждого маршрута. В результате landing нёс стили внутренних тяжёлых экранов. Build также предупреждал о больших сериализуемых строках.
 
-Рекомендация:
+**Реализовано 11–12 августа 2026:**
 
-- Перенести route-specific CSS в layout/route/component boundaries.
-- Удалить или изолировать `legacy-pages.css` и `editor-legacy.css` после визуального сравнения.
-- Lazy-load Mermaid/editor/export-heavy зависимости.
-- Ввести bundle budgets в CI и измерить Core Web Vitals/Lighthouse на production image.
+- Корневой `globals.css` оставляет только 7 общих файлов (tokens/base/app shell, shared foundation, application слой, статусы, account chrome). 11 route-specific файлов вынесены в layout-границы `/admin`, `/new`, editor, script, export, defense и account/dashboard маршрутов.
+- `landing.css` больше не импортируется root layout и подключается только в `/`; editor получает свои `editor-*` и `slide-renderer.css` только в `/projects/[id]/editor`.
+- TipTap вынесен в отдельный async chunk в текстовых properties editor. Пока он загружается, доступен нативный controlled textarea fallback; введённый текст передаётся в TipTap при handoff и не теряется, если chunk успевает загрузиться до `blur`. Mermaid уже использовал динамический `import()` и остаётся отдельным chunk.
+- По размеру прямых импортов корневой CSS уменьшен с 180,1 KiB до 13,9 KiB: 166,2 KiB (92,3%) route-specific CSS исключены из общего entrypoint. Это не gzip-метрика и не заменяет анализ production output.
+- `legacy-pages.css` удалён из root-пути. Небольшие действительно общие primitives перенесены в `shared-foundation.css`, а admin reduced-motion rules остались в `admin.css`; прежние wizard/new-project правила больше не попадают на несвязанные маршруты.
+- Добавлены `apps/web/bundle-budget.json` и `npm run bundle:check`: после production build скрипт читает `app-build-manifest.json`, измеряет actual JS/CSS assets для shared, landing и editor, сравнивает с лимитами и при необходимости сохраняет JSON evidence.
+- В GitHub release gates production web build и bundle budget обязательны в quality job. После запуска именно собранного immutable web image CI поднимает Chromium, проверяет Lighthouse performance/CWV budget (score, LCP, TBT, CLS) и публикует полный Lighthouse report как artifact.
+
+**Проверено 11 августа 2026:** `npm run typecheck -w @studydeck/web` — успешно; `npm run test -w @studydeck/web` — 11 файлов / 36 тестов успешно; `git diff --check` — без ошибок в целевом diff.
+
+**Проверено 12 августа 2026:** `npm run typecheck -w @studydeck/web` — успешно; isolated `npm run test -w @studydeck/web -- --pool=threads --poolOptions.threads.singleThread=true` — 11 файлов / 36 тестов успешно; `node --check` для обоих новых performance scripts — успешно. Node 22 `npm ci` в Docker после обновления lockfile прошёл; это устранило блокировку на install layer production image.
+
+**Дополнено 12 августа 2026:** local production Next build восстановлен. В route-specific layouts `/projects/[id]/{editor,script,export,defense}` было на один лишний `..` в CSS imports; после исправления `npm run build -w @studydeck/web` прошёл полностью (199,8 с вне Windows sandbox). Next 16 больше не создаёт `app-build-manifest.json`, поэтому `bundle:check` читает `build-manifest.json` и route `*_client-reference-manifest.js`; actual uncompressed metrics собранного output: shared JS 937,9 KiB / CSS 41,4 KiB / total 979,3 KiB, landing 1113,7 / 41,4 / 1155,1 KiB, editor 1103,5 / 103,8 / 1207,3 KiB. `bundle-budget.json` обновлён по этому первому воспроизводимому Next 16 baseline с небольшим запасом, `npm run bundle:check` проходит.
+
+**Local visual smoke 12 августа 2026:** standalone production output на `localhost:3020` отдаёт `/` с `200`, а защищённые `/new`, `/admin`, editor/script/export/defense в чистом режиме перенаправляют на login. Во втором изолированном local-only runtime с E2E dev-auth flags страницы `/new`, `/admin`, `/projects/demo/editor`, `/projects/script-review-demo/script` и `/projects/demo/export` отрендерились без error boundary. `/projects/demo/defense/plan` показал штатное error-state: demo fixture не содержит defense workspace, поэтому содержимое defense flow ещё не принято. Новый Chromium regression `e2e/editor-autosave.spec.ts` вводит текст в `textarea.rich-text-content` до TipTap handoff и подтверждает тот же текст в `.ProseMirror`; весь spec проходит: 3/3. Повторный isolated web unit run: 11 файлов / 36 тестов успешно.
+
+**Lighthouse и Docker 12 августа 2026:** standalone harness теперь копирует также `public` assets (landing image URL отвечает `200`), но последний `npm run lighthouse:production -- --url=http://localhost:3020/ --assert` всё ещё не прошёл budget: performance 43, FCP 1508 ms, LCP 5062 ms, TBT 666 ms, CLS 0 (лимиты нарушены по score/LCP/TBT). Лимиты Lighthouse не повышались. Скрипт теперь не маскирует budget verdict, если Windows временно удерживает Chrome profile directory при cleanup: это выводится как warning. `.github/workflows/release-gates.yml` подтверждённо выполняет `npm ci` до web build/bundle check и отдельный `npm ci` до запуска exact image и Lighthouse. Один `docker build --progress=plain --file Dockerfile.web ...` не вывел даже начального прогресса за две минуты и был остановлен; это остаётся Docker Desktop/BuildKit blocker ниже Dockerfile, а не регрессией Next build.
+
+**Статус:** source build, actual bundle gate, visual smoke доступных routes и textarea fallback восстановлены. Local production acceptance не принято из-за красного Lighthouse, непроверенного content-state defense demo и зависания Docker/BuildKit image build.
+
+**Нужно доделать:**
+
+- Устранить Lighthouse regression production output (последний прогон: score 43, LCP 5062 ms, TBT 666 ms), затем повторить `npm run lighthouse:production -- --assert` на exact Docker image; не менять Lighthouse budgets без принятого evidence.
+- Восстановить Docker Desktop/BuildKit на хосте: один plain `Dockerfile.web` build завис до первой строки progress. После восстановления собрать exact image, запустить его и повторить Lighthouse/CWV smoke.
+- Добавить или выбрать demo fixture с defense workspace, затем принять visual content-state `/projects/<id>/defense/{plan,review}`; текущий `demo` покрывает route error-state, но не defense workflow content.
+- Запустить release gates для commit с этими изменениями и принять artifacts: actual shared/landing/editor bundle metrics и `lighthouse-production-<sha>`.
 
 ### P2-4. Крупные модули затрудняют безопасные изменения
 

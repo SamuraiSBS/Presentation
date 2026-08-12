@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import "./landing.css";
 import {
   ArrowRight,
   BookOpenCheck,

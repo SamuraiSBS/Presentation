@@ -36,6 +36,8 @@ jobs:
           DATABASE_URL: postgresql://studydeck:studydeck@localhost:5432/studydeck?schema=public
       - run: npm run lint
       - run: npm run check
+      - run: npm run build -w @studydeck/web
+      - run: npm run bundle:check
       - run: npx playwright install --with-deps chromium
       - run: sudo apt-get update && sudo apt-get install --yes poppler-utils
       - run: CHROMIUM_PATH="$(node -e "console.log(require('@playwright/test').chromium.executablePath())")" npm test
@@ -83,6 +85,11 @@ jobs:
       STUDYDECK_IMAGE_TAG: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - name: Build release images
         run: |
           docker build --tag studydeck-api:${STUDYDECK_IMAGE_TAG} --file Dockerfile.api .
@@ -114,6 +121,17 @@ jobs:
           done
           docker compose -f docker-compose.yml -f compose.ci.yml logs --no-color
           exit 1
+      - name: Enforce Lighthouse and Core Web Vitals on the exact web image
+        run: |
+          npx playwright install --with-deps chromium
+          npm run lighthouse:production -- --url=http://localhost:3000/ --output=lighthouse-production.json --assert
+      - name: Upload Lighthouse report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-production-${{ github.sha }}
+          path: lighthouse-production.json
+          if-no-files-found: ignore
       - name: Collect staging logs
         if: always()
         run: docker compose -f docker-compose.yml -f compose.ci.yml logs --no-color

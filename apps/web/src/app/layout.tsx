@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "@fontsource-variable/nunito";
 import "./globals.css";
-import "./landing.css";
 import { AppChrome } from "@/components/app-chrome";
 import { AppQueryProvider } from "@/components/query-provider";
 import { SessionProvider } from "@/components/session-provider";
