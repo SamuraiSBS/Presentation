@@ -1312,7 +1312,7 @@
   .public-header-cta-label { display: none; }
   .public-header-actions { gap: 0.25rem; }
 
-  .landing-page { gap: 4.5rem; padding: 0.75rem 0.75rem 6rem; }
+  .landing-page { gap: 4.5rem; overflow-x: clip; padding: 0.75rem 0.75rem 6rem; }
   .landing-page :is(#how-it-works, #examples, #capabilities) { scroll-margin-top: 5rem; }
   .landing-hero { min-height: 0; gap: 1.5rem; border-radius: 1rem; padding: 1.25rem; }
   .landing-hero h1 { max-width: 13ch; font-size: clamp(2.625rem, 12vw, 3.375rem); }

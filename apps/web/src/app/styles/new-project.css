@@ -355,6 +355,7 @@
   .new-page > .new-page-kicker { display: none !important; }
 
   .new-page .page-title {
+    display: none;
     margin-bottom: 4px;
     font-size: clamp(28px, 9vw, 34px) !important;
   }
