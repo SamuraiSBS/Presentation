@@ -384,7 +384,7 @@
   .wizard-question,
   .wizard-pane h2.wizard-question { font-size: 23px; }
 
-  .topic-input { min-height: 100px; }
+  .wizard-pane-topic .topic-input { flex: 0 0 100px; min-height: 100px; }
 }
 
 @media (max-width: 760px) {

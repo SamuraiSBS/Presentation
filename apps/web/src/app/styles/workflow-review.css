@@ -207,8 +207,8 @@
   .speech-section-card { scroll-margin-top: 76px; }
   .speech-section-card header { grid-template-columns: 36px minmax(0, 1fr); }
   .speech-section-card header small { grid-column: 2; padding: 0; }
-  .script-editor-panel { padding-bottom: calc(184px + env(safe-area-inset-bottom)); }
-  .script-toolbar { position: fixed; z-index: calc(var(--z-mobile-nav) + 1); right: max(12px, env(safe-area-inset-right)); bottom: calc(92px + env(safe-area-inset-bottom) + var(--script-keyboard-inset)); left: max(12px, env(safe-area-inset-left)); }
+  .script-editor-panel { padding-bottom: calc(229px + env(safe-area-inset-bottom)); }
+  .script-toolbar { position: fixed; z-index: calc(var(--z-mobile-nav) + 1); right: max(12px, env(safe-area-inset-right)); bottom: calc(137px + env(safe-area-inset-bottom) + var(--script-keyboard-inset)); left: max(12px, env(safe-area-inset-left)); }
   .script-toolbar .actions { width: 100%; }
   .script-toolbar .actions .ui-button { width: 100%; }
   .generation-safety-note { text-align: left; }
