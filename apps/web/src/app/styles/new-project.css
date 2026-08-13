@@ -386,6 +386,14 @@
   .wizard-pane h2.wizard-question { font-size: 23px; }
 
   .wizard-pane-topic .topic-input { flex: 0 0 100px; min-height: 100px; }
+  .wizard-pane-topic .action-row {
+    position: fixed;
+    z-index: calc(var(--z-mobile-nav) + 1);
+    right: max(12px, env(safe-area-inset-right));
+    bottom: calc(137px + env(safe-area-inset-bottom));
+    left: max(12px, env(safe-area-inset-left));
+  }
+  .wizard-pane-topic .action-row .button { width: 100%; }
 }
 
 @media (max-width: 760px) {
