@@ -1,4 +1,5 @@
 import "../private.css";
+import "../styles/admin.css";
 import { AdminShell } from "@/components/admin/admin-shell";
 import { PrivateRouteLayout } from "@/components/private-route-layout";
 import { requireAdminSession } from "@/lib/admin-auth";

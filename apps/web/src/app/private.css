@@ -1,18 +1,5 @@
-/* Shared only by authenticated/app routes; keep the public landing critical CSS lean.
-   These rules previously lived in the root stylesheet. They remain outside the
-   public route while preserving the cross-route application shell contract. */
+/* Shared only by authenticated/app routes; keep the public landing critical CSS lean. */
 @import "@fontsource-variable/nunito";
-@import "./styles/new-project-foundation.css";
-@import "./styles/admin.css";
-@import "./styles/workflow-review.css";
-@import "./styles/editor-foundation.css";
-@import "./styles/slide-renderer.css";
-@import "./styles/editor-legacy.css";
 @import "./styles/application-system.css";
 @import "./styles/dashboard-projects-foundation.css";
-@import "./styles/new-project-shell.css";
-@import "./styles/editor.css";
-@import "./styles/new-project.css";
 @import "./styles/account.css";
-@import "./styles/dashboard-projects.css";
-@import "./styles/defense.css";

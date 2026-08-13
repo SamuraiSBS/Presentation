@@ -9,7 +9,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { FiveMinuteTimeline } from "@/components/landing/five-minute-timeline";
-import { LazyDemoGallery } from "@/components/landing/lazy-demo-gallery";
+import { DemoGallery } from "@/components/landing/demo-gallery";
 import { LandingFinalCta } from "@/components/landing/landing-final-cta";
 import { LandingHero } from "@/components/landing/landing-hero";
 import { PublicRouteLayout } from "@/components/public-route-layout";
@@ -64,7 +64,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <LazyDemoGallery />
+      <DemoGallery />
       <FiveMinuteTimeline />
 
       <section className="landing-output-section" aria-labelledby="landing-output-title">

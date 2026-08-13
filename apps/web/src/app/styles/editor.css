@@ -863,6 +863,10 @@ body:has(.editor-page) {
     grid-template-rows: minmax(0, 1fr);
   }
 
+  .editor-workspace .canvas-frame {
+    min-width: 281px;
+  }
+
   .editor-workspace .properties-panel {
     grid-column: auto;
   }
