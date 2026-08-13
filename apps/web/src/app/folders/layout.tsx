@@ -1,5 +1,6 @@
-import "../styles/dashboard-projects.css";
+import "../private.css";
+import { PrivateRouteLayout } from "@/components/private-route-layout";
 
 export default function FoldersLayout({ children }: { children: React.ReactNode }) {
-  return children;
+  return <PrivateRouteLayout>{children}</PrivateRouteLayout>;
 }

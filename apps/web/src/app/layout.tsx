@@ -1,10 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import "@fontsource-variable/nunito";
 import "./globals.css";
-import { AppChrome } from "@/components/app-chrome";
-import { AppQueryProvider } from "@/components/query-provider";
-import { SessionProvider } from "@/components/session-provider";
-import { auth } from "@/auth";
 
 export const metadata: Metadata = {
   title: "StudyDeck AI",
@@ -17,17 +12,10 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const session = await auth();
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ru">
-      <body>
-        <SessionProvider session={session}>
-          <AppQueryProvider>
-            <AppChrome>{children}</AppChrome>
-          </AppQueryProvider>
-        </SessionProvider>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

@@ -8,10 +8,11 @@ import {
   Presentation,
   Sparkles,
 } from "lucide-react";
-import { DemoGallery } from "@/components/landing/demo-gallery";
 import { FiveMinuteTimeline } from "@/components/landing/five-minute-timeline";
+import { LazyDemoGallery } from "@/components/landing/lazy-demo-gallery";
 import { LandingFinalCta } from "@/components/landing/landing-final-cta";
 import { LandingHero } from "@/components/landing/landing-hero";
+import { PublicRouteLayout } from "@/components/public-route-layout";
 
 export const metadata: Metadata = {
   title: "StudyDeck AI — презентация и речь за 5 минут",
@@ -20,7 +21,8 @@ export const metadata: Metadata = {
 
 export default function HomePage() {
   return (
-    <main className="landing-page" id="main-content">
+    <PublicRouteLayout>
+      <main className="landing-page" id="main-content">
       <LandingHero />
 
       <section className="landing-transform-section" id="capabilities" aria-labelledby="landing-transform-title">
@@ -62,7 +64,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <DemoGallery />
+      <LazyDemoGallery />
       <FiveMinuteTimeline />
 
       <section className="landing-output-section" aria-labelledby="landing-output-title">
@@ -99,6 +101,7 @@ export default function HomePage() {
       <a className="landing-sticky-create" href="/new">
         Создать за 5 минут <ArrowRight aria-hidden="true" size={17} />
       </a>
-    </main>
+      </main>
+    </PublicRouteLayout>
   );
 }

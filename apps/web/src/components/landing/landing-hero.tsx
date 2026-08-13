@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, Sparkles } from "lucide-react";
-import { HeroGenerationDemo } from "@/components/landing/hero-generation-demo";
+import { LazyHeroGenerationDemo } from "@/components/landing/lazy-hero-generation-demo";
 
 export function LandingHero() {
   return (
@@ -28,7 +28,7 @@ export function LandingHero() {
         </div>
       </div>
 
-      <HeroGenerationDemo className="landing-hero-demo" />
+      <LazyHeroGenerationDemo className="landing-hero-demo" />
     </section>
   );
 }

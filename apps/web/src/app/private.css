@@ -1,0 +1,5 @@
+/* Shared only by authenticated/app routes; keep the public landing critical CSS lean. */
+@import "@fontsource-variable/nunito";
+@import "./styles/application-system.css";
+@import "./styles/dashboard-projects-foundation.css";
+@import "./styles/account.css";
