@@ -12,3 +12,11 @@ npm-debug.log*
 *.log
 uploads/
 tmp/
+
+# Local Codex and runtime artifacts; never part of application source commits.
+.audit-bmw/
+.audit-p2-3-lighthouse.json
+.codex-remote-attachments/
+.worktrees/
+docker-pre-reset-backup-*/
+test-results/
