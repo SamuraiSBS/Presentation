@@ -138,6 +138,10 @@ export function productionConfigurationErrors(env: RuntimeEnvironment = process.
   if (!positiveInteger(value(env, "BACKUP_DRILL_MAX_AGE_DAYS"))) errors.push("BACKUP_DRILL_MAX_AGE_DAYS must be a positive integer");
   if (!value(env, "OPERATIONS_OWNER")) errors.push("OPERATIONS_OWNER must identify the incident owner");
   if (!value(env, "OPERATIONS_ALERT_CHANNEL")) errors.push("OPERATIONS_ALERT_CHANNEL must identify the incident notification channel");
+  if (!value(env, "YOOKASSA_SHOP_ID")) errors.push("YOOKASSA_SHOP_ID is required for paid subscriptions");
+  if (isUnsafeSecret(value(env, "YOOKASSA_SECRET_KEY")) || value(env, "YOOKASSA_SECRET_KEY").length < 24) {
+    errors.push("YOOKASSA_SECRET_KEY must be a non-default production secret");
+  }
 
   const hstsMaxAge = positiveInteger(value(env, "HSTS_MAX_AGE"));
   if (!hstsMaxAge || hstsMaxAge < 31_536_000) {

@@ -71,7 +71,7 @@ export const adminUserRowSchema = z.object({
   telegramId: z.string().nullable(),
   telegramUsername: z.string().nullable(),
   planCode: z.enum(["free", "student", "pro"]),
-  effectivePlanCode: z.enum(["free", "student", "pro"]),
+  effectivePlanCode: z.enum(["free", "student", "plus", "pro"]),
   subscriptionStatus: z.string().nullable(),
   createdAt: z.string().datetime(),
   lastSeenAt: z.string().datetime().nullable(),

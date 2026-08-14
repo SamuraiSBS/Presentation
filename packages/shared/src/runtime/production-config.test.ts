@@ -36,6 +36,8 @@ const productionEnvironment = {
   BACKUP_DRILL_MAX_AGE_DAYS: "7",
   OPERATIONS_OWNER: "studydeck-on-call",
   OPERATIONS_ALERT_CHANNEL: "telegram:123456789",
+  YOOKASSA_SHOP_ID: "123456",
+  YOOKASSA_SECRET_KEY: `${secret}-yookassa`,
   HSTS_MAX_AGE: "31536000",
   TRUST_PROXY_HOPS: "1",
   MALWARE_SCAN_ENABLED: "true",
@@ -98,11 +100,15 @@ describe("production configuration", () => {
       BACKUP_OBJECT_LOCK_RETENTION_DAYS: "1",
       OPERATIONS_OWNER: "",
       OPERATIONS_ALERT_CHANNEL: "",
+      YOOKASSA_SHOP_ID: "",
+      YOOKASSA_SECRET_KEY: "change-me",
     }).join("\n");
     expect(errors).toMatch(/BACKUP_ENABLED/);
     expect(errors).toMatch(/BACKUP_AGE_RECIPIENT/);
     expect(errors).toMatch(/BACKUP_S3_ENDPOINT/);
     expect(errors).toMatch(/BACKUP_RETENTION_DAYS/);
     expect(errors).toMatch(/OPERATIONS_OWNER/);
+    expect(errors).toMatch(/YOOKASSA_SHOP_ID/);
+    expect(errors).toMatch(/YOOKASSA_SECRET_KEY/);
   });
 });

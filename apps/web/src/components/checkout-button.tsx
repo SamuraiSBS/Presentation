@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import * as Sentry from "@sentry/nextjs";
+import type { PaidPlanCode } from "@studydeck/shared";
 
-export function CheckoutButton({ plan }: { plan: "student" | "pro" }) {
+export function CheckoutButton({ plan }: { plan: PaidPlanCode }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const idempotencyKey = useRef<string | null>(null);
 
   async function checkout() {
     setBusy(true);
@@ -16,22 +18,23 @@ export function CheckoutButton({ plan }: { plan: "student" | "pro" }) {
       const response = await fetch("/api/billing/checkout", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ plan, idempotencyKey: checkoutIdempotencyKey(plan) }),
+        body: JSON.stringify({ plan, idempotencyKey: idempotencyKey.current ||= `checkout:${plan}:${crypto.randomUUID()}` }),
       });
       const result = await response.json().catch(() => null) as { url?: unknown; message?: unknown } | null;
       if (!response.ok || typeof result?.url !== "string") {
-        throw new Error(typeof result?.message === "string" ? result.message : "Checkout session was not created");
+        throw new Error(typeof result?.message === "string" ? result.message : "Не удалось создать платёж");
       }
 
       window.location.assign(result.url);
     } catch (cause) {
+      idempotencyKey.current = null;
       Sentry.addBreadcrumb({
         category: "billing.checkout",
         level: "error",
-        message: "Checkout session creation failed",
+        message: "YooKassa checkout creation failed",
         data: { plan, reason: cause instanceof Error ? cause.message : "unknown" },
       });
-      setError("Не удалось открыть страницу оплаты. Проверьте подключение и повторите попытку.");
+      setError("Не удалось открыть оплату. Проверьте соединение и попробуйте ещё раз.");
     } finally {
       setBusy(false);
     }
@@ -40,19 +43,9 @@ export function CheckoutButton({ plan }: { plan: "student" | "pro" }) {
   return (
     <div>
       <button className="button" type="button" onClick={checkout} disabled={busy}>
-        {busy ? <><LoaderCircle className="spin" aria-hidden="true" size={18} />Открываем оплату...</> : error ? "Повторить попытку" : "Выбрать план"}
+        {busy ? <><LoaderCircle className="spin" aria-hidden="true" size={18} />Открываем оплату...</> : error ? "Повторить попытку" : "Выбрать тариф"}
       </button>
       {error ? <p role="alert" aria-live="assertive">{error}</p> : null}
     </div>
   );
-}
-
-function checkoutIdempotencyKey(plan: "student" | "pro") {
-  const storageKey = `studydeck:checkout:idempotency:${plan}`;
-  const existing = window.sessionStorage.getItem(storageKey);
-  if (existing) return existing;
-
-  const key = `checkout:${plan}:${crypto.randomUUID()}`;
-  window.sessionStorage.setItem(storageKey, key);
-  return key;
 }

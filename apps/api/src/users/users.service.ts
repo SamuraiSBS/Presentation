@@ -32,7 +32,7 @@ export class UsersService {
         },
       },
     });
-    return { ...user, usage };
+    return { ...user, planCode: usage.planCode, usage };
   }
 
   async removeMe(userId: string, confirmation: unknown) {

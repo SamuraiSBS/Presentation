@@ -319,7 +319,7 @@ export class AdminService {
     return { ok: true as const, message: "Проект удалён", auditId: audit.id };
   }
 
-  private async userRow(user: { id: string; name: string | null; image: string | null; telegramId: string | null; telegramUsername: string | null; planCode: "free" | "student" | "pro"; subscriptionStatus: string | null; createdAt: Date; lastSeenAt: Date | null; blockedAt: Date | null; planOverride: "free" | "student" | "pro" | null; planOverrideStartsAt: Date | null; planOverrideExpiresAt: Date | null; _count: { projects: number } }) {
+  private async userRow(user: { id: string; name: string | null; image: string | null; telegramId: string | null; telegramUsername: string | null; planCode: "free" | "student" | "plus" | "pro"; subscriptionStatus: string | null; createdAt: Date; lastSeenAt: Date | null; blockedAt: Date | null; planOverride: "free" | "student" | "plus" | "pro" | null; planOverrideStartsAt: Date | null; planOverrideExpiresAt: Date | null; _count: { projects: number } }) {
     const now = new Date();
     const effectivePlanCode = user.planOverride && (!user.planOverrideStartsAt || user.planOverrideStartsAt <= now) && (!user.planOverrideExpiresAt || user.planOverrideExpiresAt > now) ? user.planOverride : user.planCode;
     const [generations, errors, ai, costs, revenue] = await Promise.all([

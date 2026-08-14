@@ -98,10 +98,13 @@ describe("shared contracts", () => {
     ).not.toThrow();
   });
 
-  it("exposes the personal-account free plan limits", () => {
-    expect(planLimits.free.monthlyPresentations).toBe(10);
+  it("exposes the fixed subscription generation limits", () => {
+    expect(planLimits.free.generationLimit).toBe(3);
     expect(planLimits.free.exports).toEqual(["pdf", "pptx"]);
-    expect(planLimits.free.maxSlides).toBe(10);
+    expect(planLimits.free.allowedSlideCounts).toEqual([6]);
+    expect(planLimits.student.generationLimit).toBe(4);
+    expect(planLimits.plus.allowedSlideCounts).toEqual([6, 8, 10, 12]);
+    expect(planLimits.pro.generationLimit).toBe(15);
   });
 
   it("accepts both school and university audiences while keeping the university default", () => {
@@ -164,11 +167,14 @@ describe("shared contracts", () => {
     const usage = usageSummarySchema.parse({
       planCode: "free",
       period: "2026-07",
+      reset: "month",
+      allowedSlideCounts: [6],
       limit: 10,
       used: 2,
       remaining: 8,
       resetsAt: "2026-07-31T21:00:00.000Z",
       exhausted: false,
+      subscriptionExpiresAt: null,
     });
 
     expect(project.updatedAt).toBe("2026-07-11T10:00:00.000Z");

@@ -2,13 +2,10 @@
 
 import { useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { Check, FileUp, GraduationCap, School, Search, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { fadeSlideVariants, listItemVariants, transitions } from "@/components/motion/motion-presets";
 import type { UsageSummary } from "@/lib/account-types";
-import { canCreateProject } from "@/lib/account-types";
-import { formatResetDate } from "@/lib/project-ui";
 import { ApiClientError, apiJson } from "@/lib/project-queries";
 import { RUSSIAN_STUDENT_SPEECH_TIMING_PRESETS, getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
 
@@ -27,11 +24,11 @@ const studentGenerationBrief = {
   exportTarget: "web_and_pptx_pdf",
 } as const;
 
-export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxSlides: number }) {
+export function NewProjectForm({ usage }: { usage: UsageSummary }) {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [topic, setTopic] = useState("");
-  const [slideCount, setSlideCount] = useState(10);
+  const [slideCount, setSlideCount] = useState(() => usage.allowedSlideCounts.includes(10) ? 10 : usage.allowedSlideCounts.at(-1) || 6);
   const [volumeConfirmed, setVolumeConfirmed] = useState(false);
   const [sourceMode, setSourceMode] = useState<"web" | "files">("web");
   const [audience, setAudience] = useState<"school" | "university">("university");
@@ -41,8 +38,7 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
   const [error, setError] = useState("");
 
   const normalizedTopic = topic.trim();
-  const availableSlideOptions = slideOptions.filter((option) => option.count <= maxSlides);
-  const creationAllowed = canCreateProject(usage);
+  const availableSlideOptions = slideOptions.filter((option) => usage.allowedSlideCounts.includes(option.count));
 
   function nextFromTopic() {
     setError("");
@@ -64,10 +60,6 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
   }
 
   async function createProjectDraft() {
-    if (!creationAllowed) {
-      setError(`Лимит исчерпан. Новую презентацию можно создать ${formatResetDate(usage)}.`);
-      return;
-    }
     if (sourceMode === "files" && !files.length) {
       setError("Добавь хотя бы один файл или выбери поиск источников в интернете.");
       return;
@@ -105,7 +97,6 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
 
   return (
     <section className="wizard panel new-workspace" aria-label="Создание презентации">
-      {!creationAllowed ? <div className="usage-blocked" role="alert"><strong>Лимит на этот месяц исчерпан</strong><span>Создание снова откроется {formatResetDate(usage)}. Существующие презентации можно редактировать и экспортировать.</span><Link className="ghost" href="/projects">Открыть презентации</Link></div> : null}
       <nav className="wizard-progress" aria-label="Шаги создания презентации">
         {[
           { label: "Тема", complete: Boolean(normalizedTopic) },
@@ -165,7 +156,7 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
               </fieldset>
             </div>
             <div className="actions action-row">
-              <button className="button" data-testid="new-project-next" type="button" onClick={nextFromTopic} disabled={!creationAllowed}>
+              <button className="button" data-testid="new-project-next" type="button" onClick={nextFromTopic}>
                 Продолжить
               </button>
             </div>
@@ -311,7 +302,7 @@ export function NewProjectForm({ usage, maxSlides }: { usage: UsageSummary; maxS
               <button className="ghost" type="button" onClick={() => setStep(1)} disabled={busy}>
                 Назад
               </button>
-              <button className="button" data-testid="new-project-next" type="button" onClick={createProjectDraft} disabled={busy || !creationAllowed || (sourceMode === "files" && !files.length)}>
+              <button className="button" data-testid="new-project-next" type="button" onClick={createProjectDraft} disabled={busy || (sourceMode === "files" && !files.length)}>
                 {busy ? "Сохраняем проект..." : "Сохранить и проверить настройки"}
               </button>
             </div>

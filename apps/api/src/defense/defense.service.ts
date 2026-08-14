@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { ConfigService } from "@nestjs/config";
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -24,7 +24,6 @@ import {
   type UpdateFactInput,
   type UpdateRequirementInput,
   defensePlanSchema,
-  planLimits,
 } from "@studydeck/shared";
 import { ProjectAccessService } from "../access/project-access.service.js";
 import { badRequest, conflict, resourceNotFound } from "../errors/api-error.js";
@@ -71,16 +70,7 @@ export class DefenseService {
 
     try {
       const project = await this.prisma.$transaction(async (tx) => {
-        const user = await tx.user.upsert({
-          where: { id: userId },
-          create: { id: userId },
-          update: {},
-          select: { planCode: true },
-        });
-        const limit = planLimits[user.planCode];
-        if (input.targetSlideCount > limit.maxSlides) {
-          throw new BadRequestException(`Your plan allows up to ${limit.maxSlides} slides`);
-        }
+        await this.usage.assertSlideCount(tx, userId, input.targetSlideCount);
         if (input.folderId) {
           const folder = await tx.folder.findFirst({
             where: { id: input.folderId, ownerId: userId },
@@ -88,7 +78,6 @@ export class DefenseService {
           });
           if (!folder) throw resourceNotFound("Папка не найдена");
         }
-        await this.usage.reserveCreationSlot(tx, userId);
         return tx.project.create({
           data: {
             userId,

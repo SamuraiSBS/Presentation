@@ -10,7 +10,13 @@ datasource db {
 enum PlanCode {
   free
   student
+  plus
   pro
+}
+
+enum GenerationQuotaReservationStatus {
+  reserved
+  released
 }
 
 enum ProjectStatus {
@@ -234,6 +240,8 @@ model User {
   stripeCustomerId      String?              @unique
   stripeSubscriptionId  String?              @unique
   subscriptionStatus    String?
+  subscriptionExpiresAt DateTime?
+  subscriptionQuotaEpoch String?
   lastSeenAt            DateTime?
   blockedAt             DateTime?
   blockedById           String?
@@ -249,6 +257,9 @@ model User {
   sessions              Session[]
   projects              Project[]
   usageCounters         UsageCounter[]
+  generationQuotaCounters GenerationQuotaCounter[]
+  generationQuotaReservations GenerationQuotaReservation[]
+  yooKassaPayments      YooKassaPayment[]
   folders               Folder[]
   projectMemberships    ProjectMember[]
   projectInvitesCreated ProjectInvitation[]  @relation("InviteCreator")
@@ -270,6 +281,7 @@ model User {
   @@index([createdAt])
   @@index([lastSeenAt])
   @@index([blockedAt])
+  @@index([subscriptionExpiresAt])
 }
 
 model AccountDeletion {
@@ -603,10 +615,62 @@ model GenerationJob {
   costEvents        CostEvent[]
   narrationEnvelope CostEnvelope? @relation("CostEnvelopeNarrationJob")
   presentationEnvelope CostEnvelope? @relation("CostEnvelopePresentationJob")
+  quotaReservation    GenerationQuotaReservation?
 
   @@unique([projectId, kind, requestKey])
   @@index([projectId, createdAt])
   @@index([projectId, kind, createdAt])
+}
+
+model GenerationQuotaCounter {
+  id         String   @id @default(cuid())
+  userId     String
+  period     String
+  quotaEpoch String
+  used       Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, period, quotaEpoch])
+  @@index([userId, period])
+}
+
+model GenerationQuotaReservation {
+  id              String                           @id @default(cuid())
+  userId          String
+  generationJobId String                           @unique
+  period          String
+  quotaEpoch      String
+  planCode        PlanCode
+  status          GenerationQuotaReservationStatus @default(reserved)
+  releasedAt      DateTime?
+  createdAt       DateTime                         @default(now())
+  updatedAt       DateTime                         @updatedAt
+  user            User                             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  generationJob   GenerationJob                    @relation(fields: [generationJobId], references: [id], onDelete: Cascade)
+
+  @@index([userId, period, quotaEpoch, status])
+}
+
+model YooKassaPayment {
+  id                 String   @id @default(cuid())
+  userId             String
+  idempotencyKey     String   @unique
+  providerPaymentId  String?  @unique
+  planCode           PlanCode
+  amountRub          Decimal  @db.Decimal(24, 2)
+  status             String
+  confirmationUrl    String?
+  paidAt             DateTime?
+  activatedAt        DateTime?
+  payload            Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
 }
 
 model Export {
@@ -790,12 +854,13 @@ model ExchangeRate {
 model PaymentTransaction {
   id                    String                   @id @default(cuid())
   userId                String?
-  stripeEventId         String                   @unique
+  providerEventId       String                   @unique @map("stripeEventId")
   stripeCustomerId      String?
   stripeSubscriptionId  String?
   stripeInvoiceId       String?
   stripePaymentIntentId String?
   stripeChargeId        String?
+  yooKassaPaymentId     String?                  @unique
   type                  PaymentTransactionType
   status                PaymentTransactionStatus
   grossAmount           Decimal                  @db.Decimal(24, 10)

@@ -31,6 +31,7 @@ import { failCostEnvelope, finalizeFailedCostEnvelope, reserveCostEnvelope, sett
 import { EconomicReleaseGateError, evaluateEconomicReleaseGate } from "../economic-release-gate.js";
 import { createMandatorySourceSnapshot, parseMandatorySourceSnapshot, snapshotSources } from "../source-snapshot.js";
 import { captureWorkerProductAnalytics } from "../product-analytics.js";
+import { releaseGenerationQuotaReservation } from "../generation-quota.js";
 import {
   handleDefenseAnalysisJob,
   handleDefenseComplianceJob,
@@ -444,6 +445,14 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
         stageStartedAt: new Date(),
       },
     });
+    if (kind === "presentation" && !willRetry && job.data.generationJobId) {
+      // The customer was charged only for a queued launch. A terminal service
+      // failure returns that launch exactly once; the conditional reservation
+      // transition also keeps duplicate BullMQ deliveries harmless.
+      await releaseGenerationQuotaReservation(prisma, job.data.generationJobId).catch((releaseError) => {
+        logger.error({ projectId, jobId: job.id, generationJobId: job.data.generationJobId, ...errorLogFields(releaseError) }, "generation quota refund failed");
+      });
+    }
     if (kind === "narration" && !willRetry && job.data.costEnvelopeId) {
       try {
         // The in-memory project that began this job may be stale. Only close

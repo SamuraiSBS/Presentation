@@ -65,12 +65,15 @@ export type ProjectMember = z.infer<typeof projectMemberSchema>;
 
 export const usageSummarySchema = z.object({
   planCode: planCodeSchema,
-  period: z.string().regex(/^\d{4}-\d{2}$/),
+  period: z.string().min(7).max(20),
+  reset: z.enum(["month", "week"]),
+  allowedSlideCounts: z.array(z.number().int().positive()).min(1),
   limit: z.number().int().nonnegative(),
   used: z.number().int().nonnegative(),
   remaining: z.number().int().nonnegative(),
   resetsAt: isoDateTimeSchema,
   exhausted: z.boolean(),
+  subscriptionExpiresAt: isoDateTimeSchema.nullable(),
 });
 export type UsageSummary = z.infer<typeof usageSummarySchema>;
 

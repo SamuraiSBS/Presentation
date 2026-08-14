@@ -112,17 +112,7 @@ export class ProjectsService {
       "studydeck.slide_count": input.slideCount,
       "studydeck.mode": input.mode,
     }, async () => this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.upsert({
-        where: { id: userId },
-        create: { id: userId },
-        update: {},
-        select: { planCode: true },
-      });
-      const limit = planLimits[user.planCode];
-      if (input.slideCount > limit.maxSlides) {
-        throw new BadRequestException(`Your plan allows up to ${limit.maxSlides} slides`);
-      }
-      await this.usage.reserveCreationSlot(tx, userId);
+      await this.usage.assertSlideCount(tx, userId, input.slideCount);
       return tx.project.create({
         data: {
           userId,
@@ -198,7 +188,6 @@ export class ProjectsService {
     const keyMap = await this.storage.copyProjectPrefix(project.id, destinationProjectId);
     try {
       await this.prisma.$transaction(async (tx) => {
-        await this.usage.reserveCreationSlot(tx, access.project.userId);
         await tx.project.create({
           data: {
             id: destinationProjectId,
@@ -536,43 +525,69 @@ export class ProjectsService {
         );
       }
 
-      const activeJob = await this.prisma.generationJob.findFirst({
-        where: { projectId: project.id, kind: "presentation", status: { in: [...activePresentationJobStatuses] } },
-        orderBy: { createdAt: "desc" },
-      });
-      if (activeJob) {
+      const envelope = await this.createAitunnelEnvelope(project.id, "presentation", access.project.userId);
+      const job = envelope.job;
+      if (envelope.existing) {
         const status = project.status === "generating" ? "generating" : "queued";
         if (project.status !== status) {
           await this.prisma.project.update({ where: { id: project.id }, data: { status, error: null } });
         }
-        return { projectId: project.id, jobId: activeJob.id, queueJobId: activeJob.queueJobId, status };
+        return { projectId: project.id, jobId: job.id, queueJobId: job.queueJobId, status };
       }
 
       await this.prisma.project.update({ where: { id: project.id }, data: { status: "queued", error: null } });
-      const envelope = await this.createAitunnelEnvelope(project.id, "presentation");
-      const job = envelope.job;
-      const queueJob = await this.generationQueue.add(
-        "generate-presentation",
-        { projectId: project.id, userId: access.project.userId, generationJobId: job.id, costEnvelopeId: envelope.id, traceContext: injectTraceContext() },
-        generationJobOptions(),
-      );
-      await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
-      void this.productAnalytics?.capture(access.project.userId, "generation_requested", {
-        kind: "presentation",
-        retry: Boolean(project.jobs.some((item) => item.kind === "presentation" && item.status === "failed")),
-      });
-      return { projectId: project.id, jobId: job.id, queueJobId: queueJob.id, status: "queued" };
+      let queueAccepted = false;
+      try {
+        const queueJob = await this.generationQueue.add(
+          "generate-presentation",
+          { projectId: project.id, userId: access.project.userId, generationJobId: job.id, costEnvelopeId: envelope.id, traceContext: injectTraceContext() },
+          generationJobOptions(),
+        );
+        queueAccepted = true;
+        await this.prisma.generationJob.update({ where: { id: job.id }, data: { queueJobId: queueJob.id } });
+        void this.productAnalytics?.capture(access.project.userId, "generation_requested", {
+          kind: "presentation",
+          retry: Boolean(project.jobs.some((item) => item.kind === "presentation" && item.status === "failed")),
+        });
+        return { projectId: project.id, jobId: job.id, queueJobId: queueJob.id, status: "queued" };
+      } catch (error) {
+        // A queue rejection means nothing was launched, so the slot belongs
+        // back to the user. Once BullMQ accepted the job it remains charged:
+        // the worker will either complete it or perform the terminal refund.
+        if (!queueAccepted) {
+          await this.usage.releaseGenerationSlot(job.id).catch(() => undefined);
+          await this.prisma.$transaction([
+            this.prisma.generationJob.update({ where: { id: job.id }, data: { status: "failed", error: "queue_unavailable" } }),
+            this.prisma.project.update({ where: { id: project.id }, data: { status: "script_ready", error: null } }),
+          ]).catch(() => undefined);
+        }
+        throw error;
+      }
     });
   }
 
-  private async createAitunnelEnvelope(projectId: string, kind: "narration" | "presentation") {
-    if (process.env.AI_PROVIDER?.trim().toLowerCase() !== "aitunnel") {
-      const job = await this.prisma.generationJob.create({ data: { projectId, kind, status: "queued" } });
-      return { id: undefined, job };
-    }
+  private async createAitunnelEnvelope(projectId: string, kind: "narration" | "presentation", ownerId?: string) {
     const policy = standardGenerationCostPolicy();
     return this.prisma.$transaction(async (tx) => {
+      // This row lock serializes two browser tabs trying to launch the same
+      // deck. The active-job read below therefore sees the first reservation.
+      let slideCount: number | undefined;
+      if (kind === "presentation") {
+        const lockedProject = await tx.project.update({ where: { id: projectId }, data: { updatedAt: new Date() }, select: { slideCount: true } });
+        slideCount = lockedProject.slideCount;
+        const active = await tx.generationJob.findFirst({
+          where: { projectId, kind, status: { in: [...activePresentationJobStatuses] } },
+          orderBy: { createdAt: "desc" },
+        });
+        if (active) return { id: undefined, job: active, existing: true };
+      }
       const job = await tx.generationJob.create({ data: { projectId, kind, status: "queued" } });
+      if (kind === "presentation" && ownerId) {
+        await this.usage.reserveGenerationSlot(tx, ownerId, job.id, slideCount!);
+      }
+      if (process.env.AI_PROVIDER?.trim().toLowerCase() !== "aitunnel") {
+        return { id: undefined, job, existing: false };
+      }
       const priorAttemptEnvelopes = kind === "presentation"
         ? await tx.costEnvelope.findMany({
           // A failed presentation can exhaust its envelope after the source
@@ -605,7 +620,7 @@ export class ProjectsService {
         // worker's reservation keys include generationJobId, so this keeps
         // retry spend under the same cap without replaying prior settlement.
         const envelope = await tx.costEnvelope.update({ where: { id: existing.id }, data: { presentationJobId: job.id } });
-        return { id: envelope.id, job };
+        return { id: envelope.id, job, existing: false };
       }
       const envelope = await tx.costEnvelope.create({
         data: {
@@ -621,7 +636,7 @@ export class ProjectsService {
           ...(kind === "narration" ? { narrationJobId: job.id } : { presentationJobId: job.id }),
         },
       });
-      return { id: envelope.id, job };
+      return { id: envelope.id, job, existing: false };
     });
   }
 
@@ -722,7 +737,8 @@ export class ProjectsService {
     if (!project) throw resourceNotFound("Презентация не найдена");
     if (!project.presentation) throw new NotFoundException("Presentation not generated yet");
     if (project.userId !== access.project.userId) throw resourceNotFound("Презентация не найдена");
-    if (file.size > planLimits[project.user.planCode].maxProjectBytes) {
+    const entitlement = await this.usage.getPlan(project.userId);
+    if (file.size > planLimits[entitlement.planCode].maxProjectBytes) {
       throw new BadRequestException("Image upload limit exceeded");
     }
     // Object storage is shared with workers and exports, so scan before the
