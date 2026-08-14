@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, Check } from "lucide-react";
-import { LandingFinalCtaArtifact } from "@/components/landing/landing-final-cta-artifact";
 import { LANDING_SHOWCASE_FIXTURES } from "@/lib/landing-demo-data";
+import { LandingFinalCtaArtifact } from "@/components/landing/landing-final-cta-artifact";
 
 export function LandingFinalCta() {
   const featuredFixture = LANDING_SHOWCASE_FIXTURES[0];

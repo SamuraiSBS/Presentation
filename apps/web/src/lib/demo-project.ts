@@ -1,4 +1,5 @@
 import { ensureEditableCanvas, type PresentationDocument, type SlideBlock, type SlideCanvas } from "@studydeck/shared";
+import type { DefenseWorkspacePayload } from "@/lib/defense-queries";
 
 const source = {
   id: "src-demo",
@@ -147,6 +148,120 @@ export const demoProject = {
     id: demoPresentation.id,
     document: demoPresentation,
   },
+};
+
+const demoDefenseSource = {
+  id: "src-defense-brief",
+  label: "Бриф учебного проекта",
+  type: "FILE",
+  excerpt: "MVP помогает студенту подготовить структуру выступления, слайды и текст доклада.",
+  included: true,
+  role: "defense_spec" as const,
+  metadata: {
+    origin: "upload" as const,
+    originalFileName: "project-brief.pdf",
+    mimeType: "application/pdf",
+    locator: "стр. 2",
+    chunks: [],
+    warnings: [],
+  },
+};
+
+const demoDefensePlanSlides = [
+  ["defense-plan-1", "Проблема и цель", "Сформулировать задачу учебного проекта"],
+  ["defense-plan-2", "Решение", "Показать ключевые возможности StudyDeck"],
+  ["defense-plan-3", "Проверка результата", "Связать факты и требования с демонстрацией"],
+  ["defense-plan-4", "Вывод", "Подвести итог и обозначить следующий шаг"],
+] as const;
+
+export const demoDefenseProject = {
+  ...demoProject,
+  id: "defense-demo",
+  title: "Защита учебного проекта StudyDeck",
+  workflow: "requirements_driven" as const,
+};
+
+export const demoDefenseWorkspace: DefenseWorkspacePayload = {
+  workspace: {
+    id: "workspace-defense-demo",
+    projectId: demoDefenseProject.id,
+    defenseType: "hackathon",
+    complianceMode: "strict",
+    language: "ru",
+    targetSlideCount: 4,
+    targetDurationSeconds: 300,
+    allowWebImages: false,
+    authorProfile: { teamName: "StudyDeck demo", eventName: "Учебная защита" },
+    standardPresetVersion: "hackathon-v1",
+    analysisStatus: "review_ready",
+    analysisRevision: 1,
+    planRevision: 1,
+    styleBrief: null,
+    analysisError: null,
+    plan: {
+      version: 1,
+      defenseType: "hackathon",
+      complianceMode: "strict",
+      presetVersion: "hackathon-v1",
+      status: "draft",
+      slides: demoDefensePlanSlides.map(([id, title, purpose], index) => ({
+        id,
+        order: index + 1,
+        title,
+        purpose,
+        timingSeconds: 60,
+        requirementIds: index === 0 ? ["requirement-defense-brief"] : [],
+        factIds: index === 1 ? ["fact-defense-mvp"] : [],
+        assetSourceIds: index === 1 ? [demoDefenseSource.id] : [],
+        placeholders: [],
+        visualStrategy: index === 1 ? "Показать краткую схему сценария работы" : "",
+        origin: "user",
+      })),
+      totalTimingSeconds: 240,
+      approvedAt: null,
+    },
+    facts: [],
+    requirements: [],
+    conflicts: [],
+    assets: [],
+    createdAt: "2026-08-12T12:00:00.000Z",
+    updatedAt: "2026-08-12T12:00:00.000Z",
+  },
+  sources: [demoDefenseSource],
+  facts: [
+    {
+      id: "fact-defense-mvp",
+      workspaceId: "workspace-defense-demo",
+      key: "mvp-purpose",
+      statement: "MVP объединяет подготовку структуры, слайдов и текста выступления в одном проекте.",
+      state: "active",
+      evidence: [{ confirmation: "source", sourceId: demoDefenseSource.id, locator: "стр. 2", excerpt: demoDefenseSource.excerpt }],
+      createdAt: "2026-08-12T12:00:00.000Z",
+      updatedAt: "2026-08-12T12:00:00.000Z",
+    },
+  ],
+  requirements: [
+    {
+      id: "requirement-defense-brief",
+      workspaceId: "workspace-defense-demo",
+      key: "demo-slide-count",
+      text: "В защите должны быть цель, решение, подтверждённый результат и вывод.",
+      priority: "required",
+      origin: "source",
+      sourceId: demoDefenseSource.id,
+      locator: "стр. 2",
+      excerpt: demoDefenseSource.excerpt,
+      state: "active",
+      rule: { kind: "slide_count", exact: 4 },
+      createdAt: "2026-08-12T12:00:00.000Z",
+      updatedAt: "2026-08-12T12:00:00.000Z",
+    },
+  ],
+  conflicts: [],
+  reports: [],
+  jobs: [],
+  presentationRevision: 1,
+  accessRole: "owner",
 };
 
 const scriptReviewSources = Array.from({ length: 6 }, (_, index) => ({

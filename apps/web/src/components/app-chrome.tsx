@@ -1,29 +1,44 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
-import { AppHeader } from "@/components/app-header";
+import type { Session } from "@studydeck/auth";
 import { PublicHeader } from "@/components/landing/public-header";
-import { classifyAppRoute, usesAccountNavigation } from "@/lib/app-route-classification";
-import { MobileBottomNav } from "@/components/mobile-bottom-nav";
-import { MotionProvider } from "@/components/motion/motion-provider";
-import { PageTransition } from "@/components/motion/page-transition";
 import { PublicFooter } from "@/components/landing/public-footer";
+import { classifyAppRoute } from "@/lib/app-route-classification";
 
-export function AppChrome({ children, adminAvailable = false }: { children: React.ReactNode; adminAvailable?: boolean }) {
+const PrivateAppRuntime = dynamic(
+  () => import("@/components/private-app-runtime").then((module) => module.PrivateAppRuntime),
+  { ssr: false },
+);
+
+export function AppChrome({
+  children,
+  session,
+  adminAvailable = false,
+}: {
+  children: React.ReactNode;
+  session?: Session | null;
+  adminAvailable?: boolean;
+}) {
   const pathname = usePathname();
   const route = classifyAppRoute(pathname);
-  const login = route === "auth";
-  const publicLanding = route === "public";
-  const accountRoute = usesAccountNavigation(route);
+
+  if (route === "public") {
+    return (
+      <>
+        <PublicHeader isAuthenticated={Boolean(session?.user?.id)} />
+        <div className="app-content app-content-public">
+          <div className="motion-page" data-route-key={pathname}>{children}</div>
+        </div>
+        <PublicFooter />
+      </>
+    );
+  }
 
   return (
-    <MotionProvider>
-      {publicLanding ? <PublicHeader /> : !login ? <AppHeader adminAvailable={adminAvailable} /> : null}
-      <div className={login ? "app-content app-content-auth" : publicLanding ? "app-content app-content-public" : "app-content"}>
-        <PageTransition routeKey={pathname}>{children}</PageTransition>
-      </div>
-      {publicLanding ? <PublicFooter /> : null}
-      {!login && accountRoute ? <MobileBottomNav /> : null}
-    </MotionProvider>
+    <PrivateAppRuntime adminAvailable={adminAvailable} pathname={pathname} route={route} session={session}>
+      {children}
+    </PrivateAppRuntime>
   );
 }

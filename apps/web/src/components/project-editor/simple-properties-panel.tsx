@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import NextImage from "next/image";
 import { Image as ImageIcon, Type, Upload } from "lucide-react";
-import { RichTextField } from "@/components/editor/rich-text-field";
+import { LazyRichTextField as RichTextField } from "@/components/editor/lazy-rich-text-field";
 import type { CanvasImageElement, Slide } from "@studydeck/shared";
 import { Icon } from "./editor-icons";
 import type { SimpleEditorTab } from "./editor-types";

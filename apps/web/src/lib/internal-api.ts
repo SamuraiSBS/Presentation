@@ -79,6 +79,8 @@ export async function internalRequest<T = unknown>(
 async function demoPreviewResponse(path: string): Promise<unknown | null> {
   const {
     demoDashboard,
+    demoDefenseProject,
+    demoDefenseWorkspace,
     demoFolders,
     demoProfile,
     demoProject,
@@ -87,6 +89,8 @@ async function demoPreviewResponse(path: string): Promise<unknown | null> {
   } = await import("./demo-project");
 
   if (path === "/projects/demo") return demoProject;
+  if (path === "/projects/defense-demo") return demoDefenseProject;
+  if (path === "/projects/defense-demo/defense") return demoDefenseWorkspace;
   if (path === "/projects/script-review-demo") return demoScriptReviewProject;
   if (path === "/dashboard") return demoDashboard;
   if (path === "/folders") return demoFolders;

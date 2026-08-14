@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { RichTextField } from "@/components/editor/rich-text-field";
+import { LazyRichTextField as RichTextField } from "@/components/editor/lazy-rich-text-field";
 import { Select } from "@/components/ui/select";
 import type { CanvasElement, CanvasImageElement, CanvasShapeElement, CanvasTextElement, Slide } from "@studydeck/shared";
 import { elementLabel } from "./editor-errors";

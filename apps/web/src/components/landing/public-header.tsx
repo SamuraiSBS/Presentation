@@ -1,7 +1,4 @@
-"use client";
-
 import Link from "next/link";
-import { useSession } from "@studydeck/auth/react";
 import { ArrowUpRight, GraduationCap, LayoutDashboard, LogIn } from "lucide-react";
 
 const landingLinks = [
@@ -10,9 +7,7 @@ const landingLinks = [
   { href: "#capabilities", label: "Возможности" },
 ] as const;
 
-export function PublicHeader() {
-  const { data: session, status } = useSession();
-  const isAuthenticated = status === "authenticated" && Boolean(session?.user?.id);
+export function PublicHeader({ isAuthenticated = false }: { isAuthenticated?: boolean }) {
   const accountHref = isAuthenticated ? "/dashboard" : "/login";
   const accountLabel = isAuthenticated ? "Кабинет" : "Войти";
 

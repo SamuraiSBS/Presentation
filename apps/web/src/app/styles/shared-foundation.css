@@ -1,0 +1,88 @@
+/* Reusable application primitives. Route-specific page and wizard rules live
+   beside the routes that render them. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.card,
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.card { padding: 18px; }
+.panel { padding: clamp(18px, 3vw, 28px); }
+.muted { color: var(--muted); }
+
+.stat {
+  font-size: 34px;
+  font-weight: 950;
+}
+
+.form {
+  display: grid;
+  gap: 14px;
+  max-width: 820px;
+}
+
+.form-error {
+  margin: 0;
+  border: 1px solid #f0b8a8;
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: #fff2ee;
+  color: #8d2d18;
+  font-weight: 800;
+}
+
+.field {
+  display: grid;
+  gap: 7px;
+  color: #343b34;
+  font-weight: 800;
+}
+
+.input,
+.textarea,
+.select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fffefb;
+  padding: 12px;
+  color: var(--ink);
+}
+
+.textarea {
+  min-height: 170px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 16px;
+}
+
+.sidebar,
+.editor-shell { min-width: 0; }
+
+.project-list {
+  display: grid;
+  gap: 10px;
+}
+
+.status {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #eef4ea;
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 850;
+}
