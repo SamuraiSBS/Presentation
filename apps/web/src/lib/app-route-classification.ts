@@ -1,9 +1,10 @@
 export type AppRouteKind = "public" | "auth" | "account" | "editor" | "admin";
 
+const publicRoutes = new Set(["/", "/privacy", "/terms", "/support"]);
 const accountPrefixes = ["/dashboard", "/projects", "/new", "/folders", "/pricing", "/profile", "/billing", "/invite"];
 
 export function classifyAppRoute(pathname: string): AppRouteKind {
-  if (pathname === "/") return "public";
+  if (publicRoutes.has(pathname)) return "public";
   if (pathname === "/login") return "auth";
   if (pathname === "/admin" || pathname.startsWith("/admin/")) return "admin";
   if (/^\/projects\/[^/]+\/(editor|script|export)\/?$/.test(pathname)) return "editor";
