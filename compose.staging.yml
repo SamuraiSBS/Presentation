@@ -1,0 +1,27 @@
+# Temporary public test environment. Keep this overlay separate from
+# compose.production.yml: production keeps its encrypted off-site backups,
+# payment configuration, and long-lived HSTS policy.
+services:
+  api:
+    environment:
+      DEPLOYMENT_ENV: staging
+      BACKUP_ENABLED: "false"
+      YOOKASSA_SHOP_ID: ""
+      YOOKASSA_SECRET_KEY: ""
+      SENTRY_ENVIRONMENT: staging
+
+  worker:
+    environment:
+      DEPLOYMENT_ENV: staging
+      BACKUP_ENABLED: "false"
+      SENTRY_ENVIRONMENT: staging
+
+  web:
+    environment:
+      DEPLOYMENT_ENV: staging
+      NEXT_PUBLIC_SENTRY_ENVIRONMENT: staging
+
+  caddy:
+    environment:
+      # Do not teach browsers to pin the test deployment as a production host.
+      HSTS_MAX_AGE: "0"
