@@ -26,6 +26,7 @@ import { WorkflowProgress } from "@/components/workflow-progress";
 import { isStaleExport } from "@/lib/export-revision";
 import { DefenseExportCompliance } from "@/components/defense/defense-export-compliance";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ConnectionStatus } from "@/components/connection-status";
 
 type ExportProjectPayload = ProjectPayload & {
   presentation?: { document?: PresentationDocument } | null;
@@ -161,7 +162,9 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
   }
 
   return (
-    <section className="export-workspace" aria-labelledby="export-title">
+    <>
+      <ConnectionStatus scope="export" onReconnect={() => projectQuery.refetch().then(() => undefined)} />
+      <section className="export-workspace" aria-labelledby="export-title">
       <WorkflowProgress current={5} />
       <header className="export-header">
         <span className={`status status-${project.status}`}>{statusLabel(project.status)}</span>
@@ -212,11 +215,11 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
                   </Button>
                 )}
                 {livePdf?.status === "ready" && !pdfStale ? (
-                  <Button variant="secondary" type="button" onClick={() => downloadPresentation(livePdf)}>
+                  <Button variant="secondary" data-testid="export-pdf-action" type="button" onClick={() => downloadPresentation(livePdf)}>
                     <Download size={19} aria-hidden="true" />Скачать PDF
                   </Button>
                 ) : (
-                  <Button variant="secondary" type="button" onClick={startPdfExport} disabled={requestExport.isPending || pdfPending}>
+                  <Button variant="secondary" data-testid="export-pdf-action" type="button" onClick={startPdfExport} disabled={requestExport.isPending || pdfPending}>
                     {pdfPending ? <LoaderCircle className="spin" size={19} /> : livePdf?.status === "failed" ? <RefreshCw size={19} /> : <FileText size={19} />}
                     {pdfPending ? "Готовим PDF" : pdfStale ? "Собрать актуальный PDF" : livePdf?.status === "failed" ? "Повторить PDF" : "Подготовить PDF"}
                   </Button>
@@ -295,7 +298,8 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
           <div className="ui-dialog-actions"><Button variant="secondary" type="button" onClick={() => setExportWarning(null)}>Вернуться к проверке</Button><Button type="button" onClick={confirmWarningExport} disabled={requestExport.isPending || !exportWarning?.complianceReportId && !exportWarning?.preflightToken}>{requestExport.isPending ? <LoaderCircle className="spin" size={18} /> : <Download size={18} />}Подтвердить экспорт с проблемами</Button></div>
         </DialogContent>
       </Dialog>
-    </section>
+      </section>
+    </>
   );
 }
 

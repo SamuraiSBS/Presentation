@@ -1,12 +1,19 @@
 import type { Job } from "bullmq";
+import { Queue } from "bullmq";
 import crypto from "node:crypto";
 import { getPrisma } from "../prisma.js";
 import { errorLogFields, logger } from "../observability.js";
+import { createRedisConnection } from "../queue.js";
+import { deleteObject, deleteProjectPrefix } from "../storage.js";
+import { exportRetentionCutoff, exportStoragePolicy } from "./export-storage-policy.js";
 
-export async function handleAdminMaintenance(_job: Job) {
+export async function handleAdminMaintenance(job: Job) {
+  if (job.name === "delete-account") return handleAccountDeletion(job as Job<{ deletionId: string }>);
+  if (job.name !== "reconcile") throw new Error(`Unsupported maintenance job: ${job.name}`);
   const prisma = getPrisma();
   const now = new Date();
   await prisma.operationalEvent.deleteMany({ where: { expiresAt: { lt: now } } });
+  await cleanupExpiredExports(now);
   await refreshCbrRates(now);
 
   const stuckBefore = new Date(now.getTime() - Number(process.env.ADMIN_STUCK_JOB_MINUTES || 30) * 60_000);
@@ -26,7 +33,142 @@ export async function handleAdminMaintenance(_job: Job) {
       expiresAt: new Date(now.getTime() + 90 * 86_400_000),
     } });
   }
+  await recoverQueuedAccountDeletions();
   await evaluateAlerts(now);
+}
+
+async function cleanupExpiredExports(now: Date) {
+  const prisma = getPrisma();
+  const expired = await prisma.export.findMany({
+    where: {
+      status: { in: ["ready", "failed"] },
+      updatedAt: { lt: exportRetentionCutoff(now, exportStoragePolicy()) },
+    },
+    select: { id: true, objectKey: true },
+    orderBy: { updatedAt: "asc" },
+    take: 100,
+  });
+  for (const item of expired) {
+    try {
+      if (item.objectKey) await deleteObject(item.objectKey);
+      await prisma.export.delete({ where: { id: item.id } });
+    } catch (error) {
+      logger.error({ exportId: item.id, objectKey: item.objectKey, ...errorLogFields(error) }, "could not clean up expired export artifact");
+    }
+  }
+}
+
+async function recoverQueuedAccountDeletions() {
+  const prisma = getPrisma();
+  const pending = await prisma.accountDeletion.findMany({
+    where: { status: "queued", subscriptionCancelledAt: { not: null } },
+    select: { id: true, queueJobId: true },
+    take: 50,
+  });
+  if (!pending.length) return;
+  const queue = new Queue("admin-maintenance", { connection: createRedisConnection() });
+  try {
+    for (const deletion of pending) {
+      const existing = deletion.queueJobId ? await queue.getJob(deletion.queueJobId) : null;
+      const state = existing ? await existing.getState() : null;
+      if (state === "waiting" || state === "active" || state === "delayed") continue;
+      if (existing) await existing.remove();
+      const job = await queue.add("delete-account", { deletionId: deletion.id }, accountDeletionJobOptions(deletion.id));
+      await prisma.accountDeletion.update({ where: { id: deletion.id }, data: { queueJobId: String(job.id) } });
+    }
+  } finally {
+    await queue.close();
+  }
+}
+
+async function handleAccountDeletion(job: Job<{ deletionId: string }>) {
+  const prisma = getPrisma();
+  const deletion = await prisma.accountDeletion.findUnique({
+    where: { id: job.data.deletionId },
+    include: { user: { select: { id: true } } },
+  });
+  if (!deletion || deletion.status === "completed") return;
+  if (!deletion.subscriptionCancelledAt) {
+    await prisma.accountDeletion.update({
+      where: { id: deletion.id },
+      data: { status: "failed", error: "Subscription cancellation was not confirmed" },
+    });
+    throw new Error("Account deletion cannot continue without subscription cancellation");
+  }
+  if (!deletion.user) {
+    await prisma.accountDeletion.update({ where: { id: deletion.id }, data: { status: "completed", completedAt: new Date(), error: null } });
+    return;
+  }
+
+  await prisma.accountDeletion.update({ where: { id: deletion.id }, data: { status: "processing", error: null } });
+  const projects = await prisma.project.findMany({ where: { userId: deletion.user.id }, select: { id: true } });
+  await cancelQueuedWork(projects.map((project) => project.id));
+
+  const active = await prisma.generationJob.count({
+    where: { projectId: { in: projects.map((project) => project.id) }, status: "active" },
+  }) + await prisma.export.count({
+    where: { projectId: { in: projects.map((project) => project.id) }, status: "processing" },
+  });
+  if (active) {
+    await prisma.accountDeletion.update({ where: { id: deletion.id }, data: { status: "queued", error: null } });
+    throw new Error("Account deletion is waiting for active jobs to finish safely");
+  }
+
+  for (const project of projects) await deleteProjectPrefix(project.id);
+  const now = new Date();
+  await prisma.$transaction(async (tx) => {
+    await tx.accountDeletion.update({
+      where: { id: deletion.id },
+      data: { status: "completed", storageDeletedAt: now, completedAt: now, error: null },
+    });
+    await tx.user.delete({ where: { id: deletion.user!.id } });
+  });
+}
+
+async function cancelQueuedWork(projectIds: string[]) {
+  if (!projectIds.length) return;
+  const prisma = getPrisma();
+  const [generationJobs, exports] = await Promise.all([
+    prisma.generationJob.findMany({
+      where: { projectId: { in: projectIds }, status: { in: ["queued", "active"] } },
+      select: { id: true, status: true, queueJobId: true },
+    }),
+    prisma.export.findMany({
+      where: { projectId: { in: projectIds }, status: { in: ["queued", "processing"] } },
+      select: { id: true, status: true, queueJobId: true },
+    }),
+  ]);
+  const generationQueue = new Queue("generation", { connection: createRedisConnection() });
+  const exportsQueue = new Queue("exports", { connection: createRedisConnection() });
+  try {
+    for (const item of generationJobs) {
+      if (item.status === "queued" && item.queueJobId) await (await generationQueue.getJob(item.queueJobId))?.remove();
+      await prisma.generationJob.update({
+        where: { id: item.id },
+        data: item.status === "queued"
+          ? { status: "failed", cancelRequestedAt: new Date(), error: "Cancelled for account deletion", progressStage: "failed", progressLabel: "Cancelled" }
+          : { cancelRequestedAt: new Date() },
+      });
+    }
+    for (const item of exports) {
+      if (item.status === "queued" && item.queueJobId) await (await exportsQueue.getJob(item.queueJobId))?.remove();
+      if (item.status === "queued") {
+        await prisma.export.update({ where: { id: item.id }, data: { status: "failed", error: "Cancelled for account deletion" } });
+      }
+    }
+  } finally {
+    await Promise.all([generationQueue.close(), exportsQueue.close()]);
+  }
+}
+
+function accountDeletionJobOptions(deletionId: string) {
+  return {
+    jobId: `account-deletion-${deletionId}`,
+    attempts: 60,
+    backoff: { type: "fixed" as const, delay: 30_000 },
+    removeOnComplete: { age: 60 * 60 * 24 * 30, count: 1_000 },
+    removeOnFail: { age: 60 * 60 * 24 * 90, count: 1_000 },
+  };
 }
 
 async function refreshCbrRates(now: Date) {

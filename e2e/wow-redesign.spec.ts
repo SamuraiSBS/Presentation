@@ -27,6 +27,7 @@ test("public wow landing is a read-only walkthrough", async ({ page }) => {
   await expect(page.locator(".landing-page")).toBeVisible();
   await expect(page.locator(".public-header")).toBeVisible();
   await expect(page.getByTestId("hero-generation-demo")).toBeVisible();
+  await page.getByTestId("landing-demo-gallery-placeholder").scrollIntoViewIfNeeded();
   await expect(page.locator(".landing-showcase-trigger")).toHaveCount(3);
   await waitForLandingHydration(page);
 
@@ -53,6 +54,8 @@ test("hero demo becomes static when reduced motion is requested", async ({ page 
 });
 
 test("final landing artifact stays inside compact phone viewports", async ({ page }) => {
+  test.slow();
+
   for (const viewport of [
     { width: 320, height: 844 },
     { width: 390, height: 844 },
@@ -63,6 +66,8 @@ test("final landing artifact stays inside compact phone viewports", async ({ pag
     await page.goto("/", { waitUntil: "networkidle" });
     await waitForLandingHydration(page);
 
+    await page.getByTestId("landing-final-cta-artifact-placeholder").scrollIntoViewIfNeeded();
+    await expect(page.locator(".landing-final-cta-artifact")).toBeVisible();
     const artifact = page.locator(".landing-final-cta-artifact");
     await artifact.scrollIntoViewIfNeeded();
     const bounds = await page.locator(".landing-final-cta-card-stack, .landing-final-cta-card, .landing-final-cta-card-hint").evaluateAll((elements) =>

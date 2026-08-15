@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import path from "node:path";
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { Prisma, type SourceRole } from "@prisma/client";
@@ -9,6 +9,8 @@ import sharp from "sharp";
 import { ProjectAccessService } from "../access/project-access.service.js";
 import { conflict } from "../errors/api-error.js";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { MalwareScanService } from "../security/malware-scan.service.js";
+import { ProductAnalyticsService } from "../analytics/product-analytics.service.js";
 
 @Injectable()
 export class SourcesService {
@@ -18,6 +20,8 @@ export class SourcesService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly access: ProjectAccessService,
+    private readonly malwareScanner: MalwareScanService,
+    @Optional() private readonly productAnalytics?: ProductAnalyticsService,
   ) {}
 
   async upload(userId: string, projectId: string, files: Express.Multer.File[]) {
@@ -30,6 +34,7 @@ export class SourcesService {
     const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
     const limit = planLimits[project.user.planCode].maxProjectBytes;
     if (totalBytes > limit) throw new BadRequestException("Project upload limit exceeded");
+    await this.scanFiles(files);
 
     const created = [];
     for (const file of files) {
@@ -59,6 +64,12 @@ export class SourcesService {
     }
 
     await this.prisma.project.update({ where: { id: projectId }, data: { status: "uploading" } });
+    void this.productAnalytics?.capture(access.project.userId, "sources_added", {
+      source_count: created.length,
+      unconfirmed_source_count: created.length,
+      source_origin: "upload",
+      source_types: [...new Set(created.map((source) => source.type))],
+    });
     return { sources: created };
   }
 
@@ -132,6 +143,7 @@ export class SourcesService {
     if ((stored._sum.size ?? 0) + incoming > limit) {
       throw new BadRequestException("Project upload limit exceeded");
     }
+    await this.scanFiles(files);
 
     // Validate every file before the first external write, so a bad second
     // file cannot leave a partially accepted upload behind.
@@ -210,6 +222,12 @@ export class SourcesService {
         }
         return rows;
       });
+      void this.productAnalytics?.capture(access.project.userId, "sources_added", {
+        source_count: created.length,
+        unconfirmed_source_count: created.length,
+        source_origin: "defense_upload",
+        source_types: [...new Set(created.map((source) => source.type))],
+      });
       return { sources: created };
     } catch (error) {
       await Promise.allSettled(uploadedKeys.map((objectKey) => this.getS3().send(new DeleteObjectCommand({
@@ -241,6 +259,12 @@ export class SourcesService {
     }
 
     return this.s3Client;
+  }
+
+  private async scanFiles(files: readonly Express.Multer.File[]) {
+    // Do this before any S3 write. A scanner outage is deliberately fail-closed
+    // in production, so unverified content never reaches the shared bucket.
+    await Promise.all(files.map((file) => this.malwareScanner.scan(file.buffer, file.originalname || "upload")));
   }
 }
 

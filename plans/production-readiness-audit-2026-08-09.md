@@ -88,16 +88,15 @@
 
 ### P1-1. Deploy неатомарный, без rollback и post-deploy проверки
 
-`scripts/deploy.ps1` архивирует `HEAD` прямо в постоянный каталог, затем на сервере выполняет build, migration и `up -d`. Нет release directory, registry digest, backup, lock от параллельного deploy, `docker compose config`, health wait, smoke test, automatic rollback или сохранения предыдущего набора образов.
+**Реализовано 11 августа 2026:** `scripts/deploy.ps1` принимает только принятый CI `release-manifest.json` с immutable API/worker/web `@sha256` references, запрещает dirty tree и передаёт commit archive в отдельный каталог `/releases/<sha>-<timestamp>`. Remote `scripts/deploy-release.sh` сериализует deploy через `flock`, запускает `docker compose config --quiet` и pull digest-образов, создаёт защищённый pre-migration PostgreSQL dump, запускает Prisma и ждёт не более 180 секунд healthy API/worker/web и `/v1/health/ready`. Затем обязательный smoke проверяет API readiness, web и публичный Caddy `/api/internal-health`; `docker compose ps` и ответ readiness сохраняются в `deploy-evidence.txt` релиза.
 
-Текущий рабочий tree также не является release-кандидатом: есть незакоммиченные изменения в generation-коде и `.worktrees/`. Поскольку скрипт архивирует только `HEAD`, незакоммиченные исправления не попадут в релиз, даже если локальные тесты запускались на них.
+При неуспешном deploy скрипт не меняет `current`, сохраняет failed release/evidence и автоматически поднимает предыдущий accepted source/manifest/image set. Предыдущий release хранится как `/previous`; ручной возврат — одна команда: `./scripts/deploy.ps1 -HostName <host> -RemotePath <path> -Rollback`. CI в текущей политике блокирует публикацию release с изменением `prisma/migrations`, пока не появится отдельная проверяемая политика forward-fix/rollback compatibility; поэтому обычный rollout не может незаметно внести schema change.
 
-Нужно:
+**Нужно доделать для полного закрытия:**
 
-- Собирать подписанные/versioned images в CI и разворачивать по digest.
-- Перед миграцией делать backup и проверять совместимость migration rollback/forward fix.
-- Добавить staging, smoke, health timeout и переключение трафика только после readiness.
-- Хранить предыдущий release manifest и одну команду rollback.
+- Развернуть отдельный staging host и принять реальный deploy/rollback drill с сохранёнными backup, `deploy-evidence.txt` и проверкой восстановления в изолированной БД.
+- Спроектировать blue/green (или иной proxy-level) traffic switch: текущий Compose обновляет сервисы in-place, поэтому rollback автоматизирован, но нулевой перерыв трафика до readiness ещё не гарантирован.
+- Для будущих Prisma migrations добавить CI-проверяемый контракт backward compatibility и forward-fix/restore procedure; снять сознательный запрет migration changes только после такого drill.
 
 ### P1-2. Health endpoint проверяет только факт работы Node.js
 
@@ -105,56 +104,85 @@
 
 Worker публикует TTL heartbeat в Redis, а `compose.production.yml` и local/CI compose получили healthchecks для MinIO, API readiness, worker heartbeat и web; `create-bucket` ждёт healthy MinIO, API/worker — завершения bucket setup, а Caddy — healthy API/web. Release gates и `/api/internal-health` теперь используют readiness, а не безусловный `200`.
 
+**Дополнено 11 августа 2026:** API-side монитор (то есть независимый от worker процесс) при включённых production Telegram alerts периодически проверяет readiness и отправляет дедуплицированные уведомления о `503`, stale worker heartbeat и нарушении SLO очередей. CI сохраняет ответы live/ready/workers и `docker compose ps` в artifacts `staging-health-evidence-<sha>` и `registry-health-evidence-<sha>`.
+
 Критерий закрытия: staging/release smoke получает `200` от `/v1/health/ready` только после migration, bucket setup и запуска worker; отключение любой зависимости возвращает `503`, тогда как `/v1/health/live` остаётся `200` до остановки процесса.
 
-**Нужно доделать:**
+**Нужно доделать для acceptance:**
 
-- Выполнить staging smoke на собранных immutable образах и зафиксировать ответы live/ready/workers и Docker health states. Сейчас это блокируется известным зависанием Docker Desktop/BuildKit из P0-2.
-- Подключить monitoring/alerting к `503` readiness, stale worker heartbeat и согласованным SLO-порогам queue lag; сам endpoint метрики отдаёт, но канал оповещения в репозитории пока отсутствует.
+- Выполнить release-gates для commit SHA и принять CI-artifact `staging-health-evidence-<sha>`; после публикации digest принять также `registry-health-evidence-<sha>`. Они должны показать `200` live/ready/workers и healthy API/worker/web. Локально 11 августа Docker Desktop доступен, но запущены только PostgreSQL и MinIO, поэтому это не заменяет staging/release acceptance.
+- В production secret manager задать `ADMIN_ALERTS_ENABLED=true`, Telegram token/chat ID и согласованные SLO-пороги `HEALTH_QUEUE_WAITING_MAX` / `HEALTH_QUEUE_LAG_MAX_AGE_MS`; API-side монитор уже отправляет Telegram-уведомления для `503` readiness, stale worker heartbeat и нарушений queue-lag и не зависит от работающего worker.
 
 ### P1-3. Нет graceful shutdown фоновых задач
 
 **Реализовано 10 августа 2026:** worker обрабатывает `SIGTERM`/`SIGINT` ровно один раз: снимает heartbeat, прекращает получение новых задач через `pause(true)`, ждёт завершения active jobs до `WORKER_SHUTDOWN_TIMEOUT_MS` (по умолчанию 14 минут), затем при необходимости force-close оставшиеся jobs для безопасного BullMQ retry. После этого закрываются queue/Redis connections, Prisma и tracing/Sentry. API включает Nest shutdown hooks, поэтому останавливает HTTP listener и lifecycle providers, включая Prisma; отдельный lifecycle service flushes tracing/Sentry. В local и production Compose API получает 45 секунд, worker — 15 минут `stop_grace_period`, то есть больше заданного worker deadline.
 
+**Локально подтверждено 11 августа 2026:** worker image был пересобран с прямым Node entrypoint (`node apps/worker/dist/main.js`), чтобы `SIGTERM` попадал в обработчик worker, а не в обёртку `npm`. Controlled stop/start idle worker завершился за 3,98 секунды; логи содержат `worker graceful shutdown started` и `worker graceful shutdown completed`, heartbeat удалён до остановки (`TTL=-2`) и восстановлен после запуска (`TTL=58`).
+
 Критерий закрытия: controlled `docker compose restart api worker` во время активной generation/export job не принимает новых jobs после SIGTERM, завершает текущую job либо оставляет её для штатного BullMQ retry после timeout, удаляет worker heartbeat и завершает контейнеры в их grace period без stalled/double execution.
 
-**Нужно доделать:**
+**Нужно доделать для acceptance:**
 
-- Выполнить controlled restart на staging/immutable worker image во время реальных generation и PDF export jobs, сохранить логи shutdown и проверить отсутствие дублей/stalled jobs после retry. Локальная проверка сейчас зависит от восстановления Docker Desktop/BuildKit из P0-2.
+- Выполнить controlled restart на staging с immutable worker image во время реальных generation и PDF export jobs. Сохранить shutdown-логи, состояния BullMQ до и после retry и время завершения контейнеров; принять только при отсутствии дублей и stalled jobs. Локальный restart не заменяет этот staging acceptance.
+- Для запуска этой проверки нужны SSH-доступ к staging, принятый `release-manifest.json` с digest-образами API/worker/web и чистый commit: `scripts/deploy.ps1` отказывается разворачивать dirty tree и не содержит реального staging host.
 
 ### P1-4. Billing и удаление аккаунта не образуют завершённый lifecycle
 
-Stripe webhook и синхронизация статусов существуют — это плюс. Но не найден customer billing portal/cancel flow. `removeMe` удаляет storage prefixes и запись User, не отменяя активную Stripe subscription и не координируя фоновые jobs. Возможен orphan subscription: аккаунт удалён, а списания продолжаются. Последовательное удаление storage → DB также неатомарно.
+**Реализовано 11 августа 2026:** добавлен Stripe Billing Portal: платный пользователь открывает self-service из профиля и возвращается в `/profile`. Удаление аккаунта больше не выполняется в HTTP-запросе. Подтверждённый запрос создаёт durable `AccountDeletion`, сразу блокирует аккаунт (`ACCOUNT_DELETION_PENDING`) и тем самым запрещает новые jobs, затем отменяет активную Stripe subscription. Только сохранённый `subscriptionCancelledAt` позволяет поставить идемпотентную BullMQ maintenance-задачу на очистку. При ошибке Stripe операция остаётся в `failed`, storage и DB не трогаются, а повтор подтверждения безопасно повторяет lifecycle.
 
-Нужно:
+Worker при удалении снимает queued generation/export jobs, запрашивает отмену active generation jobs и ждёт завершения active generation/export до destructive phase. Затем удаляет project prefixes из MinIO и удаляет User вместе с каскадными данными; `AccountDeletion` остаётся audit trail со статусом, датами отмены billing/storage/completion и ошибкой. В профиле до запуска очистки явно показаны необратимые последствия, момент принятия и текущий статус; пользователь не получает ложного сообщения об успешном удалении, если billing cancellation не прошла.
 
-- Добавить Stripe Billing Portal или собственные cancel/change-plan endpoints.
-- Перед удалением аккаунта отменять/планировать отмену подписки и фиксировать результат.
-- Перевести удаление в идемпотентный background workflow: tombstone, запрет новых jobs, отмена/дожидание активных jobs, удаление storage, anonymization/deletion DB, audit trail.
-- Показать пользователю последствия, срок удаления и статус операции.
+Критерий закрытия: тестовый Stripe customer с активной subscription проходит Portal и account deletion: subscription отменена до удаления данных, новые/queued jobs не исполняются, active jobs штатно заканчиваются или отменяются, MinIO и DB очищены, а в `AccountDeletion` остаётся completed audit record без orphan subscription.
+
+**Нужно доделать для acceptance:**
+
+- На staging выполнить E2E с Stripe test mode: checkout → Portal (смена/отмена плана) → account deletion, проверить Stripe Dashboard/webhook, Postgres `AccountDeletion`, BullMQ и MinIO. Локальные unit/typecheck не подтверждают реальную Stripe-конфигурацию.
+- Согласовать с legal/support срок и политику retention для audit record/платёжных транзакций, а также текст письма/тикета пользователю после завершения удаления. Текущий UI показывает статус в открытом профиле, но email/in-app delivery ещё не реализован.
+- Настроить Stripe Billing Portal configuration (разрешённые тарифы, cancel behavior, invoices) и production `PUBLIC_APP_URL`/Stripe secrets в secret manager.
 
 ### P1-5. Нет backup/restore, DR и эксплуатационного runbook
 
-В репозитории не найдено автоматизации `pg_dump`/restore и проверяемого backup для PostgreSQL/MinIO. Нет RPO/RTO, инструкции инцидента, восстановления очередей, ротации секретов или действий при недоступности AI/search provider.
+**Реализовано в репозитории (2026-08-11):** production config теперь не
+принимается без отдельного off-site backup target, age recipient, retention,
+RPO/RTO, owner и incident channel. `scripts/backup-production.sh` создаёт
+custom `pg_dump`, шифрует его age до выгрузки, сохраняет checksum/metadata и
+зеркалирует MinIO в отдельный S3-compatible bucket. Скрипт требует versioning,
+SSE-S3 и Object Lock `COMPLIANCE`; ошибка прав или policy завершает backup с
+ошибкой. `scripts/restore-drill.sh` получает latest encrypted dump и MinIO
+mirror, восстанавливает их в новые временные Docker volumes, проверяет таблицы
+и объектное хранилище, затем удаляет только drill-resources. Systemd timers
+задают ежедневный backup и еженедельный restore drill. Полный порядок
+настройки, DB/Redis/MinIO/BullMQ/Stripe/AI/Sentry incident paths и rollback
+описан в `docs/operations/production-recovery.md`.
 
-Нужно:
+**До live-acceptance ещё нужно:**
 
-- Автоматические зашифрованные backups PostgreSQL и versioned/object-lock policy для MinIO.
-- Регулярный restore drill в отдельном окружении.
-- Runbook по DB/Redis/MinIO, очередям, Stripe webhook, AI provider, Sentry и rollback.
-- Определить RPO/RTO, ответственного и канал уведомления.
+- Provisioning: создать отдельный off-site S3-compatible account/bucket с
+  Object Lock, versioning и SSE, выпустить dedicated backup credentials и age
+  recovery key; private age identity хранить только в recovery secret store.
+- На production host заполнить новые `BACKUP_*`/owner/channel values, установить
+  `age`, включить systemd units и успешно выполнить первый backup + isolated
+  restore drill. Сохранить evidence и фактические RPO/RTO.
+- Подтвердить доступность incident channel и назначение реального on-call owner;
+  повторять drill минимум еженедельно и закрывать release gate при его
+  просрочке/ошибке.
 
 ### P1-6. Недостаёт perimeter security
 
-Не найдены rate limiting/throttling и явные security headers: CSP, HSTS, `frame-ancestors`, `Referrer-Policy`, `Permissions-Policy`. Caddy сейчас только сжимает и проксирует. Docker runtime работает от root; базовые образы используют mutable tags, API/worker runner копируют весь root `node_modules`.
+**Реализовано в репозитории 11 августа 2026:**
 
-Нужно:
+- API теперь применяет Redis-backed throttling одновременно по хэшированным user и IP ключам. Общий лимит и отдельные лимиты для upload, generation, export, invitation и billing задаются через `API_RATE_LIMIT_*`; при недоступном Redis защищённые запросы получают `503`, а не обходят защиту. Health endpoints исключены, чтобы не замаскировать отказ Redis.
+- Caddy добавляет CSP для Next.js/Auth.js/Telegram OAuth, `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy` и HSTS. Production startup validation требует публичный HTTPS домен и `HSTS_MAX_AGE >= 31536000`, поэтому HSTS не включается случайно в local окружении.
+- API, worker и web runner теперь запускаются как unprivileged `node`; production compose задаёт read-only rootfs с отдельными tmpfs, `no-new-privileges`, dropped capabilities, PIDs и CPU/RAM limits. Caddy работает UID 1000 с единственным `NET_BIND_SERVICE`; разовый `caddy-init` с root нужен только для миграции прав уже существующих Caddy volumes. Stateful PostgreSQL/Redis/MinIO и ClamAV не переведены в read-only режим, так как им нужны persistent writes.
+- Все production runtime и Node base images закреплены `@sha256` digest-ами. API/worker удаляют dev dependencies перед переносом runtime `node_modules`. CI генерирует SBOM/provenance для публикуемых образов и останавливает release при fixable HIGH/CRITICAL уязвимостях Trivy scan.
+- В production compose добавлен private ClamAV daemon с persistent signature volume. `MalwareScanService` stream-сканирует обычные uploads, defense uploads и пользовательские slide assets **до** первого S3 write; сигнатура или недоступный scanner отклоняют файл. Readiness API также проверяет ClamAV `PING`, а production config не разрешает запуск без включённого scanner и его host/port.
 
-- Добавить API throttling по user/IP и отдельные лимиты для upload, generation, export, invite и billing endpoints.
-- Настроить CSP с учётом Next/Auth/Telegram, HSTS после готовности домена, clickjacking/referrer/permissions policies.
-- Запускать контейнеры от non-root пользователя, добавить read-only filesystem там, где возможно, ограничить capabilities/resources/PIDs.
-- Закрепить base images digest-ами, добавить SBOM и image scan.
-- Добавить антивирусную/малварь-проверку загружаемых файлов. Текущие magic bytes и ZIP limits защищают формат и ресурсы, но не содержимое.
+**Нужно доделать для live-acceptance:**
+
+- На staging/prod выделить ClamAV минимум 4 GiB RAM, дождаться первого обновления signature database и сохранить evidence: `ready` с успешным scanner check, разрешённый чистый upload, отклонённый EICAR-тест (только изолированная staging-среда) и отказ upload при остановленном scanner.
+- Проверить с публичного HTTPS домена фактические headers/CSP, Telegram OAuth, Sentry transport и `429` для каждого специального bucket. Если Sentry использует не `*.ingest.sentry.io`, добавить его точный HTTPS ingest host в `connect-src` до запуска.
+- Настроить на уровне cloud firewall/WAF только 80/443 и наблюдение за signature-update/ClamAV health; application compose не заменяет сетевой perimeter провайдера.
+- Результат Trivy/SBOM должен быть принят владельцем release: triage найденных fixable HIGH/CRITICAL CVE, обновление закреплённых digest-ов по расписанию и документированный exception только для явно неприменимых уязвимостей.
 
 ### P1-7. Юридический и support-минимум отсутствует
 
@@ -178,15 +206,21 @@ Stripe webhook и синхронизация статусов существую
 
 ### P2-1. Editor autosave не защищён при закрытии страницы
 
+**Реализовано 11 августа 2026:** editor помечает изменения как несохранённые до подтверждения последнего PATCH-ответа и ставит нативный `beforeunload` guard для закрытия/перехода. Ошибка сети теперь выводит явный статус и кнопку retry; конфликт ревизий по-прежнему открывает отдельный conflict-flow. Добавлен unit-тест guard для сохранённого и pending состояний.
+
 Editor сериализует PATCH-запросы через `saveQueueRef`, но в нём нет `beforeunload`/navigation guard, аналогичного script review. Если пользователь закроет вкладку сразу после редактирования, queued save может не завершиться.
 
-Рекомендация: dirty/pending-save guard, явный статус офлайн/ошибки, retry и тест закрытия/перехода во время сохранения.
+Статус: закрыто на уровне editor-кода. До live-acceptance остаётся пройти browser E2E: внести правку, начать искусственно задержанный PATCH, убедиться в предупреждении при закрытии/переходе, затем проверить retry после сетевой ошибки.
+
+**Live E2E (11 августа 2026): не принято.** Добавлен scoped Playwright test `e2e/editor-autosave.spec.ts`: он задерживает PATCH и подтверждает native `beforeunload`, затем моделирует 500 и успешный retry. Spec компилируется и регистрирует оба сценария, но не выполнен live: production web build не завершился за 5 минут; clean Next preview сообщает `Ready`, но возвращает `000` даже на `/` и `/api/projects/demo`; единственный in-app browser изолирован от host `localhost`. Повторить `npm run test:e2e -- e2e/editor-autosave.spec.ts --project=chromium` после восстановления local web runtime.
 
 ### P2-2. Checkout имеет слабый error UX
 
-Checkout button устанавливает busy, вызывает `fetch`, затем ожидает JSON, но не имеет `try/catch/finally` и видимого сообщения об ошибке. Network failure может оставить кнопку в busy-state без понятного восстановления.
+**Реализовано 11 августа 2026:** checkout теперь сбрасывает busy-state через `finally` при сетевой ошибке, ошибочном HTTP-ответе и не-JSON ответе. Пользователь получает доступный error alert и может сразу повторить запрос кнопкой; повтор сохраняет session-scoped idempotency key. API передаёт этот key в Stripe, поэтому retry не создаёт вторую checkout session. Неуспешная попытка также записывается как Sentry breadcrumb без платежных данных. Добавлен unit-тест передачи retry key в Stripe.
 
-Рекомендация: `finally`, error alert с retry, Sentry breadcrumb и идемпотентность создания checkout session.
+Статус: закрыто на уровне кода.
+
+**Live E2E (11 августа 2026): не принято.** В локальном `.env` отсутствуют `STRIPE_SECRET_KEY` и `STRIPE_PRICE_STUDENT`, поэтому Stripe test-mode session создать нельзя. Дополнительно текущая `/pricing` отображает только free-plan и не рендерит `CheckoutButton`, так что error alert/retry недоступны для browser-сценария. Для acceptance сначала вернуть checkout CTA в продуктовый flow и предоставить Stripe test-mode конфигурацию; затем искусственно оборвать checkout-запрос, увидеть alert и доступный retry, а в Stripe Dashboard подтвердить, что два запроса с одним ключом вернули одну checkout session.
 
 ### P2-3. Frontend bundle и CSS слишком глобальны
 
@@ -234,31 +268,72 @@ Checkout button устанавливает busy, вызывает `fetch`, за�
 
 ### P2-4. Крупные модули затрудняют безопасные изменения
 
-Самые крупные production-файлы: `canvas-builder.ts` ~2797 строк, `presentation-quality.ts` ~2678, API defense service ~1589, export ~1491, project editor ~1051. Декомпозиция началась, но новые файлы пока содержат много неиспользуемого кода и сломали lint baseline.
+**Закрыто в коде 12 августа 2026.** Правила ограничений текста, видимого на слайде, и их детерминированная диагностика вынесены из `presentation-quality.ts` в `presentation/quality/visible-text-rules.ts`. Новый модуль не зависит от model critique, repair orchestration, БД или очередей; он владеет только renderer-facing лимитами и их `QualityIssue`. Фасад `presentation-quality.ts` сохраняет прежние exports, поэтому текущие потребители не меняют контракт, а целевые проверки импортируют новый модуль напрямую.
 
-Рекомендация: завершать декомпозицию вертикальными slices с ясным ownership и тестами, а не копированием больших наборов imports/types. Вынести export serializers, renderers и preflight; editor state/save/geometry; defense orchestration; quality rules.
+Из `export.ts` выделен `export/presentation-content.ts`: только общая семантическая проекция слайда и export theme для PPTX/HTML-PDF. В нём нет доступа к storage, Chromium, очередям или конкретному renderer API; этим исключена скрытая связь между двумя форматами и сохранено единое отображение title/body/quote/sequence/comparison.
+
+`export/pptx-image.ts` теперь владеет binary image fitting и embedding в PPTX: cover/contain geometry, rasterization и image metadata. Canvas/PPTX renderer передаёт только входные данные и не содержит логики `sharp`-обработки; прежний `fitPptxImage` сохранён через фасад для совместимости.
+
+`export/pptx-geometry.ts` изолирует единственный conversion boundary между canvas 96 DPI и PPTX: box coordinates, points и transparency. Это исключает разрозненные коэффициенты из renderer кода.
+
+`export/pptx-background.ts` владеет всеми вариантами декоративного фона PPTX (`title`, `section`, `summary`, `v1`–`v5`) и их transparency offsets. Основной export workflow теперь только выбирает renderer и передаёт slide/theme, не смешивая orchestration с визуальной геометрией.
+
+`export/pptx-content.ts` изолирует runtime-проекцию семантических template layouts PPTX (statement, definition, sequence, comparison, evidence и других) и их image placement от workflow/DB/storage boundary. `createPptx(...)` по-прежнему загружает данные, выбирает canvas/template path, добавляет attribution/notes и делегирует renderer через явный минимальный PPTX interface; API `createPptx` и формат результата не менялись.
+
+Из API `DefenseService` выделен чистый `compliance-report-view.ts`: serializer detail/summary, stale-check и безопасное имя PDF. Orchestration очередей, idempotency и revision-conflict остаются в сервисе; view не зависит от Nest, очередей, storage или доступа к данным.
+
+**Проверено:** worker/API typecheck, изолированный `presentation-quality.test.ts` — 59/59, целевой export contract test, cover/contain regression, `defense.service.test.ts` — 15/15 и полный `npm run lint` с нулевым baseline. Полный `export.test.ts` на host прошёл 18/20: два PDF-raster теста ожидаемо требуют Chromium, который доступен в worker image/CI, но отсутствует на Windows host. Историческое утверждение о сломанном lint baseline более не соответствует текущему состоянию.
+
+**12 August follow-up — canvas builder tokens:** the first planned safe `canvas-builder.ts` slice is now implemented in `presentation/canvas-tokens.ts`. Typography, plaque spacing, and editorial layout tokens are pure constants with a direct regression test; `buildSlideCanvas`, fallback/ID ownership, and the public shared barrel remain unchanged, so no builder-to-helper cycle was introduced. Shared typecheck passed and the repository lint gate passed. The isolated Vitest command remains host-blocked by Windows `spawn EPERM` before test collection.
+
+**12 August follow-up — PPTX renderers:** `createPptx` now delegates the semantic template projection to `export/pptx-content.ts` and saved canvas geometry to `export/pptx-canvas.ts`. The canvas renderer receives storage, content-type, and warning callbacks explicitly; it owns canvas text/shapes/images and gradient rasterization, while the export-job facade keeps preflight, persistence, notes, attribution, and placeholders. Worker typecheck and repository lint pass. The focused export suite is currently blocked before collection by the host's `spawn EPERM`, not an assertion failure.
+
+**12 August follow-up — defense analysis/plan identity:** `defense-analysis-plan-job.ts` now owns the pure retry identity, queue name/id prefix, progress metadata, and failure message for both analysis and plan requests. `DefenseService` retains access checks, transactions, idempotent DB lookup, revision-conflict handling, and queue effects, but consumes the shared spec for both paths. API typecheck and repository lint pass; the focused Vitest command is host-blocked before collection by `spawn EPERM`.
+
+**12 August follow-up — editor save state:** `editor-save-queue.ts` now owns serial slide writes, latest-patch retry, unsaved state, revision handoff, and conflict latching. `project-editor.tsx` remains the owner of UI state and local canvas/text projection, while before-unload/offline safeguards consume the extracted unsaved ref. Web typecheck and repository lint pass. The existing autosave/navigation-guard and geometry tests remain present but cannot collect on this host because Vite fails before collection with `spawn EPERM`.
+
+**12 August follow-up — quality pipeline boundaries:** deterministic collection is now split into `quality/semantic-rules.ts`, `quality/source-grounding.ts`, and `quality/repair-orchestration.ts`. These modules accept explicit checks/repairs rather than importing the facade, so semantic, source, and initial-repair phases cannot create a `facade -> rule -> facade` cycle. `presentation-quality.ts` remains the public compatibility surface while delegating its deterministic composition to the three boundaries. Worker typecheck and repository lint pass; focused worker Vitest remains blocked before collection by the same host `spawn EPERM`.
+
+**12 August follow-up — PDF canvas renderer:** saved-canvas HTML serialization now runs through `export/pdf-canvas.ts`, with object reads, content-type resolution, and warning logging injected by `renderPdfHtml`. This completes the canvas renderer split across PPTX and PDF/HTML while leaving semantic PDF templates and export-job lifecycle in the facade. Worker typecheck, repository lint, and scoped `git diff --check` pass; the focused export test command remains blocked before collection by the host `spawn EPERM`.
+
+**Нужно доделать для P2-4:** ничего в code scope. Финально подтверждены typecheck shared/worker/API/web, `npm run lint` и `git diff --check`. Целевые Vitest-команды на этом Windows host не доходят до collection из-за внешнего `spawn EPERM`; их нужно повторить в CI/worker image вместе с уже существующими PDF-raster проверками. Browser regression для autosave/navigation guard остаётся существующим acceptance test и не был ослаблен.
 
 ### P2-5. Экспорт требует визуальной и шрифтовой матрицы
 
-Темы используют Arial, Aptos/Aptos Display, Georgia, Trebuchet MS и Verdana. Worker image устанавливает Chromium, Noto и DejaVu, но не весь набор theme fonts. Для PDF это может приводить к подстановке и изменению переносов; для PPTX результат зависит от компьютера пользователя.
+**Закрыто в code scope 12 августа 2026.** Все штатные themes теперь используют один утверждённый export family `Arial`; экспортёр дополнительно нормализует legacy/user canvas fonts к `Arial`, поэтому имя нестандартного font не попадает в PPTX. В worker image установлен `font-liberation`: PDF/Chromium использует явный fallback stack `Arial -> Liberation Sans -> Noto Sans -> DejaVu Sans`, а PPTX сохраняет Windows-совместимое имя Arial. Это устраняет случайную подстановку Aptos/Aptos Display, Georgia и Trebuchet MS в worker path, не требуя встраивать проприетарные файлы в репозиторий.
+
+Автоматическая матрица закреплена в `plans/export-visual-font-matrix.md` и export tests: все premium themes, canvas font normalization и HTML/PDF stack. Она использует уже существующие export fixtures для русского текста, диаграмм, tables, notes и source attribution.
+
+Для storage добавлены `Export.sizeBytes`, migration `20260812160000_export_retention_and_quota`, очистка ready/failed objects и DB records из maintenance worker после `EXPORT_RETENTION_DAYS` (default 30), а также pre-upload project quota `EXPORT_STORAGE_QUOTA_BYTES_PER_PROJECT` (default 512 MiB). Непубликованный stale/failed объект удаляется сразу и не остаётся в storage/quota.
 
 Рекомендация:
 
-- Либо встраивать/лицензировать утверждённые шрифты, либо ограничить themes гарантированно доступным набором.
-- Тестировать Windows PowerPoint, LibreOffice и PDF render на русском тексте, таблицах, диаграммах, notes и source attribution.
-- Добавить retention/cleanup старых export objects и storage quotas.
+- Ограничить themes гарантированно доступным набором — реализовано: Arial + worker fallback matrix.
+- Добавить retention/cleanup старых export objects и storage quotas — реализовано: managed cleanup и project byte quota.
+
+**Нужно доделать для P2-5:** один manual acceptance run в Windows PowerPoint, LibreOffice и PDF viewer на fixture из `plans/export-visual-font-matrix.md`, с сохранёнными screenshots/versions в release artifact. В CI/worker image также нужно принять focused export suite: текущий Windows host периодически блокирует Vitest до collection через внешний `spawn EPERM`, а host не содержит Chromium. При необходимости product может отдельно лицензировать/встраивать фирменный шрифт, но code больше не зависит от такого решения.
 
 ### P2-6. Нужна продуктовая аналитика полного пути
 
-В коде есть operational events/Sentry, но перед запуском нужен пользовательский funnel:
+**Закрыто в code scope 12 августа 2026.** Добавлен privacy-safe событийный контракт и отправка в PostHog Capture API без нового тяжёлого SDK. Доставка включается только через `POSTHOG_API_KEY`/`NEXT_PUBLIC_POSTHOG_API_KEY`; без ключей продукт работает как прежде. Общий фильтр отбрасывает поля с prompt/text/content/title/name/email/token/secret/password/url/excerpt/file, поэтому в события не попадают исходный текст презентации, материалы, имена файлов и секреты.
 
-`landing → login → new project → sources → generation → script approval → editor → export → download → paid conversion`.
+Полный funnel теперь собирает `landing_viewed → login_completed → project_created → sources_added → sources_reviewed → generation_requested → script_approved → generation_completed → editor_opened → export_requested → export_completed → export_downloaded → checkout_started → paid_conversion`, а `generation_failed`, `export_failed` и `subscription_churned` фиксируют потери. События создания/запуска/экспорта/оплаты идут с доверенного API, terminal generation/export — из worker, поэтому completion и failure не теряются при закрытии вкладки. В `Source.reviewedAt` фиксируется явная проверка источника владельцем; поэтому `unconfirmed_source_count` — именно число ещё не проверенных источников, а `excluded_source_count` — отдельно исключённые. В properties передаются только безопасные категории и счётчики: scenario/mode, тип операции, attempt/retry, duration, `time_to_ready_ms`, `unconfirmed_source_count`, а не пользовательское содержание.
 
-Нужно измерять completion/drop-off, время до первой готовой презентации, generation/export failure rate, повторные попытки, долю неподтверждённых источников, conversion и churn. События не должны содержать исходный текст презентаций или секреты.
+Это позволяет измерять completion/drop-off, время до первой готовой презентации, generation/export failure rate и повторные попытки, долю исключённых при review источников, conversion и churn.
+
+**Нужно доделать для P2-6:** завести production project в PostHog с событиями выше, записать `POSTHOG_API_KEY` только в API/worker secrets и `NEXT_PUBLIC_POSTHOG_API_KEY` в web runtime, настроить retention/roles и legal consent/cookie policy для целевых стран. До релиза выполнить один реальный тестовый путь и сверить в PostHog: события анонимного лендинга склеиваются с аккаунтом после login, нет запрещённых ключей/значений, а payment и cancellation приходят из Stripe webhook. В аналитическом проекте также нужно сохранить dashboard/alerts для funnel, p50/p95 `time_to_ready_ms`, generation/export failure rate, retry rate, source-review exclusion rate, conversion и churn по неделям.
 
 ### P2-7. Нужны route-level error/offline состояния
 
 Есть global error и локальные ошибки на ряде экранов, но нет целостного offline/reconnect UX и единых route error boundaries для editor/export. Пользователь должен понимать, сохранены ли изменения, работает ли генерация в фоне и безопасно ли закрывать вкладку.
+
+**Закрыто в code scope 12 августа 2026.** Для `/projects/[id]/editor` и `/projects/[id]/export` добавлены отдельные Next route error boundaries с единым recovery UI, безопасным повтором загрузки, возвратом к списку проектов и Sentry-событием с route tag. Оба экрана показывают доступный offline/reconnect-баннер: редактор явно запрещает закрывать вкладку до статуса «Сохранено» и после reconnect повторно отправляет последнюю несохранённую правку; экспорт объясняет, что новые запросы и скачивание недоступны, но уже начатая серверная сборка продолжается в фоне и её статус обновится после reconnect. Существующие `beforeunload` guard, очередь автосохранения и polling job не ослаблены.
+
+**Проверено 12 августа 2026:** `npm run typecheck -w @studydeck/web` — успешно; isolated `npm run test -w @studydeck/web -- --pool=threads --poolOptions.threads.singleThread=true` — 12 файлов / 39 тестов успешно; `npm run build -w @studydeck/web` — успешно (Next production build распознал маршруты editor/export). В sandbox build не завершился за 5 минут без диагностики, но тот же build вне sandbox успешно завершился за 154 с; это ограничение локального sandbox, а не регрессия проекта.
+
+**Live browser acceptance 12 августа 2026: принято.** На production Next runtime Playwright физически отключил сеть в Chromium. В editor несохранённая правка показала offline warning, native `beforeunload` остановил закрытие вкладки, а после reconnect последняя правка автоматически сохранилась. Для отдельной копии готового проекта был запущен PDF export; во время active job показан offline warning, маршрут закрыт, после reconnect открыт заново, а API подтвердил `ready` именно для исходного job ID и UI показал «Скачать PDF». `e2e/offline-reconnect.spec.ts` — 2/2 успешно; screenshots и trace сохранены в `plans/release-artifacts/p2-7-offline-reconnect/`.
+
+**Нужно доделать для P2-7:** ничего — code scope и live browser acceptance закрыты.
 
 ## 5. Дизайн и доступность
 

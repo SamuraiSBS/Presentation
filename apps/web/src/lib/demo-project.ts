@@ -1,5 +1,6 @@
 import { ensureEditableCanvas, type PresentationDocument, type SlideBlock, type SlideCanvas } from "@studydeck/shared";
 import type { DefenseWorkspacePayload } from "@/lib/defense-queries";
+import type { UsageSummary } from "@/lib/account-types";
 
 const source = {
   id: "src-demo",
@@ -302,13 +303,16 @@ const demoUser = {
 export const demoUsage = {
   planCode: "free" as const,
   period: "2026-07",
+  reset: "month" as const,
+  allowedSlideCounts: [6],
   limit: 10,
   used: 1,
   remaining: 9,
   resetsAt: "2026-08-01T00:00:00.000Z",
   exhausted: false,
+  subscriptionExpiresAt: null,
   canCreate: true,
-};
+} satisfies UsageSummary;
 
 const demoProjectSummary = {
   id: demoProject.id,

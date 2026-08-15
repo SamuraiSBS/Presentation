@@ -23,6 +23,7 @@ describe("SourcesService defense upload idempotency", () => {
       prisma as never,
       { get: vi.fn(), getOrThrow: vi.fn() } as never,
       { requireEditor: vi.fn().mockResolvedValue({ project: { userId: "owner-1" } }) } as never,
+      { scan: vi.fn().mockResolvedValue(undefined) } as never,
     );
     const file = {
       fieldname: "file_0",

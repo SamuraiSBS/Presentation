@@ -231,6 +231,17 @@ body:has(.editor-page) {
   font-weight: 800;
 }
 
+.save-indicator-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.save-retry {
+  min-height: 30px;
+  padding: 4px 10px;
+}
+
 .save-indicator svg {
   width: 16px;
   height: 16px;

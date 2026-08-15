@@ -10,7 +10,13 @@ datasource db {
 enum PlanCode {
   free
   student
+  plus
   pro
+}
+
+enum GenerationQuotaReservationStatus {
+  reserved
+  released
 }
 
 enum ProjectStatus {
@@ -28,6 +34,14 @@ enum ProjectStatus {
 enum JobStatus {
   queued
   active
+  completed
+  failed
+}
+
+enum AccountDeletionStatus {
+  cancellation_pending
+  queued
+  processing
   completed
   failed
 }
@@ -226,6 +240,8 @@ model User {
   stripeCustomerId      String?              @unique
   stripeSubscriptionId  String?              @unique
   subscriptionStatus    String?
+  subscriptionExpiresAt DateTime?
+  subscriptionQuotaEpoch String?
   lastSeenAt            DateTime?
   blockedAt             DateTime?
   blockedById           String?
@@ -241,6 +257,9 @@ model User {
   sessions              Session[]
   projects              Project[]
   usageCounters         UsageCounter[]
+  generationQuotaCounters GenerationQuotaCounter[]
+  generationQuotaReservations GenerationQuotaReservation[]
+  yooKassaPayments      YooKassaPayment[]
   folders               Folder[]
   projectMemberships    ProjectMember[]
   projectInvitesCreated ProjectInvitation[]  @relation("InviteCreator")
@@ -255,12 +274,31 @@ model User {
   adminActions          AdminAuditLog[]      @relation("AdminAuditActor")
   activityEvents        UserActivityEvent[]  @relation("ActivityUser")
   activityActions       UserActivityEvent[]  @relation("ActivityActor")
+  accountDeletion       AccountDeletion?
   factConfirmations     FactEvidence[]       @relation("FactEvidenceConfirmer")
   conflictResolutions   ProjectConflict[]    @relation("ConflictResolver")
 
   @@index([createdAt])
   @@index([lastSeenAt])
   @@index([blockedAt])
+  @@index([subscriptionExpiresAt])
+}
+
+model AccountDeletion {
+  id                       String                @id @default(cuid())
+  userId                   String?               @unique
+  status                   AccountDeletionStatus @default(cancellation_pending)
+  stripeSubscriptionId     String?
+  subscriptionCancelledAt  DateTime?
+  queueJobId               String?
+  storageDeletedAt         DateTime?
+  completedAt              DateTime?
+  error                    String?               @db.Text
+  requestedAt              DateTime              @default(now())
+  updatedAt                DateTime              @updatedAt
+  user                     User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status, requestedAt])
 }
 
 model Account {
@@ -397,6 +435,7 @@ model Source {
   text           String               @default("") @db.Text
   metadata       Json?
   included       Boolean              @default(true)
+  reviewedAt     DateTime?
   createdAt      DateTime             @default(now())
   project        Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
   parentSource   Source?              @relation("SourceChildren", fields: [parentSourceId], references: [id], onDelete: Cascade)
@@ -407,6 +446,7 @@ model Source {
   @@index([projectId])
   @@index([parentSourceId])
   @@index([projectId, role])
+  @@index([projectId, reviewedAt])
   @@unique([projectId, role, url])
   @@unique([projectId, uploadRequestKey, uploadFieldName])
 }
@@ -575,10 +615,62 @@ model GenerationJob {
   costEvents        CostEvent[]
   narrationEnvelope CostEnvelope? @relation("CostEnvelopeNarrationJob")
   presentationEnvelope CostEnvelope? @relation("CostEnvelopePresentationJob")
+  quotaReservation    GenerationQuotaReservation?
 
   @@unique([projectId, kind, requestKey])
   @@index([projectId, createdAt])
   @@index([projectId, kind, createdAt])
+}
+
+model GenerationQuotaCounter {
+  id         String   @id @default(cuid())
+  userId     String
+  period     String
+  quotaEpoch String
+  used       Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, period, quotaEpoch])
+  @@index([userId, period])
+}
+
+model GenerationQuotaReservation {
+  id              String                           @id @default(cuid())
+  userId          String
+  generationJobId String                           @unique
+  period          String
+  quotaEpoch      String
+  planCode        PlanCode
+  status          GenerationQuotaReservationStatus @default(reserved)
+  releasedAt      DateTime?
+  createdAt       DateTime                         @default(now())
+  updatedAt       DateTime                         @updatedAt
+  user            User                             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  generationJob   GenerationJob                    @relation(fields: [generationJobId], references: [id], onDelete: Cascade)
+
+  @@index([userId, period, quotaEpoch, status])
+}
+
+model YooKassaPayment {
+  id                 String   @id @default(cuid())
+  userId             String
+  idempotencyKey     String   @unique
+  providerPaymentId  String?  @unique
+  planCode           PlanCode
+  amountRub          Decimal  @db.Decimal(24, 2)
+  status             String
+  confirmationUrl    String?
+  paidAt             DateTime?
+  activatedAt        DateTime?
+  payload            Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
 }
 
 model Export {
@@ -588,6 +680,7 @@ model Export {
   requestKey           String?
   status               ExportStatus       @default(queued)
   objectKey            String?
+  sizeBytes            Int                @default(0)
   error                String?
   queueJobId           String?
   presentationRevision Int
@@ -761,12 +854,13 @@ model ExchangeRate {
 model PaymentTransaction {
   id                    String                   @id @default(cuid())
   userId                String?
-  stripeEventId         String                   @unique
+  providerEventId       String                   @unique @map("stripeEventId")
   stripeCustomerId      String?
   stripeSubscriptionId  String?
   stripeInvoiceId       String?
   stripePaymentIntentId String?
   stripeChargeId        String?
+  yooKassaPaymentId     String?                  @unique
   type                  PaymentTransactionType
   status                PaymentTransactionStatus
   grossAmount           Decimal                  @db.Decimal(24, 10)

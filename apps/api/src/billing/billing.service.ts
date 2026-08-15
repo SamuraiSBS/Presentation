@@ -1,232 +1,230 @@
-import { Injectable } from "@nestjs/common";
+import crypto from "node:crypto";
+import { BadRequestException, ConflictException, Injectable, Optional, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import Stripe from "stripe";
-import type { PaymentTransactionType } from "@prisma/client";
+import type { PlanCode, Prisma } from "@prisma/client";
+import { paidPlanCodes, planPricesRub, planRank, type PaidPlanCode } from "@studydeck/shared";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { ProductAnalyticsService } from "../analytics/product-analytics.service.js";
+
+type YooKassaPayment = {
+  id: string;
+  status: "pending" | "waiting_for_capture" | "succeeded" | "canceled" | string;
+  paid?: boolean;
+  amount?: { value?: string; currency?: string };
+  confirmation?: { type?: string; confirmation_url?: string };
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+};
 
 @Injectable()
 export class BillingService {
-  private stripe?: Stripe;
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    @Optional() private readonly productAnalytics?: ProductAnalyticsService,
   ) {}
 
-  async handleStripeWebhook(rawBody: Buffer, signature: string) {
-    const secret = this.config.get<string>("STRIPE_WEBHOOK_SECRET");
-    if (!secret) return { received: false, reason: "stripe webhook not configured" };
-
-    const event = this.getStripe().webhooks.constructEvent(rawBody, signature, secret);
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object as Stripe.Checkout.Session;
-      await this.syncCheckoutSession(session);
-    }
-
-    if (event.type === "customer.subscription.created" || event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
-      const subscription = event.data.object as Stripe.Subscription;
-      await this.syncSubscription(subscription);
-    }
-
-    if (event.type === "invoice.payment_succeeded") {
-      await this.recordPaidInvoice(event, event.data.object as Stripe.Invoice);
-    }
-
-    if (event.type === "invoice.payment_failed") {
-      await this.recordFailedInvoice(event, event.data.object as Stripe.Invoice);
-    }
-
-    if (event.type === "charge.refunded") {
-      await this.recordRefund(event, event.data.object as Stripe.Charge);
-    }
-
-    if (event.type === "charge.dispute.created") {
-      await this.recordDispute(event, event.data.object as Stripe.Dispute);
-    }
-
-    return { received: true };
-  }
-
-  async createCheckoutSession(userId: string, plan: "student" | "pro") {
-    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
-    const priceId = plan === "pro" ? this.config.get<string>("STRIPE_PRICE_PRO") : this.config.get<string>("STRIPE_PRICE_STUDENT");
-    if (!priceId) throw new Error(`Stripe price for ${plan} is not configured`);
-
-    const appUrl = this.config.get<string>("PUBLIC_APP_URL") || "http://localhost:3000";
-    const session = await this.getStripe().checkout.sessions.create({
-      mode: "subscription",
-      customer: user.stripeCustomerId || undefined,
-      customer_email: user.stripeCustomerId ? undefined : user.email || undefined,
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${appUrl}/billing?checkout=success`,
-      cancel_url: `${appUrl}/pricing?checkout=cancelled`,
-      metadata: { userId, plan },
-    });
-
-    return { url: session.url };
-  }
-
-  private async syncCheckoutSession(session: Stripe.Checkout.Session) {
-    const userId = session.metadata?.userId;
-    if (!userId || !session.customer) return;
-
-    await this.prisma.user.update({
+  async createCheckoutSession(userId: string, plan: PaidPlanCode, suppliedKey?: string) {
+    if (!(paidPlanCodes as readonly string[]).includes(plan)) throw new BadRequestException("Недоступный тариф");
+    const idempotencyKey = normalizeIdempotencyKey(suppliedKey);
+    const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
-      data: {
-        stripeCustomerId: String(session.customer),
-        stripeSubscriptionId: session.subscription ? String(session.subscription) : undefined,
-        subscriptionStatus: "checkout_completed",
-      },
+      select: { id: true, planCode: true, subscriptionExpiresAt: true },
     });
-  }
+    this.assertPurchaseAllowed(user, plan);
 
-  private async syncSubscription(subscription: Stripe.Subscription) {
-    const planCode = this.planCodeForPrice(subscription.items.data[0]?.price.id);
-    await this.prisma.user.updateMany({
-      where: { stripeCustomerId: String(subscription.customer) },
-      data: {
-        stripeSubscriptionId: subscription.id,
-        subscriptionStatus: subscription.status,
-        planCode,
-      },
-    });
-  }
+    const existing = await this.prisma.yooKassaPayment.findUnique({ where: { idempotencyKey } });
+    if (existing?.confirmationUrl && existing.status === "pending") return { url: existing.confirmationUrl };
+    if (existing?.activatedAt) throw new ConflictException("Этот платёж уже подтверждён. Создайте новый платёж для следующей покупки.");
 
-  private async recordPaidInvoice(event: Stripe.Event, invoice: Stripe.Invoice) {
-    const customerId = stringId(invoice.customer);
-    const user = customerId ? await this.prisma.user.findFirst({ where: { stripeCustomerId: customerId }, select: { id: true } }) : null;
-    const amount = minorToMajor(invoice.amount_paid, invoice.currency);
-    const fx = await this.exchangeRate(invoice.currency);
-    const fee = await this.invoiceFee(invoice);
-    const net = subtractMoney(amount, fee);
-    await this.prisma.paymentTransaction.upsert({
-      where: { stripeEventId: event.id },
+    await this.prisma.yooKassaPayment.upsert({
+      where: { idempotencyKey },
       update: {},
       create: {
-        userId: user?.id,
-        stripeEventId: event.id,
-        stripeCustomerId: customerId,
-        stripeSubscriptionId: subscriptionId(invoice),
-        stripeInvoiceId: invoice.id,
-        stripePaymentIntentId: paymentIntentId(invoice),
-        stripeChargeId: chargeId(invoice),
-        type: "payment",
-        status: "succeeded",
-        grossAmount: amount,
-        feeAmount: fee,
-        netAmount: net,
-        currency: invoice.currency.toUpperCase(),
-        exchangeRateToRub: fx,
-        grossRubAtEvent: fx ? multiplyMoney(amount, fx) : null,
-        feeRubAtEvent: fx ? multiplyMoney(fee, fx) : null,
-        netRubAtEvent: fx ? multiplyMoney(net, fx) : null,
-        occurredAt: new Date(event.created * 1000),
-        metadata: { billingReason: invoice.billing_reason || null },
+        userId,
+        idempotencyKey,
+        planCode: plan,
+        amountRub: planPricesRub[plan],
+        status: "pending",
       },
     });
-  }
 
-  private async recordFailedInvoice(event: Stripe.Event, invoice: Stripe.Invoice) {
-    const customerId = stringId(invoice.customer);
-    const user = customerId ? await this.prisma.user.findFirst({ where: { stripeCustomerId: customerId }, select: { id: true } }) : null;
-    const amount = minorToMajor(invoice.amount_due, invoice.currency);
-    await this.prisma.paymentTransaction.upsert({
-      where: { stripeEventId: event.id },
-      update: {},
-      create: { userId: user?.id, stripeEventId: event.id, stripeCustomerId: customerId, stripeInvoiceId: invoice.id, type: "payment", status: "failed", grossAmount: amount, netAmount: "0", currency: invoice.currency.toUpperCase(), occurredAt: new Date(event.created * 1000) },
+    const appUrl = this.config.get<string>("PUBLIC_APP_URL") || "http://localhost:3000";
+    const payment = await this.requestYooKassa("/payments", {
+      method: "POST",
+      headers: { "Idempotence-Key": idempotencyKey },
+      body: {
+        amount: { value: planPricesRub[plan].toFixed(2), currency: "RUB" },
+        capture: true,
+        confirmation: { type: "redirect", return_url: `${appUrl}/billing?checkout=success` },
+        description: `StudyDeck ${plan} — 30 дней доступа`,
+        metadata: { userId, plan, idempotencyKey },
+      },
     });
-  }
-
-  private async recordRefund(event: Stripe.Event, charge: Stripe.Charge) {
-    const customerId = stringId(charge.customer);
-    const user = customerId ? await this.prisma.user.findFirst({ where: { stripeCustomerId: customerId }, select: { id: true } }) : null;
-    const amount = `-${minorToMajor(charge.amount_refunded, charge.currency)}`;
-    const fx = await this.exchangeRate(charge.currency);
-    await this.upsertNegativeTransaction(event, "refund", amount, charge.currency, user?.id, customerId, charge.id, fx);
-  }
-
-  private async recordDispute(event: Stripe.Event, dispute: Stripe.Dispute) {
-    const charge = typeof dispute.charge === "string" ? await this.getStripe().charges.retrieve(dispute.charge) : dispute.charge;
-    const customerId = charge ? stringId(charge.customer) : null;
-    const user = customerId ? await this.prisma.user.findFirst({ where: { stripeCustomerId: customerId }, select: { id: true } }) : null;
-    const amount = `-${minorToMajor(dispute.amount, dispute.currency)}`;
-    const fx = await this.exchangeRate(dispute.currency);
-    await this.upsertNegativeTransaction(event, "dispute", amount, dispute.currency, user?.id, customerId, stringId(dispute.charge), fx);
-  }
-
-  private async upsertNegativeTransaction(event: Stripe.Event, type: PaymentTransactionType, amount: string, currency: string, userId: string | undefined, customerId: string | null, chargeIdValue: string | null, fx: string | null) {
-    await this.prisma.paymentTransaction.upsert({
-      where: { stripeEventId: event.id },
-      update: {},
-      create: { userId, stripeEventId: event.id, stripeCustomerId: customerId, stripeChargeId: chargeIdValue, type, status: "succeeded", grossAmount: amount, netAmount: amount, currency: currency.toUpperCase(), exchangeRateToRub: fx, grossRubAtEvent: fx ? multiplyMoney(amount, fx) : null, netRubAtEvent: fx ? multiplyMoney(amount, fx) : null, occurredAt: new Date(event.created * 1000) },
+    const url = payment.confirmation?.confirmation_url;
+    if (!payment.id || !url) throw new ServiceUnavailableException("ЮKassa не вернула ссылку на оплату");
+    await this.prisma.yooKassaPayment.update({
+      where: { idempotencyKey },
+      data: { providerPaymentId: payment.id, confirmationUrl: url, status: payment.status, payload: payment as Prisma.InputJsonValue },
     });
+    void this.productAnalytics?.capture(userId, "checkout_started", { plan, provider: "yookassa" });
+    return { url };
   }
 
-  private async invoiceFee(invoice: Stripe.Invoice) {
-    const charge = chargeId(invoice);
-    if (!charge) return "0";
-    try {
-      const item = await this.getStripe().charges.retrieve(charge, { expand: ["balance_transaction"] });
-      if (!item.balance_transaction || typeof item.balance_transaction === "string") return "0";
-      return minorToMajor(item.balance_transaction.fee, item.balance_transaction.currency);
-    } catch {
-      return "0";
-    }
+  async createPortalSession(_userId: string) {
+    // Purchases are one-time and have no provider-managed recurring contract.
+    // The pricing page is therefore the only meaningful account surface.
+    const appUrl = this.config.get<string>("PUBLIC_APP_URL") || "http://localhost:3000";
+    return { url: `${appUrl}/pricing` };
   }
 
-  private async exchangeRate(currency: string) {
-    const code = currency.toUpperCase();
-    if (code === "RUB") return "1";
-    const cached = await this.prisma.exchangeRate.findFirst({ where: { baseCurrency: code, quoteCurrency: "RUB" }, orderBy: { effectiveAt: "desc" } });
-    return cached?.rate.toString() || null;
-  }
+  /** YooKassa webhooks are verified against the provider API before state changes. */
+  async handleYooKassaWebhook(payload: unknown) {
+    const event = payload as { event?: unknown; object?: unknown };
+    const hintedPayment = event?.object as { id?: unknown } | undefined;
+    const paymentId = typeof hintedPayment?.id === "string" ? hintedPayment.id : "";
+    if (!paymentId) throw new BadRequestException("Некорректный webhook ЮKassa");
 
-  private planCodeForPrice(priceId?: string) {
-    if (priceId && priceId === this.config.get<string>("STRIPE_PRICE_PRO")) return "pro";
-    if (priceId && priceId === this.config.get<string>("STRIPE_PRICE_STUDENT")) return "student";
-    return "free";
-  }
-
-  private getStripe() {
-    if (!this.stripe) {
-      this.stripe = new Stripe(this.config.getOrThrow<string>("STRIPE_SECRET_KEY"), {
-        apiVersion: "2025-02-24.acacia",
-        typescript: true,
+    const payment = await this.requestYooKassa(`/payments/${encodeURIComponent(paymentId)}`, { method: "GET" });
+    if (payment.status !== "succeeded" || payment.paid !== true) {
+      await this.prisma.yooKassaPayment.updateMany({
+        where: { providerPaymentId: paymentId, activatedAt: null },
+        data: { status: payment.status, payload: payment as Prisma.InputJsonValue },
       });
+      return { received: true, activated: false };
     }
-    return this.stripe;
+    const activated = await this.activateSucceededPayment(payment);
+    return { received: true, activated };
+  }
+
+  /** There is no recurring charge to cancel for a one-time 30-day purchase. */
+  async cancelSubscriptionForAccountDeletion(user: {
+    stripeSubscriptionId: string | null;
+    subscriptionStatus: string | null;
+  }) {
+    return { subscriptionId: user.stripeSubscriptionId, cancelledAt: new Date() };
+  }
+
+  private async activateSucceededPayment(payment: YooKassaPayment) {
+    const paymentId = payment.id;
+    const metadata = payment.metadata || {};
+    const userId = typeof metadata.userId === "string" ? metadata.userId : null;
+    const plan = typeof metadata.plan === "string" && (paidPlanCodes as readonly string[]).includes(metadata.plan)
+      ? metadata.plan as PaidPlanCode
+      : null;
+    const idempotencyKey = typeof metadata.idempotencyKey === "string" ? metadata.idempotencyKey : null;
+    const expectedAmount = plan ? planPricesRub[plan].toFixed(2) : null;
+    if (!userId || !plan || !idempotencyKey || payment.amount?.currency !== "RUB" || payment.amount?.value !== expectedAmount) {
+      throw new BadRequestException("Платёж ЮKassa не прошёл проверку тарифа");
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // The pending row exists before the provider call. Match the webhook to
+      // our idempotency key so a fast notification cannot race the response
+      // handler that persists providerPaymentId.
+      const paymentRow = await tx.yooKassaPayment.upsert({
+        where: { idempotencyKey },
+        update: { status: "succeeded", paidAt: new Date(), payload: payment as Prisma.InputJsonValue },
+        create: {
+          userId,
+          idempotencyKey,
+          providerPaymentId: paymentId,
+          planCode: plan,
+          amountRub: planPricesRub[plan],
+          status: "succeeded",
+          paidAt: new Date(),
+          payload: payment as Prisma.InputJsonValue,
+        },
+        select: { id: true, activatedAt: true },
+      });
+      if (paymentRow.activatedAt) return false;
+
+      const user = await tx.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { planCode: true, subscriptionExpiresAt: true, subscriptionQuotaEpoch: true },
+      });
+      this.assertPurchaseAllowed(user, plan);
+      const now = new Date();
+      const hasActivePaidPlan = user.planCode !== "free" && Boolean(user.subscriptionExpiresAt && user.subscriptionExpiresAt > now);
+      const isRenewal = hasActivePaidPlan && user.planCode === plan;
+      const expiresAt = isRenewal
+        ? addDays(user.subscriptionExpiresAt!, 30)
+        : addDays(now, 30);
+      const quotaEpoch = isRenewal
+        ? user.subscriptionQuotaEpoch || crypto.randomUUID()
+        : crypto.randomUUID();
+
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          planCode: plan,
+          subscriptionStatus: "active",
+          subscriptionExpiresAt: expiresAt,
+          subscriptionQuotaEpoch: quotaEpoch,
+        },
+      });
+      await tx.yooKassaPayment.update({ where: { id: paymentRow.id }, data: { activatedAt: now } });
+      await tx.paymentTransaction.upsert({
+        where: { providerEventId: `yookassa:${paymentId}` },
+        update: {},
+        create: {
+          userId,
+          providerEventId: `yookassa:${paymentId}`,
+          yooKassaPaymentId: paymentId,
+          type: "payment",
+          status: "succeeded",
+          grossAmount: planPricesRub[plan],
+          netAmount: planPricesRub[plan],
+          currency: "RUB",
+          exchangeRateToRub: 1,
+          grossRubAtEvent: planPricesRub[plan],
+          netRubAtEvent: planPricesRub[plan],
+          occurredAt: now,
+          metadata: { plan, kind: isRenewal ? "renewal" : hasActivePaidPlan ? "upgrade" : "new_30_day_access", provider: "yookassa" },
+        },
+      });
+      void this.productAnalytics?.capture(userId, "paid_conversion", { plan, provider: "yookassa", purchase_kind: isRenewal ? "renewal" : hasActivePaidPlan ? "upgrade" : "new" });
+      return true;
+    });
+  }
+
+  private assertPurchaseAllowed(user: { planCode: PlanCode; subscriptionExpiresAt: Date | null }, targetPlan: PaidPlanCode) {
+    const active = user.planCode !== "free" && Boolean(user.subscriptionExpiresAt && user.subscriptionExpiresAt > new Date());
+    if (active && planRank[targetPlan] < planRank[user.planCode]) {
+      throw new ConflictException("Понижение тарифа доступно после окончания текущей подписки");
+    }
+  }
+
+  private async requestYooKassa(path: string, init: { method: "GET" | "POST"; headers?: Record<string, string>; body?: unknown }) {
+    const shopId = this.config.get<string>("YOOKASSA_SHOP_ID");
+    const secret = this.config.get<string>("YOOKASSA_SECRET_KEY");
+    if (!shopId || !secret) throw new ServiceUnavailableException("ЮKassa не настроена");
+    const response = await fetch(`${this.config.get<string>("YOOKASSA_API_URL") || "https://api.yookassa.ru/v3"}${path}`, {
+      method: init.method,
+      headers: {
+        authorization: `Basic ${Buffer.from(`${shopId}:${secret}`).toString("base64")}`,
+        accept: "application/json",
+        ...(init.body ? { "content-type": "application/json" } : {}),
+        ...init.headers,
+      },
+      ...(init.body ? { body: JSON.stringify(init.body) } : {}),
+    });
+    const data = await response.json().catch(() => null) as YooKassaPayment | { description?: string } | null;
+    if (!response.ok || !data || !("id" in data || response.status === 204)) {
+      const description = data && "description" in data ? data.description : undefined;
+      throw new ServiceUnavailableException(typeof description === "string" ? description : "ЮKassa временно недоступна");
+    }
+    return data as YooKassaPayment;
   }
 }
 
-function minorToMajor(amount: number, currency: string) {
-  const zeroDecimal = new Set(["bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf"]);
-  return zeroDecimal.has(currency.toLowerCase()) ? String(amount) : `${Math.trunc(amount / 100)}.${String(Math.abs(amount % 100)).padStart(2, "0")}`;
+function normalizeIdempotencyKey(value?: string) {
+  const key = value?.trim();
+  if (!key) return `checkout:${crypto.randomUUID()}`;
+  if (key.length > 64) throw new BadRequestException("Некорректный ключ идемпотентности оплаты");
+  return key;
 }
 
-function multiplyMoney(left: string, right: string) {
-  const scale = 100_000_000n;
-  const value = (toScaled(left) * toScaled(right)) / scale;
-  const sign = value < 0n ? "-" : "";
-  const absolute = value < 0n ? -value : value;
-  const text = absolute.toString().padStart(9, "0");
-  return `${sign}${text.slice(0, -8)}.${text.slice(-8)}`;
+function addDays(date: Date, days: number) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 }
-
-function subtractMoney(left: string, right: string) {
-  const value = toScaled(left) - toScaled(right);
-  const sign = value < 0n ? "-" : "";
-  const absolute = value < 0n ? -value : value;
-  const text = absolute.toString().padStart(9, "0");
-  return `${sign}${text.slice(0, -8)}.${text.slice(-8)}`;
-}
-
-function toScaled(value: string) {
-  const sign = value.startsWith("-") ? -1n : 1n;
-  const [whole, fraction = ""] = value.replace(/^-/, "").split(".");
-  return sign * BigInt(`${whole || "0"}${fraction.padEnd(8, "0").slice(0, 8)}`);
-}
-
-function stringId(value: string | { id: string } | null | undefined) { return typeof value === "string" ? value : value?.id || null; }
-function subscriptionId(invoice: Stripe.Invoice) { return stringId((invoice as Stripe.Invoice & { subscription?: string | Stripe.Subscription | null }).subscription); }
-function paymentIntentId(invoice: Stripe.Invoice) { return stringId((invoice as Stripe.Invoice & { payment_intent?: string | Stripe.PaymentIntent | null }).payment_intent); }
-function chargeId(invoice: Stripe.Invoice) { return stringId((invoice as Stripe.Invoice & { charge?: string | Stripe.Charge | null }).charge); }

@@ -20,6 +20,10 @@ if ($manifest.releaseGate -ne "passed") {
   throw "Release manifest does not prove a passed release gate."
 }
 
+if ($manifest.migrationCompatibility -ne "no-schema-change") {
+  throw "Release manifest must prove the no-schema-change migration policy."
+}
+
 $requiredImages = @("api", "worker", "web")
 foreach ($service in $requiredImages) {
   $imageReference = [string]$manifest.images.$service

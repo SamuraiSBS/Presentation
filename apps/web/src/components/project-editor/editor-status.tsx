@@ -1,7 +1,13 @@
 import { Check, Eye, LayoutTemplate, Settings2 } from "lucide-react";
 import type { MobileEditorSection, SaveStatus } from "./editor-types";
 
-export function SaveIndicator({ status }: { status: SaveStatus }) {
+export function SaveIndicator({
+  status,
+  onRetry,
+}: {
+  status: SaveStatus;
+  onRetry?: () => void;
+}) {
   if (status === "idle") return null;
   const label =
     status === "saving"
@@ -10,10 +16,17 @@ export function SaveIndicator({ status }: { status: SaveStatus }) {
         ? "Сохранено"
         : "Не удалось сохранить";
   return (
-    <span className={`save-indicator save-indicator-${status}`} role="status">
-      {status === "saved" ? <Check aria-hidden="true" /> : null}
-      {label}
-    </span>
+    <div className="save-indicator-group">
+      <span className={`save-indicator save-indicator-${status}`} role="status">
+        {status === "saved" ? <Check aria-hidden="true" /> : null}
+        {label}
+      </span>
+      {status === "error" && onRetry ? (
+        <button className="button ghost save-retry" type="button" onClick={onRetry}>
+          Повторить
+        </button>
+      ) : null}
+    </div>
   );
 }
 

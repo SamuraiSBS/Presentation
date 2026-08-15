@@ -59,7 +59,7 @@ export class DashboardService {
 
     const readyPresentations = readyStats._count._all;
     return {
-      user,
+      user: { ...user, planCode: usage.planCode },
       usage,
       stats: {
         presentationsCreated,

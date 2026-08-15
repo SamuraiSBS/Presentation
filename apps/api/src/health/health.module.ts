@@ -3,10 +3,11 @@ import { BullModule } from "@nestjs/bullmq";
 import { HealthController } from "./health.controller.js";
 import { HealthService } from "./health.service.js";
 import { HealthStorageService } from "./health-storage.service.js";
+import { HealthAlertService } from "./health-alert.service.js";
 
 @Module({
   imports: [BullModule.registerQueue({ name: "generation" }, { name: "exports" }, { name: "admin-maintenance" })],
   controllers: [HealthController],
-  providers: [HealthService, HealthStorageService],
+  providers: [HealthService, HealthStorageService, HealthAlertService],
 })
 export class HealthModule {}

@@ -19,7 +19,6 @@ import {
   critiquePresentationDeterministically,
   findGenericTextIssues,
   findLayoutRhythmIssues,
-  findLongSlideTextIssues,
   findNarrationMetaIssues,
   findRepeatedTitleIssues,
   findSpeechTimingIssues,
@@ -39,12 +38,15 @@ import {
   hasWeakConclusion,
   improvePresentationQuality,
   isGenericTitle,
-  isVisibleTextTooLong,
   scoreExportReadiness,
   scoreSlideBrevity,
   scoreUniversityTone,
   scoreVisualRhythm,
 } from "./presentation-quality.js";
+import {
+  findLongSlideTextIssues,
+  isVisibleTextTooLong,
+} from "./presentation/quality/visible-text-rules.js";
 import { applyNarrationFallbacks, applySlideTextRepairs, buildQualityRepairPrompt, preserveAcceptedGeneratedText, preserveAcceptedNarration, repairReleaseCandidate } from "./presentation/quality/orchestration.js";
 
 const source = {

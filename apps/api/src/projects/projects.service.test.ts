@@ -5,6 +5,7 @@ import type { ProjectAccessService } from "../access/project-access.service.js";
 import type { PrismaService } from "../prisma/prisma.service.js";
 import type { ProjectStorageService } from "../storage/project-storage.service.js";
 import type { UsageService } from "../usage/usage.service.js";
+import type { MalwareScanService } from "../security/malware-scan.service.js";
 import { ProjectsService } from "./projects.service.js";
 
 const speechDraft = "Слайд 1: Введение\nЭто достаточно длинный текст выступления для проверки запуска презентации.";
@@ -51,6 +52,7 @@ function createHarness() {
     },
     project: {
       create: vi.fn(),
+      update: vi.fn().mockResolvedValue({ slideCount: 6 }),
     },
     defenseWorkspace: {
       create: vi.fn().mockResolvedValue({ id: "workspace-copy" }),
@@ -58,6 +60,7 @@ function createHarness() {
     },
     generationJob: {
       create: vi.fn().mockResolvedValue({ id: "job-1" }),
+      findFirst: vi.fn().mockResolvedValue(null),
     },
     costEnvelope: {
       findFirst: vi.fn().mockResolvedValue(null),
@@ -92,7 +95,9 @@ function createHarness() {
     resolve: vi.fn().mockResolvedValue({ project: { id: "project-1", userId: "user-1" }, role: "owner" }),
   };
   const usage = {
-    reserveCreationSlot: vi.fn(),
+    assertSlideCount: vi.fn(),
+    reserveGenerationSlot: vi.fn(),
+    releaseGenerationSlot: vi.fn().mockResolvedValue(true),
     getSummary: vi.fn(),
   };
   const storage = {
@@ -107,13 +112,14 @@ function createHarness() {
     access as unknown as ProjectAccessService,
     usage as unknown as UsageService,
     storage as unknown as ProjectStorageService,
+    { scan: vi.fn().mockResolvedValue(undefined) } as unknown as MalwareScanService,
   );
 
   return { access, prisma, queue, service, storage, tx, usage };
 }
 
 describe("ProjectsService creation", () => {
-  it("reserves the monthly slot in the same transaction and stores the creation brief", async () => {
+  it("checks slide entitlement without charging a draft and stores the creation brief", async () => {
     const { service, tx, usage } = createHarness();
     tx.project.create.mockResolvedValueOnce(project({ prompt: "saved" }));
 
@@ -133,7 +139,7 @@ describe("ProjectsService creation", () => {
       },
     });
 
-    expect(usage.reserveCreationSlot).toHaveBeenCalledWith(tx, "user-1");
+    expect(usage.assertSlideCount).toHaveBeenCalledWith(tx, "user-1", 10);
     expect(tx.project.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         scenario: "university_report",
@@ -149,7 +155,7 @@ describe("ProjectsService creation", () => {
 
 describe("ProjectsService generation", () => {
   it("queues presentation generation without charging creation usage again", async () => {
-    const { prisma, queue, service, usage } = createHarness();
+    const { prisma, queue, service, usage, tx } = createHarness();
     prisma.project.findUnique.mockResolvedValue(project());
     prisma.generationJob.findFirst.mockResolvedValueOnce(null);
     prisma.generationJob.create.mockResolvedValueOnce({ id: "job-1" });
@@ -162,7 +168,7 @@ describe("ProjectsService generation", () => {
       expect.objectContaining({ projectId: "project-1", userId: "user-1" }),
       expect.objectContaining({ attempts: 3 }),
     );
-    expect(usage.reserveCreationSlot).not.toHaveBeenCalled();
+    expect(usage.reserveGenerationSlot).toHaveBeenCalledWith(tx, "user-1", "job-1", 6);
   });
 
   it("queues narration with one final BullMQ attempt", async () => {
@@ -228,6 +234,27 @@ describe("ProjectsService generation", () => {
       expect.objectContaining({ projectId: "project-1" }),
       expect.any(Object),
     );
+  });
+
+  it("reuses the active job from a concurrent launch without reserving another quota slot", async () => {
+    const { service, tx, usage } = createHarness();
+    tx.generationJob.findFirst.mockResolvedValueOnce({ id: "active-job", queueJobId: "bull-1" });
+
+    await expect((service as any).createAitunnelEnvelope("project-1", "presentation", "user-1"))
+      .resolves.toMatchObject({ existing: true, job: { id: "active-job" } });
+
+    expect(usage.reserveGenerationSlot).not.toHaveBeenCalled();
+    expect(tx.generationJob.create).not.toHaveBeenCalled();
+  });
+
+  it("returns a quota slot when BullMQ rejects the launch before accepting it", async () => {
+    const { prisma, queue, service, usage } = createHarness();
+    prisma.project.findUnique.mockResolvedValue(project());
+    queue.add.mockRejectedValueOnce(new Error("Redis unavailable"));
+
+    await expect(service.enqueueGeneration("user-1", "project-1")).rejects.toThrow("Redis unavailable");
+
+    expect(usage.releaseGenerationSlot).toHaveBeenCalledWith("job-1");
   });
 
   it("reuses an exhausted presentation attempt group and rebinds it to the retry job without granting a new cap", async () => {

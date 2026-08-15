@@ -12,7 +12,10 @@ export class BlockedUserGuard implements CanActivate {
       where: { id: request.userId },
       select: { id: true, blockedAt: true, blockReason: true, lastSeenAt: true },
     });
-    if (!user?.blockedAt) {
+    if (!user) {
+      throw new ForbiddenException({ code: "USER_NOT_FOUND", message: "Account is unavailable." });
+    }
+    if (!user.blockedAt) {
       const staleBefore = new Date(Date.now() - 15 * 60 * 1000);
       if (user && (!user.lastSeenAt || user.lastSeenAt < staleBefore)) {
         void this.prisma.user.updateMany({

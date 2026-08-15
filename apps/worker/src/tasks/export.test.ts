@@ -9,8 +9,11 @@ import sharp from "sharp";
 import { auditSlideCanvas, ensureEditableCanvas, PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS, presentationSchema } from "@studydeck/shared";
 import { describe, expect, it, vi } from "vitest";
 // @ts-expect-error Vitest must use the TypeScript source, not a stale local JS emit.
-import { createPdf, createPptx, fitPptxImage, renderPdfHtml } from "./export.ts";
+import { createPdf, createPptx, renderPdfHtml } from "./export.ts";
 import { preparePresentationForExport } from "./export-preflight.js";
+import { sequenceItems, slideBodyText } from "./export/presentation-content.js";
+import { fitPptxImage } from "./export/pptx-image.js";
+import { renderPptxContentSlide } from "./export/pptx-content.js";
 import { chromiumExecutablePath } from "./pdf-renderer.js";
 
 const execFileAsync = promisify(execFile);
@@ -24,6 +27,25 @@ vi.mock("../storage.js", () => ({
 }));
 
 describe("createPptx", () => {
+  it("routes a semantic template through the extracted PPTX content renderer", async () => {
+    const addText = vi.fn();
+    const addShape = vi.fn();
+    const addImage = vi.fn();
+    await renderPptxContentSlide(
+      { ShapeType: { rect: "rect", roundRect: "roundRect", ellipse: "ellipse", line: "line" } },
+      { addText, addShape, addImage },
+      presentationSchema.parse({
+        id: "renderer-contract", title: "Renderer contract", scenario: "lesson", level: "beginner", slideCount: 1, generationMode: "demo", generatedText: "", sources: [], outline: [], narrativePlan: [], speechScript: [],
+        slides: [{ id: "slide-1", order: 1, title: "A compact statement", slideKind: "content", layout: "statement", thesis: "The extracted renderer receives semantic slide data.", bullets: [], definition: null, keyConcepts: [], visual: { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] }, highlights: [], blocks: [], speakerNotes: "Explain the statement in one concise sentence.", timingSeconds: 30, placeholders: [], sourceRefs: [] }],
+      }).slides[0],
+      null,
+      { ...PREMIUM_PRESENTATION_THEMES.studydeckEditorial, pptx: { background: "FFFFFF", surface: "F5F5F5", surfaceAlt: "EEEEEE", text: "111111", muted: "555555", accent: "FF0000", accentAlt: "00AA00", line: "CCCCCC" } },
+    );
+    expect(addText).toHaveBeenCalledWith("A compact statement", expect.any(Object));
+    expect(addShape).not.toHaveBeenCalled();
+    expect(addImage).not.toHaveBeenCalled();
+  });
+
   it("uses one shared attribution string in the canvas, PPTX, and PDF", async () => {
     const document = ensureEditableCanvas(presentationSchema.parse({
       id: "attribution-deck",
@@ -56,6 +78,8 @@ describe("createPptx", () => {
     const attribution = "Источники: [1] Research archive · Фото: Archive collection";
     const canvasCredit = document.slides[0].canvas?.elements.find((element) => element.type === "text" && element.typographyRole === "sourceCredit");
 
+    expect(slideBodyText(document.slides[0])).toContain("The source footer stays compact.");
+    expect(sequenceItems(document.slides[0])).toEqual(["One visible point", "One supported point"]);
     expect(canvasCredit).toMatchObject({ text: attribution });
     expect((document.slides[0].canvas?.elements.filter((element) => element.type === "text" && element.typographyRole === "sourceCredit") || [])).toHaveLength(1);
 
@@ -394,6 +418,7 @@ describe("createPptx", () => {
     expect(html).toContain('data-canvas-element="shape-1"');
     expect(html).toContain("opacity:0.4");
     expect(html).toContain("Canvas title");
+    expect(html).toContain('font-family:Arial, "Liberation Sans", "Noto Sans", "DejaVu Sans", sans-serif');
   });
 
   it("exports evidence sources compactly without breaking pptx", async () => {
@@ -452,6 +477,7 @@ describe("createPptx", () => {
 
       expect(slideXml, themeId).toContain(theme.colors.background.slice(1));
       expect(slideXml, themeId).toContain(theme.colors.text.slice(1));
+      expect(slideXml, themeId).toContain('typeface="Arial"');
     }
   });
 

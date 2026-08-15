@@ -2,6 +2,7 @@ import NextAuth from "@studydeck/auth";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import authConfig, { optionalProfileString } from "@/auth.config";
 import { prisma } from "@/lib/prisma";
+import { captureProductAnalytics } from "@studydeck/shared";
 
 export const { auth, handlers, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
@@ -27,6 +28,13 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
         type: "login",
         metadata: { provider: "telegram" },
       } });
+      void captureProductAnalytics({
+        apiKey: process.env.POSTHOG_API_KEY,
+        host: process.env.POSTHOG_HOST,
+        distinctId: user.id,
+        event: "login_completed",
+        properties: { provider: "telegram" },
+      });
     },
   },
 });

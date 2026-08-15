@@ -3,6 +3,7 @@ import type { ConfigService } from "@nestjs/config";
 import type { Queue } from "bullmq";
 import type { PrismaService } from "../prisma/prisma.service.js";
 import type { HealthStorageService } from "./health-storage.service.js";
+import type { MalwareScanService } from "../security/malware-scan.service.js";
 import { HealthService } from "./health.service.js";
 
 const runtimeValues = {
@@ -36,6 +37,7 @@ function subject(options: { heartbeat?: string; storageError?: Error } = {}) {
     generationQueue as unknown as Queue,
     queue() as unknown as Queue,
     queue() as unknown as Queue,
+    { ping: vi.fn().mockResolvedValue(undefined) } as unknown as MalwareScanService,
   );
 }
 
@@ -51,6 +53,7 @@ describe("HealthService", () => {
         database: { ok: true },
         migrations: { ok: true },
         storage: { ok: true },
+        malwareScanner: { ok: true },
         queues: { ok: true },
         worker: { ok: true },
       },

@@ -30,6 +30,8 @@ import { runWithUsageContext } from "../usage-ledger.js";
 import { failCostEnvelope, finalizeFailedCostEnvelope, reserveCostEnvelope, settleCostEnvelope } from "../cost-envelope.js";
 import { EconomicReleaseGateError, evaluateEconomicReleaseGate } from "../economic-release-gate.js";
 import { createMandatorySourceSnapshot, parseMandatorySourceSnapshot, snapshotSources } from "../source-snapshot.js";
+import { captureWorkerProductAnalytics } from "../product-analytics.js";
+import { releaseGenerationQuotaReservation } from "../generation-quota.js";
 import {
   handleDefenseAnalysisJob,
   handleDefenseComplianceJob,
@@ -94,6 +96,7 @@ export async function handleGenerationJob(job: Job<GenerationQueueJobData>) {
 async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" | "presentation", traceContext?: TraceCarrier) {
   const prisma = getPrisma();
   const { projectId } = job.data;
+  const startedAt = Date.now();
   const jobWhere = regularGenerationJobWhere(projectId, job.id, kind, job.data.generationJobId);
 
   await prisma.project.update({
@@ -201,6 +204,11 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
         // responses never leave the narration state machine.
         metadata: { kind, narrationOutcome: narrationOutcome?.kind, narrationStage: narrationOutcome?.stage },
       } });
+      void captureWorkerProductAnalytics(job.data.userId, "generation_completed", {
+        kind,
+        attempt: job.attemptsMade + 1,
+        duration_ms: Date.now() - startedAt,
+      });
       return;
     }
 
@@ -375,6 +383,16 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       data: { status: "completed", progressStage: "completed", progressLabel: "Готово", progressPercent: 100 },
     });
     await prisma.userActivityEvent.create({ data: { userId: job.data.userId, projectId, type: "generation.completed", metadata: { kind } } });
+    const timeToReadyMs = project.createdAt instanceof Date
+      ? Date.now() - project.createdAt.getTime()
+      : undefined;
+    void captureWorkerProductAnalytics(job.data.userId, "generation_completed", {
+      kind,
+      attempt: job.attemptsMade + 1,
+      duration_ms: Date.now() - startedAt,
+      time_to_ready_ms: timeToReadyMs ?? null,
+      local_recovery: usedLocalPresentationRecovery,
+    });
   } catch (error) {
     const recovery = safeGenerationError(error);
     const failureCategory = generationFailureCategory(error);
@@ -390,6 +408,13 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       job.discard();
     }
     logGenerationStage({ projectId, jobId: job.id, stage: "failed", durationMs: 0, error, attempt: job.attemptsMade + 1, failureCategory, finalDisposition: willRetry ? "retry_scheduled" : "failed" });
+    void captureWorkerProductAnalytics(job.data.userId, "generation_failed", {
+      kind,
+      attempt: job.attemptsMade + 1,
+      duration_ms: Date.now() - startedAt,
+      failure_category: failureCategory,
+      retry_scheduled: willRetry,
+    });
     captureGenerationError(error, {
       projectId,
       jobId: job.id,
@@ -423,6 +448,14 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
         stageStartedAt: new Date(),
       },
     });
+    if (kind === "presentation" && !willRetry && job.data.generationJobId) {
+      // The customer was charged only for a queued launch. A terminal service
+      // failure returns that launch exactly once; the conditional reservation
+      // transition also keeps duplicate BullMQ deliveries harmless.
+      await releaseGenerationQuotaReservation(prisma, job.data.generationJobId).catch((releaseError) => {
+        logger.error({ projectId, jobId: job.id, generationJobId: job.data.generationJobId, ...errorLogFields(releaseError) }, "generation quota refund failed");
+      });
+    }
     if (kind === "narration" && !willRetry && job.data.costEnvelopeId) {
       try {
         // The in-memory project that began this job may be stale. Only close

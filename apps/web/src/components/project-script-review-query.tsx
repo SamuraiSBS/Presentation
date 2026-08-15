@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLink, LoaderCircle, RefreshCw, Rocket, Save, ShieldCheck } from "lucide-react";
 import {
+  ApiClientError,
   useAcceptSpeechAndGenerate,
   useGenerationJob,
   useSaveSpeechDraft,
@@ -32,6 +33,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
   const [sections, setSections] = useState(() => parseSpeechDraft(project.speechDraft || "", project.slideCount));
   const [dirty, setDirty] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [quotaLimit, setQuotaLimit] = useState<{ limit: number; remaining: number; resetsAt: string } | null>(null);
   const [activeSectionIndex, setActiveSectionIndex] = useState(0);
   const [expandedSourceId, setExpandedSourceId] = useState<string | null>(null);
   const [sectionSelections, setSectionSelections] = useState<Record<number, { end: number; start: number }>>({});
@@ -112,6 +114,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
 
   async function refresh() {
     setActionError("");
+    setQuotaLimit(null);
     try {
       await projectQuery.refetch();
     } catch (error) {
@@ -156,11 +159,21 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
       return;
     }
     setActionError("");
+    setQuotaLimit(null);
     try {
       const next = await acceptSpeech.mutateAsync(draft.trim());
       setSections(parseSpeechDraft(next.speechDraft || draft, next.slideCount));
       setDirty(false);
     } catch (error) {
+      if (error instanceof ApiClientError && error.code === "PRESENTATION_GENERATION_LIMIT_REACHED") {
+        const details = error.details || {};
+        setQuotaLimit({
+          limit: Number(details.limit) || 0,
+          remaining: Number(details.remaining) || 0,
+          resetsAt: typeof details.resetsAt === "string" ? details.resetsAt : "",
+        });
+        return;
+      }
       setActionError(userError(error, "Не получилось запустить сборку слайдов. Проверьте баланс AI-провайдера и повторите попытку."));
     }
   }
@@ -267,14 +280,23 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
                 {project.status === "ready" ? <Button asChild><Link href={`/projects/${project.id}/editor`}>Открыть редактор</Link></Button> : <AiConfirmation title="Собрать слайды по принятому тексту?" description="Это отдельный запрос к AI-провайдеру и он может расходовать платный баланс. Слайды будут собраны только по выбранным источникам и текущей версии речи." confirmLabel="Запустить AI-сборку слайдов" pending={acceptSpeech.isPending} onConfirm={acceptAndGenerate} />}
               </div> : <p className="muted">Редактирование доступно владельцу и редакторам.</p>}
             </div>
+            {quotaLimit ? <QuotaLimitNotice limit={quotaLimit.limit} remaining={quotaLimit.remaining} resetsAt={quotaLimit.resetsAt} /> : null}
           </section>
         </>
       ) : null}
 
       {project.status === "failed" ? <section className="panel script-error-panel" role="alert"><h2>{terminalFailure.title}</h2><p className="muted">{terminalFailure.message}</p>{canEdit ? (project.workflow === "requirements_driven" ? <Button asChild><Link href={`/projects/${project.id}/defense/plan`}><ShieldCheck size={18} />Открыть подтверждённый план защиты</Link></Button> : hasSavedSpeechDraft ? <AiConfirmation title="Запустить сборку слайдов ещё раз?" description="Будет создан новый платный запрос к AI-провайдеру." confirmLabel="Запустить снова" pending={acceptSpeech.isPending} onConfirm={acceptAndGenerate} /> : <AiConfirmation title="Запустить подготовку текста ещё раз?" description="Будет создан новый платный запрос к AI-провайдеру." confirmLabel="Запустить снова" pending={startNarration.isPending} onConfirm={startText} />) : null}</section> : null}
+      {quotaLimit && !isTextReady ? <QuotaLimitNotice limit={quotaLimit.limit} remaining={quotaLimit.remaining} resetsAt={quotaLimit.resetsAt} /> : null}
       {actionError && !isTextReady ? <p className="form-error" role="alert">{actionError}</p> : null}
     </section>
   );
+}
+
+function QuotaLimitNotice({ limit, remaining, resetsAt }: { limit: number; remaining: number; resetsAt: string }) {
+  const reset = resetsAt && !Number.isNaN(new Date(resetsAt).valueOf())
+    ? new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", timeZone: "Europe/Moscow" }).format(new Date(resetsAt))
+    : "в следующий период";
+  return <section className="usage-blocked" role="alert"><strong>Лимит генераций исчерпан</strong><span>Осталось {remaining} из {limit}. Следующий сброс — {reset}. Черновик и текст выступления сохранены.</span><Link className="button" href="/pricing">Выбрать тариф и оплатить</Link></section>;
 }
 
 function AiConfirmation({ title, description, confirmLabel, pending, onConfirm }: { title: string; description: string; confirmLabel: string; pending: boolean; onConfirm: () => void | Promise<void> }) {

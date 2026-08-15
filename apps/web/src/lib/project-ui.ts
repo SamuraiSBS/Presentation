@@ -25,12 +25,12 @@ export function formatShortDate(value: string) {
 }
 
 export function planLabel(planCode: UsageSummary["planCode"]) {
-  return ({ free: "Бесплатный", student: "Студенческий", pro: "Профессиональный" } as const)[planCode];
+  return ({ free: "Бесплатный", student: "Студенческий", plus: "Плюс", pro: "Профессиональный" } as const)[planCode];
 }
 
 export function formatResetDate(usage: UsageSummary) {
   const date = new Date(usage.resetsAt);
-  if (Number.isNaN(date.valueOf())) return "в следующем месяце";
+  if (Number.isNaN(date.valueOf())) return usage.reset === "week" ? "на следующей неделе" : "в следующем месяце";
   return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", timeZone: "Europe/Moscow" }).format(date);
 }
 

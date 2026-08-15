@@ -5,6 +5,7 @@ import { productionConfigurationErrors, workerHeartbeatKey, workerHeartbeatMaxAg
 import type { Queue } from "bullmq";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HealthStorageService } from "./health-storage.service.js";
+import { MalwareScanService } from "../security/malware-scan.service.js";
 
 type Check = { ok: true } | { ok: false; error: string };
 type QueueLag = { waiting: number; active: number; delayed: number; oldestWaitingMs: number | null };
@@ -27,6 +28,7 @@ export class HealthService {
     @InjectQueue("generation") private readonly generationQueue: Queue,
     @InjectQueue("exports") private readonly exportsQueue: Queue,
     @InjectQueue("admin-maintenance") private readonly maintenanceQueue: Queue,
+    private readonly malwareScanner: MalwareScanService,
   ) {}
 
   live() {
@@ -46,6 +48,7 @@ export class HealthService {
         if (Number(rows[0]?.pending || 0) !== 0) throw new Error("an unfinished migration exists");
       }),
       storage: await this.check("storage is unavailable", () => this.storage.check()),
+      malwareScanner: await this.check("malware scanner is unavailable", () => this.malwareScanner.ping()),
       queues: await this.checkQueues(),
       worker: await this.workerHeartbeat(),
     };

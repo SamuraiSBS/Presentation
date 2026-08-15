@@ -1,7 +1,7 @@
 export { adminPeriodSchema, adminTimeRangeSchema, adminListQuerySchema, adminMoneySchema, adminMetricSchema, adminOverviewSchema, adminUserRowSchema, adminUsersResponseSchema, adminUserDetailSchema, adminReasonSchema, adminPlanOverrideSchema, adminActionResultSchema } from "./admin/schemas.js";
 export type { AdminPeriod, AdminTimeRange, AdminListQuery, AdminMoney, AdminOverview, AdminUserRow, AdminUsersResponse, AdminUserDetail, AdminPlanOverrideInput, AdminActionResult } from "./admin/schemas.js";
-export { planCodeSchema, planLimits } from "./billing/limits.js";
-export type { PlanCode } from "./billing/limits.js";
+export { paidPlanCodes, planCodeSchema, planLimits, planPricesRub, planRank } from "./billing/limits.js";
+export type { PaidPlanCode, PlanCode } from "./billing/limits.js";
 export { scenarioSchema, projectStatusSchema, projectAccessRoleSchema, projectMemberRoleSchema, folderColorSchema, jobStatusSchema, sourceSchema, updateSourceReviewInputSchema, sourceRefSchema } from "./projects/schemas.js";
 export type { Scenario, ProjectStatus, ProjectAccessRole, ProjectMemberRole, FolderColor, JobStatus, Source, UpdateSourceReviewInput, SourceRef } from "./projects/schemas.js";
 export { createProjectInputSchema, folderNameSchema, createFolderInputSchema, updateFolderInputSchema, updateProjectMetadataInputSchema, duplicateProjectInputSchema, createProjectInvitationInputSchema, updateProjectMemberInputSchema, projectListQuerySchema, updateSlideInputSchema, updateNarrationInputSchema, generatePresentationInputSchema } from "./projects/inputs.js";
@@ -10,6 +10,7 @@ export { exportTypeSchema, exportStatusSchema, exportWarningAcknowledgementSchem
 export type { ExportType, ExportStatus, ExportWarningAcknowledgement, CreateExportInput } from "./exports/schemas.js";
 export { exportPreflightFormatSchema, exportPreflightSlideIssueSchema, exportPreflightReportSchema } from "./exports/preflight.js";
 export type { ExportPreflightFormat, ExportPreflightSlideIssue, ExportPreflightReport } from "./exports/preflight.js";
+export { EXPORT_FONT_FAMILY, EXPORT_PDF_FONT_STACK, exportFontFamily, exportPdfFontStack } from "./exports/font-policy.js";
 export { isoDateTimeSchema, userIdentitySummarySchema, projectSummarySchema, folderSummarySchema, projectMemberSchema, usageSummarySchema, dashboardSummarySchema } from "./projects/summaries.js";
 export type { UserIdentitySummary, ProjectSummary, FolderSummary, ProjectMember, UsageSummary, DashboardSummary } from "./projects/summaries.js";
 export { slideBlockSchema, slideKindSchema, slideLayoutSchema, visualTypeSchema, slideDefinitionSchema, keyConceptSchema, highlightSchema, presentationThemePresetSchema, presentationThemeMoodSchema, presentationThemeColorSchema, presentationThemeSchema, slideVisualItemSchema, slideVisualRowSchema, slideVisualImageSchema, mermaidDiagramKindSchema, mermaidDiagramSpecSchema, diagramGraphNodeSchema, diagramGraphEdgeSchema, diagramGraphSpecSchema, slideVisualSchema, canvasTextRunSchema, canvasTextElementSchema, canvasImageElementSchema, canvasShapeElementSchema, canvasElementSchema, canvasGradientStopSchema, canvasGradientBlobSchema, canvasBackgroundStyleSchema, slideCanvasSchema, slideSchema, speechScriptItemSchema } from "./presentation/schemas.js";
@@ -50,3 +51,5 @@ export * from "./defense/compliance.js";
 export { assertProductionConfiguration, devAuthAllowed, productionConfigurationErrors } from "./runtime/production-config.js";
 export type { RuntimeEnvironment } from "./runtime/production-config.js";
 export { workerHeartbeatIntervalMs, workerHeartbeatKey, workerHeartbeatMaxAgeMs, workerHeartbeatTtlMs } from "./runtime/health.js";
+export { productAnalyticsEventSchema, safeProductAnalyticsProperties, captureProductAnalytics, identifyProductAnalytics } from "./analytics/product-analytics.js";
+export type { ProductAnalyticsEvent, ProductAnalyticsProperties, ProductAnalyticsCapture } from "./analytics/product-analytics.js";

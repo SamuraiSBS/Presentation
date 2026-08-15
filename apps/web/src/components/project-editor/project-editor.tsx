@@ -16,6 +16,9 @@ import type { DragState, ElementPatch, ProjectPayload, SimpleEditorTab, Tool, Vi
 import { ObjectFloatingMenu } from "./object-floating-menu";
 import { SimplePropertiesPanel } from "./simple-properties-panel";
 import { DefenseCompliancePanel } from "@/components/defense/defense-compliance-panel";
+import { createUnsavedChangesBeforeUnloadHandler } from "./editor-save-guard";
+import { useEditorSaveQueue, type SlideSavePatch } from "./editor-save-queue";
+import { ConnectionStatus } from "@/components/connection-status";
 
 export function ProjectEditor({
   initialProject,
@@ -48,8 +51,6 @@ export function ProjectEditor({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const revisionRef = useRef(initialProject.presentationRevision || 0);
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const conflictRef = useRef(false);
 
   const presentation = project.presentation?.document
     ? ensureEditableCanvas(project.presentation.document)
@@ -69,6 +70,19 @@ export function ProjectEditor({
   const canUpload =
     project.id !== "demo" || process.env.NEXT_PUBLIC_DEMO_PREVIEW === "false";
   const canEdit = (project.accessRole || "owner") !== "viewer";
+  const { saveSlide, retryLatestSave, clearConflict, hasUnsavedChangesRef } = useEditorSaveQueue({
+    projectId: project.id,
+    canEdit,
+    getSlide: () => slide,
+    getRevision: () => revisionRef.current,
+    onRevision: (revision) => {
+      revisionRef.current = revision ?? revisionRef.current + 1;
+      setProject((current) => ({ ...current, presentationRevision: revisionRef.current }));
+    },
+    onStatus: setSaveStatus,
+    onError: (error) => setActionError(editorError(error, "Не получилось сохранить изменения. Проверьте соединение и повторите попытку.")),
+    onConflict: () => setRevisionConflict(true),
+  });
 
   useEffect(() => {
     setSelectedId("");
@@ -139,58 +153,32 @@ export function ProjectEditor({
     return () => observer.disconnect();
   }, [canvasHeight, canvasWidth, showObjectCanvas]);
 
+  useEffect(() => {
+    const warnBeforeUnload = createUnsavedChangesBeforeUnloadHandler(
+      () => hasUnsavedChangesRef.current,
+    );
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [hasUnsavedChangesRef]);
+
+  useEffect(() => {
+    const showOfflineSaveError = () => {
+      if (!hasUnsavedChangesRef.current) return;
+      setSaveStatus("error");
+      setActionError("Нет соединения. Изменения не потеряны: восстановите сеть и повторите сохранение.");
+    };
+    window.addEventListener("offline", showOfflineSaveError);
+    return () => window.removeEventListener("offline", showOfflineSaveError);
+  }, [hasUnsavedChangesRef]);
+
   async function refresh() {
     const response = await fetch(`/api/projects/${project.id}`);
     if (!response.ok) throw new Error(await response.text());
     const next = sanitizeProjectForDisplay(await response.json()) as ProjectPayload;
     revisionRef.current = next.presentationRevision || 0;
-    conflictRef.current = false;
+    clearConflict();
     setRevisionConflict(false);
     setProject(next);
-  }
-
-  function saveSlide(next: {
-    title?: string;
-    thesis?: string;
-    bullets?: string[];
-    layout?: SlideLayout;
-    visual?: SlideVisual;
-    blocks?: Slide["blocks"];
-    canvas?: SlideCanvas;
-    speakerNotes?: string;
-  }) {
-    if (!slide || !canEdit || conflictRef.current) return Promise.resolve();
-    const slideId = slide.id;
-    const run = async () => {
-      if (conflictRef.current) return;
-      setSaveStatus("saving");
-      const response = await fetch(`/api/projects/${project.id}/slides/${slideId}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...next, expectedRevision: revisionRef.current }),
-      });
-      const payload = await response.json().catch(() => null) as ProjectPayload | { message?: string } | null;
-      if (response.status === 409) {
-        conflictRef.current = true;
-        setRevisionConflict(true);
-        setSaveStatus("error");
-        return;
-      }
-      if (!response.ok) {
-        setSaveStatus("error");
-        setActionError(editorError(new Error(payload && "message" in payload && payload.message || ""), "Не получилось сохранить изменения. Попробуй ещё раз."));
-        return;
-      }
-      if (payload && "presentationRevision" in payload && typeof payload.presentationRevision === "number") {
-        revisionRef.current = payload.presentationRevision;
-        setProject((current) => ({ ...current, presentationRevision: payload.presentationRevision }));
-      } else {
-        revisionRef.current += 1;
-      }
-      setSaveStatus("saved");
-    };
-    saveQueueRef.current = saveQueueRef.current.then(run, run);
-    return saveQueueRef.current;
   }
 
   function updateLocalSlide(patch: Partial<Slide>) {
@@ -767,7 +755,9 @@ export function ProjectEditor({
       project.status === "draft" || project.status === "failed";
 
     return (
-      <section className="panel">
+      <>
+        <ConnectionStatus scope="editor" />
+        <section className="panel">
         <span className="status">{projectStatusLabel(project.status)}</span>
         <h1 className="page-title" style={{ fontSize: 44 }}>
           {project.title}
@@ -791,30 +781,46 @@ export function ProjectEditor({
             <Link className="button" href={`/projects/${project.id}/script`}>Проверить текст и запуск</Link>
           </div>
         ) : null}
-      </section>
+        </section>
+      </>
     );
   }
 
   if (!canEdit) {
     return (
-      <section className="editor-workspace viewer-workspace" data-testid="project-editor">
+      <>
+        <ConnectionStatus scope="editor" />
+        <section className="editor-workspace viewer-workspace" data-testid="project-editor">
         <div className="editor-top"><div><span className="status">Только просмотр</span><h1>{presentation.title}</h1></div><Link className="button" href={`/projects/${project.id}/export`}>Экспорт</Link></div>
         {project.workflow === "requirements_driven" ? <DefenseCompliancePanel projectId={project.id} presentationRevision={project.presentationRevision || 0} slides={presentation.slides} canEdit={false} onSelectSlide={setActive} /> : null}
         <section className="viewer-editor">
           <aside className="slide-rail"><strong>Слайды</strong><div className="slide-rail-list">{presentation.slides.map((item, index) => <button className={`slide-thumb ${index === active ? "slide-thumb-active" : ""}`} key={item.id} type="button" onClick={() => setActive(index)}><span>{String(index + 1).padStart(2, "0")}</span><strong>{item.title}</strong></button>)}</div></aside>
           <section className="canvas-shell viewer-canvas-shell" aria-label="Предпросмотр слайда"><div className="viewer-toolbar"><span>Редактирование доступно владельцу и редакторам</span><Link href={`/projects/${project.id}/export`}>PDF и PPTX</Link></div><TemplatePreviewFrame slide={slide} theme={theme} scale={canvasScale} frameRef={frameRef} onSelectElement={() => undefined} /></section>
         </section>
-      </section>
+        </section>
+      </>
     );
   }
 
   return (
-    <section className="editor-workspace" data-testid="project-editor">
+    <>
+      <ConnectionStatus
+        scope="editor"
+        onReconnect={() => {
+          if (!hasUnsavedChangesRef.current || revisionConflict) return;
+          setActionError("");
+          retryLatestSave();
+        }}
+      />
+      <section className="editor-workspace" data-testid="project-editor">
       <div className="editor-top">
         <div>
           <h1>{presentation.title}</h1>
         </div>
-        <SaveIndicator status={saveStatus} />
+        <SaveIndicator
+          status={saveStatus}
+          onRetry={revisionConflict ? undefined : retryLatestSave}
+        />
       </div>
 
       {project.workflow === "requirements_driven" ? <DefenseCompliancePanel projectId={project.id} presentationRevision={project.presentationRevision || 0} slides={presentation.slides} canEdit={canEdit} onSelectSlide={(index) => { setActive(index); setMobileSection("preview"); }} /> : null}
@@ -1046,6 +1052,7 @@ export function ProjectEditor({
           if (section === "preview") setViewMode("preview");
         }}
       />
-    </section>
+      </section>
+    </>
   );
 }
