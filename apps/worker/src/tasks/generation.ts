@@ -383,11 +383,14 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       data: { status: "completed", progressStage: "completed", progressLabel: "Готово", progressPercent: 100 },
     });
     await prisma.userActivityEvent.create({ data: { userId: job.data.userId, projectId, type: "generation.completed", metadata: { kind } } });
+    const timeToReadyMs = project.createdAt instanceof Date
+      ? Date.now() - project.createdAt.getTime()
+      : undefined;
     void captureWorkerProductAnalytics(job.data.userId, "generation_completed", {
       kind,
       attempt: job.attemptsMade + 1,
       duration_ms: Date.now() - startedAt,
-      time_to_ready_ms: Date.now() - project.createdAt.getTime(),
+      time_to_ready_ms: timeToReadyMs ?? null,
       local_recovery: usedLocalPresentationRecovery,
     });
   } catch (error) {

@@ -1,4 +1,21 @@
 const { resolve } = require("node:path");
+const { spawn } = require("node:child_process");
+
+if (process.platform !== "win32") {
+  const nextCli = resolve(__dirname, "../node_modules/next/dist/bin/next");
+  const child = spawn(process.execPath, [nextCli, "dev", ...process.argv.slice(2)], {
+    env: process.env,
+    stdio: "inherit",
+  });
+  child.once("exit", (code, signal) => {
+    if (signal) {
+      process.kill(process.pid, signal);
+      return;
+    }
+    process.exitCode = code ?? 1;
+  });
+  return;
+}
 
 function readOption(names) {
   const index = process.argv.findIndex((value) => names.includes(value));

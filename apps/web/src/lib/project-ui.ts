@@ -25,7 +25,7 @@ export function formatShortDate(value: string) {
 }
 
 export function planLabel(planCode: UsageSummary["planCode"]) {
-  return ({ free: "Бесплатный", student: "Student", plus: "Plus", pro: "Pro" } as const)[planCode];
+  return ({ free: "Бесплатный", student: "Студенческий", plus: "Плюс", pro: "Профессиональный" } as const)[planCode];
 }
 
 export function formatResetDate(usage: UsageSummary) {
