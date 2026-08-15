@@ -34,8 +34,8 @@ test.describe("personal account", () => {
     await expect(page.locator(".profile-plan")).toContainText("10 презентаций");
 
     await page.goto("/pricing");
-    await expect(page.getByRole("heading", { name: /Всё нужное для учёбы/ })).toBeVisible();
-    await expect(page.locator(".free-plan-card")).toContainText("PDF и PPTX");
+    await expect(page.getByRole("heading", { name: /Выбирайте объём/ })).toBeVisible();
+    await expect(page.locator(".pricing-card").filter({ has: page.getByRole("heading", { name: "Бесплатный" }) })).toContainText("PDF и PPTX");
   });
 
   test("bottom navigation keeps readable, non-overlapping 44px controls at 320 and 360", async ({ page }) => {

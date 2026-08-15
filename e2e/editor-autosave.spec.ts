@@ -41,11 +41,11 @@ test("editor warns before navigation while save is pending", async ({ page }) =>
   await expect(page.getByText("Сохранено", { exact: true })).toBeVisible();
 });
 
-test("editor preserves textarea fallback input through the TipTap handoff", async ({ page }) => {
+test("editor preserves input through the TipTap handoff", async ({ page }) => {
   await page.goto(editorRoute);
-  const fallback = page.getByTestId("slide-title-editor").locator("textarea.rich-text-content");
-  await expect(fallback).toBeVisible();
-  await fallback.fill("P2-3 fallback handoff check");
+  const field = page.getByTestId("slide-title-editor").locator(".rich-text-content");
+  await expect(field).toBeVisible();
+  await field.fill("P2-3 fallback handoff check");
   await expect(page.getByTestId("slide-title-editor").locator(".ProseMirror")).toHaveText("P2-3 fallback handoff check");
 });
 

@@ -27,5 +27,5 @@ export function LazyLandingFinalCtaArtifact({ document, speechExcerpt }: { docum
 
   return Artifact
     ? <Artifact document={document} speechExcerpt={speechExcerpt} />
-    : <div ref={placeholderRef} aria-hidden="true" />;
+    : <div ref={placeholderRef} data-testid="landing-final-cta-artifact-placeholder" aria-hidden="true" />;
 }

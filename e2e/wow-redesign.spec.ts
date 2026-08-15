@@ -64,7 +64,7 @@ test("final landing artifact stays inside compact phone viewports", async ({ pag
     await page.goto("/", { waitUntil: "networkidle" });
     await waitForLandingHydration(page);
 
-    await page.locator(".landing-final-cta").scrollIntoViewIfNeeded();
+    await page.getByTestId("landing-final-cta-artifact-placeholder").scrollIntoViewIfNeeded();
     await expect(page.locator(".landing-final-cta-artifact")).toBeVisible();
     const artifact = page.locator(".landing-final-cta-artifact");
     await artifact.scrollIntoViewIfNeeded();
