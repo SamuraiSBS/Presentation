@@ -156,7 +156,7 @@ activate_release() {
   # this deploy path is therefore forward-only application rollout with no
   # schema change. Keep the deploy command explicit for the future migration
   # policy extension and for Prisma's applied-migrations check.
-  compose_for "$directory" run --rm --no-deps --no-build api npm run prisma:deploy || return
+  compose_for "$directory" run --rm --no-deps --no-build --entrypoint ./node_modules/.bin/prisma api migrate deploy || return
   compose_for "$directory" up -d --no-build || return
   wait_for_healthy "$directory" || return
   smoke_release "$directory" || return
