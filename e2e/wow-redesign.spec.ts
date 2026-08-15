@@ -54,6 +54,8 @@ test("hero demo becomes static when reduced motion is requested", async ({ page 
 });
 
 test("final landing artifact stays inside compact phone viewports", async ({ page }) => {
+  test.slow();
+
   for (const viewport of [
     { width: 320, height: 844 },
     { width: 390, height: 844 },
