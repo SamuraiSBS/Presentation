@@ -17,7 +17,8 @@ RUN npm run build -w @studydeck/api
 RUN npm prune --omit=dev
 
 FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS runner
-RUN npm install --global npm@12.0.2
+# Runtime containers execute compiled Node.js directly and do not need a package manager.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --chown=node:node --from=base /app/package*.json ./
@@ -27,4 +28,4 @@ COPY --chown=node:node --from=base /app/packages/shared ./packages/shared
 COPY --chown=node:node --from=base /app/apps/api ./apps/api
 USER node
 EXPOSE 4000
-CMD ["npm", "run", "start", "-w", "@studydeck/api"]
+CMD ["node", "apps/api/dist/main.js"]
