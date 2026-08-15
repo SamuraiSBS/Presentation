@@ -126,16 +126,12 @@ jobs:
           severity: HIGH,CRITICAL
       - name: Render a real PDF in the Alpine worker image
         run: >
-          GOLDEN_EXPORT_TIMINGS=1 docker run --rm --entrypoint npm studydeck-worker:${STUDYDECK_IMAGE_TAG}
-          run test -w @studydeck/worker -- src/tasks/export.test.ts
-          -t "renders editable canvas to a real pdf"
-          --pool=threads --poolOptions.threads.singleThread=true
+          docker run --rm --entrypoint node studydeck-worker:${STUDYDECK_IMAGE_TAG}
+          apps/worker/dist/tasks/export-runtime-smoke.js --case real-pdf
       - name: Smoke golden export in the Alpine worker image
         run: >
-          GOLDEN_EXPORT_TIMINGS=1 docker run --rm --entrypoint npm studydeck-worker:${STUDYDECK_IMAGE_TAG}
-          run test -w @studydeck/worker -- src/tasks/export.test.ts
-          -t "keeps the golden deck visually aligned across preview, PPTX, and rasterized PDF"
-          --pool=threads --poolOptions.threads.singleThread=true
+          docker run --rm --entrypoint node studydeck-worker:${STUDYDECK_IMAGE_TAG}
+          apps/worker/dist/tasks/export-runtime-smoke.js --case golden
       - name: Validate compose and migrate the staging database
         run: |
           docker compose -f docker-compose.yml -f compose.ci.yml config --quiet
