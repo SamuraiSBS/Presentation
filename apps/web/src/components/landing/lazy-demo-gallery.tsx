@@ -22,5 +22,5 @@ export function LazyDemoGallery() {
     return () => observer.disconnect();
   }, []);
 
-  return Gallery ? <Gallery /> : <div ref={placeholderRef} aria-hidden="true" />;
+  return Gallery ? <Gallery /> : <div ref={placeholderRef} data-testid="landing-demo-gallery-placeholder" aria-hidden="true" />;
 }
