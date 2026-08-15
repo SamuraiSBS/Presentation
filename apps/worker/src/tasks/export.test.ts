@@ -36,7 +36,7 @@ describe("createPptx", () => {
       { addText, addShape, addImage },
       presentationSchema.parse({
         id: "renderer-contract", title: "Renderer contract", scenario: "lesson", level: "beginner", slideCount: 1, generationMode: "demo", generatedText: "", sources: [], outline: [], narrativePlan: [], speechScript: [],
-        slides: [{ id: "slide-1", order: 1, title: "A compact statement", slideKind: "content", layout: "statement", thesis: "The extracted renderer receives semantic slide data.", bullets: [], definition: null, keyConcepts: [], visual: { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] }, highlights: [], blocks: [], speakerNotes: "", timingSeconds: 30, placeholders: [], sourceRefs: [] }],
+        slides: [{ id: "slide-1", order: 1, title: "A compact statement", slideKind: "content", layout: "statement", thesis: "The extracted renderer receives semantic slide data.", bullets: [], definition: null, keyConcepts: [], visual: { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] }, highlights: [], blocks: [], speakerNotes: "Explain the statement in one concise sentence.", timingSeconds: 30, placeholders: [], sourceRefs: [] }],
       }).slides[0],
       null,
       { ...PREMIUM_PRESENTATION_THEMES.studydeckEditorial, pptx: { background: "FFFFFF", surface: "F5F5F5", surfaceAlt: "EEEEEE", text: "111111", muted: "555555", accent: "FF0000", accentAlt: "00AA00", line: "CCCCCC" } },
