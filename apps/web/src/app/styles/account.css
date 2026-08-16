@@ -48,6 +48,22 @@
   object-fit: cover;
 }
 
+/* OAuth providers may return an image with its own intrinsic dimensions.
+   Keep the header control stable even when page styles load in a different order. */
+.account-avatar {
+  display: block;
+  width: 34px !important;
+  min-width: 34px;
+  max-width: 34px;
+  height: 34px !important;
+  min-height: 34px;
+  max-height: 34px;
+  flex: 0 0 34px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
 .account-menu { min-width: 220px; }
 .danger-menu-item, .danger-menu-item svg { color: var(--error) !important; }
 .app-content-auth { min-height: 100dvh; }
