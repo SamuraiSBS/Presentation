@@ -61,7 +61,7 @@ export function AppHeader({ adminAvailable = false }: { adminAvailable?: boolean
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="account-trigger" type="button" aria-label="Открыть меню профиля">
-                {session?.user?.image ? <NextImage src={session.user.image} alt="" width={34} height={34} unoptimized referrerPolicy="no-referrer" /> : <span>{initials}</span>}
+                {session?.user?.image ? <NextImage className="account-avatar" src={session.user.image} alt="" width={34} height={34} unoptimized referrerPolicy="no-referrer" /> : <span>{initials}</span>}
                 <strong>{userName}</strong>
               </button>
             </DropdownMenuTrigger>
