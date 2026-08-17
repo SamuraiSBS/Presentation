@@ -1429,7 +1429,7 @@ export async function requestOpenAIStructuredWithSdk<T>({
     : Output.object({
         schema,
         name: schemaName,
-        description: "StudyDeck structured generation output. User-facing educational text should be in Russian.",
+        description: "Lazyum structured generation output. User-facing educational text should be in Russian.",
       });
   try {
     const result = await generate({

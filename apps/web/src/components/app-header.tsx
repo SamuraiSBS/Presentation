@@ -7,7 +7,6 @@ import { signOut, useSession } from "@studydeck/auth/react";
 import {
   Folder,
   Gauge,
-  GraduationCap,
   LogOut,
   Plus,
   Presentation,
@@ -15,6 +14,7 @@ import {
   UserRound,
   ShieldCheck,
 } from "lucide-react";
+import { LazyumLogo } from "@/components/lazyum-logo";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -43,8 +43,8 @@ export function AppHeader({ adminAvailable = false }: { adminAvailable?: boolean
     <header className="topbar">
       <div className="topbar-main">
         <Link className="brand" href={session ? "/dashboard" : "/"}>
-          <span className="mark"><GraduationCap aria-hidden="true" size={22} /></span>
-          <span>StudyDeck AI</span>
+          <LazyumLogo className="mark" />
+          <span>Lazyum</span>
         </Link>
         <div className="topbar-navigation">
           <nav className="nav" aria-label="Основная навигация">

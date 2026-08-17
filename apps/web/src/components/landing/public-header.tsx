@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { ArrowUpRight, GraduationCap, LayoutDashboard, LogIn } from "lucide-react";
+import { ArrowUpRight, LayoutDashboard, LogIn } from "lucide-react";
+import { LazyumLogo } from "@/components/lazyum-logo";
 
 const landingLinks = [
   { href: "#how-it-works", label: "Как работает" },
@@ -15,9 +16,9 @@ export function PublicHeader({ isAuthenticated = false }: { isAuthenticated?: bo
     <header className="public-header">
       <a className="landing-skip-link" href="#main-content">Перейти к содержанию</a>
       <div className="public-header-inner">
-        <Link className="public-header-brand" href="/" aria-label="StudyDeck AI — на главную">
-          <span className="public-header-mark"><GraduationCap aria-hidden="true" size={22} /></span>
-          <span>StudyDeck AI</span>
+        <Link className="public-header-brand" href="/" aria-label="Lazyum — на главную">
+          <LazyumLogo className="public-header-mark" />
+          <span>Lazyum</span>
         </Link>
 
         <nav className="public-header-nav" aria-label="Навигация по лендингу">

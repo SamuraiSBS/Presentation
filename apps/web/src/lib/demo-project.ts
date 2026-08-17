@@ -14,7 +14,7 @@ const slides: any[] = [
   {
     id: "slide-1",
     order: 1,
-    title: "StudyDeck AI помогает подготовиться к выступлению",
+    title: "Lazyum помогает подготовиться к выступлению",
     layout: "hero",
     blocks: [
       {
@@ -30,12 +30,12 @@ const slides: any[] = [
   {
     id: "slide-2",
     order: 2,
-    title: "Когда пригодится StudyDeck",
+    title: "Когда пригодится Lazyum",
     layout: "bullets",
     blocks: [
       {
         type: "callout",
-        content: "StudyDeck пригодится для доклада на паре, семинара или защиты проекта.",
+        content: "Lazyum пригодится для доклада на паре, семинара или защиты проекта.",
       },
     ],
     speakerNotes:
@@ -51,7 +51,7 @@ const slides: any[] = [
     thesis: "Работа идёт по шагам, поэтому ничего не теряется по дороге.",
     bullets: [
       "Ты задаёшь тему и добавляешь материалы",
-      "StudyDeck готовит текст и собирает слайды",
+      "Lazyum готовит текст и собирает слайды",
       "Ты проверяешь работу и скачиваешь готовый файл",
     ],
     visual: {
@@ -114,7 +114,7 @@ const slides: any[] = [
 
 export const demoPresentation: PresentationDocument = ensureEditableCanvas({
   id: "presentation-demo",
-  title: "Как StudyDeck помогает подготовиться к выступлению",
+  title: "Как Lazyum помогает подготовиться к выступлению",
   scenario: "university_report",
   level: "university_student",
   slideCount: slides.length,
@@ -170,7 +170,7 @@ const demoDefenseSource = {
 
 const demoDefensePlanSlides = [
   ["defense-plan-1", "Проблема и цель", "Сформулировать задачу учебного проекта"],
-  ["defense-plan-2", "Решение", "Показать ключевые возможности StudyDeck"],
+  ["defense-plan-2", "Решение", "Показать ключевые возможности Lazyum"],
   ["defense-plan-3", "Проверка результата", "Связать факты и требования с демонстрацией"],
   ["defense-plan-4", "Вывод", "Подвести итог и обозначить следующий шаг"],
 ] as const;
@@ -178,7 +178,7 @@ const demoDefensePlanSlides = [
 export const demoDefenseProject = {
   ...demoProject,
   id: "defense-demo",
-  title: "Защита учебного проекта StudyDeck",
+  title: "Защита учебного проекта Lazyum",
   workflow: "requirements_driven" as const,
 };
 
@@ -192,7 +192,7 @@ export const demoDefenseWorkspace: DefenseWorkspacePayload = {
     targetSlideCount: 4,
     targetDurationSeconds: 300,
     allowWebImages: false,
-    authorProfile: { teamName: "StudyDeck demo", eventName: "Учебная защита" },
+    authorProfile: { teamName: "Lazyum demo", eventName: "Учебная защита" },
     standardPresetVersion: "hackathon-v1",
     analysisStatus: "review_ready",
     analysisRevision: 1,
