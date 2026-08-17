@@ -14,7 +14,6 @@ import {
   UserRound,
   ShieldCheck,
 } from "lucide-react";
-import { LazyumLogo } from "@/components/lazyum-logo";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -43,7 +42,6 @@ export function AppHeader({ adminAvailable = false }: { adminAvailable?: boolean
     <header className="topbar">
       <div className="topbar-main">
         <Link className="brand" href={session ? "/dashboard" : "/"}>
-          <LazyumLogo className="mark" />
           <span>Lazyum</span>
         </Link>
         <div className="topbar-navigation">
