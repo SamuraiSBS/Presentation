@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-export const metadata: Metadata = { title: "Поддержка — StudyDeck AI" };
+export const metadata: Metadata = { title: "Поддержка — Lazyum" };
 
 export default function SupportPage() {
   const email = process.env.SUPPORT_EMAIL || "support@example.com";

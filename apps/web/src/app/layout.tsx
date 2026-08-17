@@ -2,8 +2,9 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "StudyDeck AI",
+  title: "Lazyum",
   description: "AI-помощник для учебных презентаций, заметок и подготовки к выступлению.",
+  icons: { icon: "/lazyum-logo.png" },
 };
 
 export const viewport: Viewport = {

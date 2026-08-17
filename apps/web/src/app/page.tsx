@@ -15,7 +15,7 @@ import { LandingHero } from "@/components/landing/landing-hero";
 import { PublicRouteLayout } from "@/components/public-route-layout";
 
 export const metadata: Metadata = {
-  title: "StudyDeck AI — презентация и речь за 5 минут",
+  title: "Lazyum — презентация и речь за 5 минут",
   description: "Начни с одной темы и подготовь студенческую презентацию, связную речь и материалы для защиты примерно за 5 минут.",
 };
 
@@ -29,7 +29,7 @@ export default function HomePage() {
         <header className="landing-section-heading landing-transform-heading">
           <p className="landing-section-label">Одна тема — это уже достаточно</p>
           <h2 id="landing-transform-title">Не нужен длинный промпт, чтобы начать готовиться к защите.</h2>
-          <p>Дальше StudyDeck раскладывает задачу на понятный маршрут: содержание, аргументы, речь и слайды.</p>
+          <p>Дальше Lazyum раскладывает задачу на понятный маршрут: содержание, аргументы, речь и слайды.</p>
         </header>
 
         <div className="landing-transform-flow">
@@ -42,7 +42,7 @@ export default function HomePage() {
           <div className="landing-transform-connector" aria-hidden="true">
             <span><Sparkles size={20} /></span>
             <i />
-            <b>StudyDeck собирает основу</b>
+            <b>Lazyum собирает основу</b>
           </div>
 
           <div className="landing-result-artifacts">

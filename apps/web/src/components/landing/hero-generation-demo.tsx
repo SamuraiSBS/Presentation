@@ -158,7 +158,7 @@ export function HeroGenerationDemo({ className }: HeroGenerationDemoProps) {
     >
       <figcaption className="hero-demo-caption">Как одна тема превращается в готовое выступление</figcaption>
       <p id={summaryId} style={visuallyHidden}>
-        Декоративная демонстрация StudyDeck: тема «Как искусственный интеллект меняет образование»
+        Декоративная демонстрация Lazyum: тема «Как искусственный интеллект меняет образование»
         превращается в план, текст речи, восемь слайдов и готовый комплект за 4 минуты 48 секунд.
       </p>
 

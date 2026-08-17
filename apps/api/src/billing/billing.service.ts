@@ -57,7 +57,7 @@ export class BillingService {
         amount: { value: planPricesRub[plan].toFixed(2), currency: "RUB" },
         capture: true,
         confirmation: { type: "redirect", return_url: `${appUrl}/billing?checkout=success` },
-        description: `StudyDeck ${plan} — 30 дней доступа`,
+        description: `Lazyum ${plan} — 30 дней доступа`,
         metadata: { userId, plan, idempotencyKey },
       },
     });
