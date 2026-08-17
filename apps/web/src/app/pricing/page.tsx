@@ -38,7 +38,7 @@ export default async function PricingPage() {
         {subscriptionEnds ? <p className="muted">Текущий платный доступ действует до {subscriptionEnds} включительно.</p> : null}
       </section>
 
-      <section className="pricing-grid" aria-label="Тарифы StudyDeck">
+      <section className="pricing-grid" aria-label="Тарифы Lazyum">
         {(["free", ...paidPlanCodes] as const).map((plan) => {
           const limits = planLimits[plan];
           const paid = plan !== "free";

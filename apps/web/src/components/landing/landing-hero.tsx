@@ -9,7 +9,7 @@ export function LandingHero() {
         <p className="landing-hero-kicker"><Sparkles aria-hidden="true" size={17} /> Пятиминутная студия презентаций</p>
         <h1 id="landing-hero-title">От одной темы до готового выступления за 5 минут</h1>
         <p className="landing-hero-lead">
-          Напиши одну тему — StudyDeck соберёт презентацию и готовую речь для студенческого выступления или защиты.
+          Напиши одну тему — Lazyum соберёт презентацию и готовую речь для студенческого выступления или защиты.
         </p>
 
         <p className="landing-hero-path" aria-label="Одна тема превращается в план, слайды и готовую речь">

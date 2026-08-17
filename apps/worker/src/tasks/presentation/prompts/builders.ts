@@ -41,7 +41,7 @@ import { cleanMultilineText } from "../utilities.js";
 export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[], _researchBrief?: ResearchBrief) {
   const timingBudget = getRussianStudentSpeechTimingBudget(project);
   return [
-    "Верни JSON-объект вида {\"slides\":[...]} с narrativePlan для StudyDeck презентации.",
+    "Верни JSON-объект вида {\"slides\":[...]} с narrativePlan для презентации Lazyum.",
     `Тема и запрос пользователя: ${project.prompt}`,
     `Название проекта: ${project.title}`,
     `Сценарий: ${project.scenario}`,
@@ -98,7 +98,7 @@ export function buildDesignBriefPrompt(
 ) {
   const themeIds = ["studydeckEditorial"].join(", ");
   return [
-    "Create a StudyDeck DesignBrief JSON. You are choosing art direction, not drawing the slides.",
+    "Create a Lazyum DesignBrief JSON. You are choosing art direction, not drawing the slides.",
     `User topic and request: ${project.prompt}`,
     `Project title: ${project.title}`,
     `Scenario: ${project.scenario}`,
@@ -107,7 +107,7 @@ export function buildDesignBriefPrompt(
     `Allowed themeId values: ${themeIds}.`,
     STUDENT_CREATION_BRIEF_LINES,
     "Choose one stable themeId. Do not invent custom theme IDs.",
-    "Use studydeckEditorial for every deck. The palette is a stable StudyDeck identity; topic variety comes from imagery and composition, not random colors.",
+    "Use studydeckEditorial for every deck. The palette is a stable Lazyum identity; topic variety comes from imagery and composition, not random colors.",
     "Return exactly one slideDirections item for every slide order.",
     "Do not output raw CSS, HTML, coordinates, pixel sizes, or layout code.",
     "Choose visualRole as a scene role: hero, problem, context, explain, compare, sequence, evidence, quote, visual_statement, or summary.",
@@ -166,7 +166,7 @@ export function buildNarrationPrompt(project: ProjectInput, sources: Source[], n
   const planText = formatNarrativePlanForPrompt(narrativePlan);
   const timingBudget = getRussianStudentSpeechTimingBudget(project);
   return [
-    "Write the complete speech text for a StudyDeck presentation.",
+    "Write the complete speech text for a Lazyum presentation.",
     `User topic and request: ${project.prompt}`,
     `Project title: ${project.title}`,
     `Scenario: ${project.scenario}`,
@@ -241,7 +241,7 @@ export function buildAitunnelFullNarrationCandidatePrompt(project: ProjectInput,
   const plan = compactFullNarrationPlan(narrativePlan);
   const snapshot = compactFullNarrationSourceSnapshot(sources);
   return [
-    "Write one complete Russian university speech for a StudyDeck presentation, not a plan or commentary.",
+    "Write one complete Russian university speech for a Lazyum presentation, not a plan or commentary.",
     `Topic and user request: ${cleanMultilineText(project.prompt).slice(0, 240)}.`,
     `Project title: ${cleanMultilineText(project.title).slice(0, 120)}. Exact slide count: ${project.slideCount}.`,
     "Return exactly ten ordered sections. Each section must start with `\u0421\u043b\u0430\u0439\u0434 N: semantic title`, followed by natural spoken prose.",
@@ -536,7 +536,7 @@ export function buildAitunnelFullNarrationRewritePrompt(
     evidence: source.excerpt.replace(/\s+/g, " ").trim().slice(0, 220),
   }));
   return [
-    "Write a fresh, complete Russian speech for a StudyDeck university presentation.",
+    "Write a fresh, complete Russian speech for a Lazyum university presentation.",
     `Topic and request: ${project.prompt}`,
     `Exact slide count: ${project.slideCount}. Return one section per slide in order, headed \`Слайд N: semantic title\`.`,
     "Each section needs 3-7 complete, natural sentences. Use the plan's key message as content, not as a label. Do not mention slides, sources, planning, or the rejected draft.",
@@ -670,7 +670,7 @@ export function buildGenerationPrompt(
   const blueprintText = artifacts.slideBlueprints?.length ? JSON.stringify(artifacts.slideBlueprints, null, 2) : "";
   const textPlanText = artifacts.slideTextPlans?.length ? JSON.stringify(artifacts.slideTextPlans, null, 2) : "";
   return [
-    "Create a complete StudyDeck PresentationDocument as JSON.",
+    "Create a complete Lazyum PresentationDocument as JSON.",
     `User topic and request: ${project.prompt}`,
     `Project title: ${project.title}`,
     `Scenario: ${project.scenario}`,
@@ -805,7 +805,7 @@ export function buildGenerationPrompt(
 
 export function legacyBuildGenerationPrompt(project: ProjectInput, sources: Source[]) {
   return [
-    "Собери готовую презентацию StudyDeck PresentationDocument.",
+    "Собери готовую презентацию Lazyum PresentationDocument.",
     `Тема и запрос пользователя: ${project.prompt}`,
     `Название проекта: ${project.title}`,
     `Сценарий: ${project.scenario}`,
@@ -855,7 +855,7 @@ export function buildYandexPresentationRecoveryPrompt(
     selectedTextPlans.length ? `Slide text plans for this range:\n${JSON.stringify(selectedTextPlans)}` : "",
     artifacts.designBrief ? `Use this design direction without inventing a new theme:\n${JSON.stringify(artifacts.designBrief)}` : "",
     sources.length ? `Grounding excerpts:\n${formatSourceText(sources)}` : "",
-    "Each slide must include the normal StudyDeck slide fields: id, order, title, slideKind, layout, thesis, bullets, definition, keyConcepts, visual, highlights, blocks, speakerNotes, timingSeconds, sourceRefs.",
+    "Each slide must include the normal Lazyum slide fields: id, order, title, slideKind, layout, thesis, bullets, definition, keyConcepts, visual, highlights, blocks, speakerNotes, timingSeconds, sourceRefs.",
     "Use concise visible text and preserve a substantive conclusion when the requested range contains the final slide.",
   ].filter(Boolean).join("\n\n");
 }

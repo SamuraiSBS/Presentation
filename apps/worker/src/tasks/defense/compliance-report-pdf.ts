@@ -76,7 +76,7 @@ export function renderComplianceReportHtml(input: ComplianceReportDocument) {
   <p>Подтверждённых фактов: <strong>${report.factProvenance.length}</strong>. Изображений в отчёте: <strong>${report.imageProvenance.length}</strong>.</p>
   ${report.imageProvenance.length ? `<ul>${report.imageProvenance.slice(0, 40).map((item) => `<li>${escapeHtml(item.label || item.sourceId)} — ${escapeHtml(item.provider)}${item.evidenceRole ? ", доказательный материал" : ""}</li>`).join("")}</ul>` : ""}
 
-  <footer>StudyDeck AI · Отчёт неизменяем и относится только к указанным версиям презентации и анализа.</footer>
+  <footer>Lazyum · Отчёт неизменяем и относится только к указанным версиям презентации и анализа.</footer>
 </body>
 </html>`;
 }

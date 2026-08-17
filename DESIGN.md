@@ -1,5 +1,5 @@
 ---
-name: StudyDeck AI
+name: Lazyum
 description: A warm, task-led workspace that turns a study prompt and sources into an editable presentation.
 colors:
   app-bg: "#fff5e9"
@@ -81,13 +81,13 @@ components:
     padding: "12px"
 ---
 
-# Design System: StudyDeck AI
+# Design System: Lazyum
 
 ## 1. Overview
 
 **Creative North Star: "The Guided Study Desk"**
 
-StudyDeck AI is a practical desk for a student preparing a presentation under time pressure. The next useful action must be unmistakable: formulate the topic, add material, check the plan, refine slides and speech, then export. The interface supports that work rather than hiding it behind a magical-looking generation flow.
+Lazyum is a practical desk for a student preparing a presentation under time pressure. The next useful action must be unmistakable: formulate the topic, add material, check the plan, refine slides and speech, then export. The interface supports that work rather than hiding it behind a magical-looking generation flow.
 
 The app shell is light, warm, and compact. A pale peach canvas and white work surfaces reduce glare; orange establishes action and current progress; green confirms trustworthy completion; purple is reserved for AI- and presentation-specific moments. The editor deliberately changes scene into a dark, concentrated workspace while leaving the generated 16:9 slide itself theme-driven.
 

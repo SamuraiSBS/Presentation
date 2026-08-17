@@ -87,7 +87,7 @@ Object.entries(pageRoutes).forEach(([route, fileName]) => {
 });
 
 app.listen(port, () => {
-  console.log(`StudyDeck AI MVP: http://localhost:${port}`);
+  console.log(`Lazyum MVP: http://localhost:${port}`);
 });
 
 async function generatePresentation(input, extractedSources) {
@@ -379,10 +379,10 @@ function normalizeBlock(block) {
 async function createPptx(presentation) {
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_WIDE";
-  pptx.author = "StudyDeck AI";
-  pptx.company = "StudyDeck AI";
+  pptx.author = "Lazyum";
+  pptx.company = "Lazyum";
   pptx.subject = presentation.scenario || "Учебная презентация";
-  pptx.title = presentation.title || "StudyDeck AI";
+  pptx.title = presentation.title || "Lazyum";
   pptx.lang = "ru-RU";
   pptx.theme = {
     headFontFace: "Arial",

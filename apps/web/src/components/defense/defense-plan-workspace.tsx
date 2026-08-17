@@ -134,7 +134,7 @@ export function DefensePlanWorkspace({ projectId, projectTitle, initialData }: {
       <section className="defense-plan-empty" aria-labelledby="defense-plan-title">
         <span className="status">План защиты</span>
         <h1 id="defense-plan-title">Распределите требования по слайдам</h1>
-        <p>StudyDeck соберёт редактируемый план из проверенных требований, фактов и материалов. Неразрешённые данные останутся заполнителями.</p>
+        <p>Lazyum соберёт редактируемый план из проверенных требований, фактов и материалов. Неразрешённые данные останутся заполнителями.</p>
         {data.workspace.analysisStatus === "queued" || data.workspace.analysisStatus === "analyzing" ? <div className="defense-analysis-band"><LoaderCircle className="spin" /><div><strong>Сначала завершается анализ</strong><span>Вернитесь к проверке материалов и дождитесь готовности данных.</span></div></div> : null}
         <div className="defense-plan-empty-actions"><Button variant="secondary" asChild><Link href={`/projects/${projectId}/defense/review`}><ArrowLeft size={18} />К проверке данных</Link></Button>{canEdit ? <Button type="button" onClick={buildPlan} disabled={busy || ["queued", "analyzing"].includes(data.workspace.analysisStatus)}>{rebuildPlan.isPending ? <LoaderCircle className="spin" size={18} /> : <Sparkles size={18} />}{rebuildPlan.isPending ? "Составляем…" : "Составить план защиты"}</Button> : null}</div>
         {error ? <p className="form-error" role="alert">{error}</p> : null}

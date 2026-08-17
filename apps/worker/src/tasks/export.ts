@@ -221,7 +221,7 @@ export async function createPptx(presentation: ReturnType<typeof presentationSch
   const pptx = new PptxGenConstructor();
   pptx.defineLayout(WIDE_LAYOUT);
   pptx.layout = WIDE_LAYOUT.name;
-  pptx.author = "StudyDeck AI";
+  pptx.author = "Lazyum";
   pptx.subject = presentation.scenario;
   pptx.title = presentation.title;
   pptx.lang = "ru-RU";

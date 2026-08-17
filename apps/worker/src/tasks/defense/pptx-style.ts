@@ -51,9 +51,9 @@ export async function extractDefensePptxStyle(buffer: Buffer): Promise<DefensePp
   }
 
   const palette = unique(colors.map(normalizeHexColor).filter(Boolean) as string[]).slice(0, 8);
-  if (!palette.length) warnings.push("В PPTX не найдена палитра; будет использована тема StudyDeck");
+  if (!palette.length) warnings.push("В PPTX не найдена палитра; будет использована тема Lazyum");
   const normalizedFonts = unique(fonts.map(normalizeFont).filter(Boolean) as string[]);
-  if (!normalizedFonts.length) warnings.push("В PPTX не найдены шрифты; будут использованы шрифты темы StudyDeck");
+  if (!normalizedFonts.length) warnings.push("В PPTX не найдены шрифты; будут использованы шрифты темы Lazyum");
   const logoCandidates = await extractMasterAndOpeningImages(zip, warnings);
 
   return {
