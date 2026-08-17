@@ -19,6 +19,28 @@ select {
   backdrop-filter: blur(12px);
 }
 
+.topbar-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  width: 100%;
+}
+
+.topbar-main > .brand {
+  justify-self: start;
+}
+
+.topbar-navigation {
+  display: grid;
+  justify-items: center;
+  min-width: 0;
+}
+
+.topbar-main > .header-actions {
+  justify-self: end;
+}
+
 .brand,
 .nav,
 .actions,
