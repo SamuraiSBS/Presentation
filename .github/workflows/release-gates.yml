@@ -140,12 +140,34 @@ jobs:
       - name: Start and smoke the exact release images
         run: |
           docker compose -f docker-compose.yml -f compose.ci.yml up -d --no-build api worker web
+          ready=false
           for attempt in $(seq 1 30); do
-            if curl --fail --silent --show-error http://localhost:4000/v1/health/ready; then exit 0; fi
+            if curl --fail --silent --show-error http://localhost:4000/v1/health/ready; then
+              ready=true
+              break
+            fi
             sleep 2
           done
-          docker compose -f docker-compose.yml -f compose.ci.yml logs --no-color
-          exit 1
+          if [ "$ready" != true ]; then
+            docker compose -f docker-compose.yml -f compose.ci.yml logs --no-color
+            exit 1
+          fi
+          for service in api worker web; do
+            healthy=false
+            for attempt in $(seq 1 30); do
+              container_id="$(docker compose -f docker-compose.yml -f compose.ci.yml ps -q "$service")"
+              if [ -n "$container_id" ] && [ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")" = healthy ]; then
+                healthy=true
+                break
+              fi
+              sleep 2
+            done
+            if [ "$healthy" != true ]; then
+              echo "Service $service did not become healthy before evidence capture."
+              docker compose -f docker-compose.yml -f compose.ci.yml logs --no-color
+              exit 1
+            fi
+          done
       - name: Enforce Lighthouse and Core Web Vitals on the exact web image
         run: |
           npx playwright install --with-deps chromium
@@ -255,12 +277,34 @@ jobs:
           docker compose -f docker-compose.yml -f compose.release.yml up -d --no-build postgres redis minio create-bucket
           docker compose -f docker-compose.yml -f compose.release.yml run --rm --no-deps --entrypoint node api node_modules/prisma/build/index.js migrate deploy
           docker compose -f docker-compose.yml -f compose.release.yml up -d --no-build api worker web
+          ready=false
           for attempt in $(seq 1 30); do
-            if curl --fail --silent --show-error http://localhost:4000/v1/health/ready; then exit 0; fi
+            if curl --fail --silent --show-error http://localhost:4000/v1/health/ready; then
+              ready=true
+              break
+            fi
             sleep 2
           done
-          docker compose -f docker-compose.yml -f compose.release.yml logs --no-color
-          exit 1
+          if [ "$ready" != true ]; then
+            docker compose -f docker-compose.yml -f compose.release.yml logs --no-color
+            exit 1
+          fi
+          for service in api worker web; do
+            healthy=false
+            for attempt in $(seq 1 30); do
+              container_id="$(docker compose -f docker-compose.yml -f compose.release.yml ps -q "$service")"
+              if [ -n "$container_id" ] && [ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")" = healthy ]; then
+                healthy=true
+                break
+              fi
+              sleep 2
+            done
+            if [ "$healthy" != true ]; then
+              echo "Service $service did not become healthy before evidence capture."
+              docker compose -f docker-compose.yml -f compose.release.yml logs --no-color
+              exit 1
+            fi
+          done
       - name: Write deployable release manifest
         run: |
           printf '{\n  "gitSha": "%s",\n  "releaseGate": "passed",\n  "migrationCompatibility": "no-schema-change",\n  "images": {\n' "$GITHUB_SHA" > release-manifest.json
