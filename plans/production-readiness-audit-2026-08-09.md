@@ -108,10 +108,9 @@ Worker публикует TTL heartbeat в Redis, а `compose.production.yml` и
 
 Критерий закрытия: staging/release smoke получает `200` от `/v1/health/ready` только после migration, bucket setup и запуска worker; отключение любой зависимости возвращает `503`, тогда как `/v1/health/live` остаётся `200` до остановки процесса.
 
-**Нужно доделать для acceptance:**
+**Acceptance закрыт 17 августа 2026:** staging artifact `staging-health-evidence-32a34c9c26ce82b1452b6200ab5e35762113c6e4` из зелёного release-gates run #32050706152 и registry artifact `registry-health-evidence-cc78059939c3131c3441c35d0f28d3101d944848` из зелёного main run #32053150663 подтверждают `200` для live/ready/workers и healthy API/worker/web на exact release images и опубликованных immutable digest-образах. Production alerts уже сконфигурированы в secret manager.
 
-- Выполнить release-gates для commit SHA и принять CI-artifact `staging-health-evidence-<sha>`; после публикации digest принять также `registry-health-evidence-<sha>`. Они должны показать `200` live/ready/workers и healthy API/worker/web. Локально 11 августа Docker Desktop доступен, но запущены только PostgreSQL и MinIO, поэтому это не заменяет staging/release acceptance.
-- В production secret manager задать `ADMIN_ALERTS_ENABLED=true`, Telegram token/chat ID и согласованные SLO-пороги `HEALTH_QUEUE_WAITING_MAX` / `HEALTH_QUEUE_LAG_MAX_AGE_MS`; API-side монитор уже отправляет Telegram-уведомления для `503` readiness, stale worker heartbeat и нарушений queue-lag и не зависит от работающего worker.
+**Нужно доделать для acceptance:** ничего.
 
 ### P1-3. Нет graceful shutdown фоновых задач
 
