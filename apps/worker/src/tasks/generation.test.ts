@@ -141,6 +141,28 @@ describe("prepareGenerationSources", () => {
     ]);
   });
 
+  it("allows the explicitly enabled accepted-speech presentation path without a source snapshot", async () => {
+    const previous = process.env.ALLOW_PRESENTATION_WITHOUT_SOURCE_SNAPSHOT;
+    process.env.ALLOW_PRESENTATION_WITHOUT_SOURCE_SNAPSHOT = "true";
+    costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: null, policySnapshot: { buckets: { sources: "0.50000000" } } });
+
+    try {
+      const sources = await prepareGenerationSources({
+        id: "project-accepted-speech",
+        prompt: "Explain photosynthesis",
+        mode: "fast_draft",
+        speechDraft: "Accepted narration provides the complete instructional context for this controlled staging presentation.",
+        sources: [],
+      }, { refreshWeb: false, costEnvelopeId: "envelope-accepted-speech" });
+
+      expect(sources).toEqual([expect.objectContaining({ type: "PROMPT", label: "Accepted speech text" })]);
+      expect(searchWebSources).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.ALLOW_PRESENTATION_WITHOUT_SOURCE_SNAPSHOT;
+      else process.env.ALLOW_PRESENTATION_WITHOUT_SOURCE_SNAPSHOT = previous;
+    }
+  });
+
   it("keeps uploaded material when refreshing web research fails", async () => {
     vi.mocked(searchWebSources).mockRejectedValue(new Error("Tavily search failed: 503 unavailable"));
 

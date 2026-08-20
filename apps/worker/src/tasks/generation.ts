@@ -682,6 +682,12 @@ export async function prepareGenerationSources(project: {
   // images, but never as factual grounding. Keep that boundary server-side so
   // a legacy `with_sources` mode cannot accidentally trigger Tavily research.
   const refreshWeb = project.workflow === "requirements_driven" ? false : options.refreshWeb ?? true;
+  // Staging can explicitly validate the one-job accepted-speech path without
+  // inventing a WEB source snapshot. This remains opt-in so production keeps
+  // the mandatory snapshot contract for ordinary presentation generation.
+  const allowAcceptedSpeechWithoutSourceSnapshot = process.env.ALLOW_PRESENTATION_WITHOUT_SOURCE_SNAPSHOT === "true"
+    && !refreshWeb
+    && Boolean(project.speechDraft?.trim());
   const sources: Source[] = [];
   const storedWebSources: Source[] = [];
 
@@ -692,7 +698,9 @@ export async function prepareGenerationSources(project: {
     });
     const snapshot = parseMandatorySourceSnapshot(envelope?.sourceSnapshot);
     if (snapshot) return snapshotSources(snapshot);
-    if (!refreshWeb) throw new Error("Mandatory source snapshot is unavailable for this generation run");
+    if (!refreshWeb && !allowAcceptedSpeechWithoutSourceSnapshot) {
+      throw new Error("Mandatory source snapshot is unavailable for this generation run");
+    }
   }
 
   for (const source of project.sources) {

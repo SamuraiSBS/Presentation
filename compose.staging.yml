@@ -15,6 +15,9 @@ services:
       DEPLOYMENT_ENV: staging
       BACKUP_ENABLED: "false"
       SENTRY_ENVIRONMENT: staging
+      ALLOW_PRESENTATION_WITHOUT_SOURCE_SNAPSHOT: ${ALLOW_PRESENTATION_WITHOUT_SOURCE_SNAPSHOT:-false}
+      DATABASE_URL: ${DATABASE_URL}
+      AI_PROVIDER: ${AI_PROVIDER}
 
   web:
     environment:
@@ -25,3 +28,7 @@ services:
     environment:
       # Do not teach browsers to pin the test deployment as a production host.
       HSTS_MAX_AGE: "0"
+
+networks:
+  default:
+    enable_ipv6: true
