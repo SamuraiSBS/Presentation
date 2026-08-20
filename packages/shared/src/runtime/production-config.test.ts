@@ -51,6 +51,18 @@ describe("production configuration", () => {
     expect(() => assertProductionConfiguration(productionEnvironment)).not.toThrow();
   });
 
+  it("does not require an age backup recipient", () => {
+    expect(productionConfigurationErrors({
+      ...productionEnvironment,
+      BACKUP_AGE_RECIPIENT: "",
+    })).toEqual([]);
+
+    expect(productionConfigurationErrors({
+      ...productionEnvironment,
+      BACKUP_AGE_RECIPIENT: "not-an-age-recipient",
+    })).toEqual([]);
+  });
+
   it("rejects local identity, defaults, and a local auth URL", () => {
     const errors = productionConfigurationErrors({
       ...productionEnvironment,
@@ -89,7 +101,7 @@ describe("production configuration", () => {
     expect(errors).toMatch(/SUPPORT_EMAIL/);
   });
 
-  it("requires an encrypted, off-site backup policy and an accountable recovery target", () => {
+  it("requires an off-site backup policy and an accountable recovery target", () => {
     const errors = productionConfigurationErrors({
       ...productionEnvironment,
       BACKUP_ENABLED: "false",
@@ -104,7 +116,6 @@ describe("production configuration", () => {
       YOOKASSA_SECRET_KEY: "change-me",
     }).join("\n");
     expect(errors).toMatch(/BACKUP_ENABLED/);
-    expect(errors).toMatch(/BACKUP_AGE_RECIPIENT/);
     expect(errors).toMatch(/BACKUP_S3_ENDPOINT/);
     expect(errors).toMatch(/BACKUP_RETENTION_DAYS/);
     expect(errors).toMatch(/OPERATIONS_OWNER/);
