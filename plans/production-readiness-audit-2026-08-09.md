@@ -154,6 +154,13 @@ mirror, восстанавливает их в новые временные Doc
 настройки, DB/Redis/MinIO/BullMQ/Stripe/AI/Sentry incident paths и rollback
 описан в `docs/operations/production-recovery.md`.
 
+**Временное послабление 20 августа 2026:** startup validation больше не требует
+`BACKUP_AGE_RECIPIENT`, чтобы production мог быть развёрнут до provisioned age
+recovery key. Это исключение допустимо только до реального production launch.
+Перед launch нужно вернуть обязательную проверку recipient формата `age1...`,
+заполнить `BACKUP_AGE_RECIPIENT`, разместить private age identity только в
+recovery secret store и принять успешные backup + isolated restore drill.
+
 **До live-acceptance ещё нужно:**
 
 - Provisioning: создать отдельный off-site S3-compatible account/bucket с

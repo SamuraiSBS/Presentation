@@ -111,9 +111,6 @@ export function productionConfigurationErrors(env: RuntimeEnvironment = process.
   if (value(env, "BACKUP_ENABLED").toLowerCase() !== "true") {
     errors.push("BACKUP_ENABLED must be true in production");
   }
-  if (!/^age1[0-9a-z]+$/.test(value(env, "BACKUP_AGE_RECIPIENT"))) {
-    errors.push("BACKUP_AGE_RECIPIENT must be an age public recipient");
-  }
   const backupEndpoint = value(env, "BACKUP_S3_ENDPOINT");
   if (!publicHttpsHost(backupEndpoint) || backupEndpoint === value(env, "S3_ENDPOINT")) {
     errors.push("BACKUP_S3_ENDPOINT must be a separate public HTTPS object-storage endpoint");
