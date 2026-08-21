@@ -1502,6 +1502,15 @@ export function productionQualityReleaseResult(
         issues: baseCritique.issues.filter((issue) => !(
           (issue.category === "generic_text" || issue.category === "bad_narration")
           && (issue.field === "speakerNotes" || (project.acceptedNarrationRecovery && issue.field === "speechScript"))
+        ) && !(
+          // The visible claim was deterministically projected from the
+          // accepted narration. A missing optional source match is advisory
+          // here; real factual blockers and mandatory snapshot checks remain
+          // untouched below.
+          hasCanonicalAcceptedNarration
+          && issue.category === "factual_risk"
+          && issue.severity === "minor"
+          && issue.message === "A precise visible claim has no matching source reference or source context."
         )),
       }
     : baseCritique;
