@@ -283,13 +283,14 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     });
     let unsafeCanvases = canvasAuditIssues(presentation);
     if (unsafeCanvases.length) {
-      logger.warn({ projectId, jobId: job.id, fallback: "roomy_local_layout", issueCount: unsafeCanvases.length }, "generated canvas is unsafe; applying local layout recovery");
-      presentation = repairPresentationLayout(presentation);
+      // A geometry-only repair can preserve provider-shaped visual directions
+      // which then fail the semantic quality gate after the canvas audit has
+      // passed. Use the same deterministic readable projection as the
+      // accepted-narration recovery: it removes optional visuals as well as
+      // cramped canvas geometry without spending on another provider call.
+      logger.warn({ projectId, jobId: job.id, fallback: "emergency_readable_layout", issueCount: unsafeCanvases.length }, "generated canvas is unsafe; applying deterministic readable recovery");
+      presentation = buildEmergencyReadablePresentation(presentation);
       unsafeCanvases = canvasAuditIssues(presentation);
-      if (unsafeCanvases.length) {
-        presentation = buildEmergencyReadablePresentation(presentation);
-        unsafeCanvases = canvasAuditIssues(presentation);
-      }
       if (unsafeCanvases.length) throw new Error(`Production quality gate rejected canvas safety: ${unsafeCanvases.slice(0, 8).join("; ")}`);
     }
     if (defenseBundle) assertDefensePresentation(presentation, defenseBundle);
