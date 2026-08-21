@@ -87,6 +87,40 @@ describe("accepted narration local recovery with the actual production gate", ()
     expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "ready" }) }));
   });
 
+  it("repairs post-image visible-copy and visual regressions before the final accepted-narration gate", async () => {
+    const initial = buildLocalPresentationFromAcceptedNarration(project, sources, acceptedNarration);
+    const releaseInput = { ...project, mandatorySourceSnapshot: true, acceptedNarrationRecovery: true };
+    expect(productionQualityReleaseResult(initial, sources, releaseInput).finalDisposition).toBe("released");
+
+    const postImage = {
+      ...initial,
+      slides: initial.slides.map((slide, index) => index >= 1 && index <= 3
+        ? {
+            ...slide,
+            bullets: index === 1
+              ? [Array.from({ length: 24 }, () => "photoelectric evidence").join(" ")]
+              : slide.bullets,
+            visual: { ...slide.visual, type: "schema" as const, description: "" },
+          }
+        : slide),
+    };
+    const rejectedPostImageRelease = productionQualityReleaseResult(postImage, sources, releaseInput);
+    expect(rejectedPostImageRelease).toMatchObject({ finalDisposition: "rejected" });
+    expect(rejectedPostImageRelease.issueCategories).toEqual(expect.arrayContaining(["too_long", "bad_visual"]));
+
+    generatePresentationFromNarration.mockResolvedValue(initial);
+    enrichPresentationImages.mockResolvedValue(postImage);
+
+    await expect(handleGenerationJob(job())).resolves.toBeUndefined();
+
+    const saved = prismaMock.presentation.upsert.mock.calls[0]?.[0]?.create?.document;
+    const finalRelease = productionQualityReleaseResult(saved, sources, releaseInput);
+    expect(finalRelease).toMatchObject({ finalDisposition: "released" });
+    expect(saved.slides[1].bullets).not.toContain(postImage.slides[1].bullets[0]);
+    expect(saved.slides.slice(1, 4).every((slide: { visual: { description: string } }) => Boolean(slide.visual.description.trim()))).toBe(true);
+    expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "ready" }) }));
+  });
+
   it("recovers a provider failure to ready through the real release gate without a second provider or Tavily call", async () => {
     await expect(handleGenerationJob(job())).resolves.toBeUndefined();
     const document = prismaMock.presentation.upsert.mock.calls[0]?.[0]?.create?.document;

@@ -1031,11 +1031,22 @@ export function applyVisualPlanFallbacks(presentation: PresentationDocument, iss
   const needsCoverageRepair = issues.some((issue) => issue.message.includes("visual coverage") || issue.message.includes("Three consecutive"));
   const duplicateAssetIds = new Set(issues.filter((issue) => issue.field === "visual.image.objectKey").map((issue) => issue.slideId).filter((id): id is string => Boolean(id)));
   const unfulfilledImageIds = new Set(issues.filter((issue) => issue.field === "visual.image.url").map((issue) => issue.slideId).filter((id): id is string => Boolean(id)));
+  const unsafeTavilyImageIds = new Set(issues
+    .filter((issue) => issue.field === "visual.image")
+    .map((issue) => issue.slideId)
+    .filter((id): id is string => Boolean(id)));
+  const genericVisualDescriptionIds = new Set(issues
+    .filter((issue) => issue.field === "visual.description")
+    .map((issue) => issue.slideId)
+    .filter((id): id is string => Boolean(id)));
   const slides = presentation.slides.map((slide) => {
     if (unfulfilledImageIds.has(slide.id)) {
       return withGroundedDiagramFallback(slide);
     }
-    if (duplicateAssetIds.has(slide.id) && slide.visual.image?.provider === "tavily") return withGroundedDiagramFallback(slide);
+    if ((duplicateAssetIds.has(slide.id) || unsafeTavilyImageIds.has(slide.id)) && slide.visual.image?.provider === "tavily") {
+      return withGroundedDiagramFallback(slide);
+    }
+    if (genericVisualDescriptionIds.has(slide.id) && !slide.visual.image) return withGroundedDiagramFallback(slide);
     return slide;
   });
   const slideByOrder = new Map(slides.map((slide) => [slide.order, slide]));
