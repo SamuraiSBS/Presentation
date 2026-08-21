@@ -289,7 +289,15 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       // document so its compact-copy and visual fallbacks are applied before
       // the final gate. This does not suppress source, schema, or canvas
       // blockers: the same gate below still evaluates the repaired document.
-      presentation = repairReleaseCandidate(presentation, presentation.sources, generationProject);
+      const repairedPostImagePresentation = repairReleaseCandidate(presentation, presentation.sources, generationProject);
+      // The release repair can replace canonical title/text fields and build
+      // a temporary generated canvas. Compose the final canvas once more from
+      // those repaired fields before auditing it; canvas safety remains a
+      // hard gate on the exact document that will be persisted.
+      presentation = ensureEditableCanvas({
+        ...repairedPostImagePresentation,
+        slides: repairedPostImagePresentation.slides.map((slide) => ({ ...slide, canvas: undefined })),
+      });
     }
     let unsafeCanvases = canvasAuditIssues(presentation);
     if (unsafeCanvases.length) {

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { buildEmergencyReadablePresentation, handleGenerationJob, hasAcceptedNarrationRecoveryArtifacts } from "./generation.js";
 import { buildLocalPresentationFromAcceptedNarration } from "./presentation.js";
+import { repairReleaseCandidate } from "./presentation/quality/orchestration.js";
 import { productionQualityReleaseResult } from "./presentation-quality.js";
 import { searchWebSources } from "./web-search.js";
 
@@ -97,6 +98,7 @@ describe("accepted narration local recovery with the actual production gate", ()
       slides: initial.slides.map((slide, index) => index >= 1 && index <= 3
         ? {
             ...slide,
+            title: index === 1 ? Array.from({ length: 14 }, () => "photoelectric conversion context").join(" ") : slide.title,
             bullets: index === 1
               ? [Array.from({ length: 24 }, () => "photoelectric evidence").join(" ")]
               : slide.bullets,
@@ -107,6 +109,10 @@ describe("accepted narration local recovery with the actual production gate", ()
     const rejectedPostImageRelease = productionQualityReleaseResult(postImage, sources, releaseInput);
     expect(rejectedPostImageRelease).toMatchObject({ finalDisposition: "rejected" });
     expect(rejectedPostImageRelease.issueCategories).toEqual(expect.arrayContaining(["too_long", "bad_visual"]));
+    const repairedPostImage = repairReleaseCandidate(postImage, sources, project);
+    expect(productionQualityReleaseResult(repairedPostImage, sources, releaseInput)).toMatchObject({
+      finalDisposition: "released",
+    });
 
     generatePresentationFromNarration.mockResolvedValue(initial);
     enrichPresentationImages.mockResolvedValue(postImage);
@@ -116,9 +122,47 @@ describe("accepted narration local recovery with the actual production gate", ()
     const saved = prismaMock.presentation.upsert.mock.calls[0]?.[0]?.create?.document;
     const finalRelease = productionQualityReleaseResult(saved, sources, releaseInput);
     expect(finalRelease).toMatchObject({ finalDisposition: "released" });
+    expect(saved.slides[1].title.length).toBeLessThanOrEqual(90);
     expect(saved.slides[1].bullets).not.toContain(postImage.slides[1].bullets[0]);
     expect(saved.slides.slice(1, 4).every((slide: { visual: { description: string } }) => Boolean(slide.visual.description.trim()))).toBe(true);
     expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "ready" }) }));
+  });
+
+  it("keeps mandatory factual blockers while suppressing only the accepted-recovery advisory", () => {
+    const initial = buildLocalPresentationFromAcceptedNarration(project, sources, acceptedNarration);
+    const postImage = {
+      ...initial,
+      generatedText: "provider visual metadata without accepted sections",
+      slides: initial.slides.map((slide, index) => index === 1
+        ? {
+            ...slide,
+            title: Array.from({ length: 14 }, () => "photoelectric conversion context").join(" "),
+            thesis: "In 2025 the conversion efficiency reached 99.9 percent in every installed system.",
+            sourceRefs: [],
+          }
+        : slide),
+    };
+    const baseInput = { ...project, mandatorySourceSnapshot: true };
+    const beforeAcceptedRecovery = productionQualityReleaseResult(postImage, sources, baseInput);
+    expect(beforeAcceptedRecovery).toMatchObject({ finalDisposition: "rejected" });
+    expect(beforeAcceptedRecovery.issueCategories).toEqual(expect.arrayContaining(["too_long", "factual_risk"]));
+
+    const acceptedRecovery = productionQualityReleaseResult(postImage, sources, {
+      ...baseInput,
+      acceptedNarrationRecovery: true,
+    });
+    expect(acceptedRecovery.issueCategories).not.toContain("factual_risk");
+    expect(acceptedRecovery.finalDisposition).toBe("rejected");
+
+    const mandatorySnapshotFailure = productionQualityReleaseResult(initial, sources.slice(0, 2), {
+      ...baseInput,
+      acceptedNarrationRecovery: true,
+    });
+    expect(mandatorySnapshotFailure).toMatchObject({ finalDisposition: "rejected" });
+    expect(mandatorySnapshotFailure.issues).toContainEqual(expect.objectContaining({
+      category: "factual_risk",
+      severity: "blocker",
+    }));
   });
 
   it("recovers a provider failure to ready through the real release gate without a second provider or Tavily call", async () => {

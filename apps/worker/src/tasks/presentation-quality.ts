@@ -1518,7 +1518,7 @@ export function productionQualityReleaseResult(
           // accepted narration. A missing optional source match is advisory
           // here; real factual blockers and mandatory snapshot checks remain
           // untouched below.
-          hasCanonicalAcceptedNarration
+          (project.acceptedNarrationRecovery || hasCanonicalAcceptedNarration)
           && issue.category === "factual_risk"
           && issue.severity === "minor"
           && issue.message === "A precise visible claim has no matching source reference or source context."
@@ -2462,7 +2462,8 @@ function acceptedNarrationSentences(values: string[]) {
 }
 
 function compactTitle(value: string) {
-  return cleanText(value).replace(/[.!?]+$/g, "").split(/\s+/).slice(0, 12).join(" ") || "Ключевой вывод";
+  const text = cleanText(value).replace(/[.!?]+$/g, "").split(/\s+/).slice(0, 12).join(" ");
+  return compactVisibleText(text, 84) || "Ключевой вывод";
 }
 
 /** A generic accepted heading may be retained in narration, but it is not a useful screen label. */
@@ -2471,20 +2472,28 @@ function compactAcceptedNarrationTitle(sectionTitle: string, sentences: string[]
   return isGenericTitle(title) ? compactTitle(sentences[0] || sectionTitle) : title;
 }
 
-function compactSentence(value: string, maxWords: number) {
+function compactSentence(value: string, maxWords: number, maxCharacters = 200) {
   const words = cleanText(value).replace(/[.!?]+$/g, "").split(/\s+/).filter(Boolean).slice(0, maxWords);
-  return words.length ? `${words.join(" ")}.` : "";
+  const compact = compactVisibleText(words.join(" "), Math.max(1, maxCharacters - 1));
+  return compact ? `${compact}.` : "";
 }
 
 function uniqueCompactSentences(values: string[], thesis: string) {
   const thesisKey = normalizeQualityText(thesis);
   const seen = new Set<string>([thesisKey]);
-  return values.map((value) => compactSentence(value, 18)).filter((value) => {
+  return values.map((value) => compactSentence(value, 18, 120)).filter((value) => {
     const key = normalizeQualityText(value);
     if (!key || seen.has(key) || value.split(/\s+/).length < 4) return false;
     seen.add(key);
     return true;
   });
+}
+
+function compactVisibleText(value: string, maximum: number) {
+  const text = cleanText(value);
+  if (text.length <= maximum) return text;
+  const boundary = text.slice(0, maximum).replace(/\s+\S*$/, "").trim();
+  return boundary || text.slice(0, maximum).trim();
 }
 
 function isLowInformationProjection(value: string) {
