@@ -888,6 +888,39 @@ describe("presentation quality checks", () => {
     expect(materialized.slides[2].visual.type).toBe("none");
   });
 
+  it("keeps generated diagram metadata inside the shared schema limits", () => {
+    const longTitle = "Graceful shutdown ".repeat(8).trim();
+    const longThesis = "A controlled worker stop preserves active work, queue ownership, and a deterministic retry path. ".repeat(3).trim();
+    const longBullet = "The replacement worker restores readiness only after it can process the original queue state without duplicating the job. ".repeat(8).trim();
+    const slide = {
+      ...makeSlide(1, longTitle, longThesis, [longBullet, longBullet]),
+      slideKind: "content" as const,
+      visual: { type: "none" as const, title: "", description: "Text-led placeholder", leftLabel: "", rightLabel: "", items: [], rows: [] },
+    };
+    const presentation = makePresentation({
+      slides: [slide] as any,
+      designBrief: {
+        ...makePresentation().designBrief!,
+        slideDirections: [{
+          slideOrder: 1,
+          visualRole: "explain" as const,
+          layoutIntent: "diagram" as const,
+          imageStrategy: "diagram" as const,
+          sceneTextMode: "visual_labels" as const,
+          visualPrompt: "Graceful shutdown process",
+        }],
+      },
+    });
+
+    const materialized = materializePlannedVisuals(presentation);
+    const diagram = materialized.slides[0].visual.diagram!;
+
+    expect(diagram.title.length).toBeLessThanOrEqual(90);
+    expect(diagram.caption.length).toBeLessThanOrEqual(160);
+    expect(diagram.fallback.length).toBeLessThanOrEqual(1200);
+    expect(() => presentationSchema.parse(materialized)).not.toThrow();
+  });
+
   it("accepts a ten-slide visual fixture with six sourced photos and three semantic diagrams", () => {
     const slides = Array.from({ length: 10 }, (_, index) => {
       const order = index + 1;
