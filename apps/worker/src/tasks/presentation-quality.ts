@@ -1127,9 +1127,12 @@ function withGroundedDiagramFallback(slide: Slide): Slide {
       rows: [],
       diagram: {
         kind: "flowchart" as const,
-        title: cleanText(slide.title),
-        caption: cleanText(slide.thesis),
-        fallback: nodes.join("\n"),
+        // These fields are generated from otherwise longer slide copy. Keep
+        // the fallback itself schema-valid so a single verbose model response
+        // cannot turn a release-ready document into a terminal job failure.
+        title: compactDiagramText(slide.title, 90),
+        caption: compactDiagramText(slide.thesis, 160),
+        fallback: nodes.map((node) => compactDiagramText(node, 360)).join("\n"),
         safety: "safe" as const,
         source: diagramSource,
       },
@@ -1141,6 +1144,15 @@ function mermaidFallbackText(value: string) {
   // Mermaid flowchart nodes render as compact labels in both the web canvas
   // and PPTX fallback. Keep them short enough to avoid clipped text.
   return cleanText(value).replace(/[<>{}[\]|"`]/g, " ").replace(/\s+/g, " ").trim().slice(0, 36) || "Идея";
+}
+
+function compactDiagramText(value: string, maximum: number) {
+  const text = cleanText(value);
+  if (text.length <= maximum) return text;
+  const limit = Math.max(1, maximum - 1);
+  const boundary = text.slice(0, limit).replace(/\s+\S*$/, "").trim();
+  const compact = boundary || text.slice(0, limit).trim();
+  return /[.!?…]$/u.test(compact) ? compact : `${compact}.`;
 }
 
 function isConcreteVisualTopic(presentation: PresentationDocument, project?: QualityProjectInput) {
