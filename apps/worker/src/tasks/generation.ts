@@ -23,6 +23,7 @@ import {
   type GenerationProgressStage,
 } from "./job-progress.js";
 import { buildLocalPresentationFromAcceptedNarration, generateNarrationDraft, generatePresentationFromNarration } from "./presentation.js";
+import { repairReleaseCandidate } from "./presentation/quality/orchestration.js";
 import { assessFullNarrationDocument } from "./presentation/narration/processing.js";
 import { searchWebSources } from "./web-search.js";
 import { enrichPresentationImages } from "./image-search.js";
@@ -281,6 +282,15 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       ...presentationWithImages,
       slides: presentationWithImages.slides.map((slide) => ({ ...slide, canvas: undefined })),
     });
+    if (!usedLocalPresentationRecovery) {
+      // Image enrichment can replace a photo direction with a diagram or add
+      // Tavily metadata after the provider's first release gate. Re-run the
+      // existing deterministic release repair on that exact post-image
+      // document so its compact-copy and visual fallbacks are applied before
+      // the final gate. This does not suppress source, schema, or canvas
+      // blockers: the same gate below still evaluates the repaired document.
+      presentation = repairReleaseCandidate(presentation, presentation.sources, generationProject);
+    }
     let unsafeCanvases = canvasAuditIssues(presentation);
     if (unsafeCanvases.length) {
       // A geometry-only repair can preserve provider-shaped visual directions
