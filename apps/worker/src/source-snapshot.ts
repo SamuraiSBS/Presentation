@@ -5,10 +5,12 @@ export const MANDATORY_SOURCE_SNAPSHOT_MAXIMUM = 4;
 export const MANDATORY_SOURCE_EXCERPT_MAX_LENGTH = 320;
 export const MANDATORY_SOURCE_CONTEXT_MAX_LENGTH = 1_200;
 
+export type WebSearchProvider = "tavily" | "aitunnel";
+
 export type MandatorySourceSnapshot = {
   version: 1;
   capturedAt: string;
-  provenance: { provider: "tavily"; queryAt: string };
+  provenance: { provider: WebSearchProvider; queryAt: string };
   sources: Array<{
     sourceId: string;
     title: string;
@@ -17,7 +19,7 @@ export type MandatorySourceSnapshot = {
   }>;
 };
 
-export function createMandatorySourceSnapshot(sources: Source[], capturedAt = new Date()): MandatorySourceSnapshot | null {
+export function createMandatorySourceSnapshot(sources: Source[], capturedAt = new Date(), provider: WebSearchProvider = "tavily"): MandatorySourceSnapshot | null {
   const selected = sources
     .filter((source) => source.type === "WEB" && source.url)
     .slice(0, MANDATORY_SOURCE_SNAPSHOT_MAXIMUM)
@@ -37,7 +39,7 @@ export function createMandatorySourceSnapshot(sources: Source[], capturedAt = ne
     return { ...source, evidenceExcerpt };
   }).filter((source) => source.evidenceExcerpt);
   return bounded.length >= MANDATORY_SOURCE_SNAPSHOT_MINIMUM
-    ? { version: 1, capturedAt: capturedAt.toISOString(), provenance: { provider: "tavily", queryAt: capturedAt.toISOString() }, sources: bounded }
+    ? { version: 1, capturedAt: capturedAt.toISOString(), provenance: { provider, queryAt: capturedAt.toISOString() }, sources: bounded }
     : null;
 }
 
@@ -51,8 +53,9 @@ export function parseMandatorySourceSnapshot(value: unknown): MandatorySourceSna
     if (!item.sourceId || !item.title || !item.url || !item.evidenceExcerpt) return [];
     return [{ sourceId: String(item.sourceId), title: compactText(item.title, 180), url: String(item.url), evidenceExcerpt: compactText(item.evidenceExcerpt, MANDATORY_SOURCE_EXCERPT_MAX_LENGTH) }];
   });
+  const provider = snapshot.provenance?.provider === "aitunnel" ? "aitunnel" : "tavily";
   return sources.length >= MANDATORY_SOURCE_SNAPSHOT_MINIMUM
-    ? { version: 1, capturedAt: String(snapshot.capturedAt || ""), provenance: { provider: "tavily", queryAt: String(snapshot.provenance?.queryAt || snapshot.capturedAt || "") }, sources }
+    ? { version: 1, capturedAt: String(snapshot.capturedAt || ""), provenance: { provider, queryAt: String(snapshot.provenance?.queryAt || snapshot.capturedAt || "") }, sources }
     : null;
 }
 

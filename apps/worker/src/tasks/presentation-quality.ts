@@ -1470,13 +1470,13 @@ export function findExportReadinessIssues(presentation: PresentationDocument): Q
 }
 
 export function findVisualFulfillmentIssues(presentation: PresentationDocument): QualityIssue[] {
-  return presentation.slides.flatMap((slide) => (slide.visual.type === "image" || slide.layout === "image-focus") && !slide.visual.image?.url
+  return presentation.slides.flatMap((slide) => (slide.visual.type === "image" || slide.layout === "image-focus") && !slide.visual.image?.url && !slide.visual.image?.objectKey
     ? [{
         slideId: slide.id,
         severity: "blocker" as const,
         category: "bad_visual" as const,
         field: "visual.image.url",
-        message: "Image visual or image-focus layout has no fulfilled image URL.",
+        message: "Image visual or image-focus layout has no fulfilled image asset.",
         repairInstruction: "Fulfill the requested image or replace this generated visual with a deterministic diagram; never leave an empty image slot.",
       }]
     : []);

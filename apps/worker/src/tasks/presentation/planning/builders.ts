@@ -366,7 +366,7 @@ export function balanceDeterministicVisualDirections(
 
   const minimumVisuals = Math.ceil(contentIndexes.length * 0.6);
   const maximumVisuals = Math.max(minimumVisuals, Math.floor(contentIndexes.length * 0.75));
-  const isVisual = (direction: DesignBrief["slideDirections"][number]) => direction.imageStrategy === "real_photo" || direction.imageStrategy === "diagram";
+  const isVisual = (direction: DesignBrief["slideDirections"][number]) => direction.imageStrategy === "real_photo" || direction.imageStrategy === "generated_illustration" || direction.imageStrategy === "diagram";
   let visualCount = contentIndexes.filter(({ direction }) => isVisual(direction)).length;
   const balanced = [...directions];
 
@@ -492,7 +492,7 @@ export function diversifySceneTextModes(
           ? "cards"
           : current.layoutIntent;
     const nextImageStrategy = current.imageStrategy;
-    const preservedVisualLayout = current.imageStrategy === "real_photo" || current.imageStrategy === "diagram";
+    const preservedVisualLayout = current.imageStrategy === "real_photo" || current.imageStrategy === "generated_illustration" || current.imageStrategy === "diagram";
     balanced[index] = {
       ...current,
       sceneTextMode: replacement,

@@ -448,6 +448,35 @@ describe("prepareGenerationSources", () => {
     expect(settleCostEnvelope).toHaveBeenNthCalledWith(2, expect.objectContaining({ idempotencyKey: "envelope-refined:mandatory-source-search:2" }));
   });
 
+  it("uses one AITUNNEL source reservation and does not retry an insufficient result", async () => {
+    const previousProvider = process.env.WEB_SEARCH_PROVIDER;
+    process.env.WEB_SEARCH_PROVIDER = "aitunnel";
+    const policySnapshot = { buckets: { sources: "1.50000000" } };
+    costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: null, policySnapshot });
+    costEnvelope.findUniqueOrThrow.mockResolvedValue({ policySnapshot });
+    reserveCostEnvelope.mockResolvedValue({ status: "reserved", idempotent: false });
+    settleCostEnvelope.mockResolvedValue({ status: "settled" });
+    vi.mocked(searchWebSources).mockRejectedValue(new Error("mandatory_source_search_insufficient"));
+
+    try {
+      await expect(prepareGenerationSources({ id: "project-aitunnel-insufficient", prompt: "Saturn", mode: "with_sources", speechDraft: null, sources: [] }, { refreshWeb: true, costEnvelopeId: "envelope-aitunnel-insufficient" }))
+        .rejects.toThrow("mandatory_source_search_insufficient");
+      expect(searchWebSources).toHaveBeenCalledTimes(1);
+      expect(reserveCostEnvelope).toHaveBeenCalledTimes(1);
+      expect(settleCostEnvelope).toHaveBeenCalledWith({
+        envelopeId: "envelope-aitunnel-insufficient",
+        idempotencyKey: "envelope-aitunnel-insufficient:mandatory-source-search:1",
+        actualRub: "0.50000000",
+        reason: "mandatory_source_search_insufficient",
+        exhaustEnvelope: true,
+      });
+      expect(failCostEnvelope).not.toHaveBeenCalled();
+    } finally {
+      if (previousProvider === undefined) delete process.env.WEB_SEARCH_PROVIDER;
+      else process.env.WEB_SEARCH_PROVIDER = previousProvider;
+    }
+  });
+
   it("does not duplicate Tavily work when a concurrent retry owns the source reservation", async () => {
     const policySnapshot = { buckets: { sources: "0.50000000" } };
     costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: null, policySnapshot });

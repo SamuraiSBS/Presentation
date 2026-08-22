@@ -510,7 +510,7 @@ describe("Yandex narration full duration rewrite", () => {
       expect(presentation.designBrief?.themeId).toBe("studydeckEditorial");
       expect(presentation.designBrief?.slideDirections).toHaveLength(10);
       expect(presentation.slides.every((slide) => slide.canvas?.version === 3)).toBe(true);
-      expect(presentation.speechScript.map((item) => item.text).join("\n\n")).toBe(accepted.replace(/Слайд \d+: [^\n]+\n/g, "").trim());
+      expect(presentation.speechScript.map((item) => item.text).join("\n\n")).toBe(accepted.replace(/\r\n?/g, "\n").replace(/Слайд \d+: [^\n]+\n/g, "").trim());
       expect(presentation.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!))).toEqual([]);
       expect(release.issues).toEqual([]);
       expect(release).toMatchObject({ finalDisposition: "released", issueCategories: [] });
