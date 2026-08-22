@@ -17,4 +17,18 @@ describe("mandatory source snapshot", () => {
       expect.objectContaining({ id: "source-1", type: "WEB" }),
     ]));
   });
+
+  it("preserves the AITUNNEL provenance on a reusable snapshot", () => {
+    const snapshot = createMandatorySourceSnapshot([1, 2, 3].map((number) => ({
+      id: `aitunnel-${number}`,
+      label: `AITUNNEL source ${number}`,
+      type: "WEB",
+      size: 0,
+      url: `https://example.org/${number}`,
+      excerpt: `Evidence ${number}`,
+    })), new Date("2026-08-22T10:00:00.000Z"), "aitunnel");
+
+    expect(snapshot?.provenance.provider).toBe("aitunnel");
+    expect(parseMandatorySourceSnapshot(snapshot)?.provenance.provider).toBe("aitunnel");
+  });
 });

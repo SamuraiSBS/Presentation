@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const recordCostEvent = vi.fn();
+const recordAiUsage = vi.fn();
 const currentUsageContext = vi.fn();
 
 vi.mock("../usage-ledger.js", () => ({
   recordCostEvent,
+  recordAiUsage,
+  normalizeOpenAIUsage: vi.fn((value: unknown) => value),
   currentUsageContext,
 }));
 
@@ -14,6 +17,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   recordCostEvent.mockReset();
+  recordAiUsage.mockReset();
   currentUsageContext.mockReset();
 });
 

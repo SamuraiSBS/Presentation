@@ -6,11 +6,18 @@ type EnvLike = Record<string, string | undefined>;
 
 export const AITUNNEL_DEFAULT_BASE_URL = "https://api.aitunnel.ru/v1";
 export const AITUNNEL_DEFAULT_NARRATION_MODEL = "gpt-5.6-terra";
+export const AITUNNEL_DEFAULT_SEARCH_MODEL = "gpt-5.6-luna";
 
 export type AitunnelConfig = {
   apiKey: string;
   baseURL: string;
   narrationModel: string;
+};
+
+export type AitunnelSearchConfig = {
+  apiKey: string;
+  baseURL: string;
+  searchModel: string;
 };
 
 /**
@@ -53,5 +60,22 @@ export function aitunnelConfig(env: EnvLike = process.env): AitunnelConfig | und
 export function createAitunnelClient(env: EnvLike = process.env) {
   const config = aitunnelConfig(env);
   if (!config) throw new Error("AITUNNEL_API_KEY and an explicit AITUNNEL_NARRATION_MODEL are required");
+  return new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
+}
+
+export function aitunnelSearchConfig(env: EnvLike = process.env): AitunnelSearchConfig | undefined {
+  const apiKey = env.AITUNNEL_API_KEY?.trim();
+  const searchModel = (env.AITUNNEL_SEARCH_MODEL === undefined ? AITUNNEL_DEFAULT_SEARCH_MODEL : env.AITUNNEL_SEARCH_MODEL).trim();
+  if (!apiKey || !isApprovedAitunnelModel(searchModel)) return undefined;
+  return {
+    apiKey,
+    baseURL: env.AITUNNEL_BASE_URL?.trim() || AITUNNEL_DEFAULT_BASE_URL,
+    searchModel,
+  };
+}
+
+export function createAitunnelSearchClient(env: EnvLike = process.env) {
+  const config = aitunnelSearchConfig(env);
+  if (!config) throw new Error("AITUNNEL_API_KEY and a valid AITUNNEL_SEARCH_MODEL are required");
   return new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
 }
