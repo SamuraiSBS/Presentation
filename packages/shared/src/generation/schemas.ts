@@ -139,7 +139,7 @@ const legacyThemeToPremiumThemeId: Record<PresentationThemePreset, string> = {
 export const sceneTextModeSchema = z.enum(["hero_phrase", "talk_sentences", "visual_labels", "takeaway"]);
 export type SceneTextMode = z.infer<typeof sceneTextModeSchema>;
 
-export const visualPurposeSchema = z.enum(["photo", "diagram", "timeline", "comparison", "metric", "text_only"]);
+export const visualPurposeSchema = z.enum(["photo", "illustration", "diagram", "timeline", "comparison", "metric", "text_only"]);
 export type VisualPurpose = z.infer<typeof visualPurposeSchema>;
 
 export const designBriefSlideDirectionSchema = z.object({

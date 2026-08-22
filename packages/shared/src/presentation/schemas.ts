@@ -187,14 +187,16 @@ export const slideVisualRowSchema = z.object({
 export type SlideVisualRow = z.infer<typeof slideVisualRowSchema>;
 
 export const slideVisualImageSchema = z.object({
-  url: z.string().url(),
+  // Stored images may not have a public provider URL. In that case the
+  // persisted objectKey is the canonical asset reference and url is empty.
+  url: z.string().url().or(z.literal("")),
   sourceId: z.string().trim().min(1).max(128).optional(),
   objectKey: z.string().optional(),
   alt: z.string().default(""),
   query: z.string().default(""),
   sourceUrl: z.string().url().optional(),
   sourceTitle: z.string().default(""),
-  provider: z.enum(["tavily", "user", "repository", "archive"]).default("tavily"),
+  provider: z.enum(["tavily", "aitunnel", "user", "repository", "archive"]).default("tavily"),
   contentType: z.string().default(""),
   width: z.number().int().positive().optional(),
   height: z.number().int().positive().optional(),

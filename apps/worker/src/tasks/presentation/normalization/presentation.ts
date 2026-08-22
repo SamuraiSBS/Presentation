@@ -21,6 +21,7 @@ import {
     type Source
 } from "@studydeck/shared";
 import crypto from "node:crypto";
+import { isAitunnelImageProviderEnabled } from "../../presentation-image-provider.js";
 
 type ProjectInput = {
   id: string;
@@ -215,6 +216,16 @@ export function ensureDesignBriefDirections(brief: DesignBrief, project: Project
         visualPurpose: "text_only" as const,
         sceneTextMode: "takeaway" as const,
         visualPrompt: completeVisualPrompt(project, plan, "none", "summary", direction.visualPrompt),
+      };
+    }
+    if (direction.imageStrategy === "generated_illustration" && isAitunnelImageProviderEnabled()) {
+      return {
+        ...direction,
+        layoutIntent: direction.visualRole === "hero" ? "statement" as const : "cards" as const,
+        imageStrategy: "generated_illustration" as const,
+        visualPurpose: "illustration" as const,
+        sceneTextMode: direction.visualRole === "hero" ? "hero_phrase" as const : "talk_sentences" as const,
+        visualPrompt: completeVisualPrompt(project, plan, "generated_illustration", direction.visualRole === "hero" ? "statement" : "cards", direction.visualPrompt),
       };
     }
     if (direction.imageStrategy === "generated_illustration") {
@@ -1128,7 +1139,7 @@ export function inferContentLayout(
   slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks"> & Partial<Pick<Slide, "sourceRefs">>,
   order: number,
 ): Slide["layout"] {
-  if (slide.visual.image?.url) return "image-focus";
+  if (slide.visual.image?.url || slide.visual.image?.objectKey) return "image-focus";
   if (slide.blocks.some((block) => block.type === "quote")) return "quote";
   if (slide.visual.type === "timeline" && layoutHasEnoughContent("timeline", slide)) return "timeline";
   if (slide.visual.type === "process_diagram" && layoutHasEnoughContent("process", slide)) return "process";
@@ -1214,7 +1225,7 @@ export function layoutHasEnoughContent(layout: SlideLayout, slide: Pick<Slide, "
   if (layout === "evidence") return Boolean(slide.thesis && slide.bullets.length >= 2);
   if (layout === "problem-solution") return slide.visual.items.length >= 3 || slide.bullets.length >= 3;
   if (layout === "explain-example") return Boolean(slide.definition || slide.thesis) && slide.bullets.length >= 1;
-  if (layout === "image-focus") return Boolean(slide.visual.image?.url);
+  if (layout === "image-focus") return Boolean(slide.visual.image?.url || slide.visual.image?.objectKey);
   return true;
 }
 

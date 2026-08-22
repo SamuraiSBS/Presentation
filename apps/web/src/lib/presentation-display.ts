@@ -398,7 +398,7 @@ function normalizeVisualImage(value: unknown): SlideVisual["image"] | undefined 
     query: sanitizeDisplayText(candidate.query),
     sourceUrl: validUrl(candidate.sourceUrl) ? candidate.sourceUrl : undefined,
     sourceTitle: sanitizeDisplayText(candidate.sourceTitle),
-    provider: ["user", "repository", "archive", "tavily"].includes(candidate.provider)
+    provider: ["user", "repository", "archive", "tavily", "aitunnel"].includes(candidate.provider)
       ? candidate.provider
       : "tavily",
     contentType: sanitizeDisplayText(candidate.contentType),
