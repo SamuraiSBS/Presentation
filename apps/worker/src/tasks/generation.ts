@@ -805,7 +805,10 @@ export async function prepareGenerationSources(project: {
     const envelope = await prisma.costEnvelope.findUniqueOrThrow({ where: { id: options.costEnvelopeId }, select: { policySnapshot: true } });
     const sourceBudgetRub = String((envelope.policySnapshot as { buckets?: { sources?: string } }).buckets?.sources || "");
     const perAttemptRub = "0.50000000";
-    const maxAttempts = Math.max(1, Math.min(3, Math.floor(Number(sourceBudgetRub) / Number(perAttemptRub))));
+    const webSearchProvider = (process.env.WEB_SEARCH_PROVIDER || "tavily").toLowerCase();
+    const maxAttempts = webSearchProvider === "aitunnel"
+      ? 1
+      : Math.max(1, Math.min(3, Math.floor(Number(sourceBudgetRub) / Number(perAttemptRub))));
     const refinements = ["", "официальные данные исследования", "аналитика история технология"];
     const sourcesByUrl = new Map<string, Source>();
 
@@ -843,7 +846,17 @@ export async function prepareGenerationSources(project: {
               ? { reason: "mandatory_source_search_refining" }
               : {}),
         });
-      } catch {
+      } catch (error) {
+        if (error instanceof Error && error.message === "mandatory_source_search_insufficient") {
+          await settleCostEnvelope({
+            envelopeId: options.costEnvelopeId,
+            idempotencyKey: reservationKey,
+            actualRub: perAttemptRub,
+            reason: "mandatory_source_search_insufficient",
+            exhaustEnvelope: true,
+          });
+          throw error;
+        }
         // Retry bounded provider failures from the next independently
         // reserved slot. The exact provider payload stays out of telemetry.
         await failCostEnvelope({
@@ -888,7 +901,7 @@ export async function prepareGenerationSources(project: {
         included: true,
       });
     }
-    const snapshot = createMandatorySourceSnapshot(snapshotCandidates);
+    const snapshot = createMandatorySourceSnapshot(snapshotCandidates, new Date(), webSearchProvider === "aitunnel" ? "aitunnel" : "tavily");
     if (!snapshot) {
       throw new Error("Mandatory source research did not return enough relevant sources");
     }

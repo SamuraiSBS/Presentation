@@ -1,6 +1,7 @@
 import { type Source } from "@studydeck/shared";
 import crypto from "node:crypto";
 import { currentUsageContext, recordCostEvent } from "../usage-ledger.js";
+import { searchAitunnelWebSearch, type AitunnelWebSearchResult } from "./aitunnel-web-search.js";
 
 type TavilySearchResult = {
   title?: string;
@@ -39,9 +40,14 @@ const SEARCH_TERM_MAX_COUNT = 10;
 
 export async function searchWebSources(request: string | WebSearchRequest): Promise<Source[]> {
   const provider = (process.env.WEB_SEARCH_PROVIDER || "tavily").toLowerCase();
-  if (provider !== "tavily") {
-    throw new Error(`Unsupported WEB_SEARCH_PROVIDER: ${provider}`);
+  if (provider === "aitunnel") {
+    const normalizedRequest = normalizeWebSearchRequestForProvider(request);
+    const run = await searchAitunnelWebSearch(normalizedRequest);
+    const sources = aitunnelResultsToSources(run.results, request);
+    if (sources.length < 3) throw new Error("mandatory_source_search_insufficient");
+    return sources;
   }
+  if (provider !== "tavily") throw new Error(`Unsupported WEB_SEARCH_PROVIDER: ${provider}`);
 
   const apiKey = process.env.TAVILY_API_KEY?.trim();
   if (!apiKey) {
@@ -100,12 +106,14 @@ export function buildTavilyWebSearchQuery(request: string | WebSearchRequest) {
 
 export function tavilyResultsToSources(payload: TavilySearchResponse, request?: string | WebSearchRequest): Source[] {
   const topic = request ? extractSearchTopic(request) : "";
+  const seenUrls = new Set<string>();
   return (payload.results || []).flatMap((result, index) => {
       const url = cleanText(result.url || "");
       const excerpt = cleanText(result.content || result.raw_content || "");
-      if (!url || !excerpt) {
+      if (!url || !excerpt || seenUrls.has(url)) {
         return [];
       }
+      seenUrls.add(url);
 
       const assessment = assessWebResult({ title: result.title, url, excerpt }, topic);
       if (!assessment.accepted) {
@@ -125,6 +133,22 @@ export function tavilyResultsToSources(payload: TavilySearchResponse, request?: 
     })
     .sort((left, right) => right.score - left.score)
     .map(({ source }) => source);
+}
+
+function aitunnelResultsToSources(results: AitunnelWebSearchResult[], request: string | WebSearchRequest): Source[] {
+  return tavilyResultsToSources({
+    results: results.map((result) => ({
+      title: result.title,
+      url: result.url,
+      content: result.excerpt || result.content || result.snippet || result.description,
+    })),
+  }, request);
+}
+
+function normalizeWebSearchRequestForProvider(request: string | WebSearchRequest) {
+  return typeof request === "string"
+    ? { prompt: request }
+    : { prompt: request.prompt, title: request.title, researchAngle: request.researchAngle, costEnvelopeRub: request.costEnvelopeRub };
 }
 
 export function buildSourceResearchBrief(project: { title: string; prompt: string }, sources: Source[]): SourceResearchBrief {
