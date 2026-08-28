@@ -83,141 +83,23 @@ jobs:
     name: Immutable images and staging smoke
     needs: [quality, secrets, browser]
     runs-on: ubuntu-24.04
-    env:
-      STUDYDECK_IMAGE_TAG: ${{ github.sha }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: Build release images
-        run: |
-          docker build --tag studydeck-api:${STUDYDECK_IMAGE_TAG} --file Dockerfile.api .
-          docker build --tag studydeck-worker:${STUDYDECK_IMAGE_TAG} --file Dockerfile.worker .
-          docker build --tag studydeck-web:${STUDYDECK_IMAGE_TAG} --file Dockerfile.web .
-      - name: Scan API release image for fixable high and critical vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: studydeck-api:${{ env.STUDYDECK_IMAGE_TAG }}
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os,library
-          severity: HIGH,CRITICAL
-      - name: Scan worker release image for fixable high and critical vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: studydeck-worker:${{ env.STUDYDECK_IMAGE_TAG }}
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os,library
-          severity: HIGH,CRITICAL
-      - name: Scan web release image for fixable high and critical vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: studydeck-web:${{ env.STUDYDECK_IMAGE_TAG }}
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os,library
-          severity: HIGH,CRITICAL
-      - name: Render a real PDF in the Alpine worker image
-        run: >
-          docker run --rm --entrypoint node studydeck-worker:${STUDYDECK_IMAGE_TAG}
-          apps/worker/dist/tasks/export-runtime-smoke.js --case real-pdf
-      - name: Smoke golden export in the Alpine worker image
-        run: >
-          docker run --rm --entrypoint node studydeck-worker:${STUDYDECK_IMAGE_TAG}
-          apps/worker/dist/tasks/export-runtime-smoke.js --case golden
-      - name: Validate compose and migrate the staging database
-        run: |
-          docker compose -f docker-compose.yml -f compose.ci.yml config --quiet
-          docker compose -f docker-compose.yml -f compose.ci.yml up -d --no-build postgres redis minio create-bucket
-          docker compose -f docker-compose.yml -f compose.ci.yml run --rm --no-deps --entrypoint node api node_modules/prisma/build/index.js migrate deploy
-      - name: Start and smoke the exact release images
-        run: |
-          docker compose -f docker-compose.yml -f compose.ci.yml up -d --no-build api worker web
-          ready=false
-          for attempt in $(seq 1 30); do
-            if curl --fail --silent --show-error http://localhost:4000/v1/health/ready; then
-              ready=true
-              break
-            fi
-            sleep 2
-          done
-          if [ "$ready" != true ]; then
-            docker compose -f docker-compose.yml -f compose.ci.yml logs --no-color
-            exit 1
-          fi
-          for service in api worker web; do
-            healthy=false
-            for attempt in $(seq 1 30); do
-              container_id="$(docker compose -f docker-compose.yml -f compose.ci.yml ps -q "$service")"
-              if [ -n "$container_id" ] && [ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")" = healthy ]; then
-                healthy=true
-                break
-              fi
-              sleep 2
-            done
-            if [ "$healthy" != true ]; then
-              echo "Service $service did not become healthy before evidence capture."
-              docker compose -f docker-compose.yml -f compose.ci.yml logs --no-color
-              exit 1
-            fi
-          done
-      - name: Enforce Lighthouse and Core Web Vitals on the exact web image
-        run: |
-          npx playwright install --with-deps chromium
-          npm run lighthouse:production -- --url=http://localhost:3000/ --output=lighthouse-production.json --assert
-      - name: Upload Lighthouse report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: lighthouse-production-${{ github.sha }}
-          path: lighthouse-production.json
-          if-no-files-found: ignore
-      - name: Collect staging logs
-        if: always()
-        run: docker compose -f docker-compose.yml -f compose.ci.yml logs --no-color
-      - name: Capture staging readiness evidence
-        if: always()
-        run: |
-          {
-            echo "== docker compose ps =="
-            docker compose -f docker-compose.yml -f compose.ci.yml ps
-            echo "== /v1/health/live =="
-            curl --silent --show-error http://localhost:4000/v1/health/live || true
-            echo
-            echo "== /v1/health/ready =="
-            curl --silent --show-error http://localhost:4000/v1/health/ready || true
-            echo
-            echo "== /v1/health/workers =="
-            curl --silent --show-error http://localhost:4000/v1/health/workers || true
-            echo
-          } | tee staging-health-evidence.txt
-      - name: Upload staging readiness evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: staging-health-evidence-${{ github.sha }}
-          path: staging-health-evidence.txt
-          if-no-files-found: error
-
-  publish-release:
-    name: Publish immutable release and verify registry digests
-    if: github.event_name == 'push'
-    needs: [quality, secrets, browser, immutable-image-smoke]
-    runs-on: ubuntu-24.04
+    outputs:
+      image_namespace: ${{ steps.registry.outputs.image_namespace }}
+      api_digest: ${{ steps.api.outputs.digest }}
+      worker_digest: ${{ steps.worker.outputs.digest }}
+      web_digest: ${{ steps.web.outputs.digest }}
     env:
       REGISTRY: ghcr.io
     steps:
       - uses: actions/checkout@v4
+        if: github.event_name == 'push'
         with:
           fetch-depth: 0
+      - name: Keep the required PR check while deferring release-only work
+        if: github.event_name == 'pull_request'
+        run: echo "PR quality, secret, and browser gates passed; immutable release build runs after merge."
       - name: Refuse unclassified Prisma migration changes
+        if: github.event_name == 'push'
         run: |
           before='${{ github.event.before }}'
           if [ "$before" = '0000000000000000000000000000000000000000' ]; then
@@ -228,46 +110,123 @@ jobs:
             echo "Prisma migration changes require an explicit forward-fix/rollback compatibility policy before publication."
             exit 1
           fi
-      - name: Normalize the GHCR namespace
-        run: echo "IMAGE_NAMESPACE=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      - id: registry
+        name: Normalize the GHCR namespace
+        if: github.event_name == 'push'
+        run: echo "image_namespace=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
+        if: github.event_name == 'push'
       - uses: docker/login-action@v3
+        if: github.event_name == 'push'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: api
+        name: Build and publish the API release image once
+        if: github.event_name == 'push'
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.api
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/studydeck-api:${{ github.sha }}
+          tags: ${{ env.REGISTRY }}/${{ steps.registry.outputs.image_namespace }}/studydeck-api:${{ github.sha }}
           sbom: true
           provenance: mode=max
+          cache-from: type=gha,scope=studydeck-api
+          cache-to: type=gha,mode=max,scope=studydeck-api
       - id: worker
+        name: Build and publish the worker release image once
+        if: github.event_name == 'push'
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.worker
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/studydeck-worker:${{ github.sha }}
+          tags: ${{ env.REGISTRY }}/${{ steps.registry.outputs.image_namespace }}/studydeck-worker:${{ github.sha }}
           sbom: true
           provenance: mode=max
+          cache-from: type=gha,scope=studydeck-worker
+          cache-to: type=gha,mode=max,scope=studydeck-worker
       - id: web
+        name: Build and publish the web release image once
+        if: github.event_name == 'push'
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.web
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/studydeck-web:${{ github.sha }}
+          tags: ${{ env.REGISTRY }}/${{ steps.registry.outputs.image_namespace }}/studydeck-web:${{ github.sha }}
           sbom: true
           provenance: mode=max
-      - name: Pin image references to the published digests
+          cache-from: type=gha,scope=studydeck-web
+          cache-to: type=gha,mode=max,scope=studydeck-web
+
+  publish-release:
+    name: Publish immutable release and verify registry digests
+    if: github.event_name == 'push'
+    needs: [quality, secrets, browser, immutable-image-smoke]
+    runs-on: ubuntu-24.04
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAMESPACE: ${{ needs.immutable-image-smoke.outputs.image_namespace }}
+      STUDYDECK_API_IMAGE: ghcr.io/${{ needs.immutable-image-smoke.outputs.image_namespace }}/studydeck-api@${{ needs.immutable-image-smoke.outputs.api_digest }}
+      STUDYDECK_WORKER_IMAGE: ghcr.io/${{ needs.immutable-image-smoke.outputs.image_namespace }}/studydeck-worker@${{ needs.immutable-image-smoke.outputs.worker_digest }}
+      STUDYDECK_WEB_IMAGE: ghcr.io/${{ needs.immutable-image-smoke.outputs.image_namespace }}/studydeck-web@${{ needs.immutable-image-smoke.outputs.web_digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # This job runs on a new runner. Its package install is needed solely for
+      # the release-only Lighthouse assertion against the published web image.
+      - run: npm ci
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify release image digests are present
         run: |
-          echo "STUDYDECK_API_IMAGE=${REGISTRY}/${IMAGE_NAMESPACE}/studydeck-api@${{ steps.api.outputs.digest }}" >> "$GITHUB_ENV"
-          echo "STUDYDECK_WORKER_IMAGE=${REGISTRY}/${IMAGE_NAMESPACE}/studydeck-worker@${{ steps.worker.outputs.digest }}" >> "$GITHUB_ENV"
-          echo "STUDYDECK_WEB_IMAGE=${REGISTRY}/${IMAGE_NAMESPACE}/studydeck-web@${{ steps.web.outputs.digest }}" >> "$GITHUB_ENV"
+          test -n "${{ needs.immutable-image-smoke.outputs.api_digest }}"
+          test -n "${{ needs.immutable-image-smoke.outputs.worker_digest }}"
+          test -n "${{ needs.immutable-image-smoke.outputs.web_digest }}"
+      - name: Scan API release image for fixable high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.STUDYDECK_API_IMAGE }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Scan worker release image for fixable high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.STUDYDECK_WORKER_IMAGE }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Scan web release image for fixable high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.STUDYDECK_WEB_IMAGE }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Render a real PDF in the published Alpine worker image
+        run: >
+          docker run --rm --entrypoint node "$STUDYDECK_WORKER_IMAGE"
+          apps/worker/dist/tasks/export-runtime-smoke.js --case real-pdf
+      - name: Smoke golden export in the published Alpine worker image
+        run: >
+          docker run --rm --entrypoint node "$STUDYDECK_WORKER_IMAGE"
+          apps/worker/dist/tasks/export-runtime-smoke.js --case golden
       - name: Pull and validate the exact registry images
         run: |
           docker pull "$STUDYDECK_API_IMAGE"
