@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { auditSlideCanvas } from "@studydeck/shared";
 import { buildEmergencyReadablePresentation, handleGenerationJob, hasAcceptedNarrationRecoveryArtifacts } from "./generation.js";
 import { buildLocalPresentationFromAcceptedNarration } from "./presentation.js";
 import { repairReleaseCandidate } from "./presentation/quality/orchestration.js";
@@ -192,6 +193,7 @@ describe("accepted narration local recovery with the actual production gate", ()
     }).finalDisposition).toBe("rejected");
 
     const emergency = buildEmergencyReadablePresentation(rejectedEditorialProjection);
+    expect(emergency.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!))).toEqual([]);
     const emergencyRelease = productionQualityReleaseResult(emergency, sources, {
       ...project,
       mandatorySourceSnapshot: true,
