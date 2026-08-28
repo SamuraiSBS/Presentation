@@ -318,7 +318,7 @@ export async function generateAitunnelFullNarrationOutcome(client: OpenAI, proje
     logV6NarrationRecoveryDecision(project.id, "repair_eligible", selected, attempts, calledStages, true);
     try {
       const repairRaw = await requestV6NarrationStage(client, project, "narration_targeted_repair", buildAitunnelTargetedNarrationRepairPrompt(project, sources, narrativePlan, rewritten, rewriteAttempt.diagnostics), reservations, calledStages, true);
-      const repaired = mergeV6TargetedRepair(rewritten, repairRaw, rewriteAttempt.diagnostics.affectedSlideOrders);
+      const repaired = mergeV6TargetedRepair(rewritten, repairRaw, rewriteAttempt.diagnostics.affectedSlideOrders, project);
       const repairAttempt = { stage: "narration_targeted_repair" as const, text: repaired, diagnostics: assessFullNarrationDocument(repaired, project, narrativePlan) };
       attempts.push(repairAttempt);
       logV6NarrationAttemptAssessment(project.id, repairAttempt);
@@ -422,8 +422,8 @@ async function generateLegacyAitunnelNarration(client: OpenAI, model: string, pr
   }
 }
 
-function maximumFullNarrationDraft(_project: ProjectInput) {
-  return Array.from({ length: 10 }, (_, index) => {
+function maximumFullNarrationDraft(project: ProjectInput) {
+  return Array.from({ length: project.slideCount }, (_, index) => {
     // `слово` is a representative Russian spoken-word fixture, not user text.
     // The envelope additionally budgets a 15% token safety margin.
     const words = Array.from({ length: 156 }, (_unused, word) => `слово${index + 1}_${word + 1}`).join(" ");
@@ -529,14 +529,14 @@ function buildV6NarrationRequest(stage: V6NarrationStage, prompt: string, json: 
   };
 }
 
-function mergeV6TargetedRepair(currentDraft: string, raw: string, requestedOrders: readonly number[]) {
+function mergeV6TargetedRepair(currentDraft: string, raw: string, requestedOrders: readonly number[], project: ProjectInput) {
   const parsed = aitunnelTargetedNarrationRepairResponseSchema.safeParse(parseJsonText(raw));
   if (!parsed.success) throw narrationFailure("quality");
   const received = Object.keys(parsed.data.replacements).map(Number).sort((left, right) => left - right);
   const expected = [...new Set(requestedOrders)].sort((left, right) => left - right);
   if (received.length !== expected.length || received.some((order, index) => order !== expected[index])) throw narrationFailure("quality");
   const sections = parseNarrationSections(currentDraft);
-  if (sections.length !== 10 || sections.some((section, index) => section.order !== index + 1)) throw narrationFailure("quality");
+  if (sections.length !== project.slideCount || sections.some((section, index) => section.order !== index + 1)) throw narrationFailure("quality");
   const replacements = new Map<number, string>();
   for (const [orderText, replacement] of Object.entries(parsed.data.replacements)) {
     const replacementSections = parseNarrationSections(replacement);
