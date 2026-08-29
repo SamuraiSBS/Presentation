@@ -34,6 +34,17 @@ describe("economic release gate", () => {
     expect(evaluateEconomicReleaseGate({ presentation: document(), sources, project, envelope })).toEqual({ passed: true, categories: [] });
   });
 
+  it("releases a bounded run at the requested six-slide plan size", () => {
+    const full = document();
+    const sixSlidePresentation = { ...full, slideCount: 6, slides: full.slides.slice(0, 6), speechScript: full.speechScript.slice(0, 6) };
+    expect(evaluateEconomicReleaseGate({
+      presentation: sixSlidePresentation,
+      sources,
+      project: { ...project, slideCount: 6 },
+      envelope,
+    })).toEqual({ passed: true, categories: [] });
+  });
+
   it("releases a v10 envelope when settled plus reserved spend remains within its persisted cap", () => {
     expect(evaluateEconomicReleaseGate({
       presentation: document(),

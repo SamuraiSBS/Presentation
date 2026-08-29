@@ -35,8 +35,10 @@ export function evaluateEconomicReleaseGate(input: EconomicReleaseGateInput): Ec
   const snapshot = parseMandatorySourceSnapshot(envelope.sourceSnapshot);
 
   if (!snapshot || snapshot.sources.length < 3) categories.add("source_snapshot");
-  if (project.slideCount !== 10 || presentation.slideCount !== 10 || presentation.slides.length !== 10
-    || new Set(presentation.slides.map((slide) => slide.order)).size !== 10
+  const expectedSlideCount = project.slideCount;
+  if (!Number.isSafeInteger(expectedSlideCount) || expectedSlideCount < 1
+    || presentation.slideCount !== expectedSlideCount || presentation.slides.length !== expectedSlideCount
+    || new Set(presentation.slides.map((slide) => slide.order)).size !== expectedSlideCount
     || !presentation.slides.every((slide, index) => slide.order === index + 1)) {
     categories.add("slide_count");
   }

@@ -104,6 +104,16 @@ describe("presentation compatibility facade", () => {
     expect(unknown).not.toHaveProperty("image");
   });
 
+  it("derives a required visual label when the provider leaves it empty", () => {
+    const project = { id: "empty-visual-label", title: "Study", prompt: "Explain the topic", scenario: "lesson", level: "university_student", mode: "with_sources", slideCount: 6 };
+    const visual = normalizeVisual({ type: "process_diagram", items: [{ label: "", text: "A provider item with usable supporting text." }, { label: "Second stage", text: "A second item keeps the process visual useful." }] }, "Study", "The topic has a clear mechanism.", ["The mechanism has two stages."], "content", project, 2);
+
+    expect(visual.items).toEqual([
+      { label: "A provider item with usable supporting text.", text: "A provider item with usable supporting text." },
+      { label: "Second stage", text: "A second item keeps the process visual useful." },
+    ]);
+  });
+
   it("builds a local deck from accepted narration without a configured AI provider", () => {
     const acceptedNarration = [
       "Слайд 1: Введение",
