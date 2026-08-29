@@ -8,7 +8,7 @@ import {
   type PresentationDocument,
   type Source,
 } from "@studydeck/shared";
-import { materializePlannedVisuals, productionQualityReleaseResult } from "./presentation-quality.js";
+import { hasMetaSlideLanguage, isGenericTitle, materializePlannedVisuals, productionQualityReleaseResult } from "./presentation-quality.js";
 import { captureGenerationError, errorLogFields, logger, type TraceCarrier, withTraceSpan } from "../observability.js";
 import { getPrisma } from "../prisma.js";
 import { readObjectBuffer } from "../storage.js";
@@ -633,7 +633,10 @@ export function buildEmergencyReadablePresentation(presentation: PresentationDoc
     generatedText: presentation.slides.map((slide) => `\u0421\u043b\u0430\u0439\u0434 ${slide.order}: ${slide.title}\n${slide.speakerNotes}`).join("\n\n"),
     speechScript: presentation.slides.map((slide) => ({ slideOrder: slide.order, slideTitle: slide.title, text: slide.speakerNotes })),
     slides: presentation.slides.map((slide) => {
-      const title = compactVisibleText(slide.title, 90, `Слайд ${slide.order}`);
+      const candidateTitle = compactVisibleText(slide.title, 90, "");
+      const title = candidateTitle && !isGenericTitle(candidateTitle) && !hasMetaSlideLanguage(candidateTitle)
+        ? candidateTitle
+        : compactVisibleText(`${presentation.title} — раздел ${slide.order}`, 90, `Тема ${slide.order}`);
       // The provider/local projection may contain a weak thesis even when the
       // accepted narration is sound. Always derive this visible claim from the
       // canonical narration, not from the rejected presentation text.
@@ -649,7 +652,7 @@ export function buildEmergencyReadablePresentation(presentation: PresentationDoc
         // long narration; the full evidence remains in speaker notes.
         bullets: [],
         blocks: [],
-        visual: { type: "schema", title: `Схема: ${title}`, description: `Схема показывает: ${thesis}`, leftLabel: "", rightLabel: "", items: [], rows: [] },
+        visual: { type: "schema", title: "", description: compactVisibleText(thesis, 220, title), leftLabel: "", rightLabel: "", items: [], rows: [] },
         canvas: {
           version: 2,
           width: 1280,
