@@ -5,6 +5,7 @@ import { z } from "zod";
 import { AitunnelProjectBudget, estimateInputTokens, reserveAitunnelStageCall, runWithAitunnelProjectBudget } from "../aitunnel-narration-budget.js";
 import { logger } from "../observability.js";
 import { productionQualityReleaseResult } from "./presentation-quality.js";
+import { buildEmergencyReadablePresentation } from "./generation.js";
 import {
     buildGenerationPrompt,
     buildLocalPresentationFromAcceptedNarration,
@@ -112,6 +113,24 @@ describe("presentation compatibility facade", () => {
       { label: "A provider item with usable supporting text.", text: "A provider item with usable supporting text." },
       { label: "Second stage", text: "A second item keeps the process visual useful." },
     ]);
+  });
+
+  it("keeps emergency accepted-narration recovery releasable for a six-slide plan", () => {
+    const project = { id: "emergency-six", title: "Generative AI and student learning", prompt: "Prepare a university presentation about generative AI and student learning.", scenario: "university_report", level: "university_student", mode: "with_sources", slideCount: 6 };
+    const sources = [1, 2, 3].map((index) => ({ id: `source-${index}`, label: `Learning source ${index}`, type: "WEB" as const, url: `https://example.edu/${index}`, excerpt: "Generative AI and student learning require transparent methods, source checking, and ethical safeguards." }));
+    const narration = Array.from({ length: 6 }, (_, index) => {
+      const words = Array.from({ length: index === 0 ? 106 : index === 5 ? 100 : 125 }, (_, word) => `evidence${index + 1}_${word + 1}`);
+      const split = Math.floor(words.length / 2);
+      return `\u0421\u043b\u0430\u0439\u0434 ${index + 1}: ${index === 0 ? "\u0412\u0432\u0435\u0434\u0435\u043d\u0438\u0435" : index === 5 ? "\u0418\u0442\u043e\u0433\u0438" : "\u041e\u0441\u043d\u043e\u0432\u043d\u044b\u0435 \u0444\u0430\u043a\u0442\u044b"}\n${words.slice(0, split).join(" ")}. ${words.slice(split).join(" ")}.`;
+    }).join("\n\n");
+    const local = buildLocalPresentationFromAcceptedNarration(project, sources, narration);
+    const emergency = buildEmergencyReadablePresentation(local);
+    const release = productionQualityReleaseResult(emergency, sources, { ...project, mandatorySourceSnapshot: true, acceptedNarrationRecovery: true });
+
+    expect(emergency.slides[0].title).toContain(project.title);
+    expect(emergency.slides.every((slide) => !["\u0412\u0432\u0435\u0434\u0435\u043d\u0438\u0435", "\u041e\u0441\u043d\u043e\u0432\u043d\u044b\u0435 \u0444\u0430\u043a\u0442\u044b", "\u0418\u0442\u043e\u0433\u0438"].includes(slide.title))).toBe(true);
+    expect(emergency.slides.every((slide) => !slide.visual.description.includes("shows:"))).toBe(true);
+    expect(release).toMatchObject({ finalDisposition: "released", issueCategories: [] });
   });
 
   it("builds a local deck from accepted narration without a configured AI provider", () => {
