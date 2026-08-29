@@ -140,6 +140,13 @@ describe("presentation compatibility facade", () => {
       slides: local.slides.map((slide, index) => index === 5 ? { ...slide, speakerNotes: completeLongClaim } : slide),
     });
     expect(longClaimRecovery.slides[5].thesis).toBe(completeLongClaim);
+
+    const dependentLead = "Чтобы оценивать влияние генеративного ИИ, недостаточно сравнить впечатления студентов. Надёжное исследование должно сопоставлять разные условия обучения и измерять понимание материала.";
+    const dependentLeadRecovery = buildEmergencyReadablePresentation({
+      ...local,
+      slides: local.slides.map((slide, index) => index === 1 ? { ...slide, speakerNotes: dependentLead } : slide),
+    });
+    expect(dependentLeadRecovery.slides[1].thesis).toBe("Надёжное исследование должно сопоставлять разные условия обучения и измерять понимание материала.");
   });
 
   it("builds a local deck from accepted narration without a configured AI provider", () => {
