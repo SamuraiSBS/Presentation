@@ -443,11 +443,12 @@ export function normalizeVisual(
     : [];
   const items = Array.isArray(candidate.items)
     ? candidate.items
-        .map((item) => ({
-          label: shortenSentence(sanitizeScreenText(item?.label), 100),
-          text: shortenSentence(sanitizeScreenText(item?.text), 180),
-        }))
-        .filter((item) => item.label || item.text)
+        .map((item) => {
+          const text = shortenSentence(sanitizeScreenText(item?.text), 180);
+          const label = shortenSentence(sanitizeScreenText(item?.label) || text, 100);
+          return { label, text };
+        })
+        .filter((item) => item.label)
         .slice(0, 8)
     : [];
   const completeRows = rows.filter((row) => row.left && row.right);
