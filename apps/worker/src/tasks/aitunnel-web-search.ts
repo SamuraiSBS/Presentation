@@ -127,16 +127,21 @@ export function parseAitunnelWebSearchResponse(value: unknown): { toolUsed: bool
     for (const item of valueToRead) {
       const candidate = asRecord(item);
       if (!candidate) continue;
-      const url = firstString(candidate.url, candidate.source_url, candidate.sourceUrl, candidate.link);
+      // AITUNNEL follows the OpenAI annotation shape for url citations:
+      // { type: "url_citation", url_citation: { url, title, content } }.
+      // Keep accepting the flat result shape used by Responses/tool outputs.
+      const citation = asRecord(candidate.url_citation);
+      const source = citation || candidate;
+      const url = firstString(source.url, source.source_url, source.sourceUrl, source.link, candidate.url, candidate.source_url, candidate.sourceUrl, candidate.link);
       if (!url) continue;
-      const excerpt = firstString(candidate.excerpt, candidate.content, candidate.snippet, candidate.description, fallbackExcerpt);
+      const excerpt = firstString(source.excerpt, source.content, source.snippet, source.description, candidate.excerpt, candidate.content, candidate.snippet, candidate.description, fallbackExcerpt);
       results.push({
-        title: firstString(candidate.title, candidate.name, candidate.label),
+        title: firstString(source.title, source.name, source.label, candidate.title, candidate.name, candidate.label),
         url,
         excerpt,
-        content: firstString(candidate.content),
-        snippet: firstString(candidate.snippet),
-        description: firstString(candidate.description),
+        content: firstString(source.content, candidate.content),
+        snippet: firstString(source.snippet, candidate.snippet),
+        description: firstString(source.description, candidate.description),
       });
     }
   };

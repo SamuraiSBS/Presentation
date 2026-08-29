@@ -124,19 +124,22 @@ wait_for_healthy() {
 
 wait_for_dependencies() {
   local directory="$1"
-  local deadline=$((SECONDS + 180))
+  local deadline=$((SECONDS + 360))
   while (( SECONDS < deadline )); do
     local healthy=true
     for service in postgres redis minio clamav; do
       local container_id
-      container_id="$(compose_for "$directory" ps -q "$service")"
+      container_id="$(compose_for "$directory" ps -aq "$service")"
       if [[ -z "$container_id" ]] || [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container_id" 2>/dev/null || true)" != "healthy" ]]; then
         healthy=false
         break
       fi
     done
     local bucket_id bucket_state bucket_exit_code
-    bucket_id="$(compose_for "$directory" ps -q create-bucket)"
+    # `docker compose ps -q` can omit a completed one-shot container. Use the
+    # all-containers form so a successful bucket init is observable after it
+    # exits instead of being treated as an endless wait.
+    bucket_id="$(compose_for "$directory" ps -aq create-bucket)"
     bucket_state="$(docker inspect --format '{{.State.Status}}' "$bucket_id" 2>/dev/null || true)"
     bucket_exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$bucket_id" 2>/dev/null || true)"
     if [[ "$healthy" == true && "$bucket_state" == exited && "$bucket_exit_code" == 0 ]]; then
@@ -144,7 +147,7 @@ wait_for_dependencies() {
     fi
     sleep 5
   done
-  echo "Timed out waiting for staging dependencies and bucket initialization after 180 seconds." >&2
+  echo "Timed out waiting for staging dependencies and bucket initialization after 360 seconds." >&2
   return 1
 }
 
