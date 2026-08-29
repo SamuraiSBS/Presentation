@@ -133,6 +133,13 @@ describe("presentation compatibility facade", () => {
     expect(emergency.slides.every((slide) => !["\u0412\u0432\u0435\u0434\u0435\u043d\u0438\u0435", "\u041e\u0441\u043d\u043e\u0432\u043d\u044b\u0435 \u0444\u0430\u043a\u0442\u044b", "\u0418\u0442\u043e\u0433\u0438"].includes(slide.title))).toBe(true);
     expect(emergency.slides.every((slide) => !slide.visual.description.includes("shows:"))).toBe(true);
     expect(release).toMatchObject({ finalDisposition: "released", issueCategories: [] });
+
+    const completeLongClaim = "Ответственное применение ИИ требует определить учебную цель, выбрать допустимую роль инструмента, проверить полученный материал, зафиксировать собственный вклад и сохранить возможность объяснить каждое принятое решение аудитории.";
+    const longClaimRecovery = buildEmergencyReadablePresentation({
+      ...local,
+      slides: local.slides.map((slide, index) => index === 5 ? { ...slide, speakerNotes: completeLongClaim } : slide),
+    });
+    expect(longClaimRecovery.slides[5].thesis).toBe(completeLongClaim);
   });
 
   it("builds a local deck from accepted narration without a configured AI provider", () => {
