@@ -614,8 +614,14 @@ export function buildEmergencyReadablePresentation(presentation: PresentationDoc
     const text = String(value || "").replace(/\s+/g, " ").trim();
     if (!text) return fallback;
     if (text.length <= maximum) return text;
-    const sentence = text.split(/(?<=[.!?])\s+/u).find((part) => part.length <= maximum && part.trim());
-    if (sentence) return sentence.trim();
+    const sentences = text.split(/(?<=[.!?])\s+/u).map((part) => part.trim()).filter(Boolean);
+    const sentence = sentences.find((part) => part.length <= maximum);
+    if (sentence) return sentence;
+    // Preserve a slightly longer complete claim instead of cutting it at a
+    // character boundary. A word-level cut can leave a visible thesis ending
+    // in a dangling connector (for example, "... проверить полученный и").
+    const firstSentence = sentences[0];
+    if (firstSentence && firstSentence.length <= maximum * 1.5) return firstSentence;
     const words = text.split(/\s+/u);
     const compact = words.reduce<string[]>((result, word) => {
       const candidate = [...result, word].join(" ");
