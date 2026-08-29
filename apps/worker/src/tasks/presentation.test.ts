@@ -121,13 +121,15 @@ describe("presentation compatibility facade", () => {
     const narration = Array.from({ length: 6 }, (_, index) => {
       const words = Array.from({ length: index === 0 ? 106 : index === 5 ? 100 : 125 }, (_, word) => `evidence${index + 1}_${word + 1}`);
       const split = Math.floor(words.length / 2);
-      return `\u0421\u043b\u0430\u0439\u0434 ${index + 1}: ${index === 0 ? "\u0412\u0432\u0435\u0434\u0435\u043d\u0438\u0435" : index === 5 ? "\u0418\u0442\u043e\u0433\u0438" : "\u041e\u0441\u043d\u043e\u0432\u043d\u044b\u0435 \u0444\u0430\u043a\u0442\u044b"}\n${words.slice(0, split).join(" ")}. ${words.slice(split).join(" ")}.`;
+      const flaggedLead = index === 4 ? "\u0412 \u044d\u0442\u043e\u0439 \u0442\u0435\u043c\u0435 \u043e\u0441\u043e\u0431\u0435\u043d\u043d\u043e \u0432\u0430\u0436\u0435\u043d \u043f\u0435\u0440\u0435\u0445\u043e\u0434 \u043e\u0442 \u043e\u0442\u043d\u043e\u0448\u0435\u043d\u0438\u044f \u043a \u0418\u0418 \u043a \u0438\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442\u0443." : "";
+      return `\u0421\u043b\u0430\u0439\u0434 ${index + 1}: ${index === 0 ? "\u0412\u0432\u0435\u0434\u0435\u043d\u0438\u0435" : index === 5 ? "\u0418\u0442\u043e\u0433\u0438" : "\u041e\u0441\u043d\u043e\u0432\u043d\u044b\u0435 \u0444\u0430\u043a\u0442\u044b"}\n${flaggedLead}${flaggedLead ? " " : ""}${words.slice(0, split).join(" ")}. ${words.slice(split).join(" ")}.`;
     }).join("\n\n");
     const local = buildLocalPresentationFromAcceptedNarration(project, sources, narration);
     const emergency = buildEmergencyReadablePresentation(local);
     const release = productionQualityReleaseResult(emergency, sources, { ...project, mandatorySourceSnapshot: true, acceptedNarrationRecovery: true });
 
     expect(emergency.slides[0].title).toContain(project.title);
+    expect(emergency.slides[4].thesis).not.toContain("\u043f\u0435\u0440\u0435\u0445\u043e\u0434");
     expect(emergency.slides.every((slide) => !["\u0412\u0432\u0435\u0434\u0435\u043d\u0438\u0435", "\u041e\u0441\u043d\u043e\u0432\u043d\u044b\u0435 \u0444\u0430\u043a\u0442\u044b", "\u0418\u0442\u043e\u0433\u0438"].includes(slide.title))).toBe(true);
     expect(emergency.slides.every((slide) => !slide.visual.description.includes("shows:"))).toBe(true);
     expect(release).toMatchObject({ finalDisposition: "released", issueCategories: [] });
