@@ -632,10 +632,11 @@ export function buildEmergencyReadablePresentation(presentation: PresentationDoc
   const fallbackLayouts = ["statement", "two-column", "comparison", "process"] as const;
   const narrationClaim = (value: string, fallback: string) => {
     const normalized = String(value || "").replace(/\s+/g, " ").trim();
+    const startsWithDependentFragment = (sentence: string) => /^(?:continuing|including|based\s+on|which|that|because|while|although|продолжая|включая|основываясь|котор(?:ый|ая|ое|ые)|поскольку|так\s+как|если|чтобы)(?:\s|,)/iu.test(sentence);
     const safeSentence = normalized
       .split(/(?<=[.!?])\s+/u)
       .map((sentence) => sentence.trim())
-      .find((sentence) => sentence && !isGenericTitle(sentence) && !hasMetaSlideLanguage(sentence));
+      .find((sentence) => sentence && !isGenericTitle(sentence) && !hasMetaSlideLanguage(sentence) && !startsWithDependentFragment(sentence));
     return compactVisibleText(safeSentence || normalized, 180, fallback);
   };
   return {
