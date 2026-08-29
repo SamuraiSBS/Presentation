@@ -624,6 +624,14 @@ export function buildEmergencyReadablePresentation(presentation: PresentationDoc
     return compact || fallback;
   };
   const fallbackLayouts = ["statement", "two-column", "comparison", "process"] as const;
+  const narrationClaim = (value: string, fallback: string) => {
+    const normalized = String(value || "").replace(/\s+/g, " ").trim();
+    const safeSentence = normalized
+      .split(/(?<=[.!?])\s+/u)
+      .map((sentence) => sentence.trim())
+      .find((sentence) => sentence && !isGenericTitle(sentence) && !hasMetaSlideLanguage(sentence));
+    return compactVisibleText(safeSentence || normalized, 180, fallback);
+  };
   return {
     ...presentation,
     presentationTheme: PREMIUM_PRESENTATION_THEMES.academicClean,
@@ -640,7 +648,7 @@ export function buildEmergencyReadablePresentation(presentation: PresentationDoc
       // The provider/local projection may contain a weak thesis even when the
       // accepted narration is sound. Always derive this visible claim from the
       // canonical narration, not from the rejected presentation text.
-      const thesis = compactVisibleText(slide.speakerNotes || slide.thesis, 180, title);
+      const thesis = narrationClaim(slide.speakerNotes || slide.thesis, title);
       const background = "#F8FAFC";
       return {
         ...slide,
