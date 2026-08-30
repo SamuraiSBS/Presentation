@@ -142,4 +142,31 @@ describe("production configuration", () => {
     expect(errors).toMatch(/YOOKASSA_SHOP_ID/);
     expect(errors).toMatch(/YOOKASSA_SECRET_KEY/);
   });
+
+  it("allows the explicit temporary no-backup exception only when backups are disabled", () => {
+    const errors = productionConfigurationErrors({
+      ...productionEnvironment,
+      ALLOW_PRODUCTION_WITHOUT_BACKUP: "true",
+      BACKUP_ENABLED: "false",
+      BACKUP_S3_ENDPOINT: "",
+      BACKUP_S3_BUCKET: "",
+      BACKUP_S3_ACCESS_KEY_ID: "",
+      BACKUP_S3_SECRET_ACCESS_KEY: "",
+      BACKUP_RETENTION_DAYS: "",
+      BACKUP_OBJECT_LOCK_RETENTION_DAYS: "",
+      BACKUP_RPO_HOURS: "",
+      BACKUP_RTO_HOURS: "",
+      BACKUP_DRILL_MAX_AGE_DAYS: "",
+    });
+    expect(errors).toEqual([]);
+  });
+
+  it("does not allow the temporary exception while backups remain enabled", () => {
+    const errors = productionConfigurationErrors({
+      ...productionEnvironment,
+      ALLOW_PRODUCTION_WITHOUT_BACKUP: "true",
+      BACKUP_ENABLED: "true",
+    }).join("\n");
+    expect(errors).toMatch(/BACKUP_ENABLED must be false/);
+  });
 });
