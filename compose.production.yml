@@ -252,3 +252,10 @@ volumes:
   clamav-data:
   caddy-data:
   caddy-config:
+
+networks:
+  # Telegram OIDC is reachable from the VPS over IPv6. Keep the application
+  # bridge on an IPv6-enabled network so Auth.js can reach the provider from
+  # the web container as well as from the host.
+  default:
+    enable_ipv6: true
