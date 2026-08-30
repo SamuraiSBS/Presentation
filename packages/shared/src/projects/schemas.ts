@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { defenseSourceMetadataSchema, sourceRoleSchema } from "../defense/schemas.js";
 export const scenarioSchema = z.enum([
+  "general",
   "university_report",
   "school_report",
   "student_seminar",

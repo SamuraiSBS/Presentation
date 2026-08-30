@@ -165,7 +165,7 @@ export function ExportPanelQuery({ project: initialProject }: { project: ExportP
     <>
       <ConnectionStatus scope="export" onReconnect={() => projectQuery.refetch().then(() => undefined)} />
       <section className="export-workspace" aria-labelledby="export-title">
-      <WorkflowProgress current={5} />
+      <WorkflowProgress current={5} includeExport />
       <header className="export-header">
         <span className={`status status-${project.status}`}>{statusLabel(project.status)}</span>
         <h1 className="page-title" id="export-title">{allPrimaryFilesReady ? "Материалы готовы к выступлению" : "Подготовьте файлы для выступления"}</h1>

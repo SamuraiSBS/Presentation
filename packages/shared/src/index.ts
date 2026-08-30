@@ -42,6 +42,7 @@ export { canvasBackgroundCss, slideBackgroundStyle } from "./presentation/canvas
 export { sortCanvasElements, compactCanvasTextToFit, minimumReadableFontSize, minimumTextColumnWidth, textSlotCapacity } from "./presentation/canvas-helpers.js";
 export { presentationTypography, typographyForCanvasText, typographyRoleForCanvasText, canvasTextLineHeight } from "./presentation/typography.js";
 export type { PresentationTypographyRole } from "./presentation/typography.js";
+export { PRESENTATION_FONT_FAMILY, PRESENTATION_FONT_STACK } from "./presentation/fonts.js";
 export { normalizeSourceRefs, sourceRefFromSource, formatSourceReference, formatImageAttribution, formatSlideAttribution } from "./presentation/attribution.js";
 export { ensureEditableCanvas, buildSlideCanvas, hasCustomSlideCanvas, hasMeasurableValue, metricLead, fittedFontSize, compactSourceRefs, assertNever } from "./presentation/canvas-builder.js";
 export * from "./defense/schemas.js";

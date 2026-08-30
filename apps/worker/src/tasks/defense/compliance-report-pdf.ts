@@ -22,7 +22,7 @@ export function renderComplianceReportHtml(input: ComplianceReportDocument) {
 <style>
   @page { size: A4; margin: 16mm 14mm; }
   * { box-sizing: border-box; }
-  body { margin: 0; color: #3a2109; font-family: Arial, "Noto Sans", "DejaVu Sans", sans-serif; font-size: 10.5pt; line-height: 1.45; }
+  body { margin: 0; color: #3a2109; font-family: "Nunito", "Nunito Variable", "Noto Sans", "DejaVu Sans", sans-serif; font-size: 10.5pt; line-height: 1.45; }
   h1, h2, h3 { margin: 0; color: #3a2109; line-height: 1.15; }
   h1 { font-size: 23pt; }
   h2 { margin-top: 22px; font-size: 15pt; }

@@ -39,6 +39,8 @@
 
 Критерий закрытия: из внешней сети доступны только 80/443, anonymous user не попадает в dashboard/admin, а контейнеры отказываются стартовать с default/dev значениями.
 
+**Репозиторная часть реализована и перепроверена 16 августа 2026:** есть отдельные `compose.production.yml` и `.env.production.example`; в production compose наружу опубликованы только Caddy `80/443`, а API/PostgreSQL/Redis/MinIO остаются во внутренней сети. Startup validation подключён в web/API/worker и запрещает dev-флаги, `TEMP_USER_ID`, default/placeholder-секреты, reserved/local домены, пустой Telegram OAuth и admin allowlist. Точечные тесты shared/API и `docker compose -f compose.production.yml config --quiet` проходят; проверка шаблона преднамеренно завершается ошибкой.
+
 **Нужно доделать:**
 
 - На production-сервере создать `.env.production` по `.env.production.example`, подставив секреты из secret manager, реальный домен, Telegram OAuth и Telegram ID администратора.
@@ -122,8 +124,11 @@ Worker публикует TTL heartbeat в Redis, а `compose.production.yml` и
 
 **Нужно доделать для acceptance:**
 
+- **Staging attempt 17 августа 2026:** staging API/worker/web подняты из принятого `release-manifest.json` успешного main release-gates run `32053150663` (`cc78059939c3131c3441c35d0f28d3101d944848`) на exact digest-образах. Readiness был `200`, worker использовал прямой `node apps/worker/dist/main.js`. Отдельная technical narration job `cmsxmmeht0003ld01zuans6i2` для проекта `cmsxmloz10001ld01mk3vrra1` упала до active phase с `mandatory_source_search_provider_failure`; worker log указывает на Tavily. `TAVILY_API_KEY` и staging flags присутствуют, но provider call неуспешен. Controlled restart и PDF export намеренно не запускались: они не дали бы достоверного доказательства graceful shutdown активных jobs.
+- **Повтор 18 августа 2026:** сетевой probe из worker подтвердил доступность Tavily, но authenticated `POST /search` с текущим staging key получил `403 Forbidden`; ключ, его права или provider-side account access требуют исправления. Попытка использовать accepted-speech staging path без Tavily также не дошла до active: presentation job `cmsz13o1n0007ld01btus0obz` завершилась `failed` с `Mandatory source snapshot is unavailable for this generation run`. Значит, immutable worker image `cc780599...` не содержит требуемый staging bypass, хотя `ALLOW_PRESENTATION_WITHOUT_SOURCE_SNAPSHOT=true` уже передан в container env. Необходим новый принятый CI release после включения этого кода либо реальный сохранённый source snapshot; повторный restart без active job запрещён как недостоверный.
+- **Read-only recheck 20 августа 2026:** API (`sha256:1fe858...`) и worker (`sha256:93ead...`) совпадают с принятым manifest `cc780599...`; readiness и worker health зелёные, generation/export очереди пусты. Но web container использует `sha256:15cdd...`, а не заявленный `sha256:b1f92...`; его Compose labels указывают на `compose.production.yml`/`compose.release.yml` из release `1728cf387b8f-20260817234500` при staging overlay из `cc780599...`. До согласования полного immutable provenance этого staging stack и восстановления Tavily/valid source path acceptance не запускать.
 - Выполнить controlled restart на staging с immutable worker image во время реальных generation и PDF export jobs. Сохранить shutdown-логи, состояния BullMQ до и после retry и время завершения контейнеров; принять только при отсутствии дублей и stalled jobs. Локальный restart не заменяет этот staging acceptance.
-- Для запуска этой проверки нужны SSH-доступ к staging, принятый `release-manifest.json` с digest-образами API/worker/web и чистый commit: `scripts/deploy.ps1` отказывается разворачивать dirty tree и не содержит реального staging host.
+- Восстановить успешный Tavily source search на staging (ключ/доступность/аккаунт provider), затем заново создать ровно одну technical generation job и дождаться `active` перед controlled restart. После успешного narration нужно принять текст и запустить presentation generation, затем PDF export; только эти две активные jobs могут закрыть acceptance.
 
 ### P1-4. Billing и удаление аккаунта не образуют завершённый lifecycle
 
@@ -505,3 +510,33 @@ Editor сериализует PATCH-запросы через `saveQueueRef`, н
 - Метрики, Sentry release и критические алерты работают.
 
 До выполнения этих условий итоговый статус: **NO-GO / HOLD**.
+
+## 13. Production release 20 августа 2026 — принятый runtime evidence
+
+**Применено:** merge commit `82564ea1dc3014ce975e83ca4f0805e22d6ae36f`
+прошёл main release-gates: secret scan, quality/migrations, desktop/mobile
+Playwright, immutable image build/scan, PDF/golden export, staging smoke и
+registry digest verification. VPS развёрнут из CI release-manifest с
+immutable API/worker/web images. API, worker и web имеют Docker health
+`healthy`; внешний `https://slides.lazyum.ru/api/internal-health` возвращает
+`ok: true`, а Caddy получил сертификат Let's Encrypt для `slides.lazyum.ru`.
+
+**Эксплуатационные выводы:** при первом rollout `studydeck-staging-caddy-1`
+занимал `80/443` и блокировал production Caddy. Он остановлен; staging нельзя
+считать доступным, пока для него не выделены отдельный hostname и порты (либо
+отдельный VPS/proxy). На VPS также были восстановлены `systemd-resolved` и
+Docker DNS; production Caddy должен быть частью Compose project `studydeck` и
+подключён к `studydeck_default`, иначе ему не назначаются bridge route и
+публикация `80/443`.
+
+**Остаётся до реального production launch:**
+
+- Вернуть обязательную проверку `BACKUP_AGE_RECIPIENT`, provisioned age
+  recipient/private recovery identity и успешно принять off-site backup +
+  isolated restore drill.
+- Развести staging и production ingress без конфликта `80/443`; после этого
+  повторно подтвердить staging acceptance.
+- Пройти ручной production smoke: Telegram login, generation, PDF/PPTX/DOCX
+  export, editor flow, billing cancellation и account deletion.
+- Зафиксировать DNS/Docker resolver recovery procedure и владельца этой
+  эксплуатации в runbook.

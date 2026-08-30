@@ -1,5 +1,5 @@
 /**
- * The single timing contract for newly generated Russian university speeches.
+ * The single timing contract for newly generated Russian study speeches.
  * 130 words/minute leaves room for pauses and slide changes. Word boundaries
  * are inclusive: a narration at minWords or maxWords is valid.
  */
@@ -59,8 +59,9 @@ export const RUSSIAN_STUDENT_SPEECH_TIMING_PRESETS = rawPresets.map(toBudget) as
 export function getRussianStudentSpeechTimingBudget(project: SpeechTimingProject): SpeechTimingBudget | null {
   const mode = String(project.mode || "").toLowerCase();
   const level = String(project.level || "").toLowerCase();
-  // Timing is actionable only for a newly authored university-student deck.
-  if (/(?:legacy|display|export|import|defense)/.test(mode) || !level.includes("university")) return null;
+  // Timing is actionable only for newly authored standard study decks. Keep
+  // legacy and special workflows on their existing contracts.
+  if (/(?:legacy|display|export|import|defense)/.test(mode) || !(level.includes("university") || level === "general")) return null;
   return RUSSIAN_STUDENT_SPEECH_TIMING_PRESETS.find((preset) => preset.slideCount === project.slideCount) || null;
 }
 

@@ -5,6 +5,7 @@ import {
   fittedFontSize,
   hasMeasurableValue,
   metricLead,
+  PRESENTATION_FONT_STACK,
   type PresentationDocument,
   type PresentationTheme,
   type SlideBlock,
@@ -30,8 +31,8 @@ export function slideTemplateThemeStyle(theme: PresentationTheme): CSSProperties
     "--slide-accent": theme.colors.accent,
     "--slide-accent-alt": theme.colors.accentAlt,
     "--slide-line": theme.colors.line,
-    "--slide-heading-font": `${theme.fonts.heading}, Georgia, Arial, sans-serif`,
-    "--slide-body-font": `${theme.fonts.body}, Arial, sans-serif`,
+    "--slide-heading-font": PRESENTATION_FONT_STACK,
+    "--slide-body-font": PRESENTATION_FONT_STACK,
   } as CSSProperties;
 }
 

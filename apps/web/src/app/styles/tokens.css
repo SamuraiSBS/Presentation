@@ -6,6 +6,7 @@
   --surface-translucent: rgba(255, 255, 255, 0.86);
   --ink: #3a2109;
   --muted: #805c38;
+  --font-family: "Nunito Variable", Nunito, ui-sans-serif, system-ui, sans-serif;
   --line: #efd6b9;
   --orange: #ff8a00;
   --orange-deep: #a84600;
@@ -31,4 +32,5 @@
   --z-dropdown: 40;
   --z-mobile-nav: 50;
   --z-dialog: 80;
+  --mobile-nav-offset: calc(67px + max(8px, env(safe-area-inset-bottom)));
 }

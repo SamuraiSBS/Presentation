@@ -62,40 +62,25 @@ async function setVisualViewport(page: Page, height: number, offsetTop = 0) {
   }, { height, offsetTop });
 }
 
-test("keyboard path discloses sources, changes section, and reaches save", async ({ page }) => {
+test("keyboard path reaches the single speech editor and generation action", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 568 });
   await page.goto(scriptRoute);
 
   await expect(page.locator(".journey-progress [aria-current=step]")).toBeVisible();
-  await expect(page.getByTestId("source-review-summary")).toBeVisible();
-  await expect(page.locator(".source-review-item")).toHaveCount(6);
-  await expect(page.locator("[data-testid^=source-review-detail-]")).toHaveCount(0);
-  await expect(page.locator(".speech-section-card")).toHaveCount(1);
-  await expect(page.locator(".speech-section-card textarea")).toHaveCount(1);
-  await expectNoDocumentOverflow(page);
-
-  await tabTo(page, ".source-review-item:first-child .source-detail-toggle");
-  const sourceToggle = page.locator(".source-review-item").first().locator(".source-detail-toggle");
-  await expect(sourceToggle).toBeFocused();
-  await page.keyboard.press("Enter");
-  await expect(sourceToggle).toHaveAttribute("aria-expanded", "true");
-  await expect(page.getByTestId("source-review-detail-src-script-review-1")).toBeVisible();
-
-  await tabTo(page, '[data-testid="script-jump-14"]');
-  const lastJump = page.getByTestId("script-jump-14");
-  await expect(lastJump).toBeFocused();
-  await page.keyboard.press("Enter");
-  await expect(lastJump).toHaveAttribute("aria-current", "step");
-  await expect(page.getByTestId("speech-section-14")).toBeVisible();
+  await expect(page.locator(".source-review")).toHaveCount(0);
+  await expect(page.locator(".speech-jump-nav")).toHaveCount(0);
+  await expect(page.locator(".speech-section-card")).toHaveCount(0);
+  await expect(page.getByTestId("speech-draft-editor")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Создать презентацию" })).toBeVisible();
   await expectNoDocumentOverflow(page);
 
   await tabTo(page, '[data-testid="script-save-toolbar"] button');
-  const save = page.getByRole("button", { name: "Сохранить текст" });
+  const save = page.getByRole("button", { name: "Сохранить черновик" });
   await expect(save).toBeFocused();
 
   for (const viewport of [{ width: 412, height: 915 }, { width: 1280, height: 800 }]) {
     await page.setViewportSize(viewport);
-    await expect(page.getByTestId("speech-section-14")).toBeVisible();
+    await expect(page.getByTestId("speech-draft-editor")).toBeVisible();
     await expect(save).toBeVisible();
     await expectNoDocumentOverflow(page);
   }
@@ -108,12 +93,12 @@ test("focused editor keeps sticky save clear of keyboard inset and bottom naviga
     await page.setViewportSize(viewport);
     await page.goto(scriptRoute);
 
-    const editor = page.getByRole("textbox", { name: "Текст выступления для слайда 1" });
+    const editor = page.getByRole("textbox", { name: "Текст выступления" });
     await editor.focus();
     await setVisualViewport(page, viewport.keyboardHeight);
 
     const layout = await page.getByTestId("script-save-toolbar").evaluate((toolbar, keyboardTop) => {
-      const editor = document.querySelector<HTMLTextAreaElement>(".speech-section-card textarea");
+      const editor = document.querySelector<HTMLTextAreaElement>(".script-textarea");
       const toolbarBox = toolbar.getBoundingClientRect();
       const editorBox = editor?.getBoundingClientRect();
       const navigationBox = document.querySelector(".mobile-bottom-nav")?.getBoundingClientRect();
@@ -136,7 +121,7 @@ test("focused editor keeps sticky save clear of keyboard inset and bottom naviga
   }
 });
 
-test("script draft survives section switches and delayed save feedback stays available above mobile navigation", async ({ page }) => {
+test("script draft survives a delayed save and feedback stays available above mobile navigation", async ({ page }) => {
   let releasePatch: (() => void) | undefined;
   await page.route("**/api/projects/script-review-demo/narration", async (route) => {
     if (route.request().method() !== "PATCH") return route.fallback();
@@ -164,10 +149,8 @@ test("script draft survives section switches and delayed save feedback stays ava
     await page.setViewportSize(viewport);
     await page.goto(scriptRoute);
 
-    const editor = page.getByRole("textbox", { name: "Текст выступления для слайда 1" });
+    const editor = page.getByRole("textbox", { name: "Текст выступления" });
     await editor.fill("Черновик остаётся на месте после перехода между разделами. Здесь достаточно текста для сохранения.");
-    await page.getByTestId("script-jump-2").click();
-    await page.getByTestId("script-jump-1").click();
     await expect(editor).toHaveValue(/Черновик остаётся на месте/);
 
     const save = page.getByTestId("script-save-toolbar").getByRole("button").first();
@@ -176,7 +159,7 @@ test("script draft survives section switches and delayed save feedback stays ava
     await expect(save).toHaveText("Сохраняем…");
     await expect(save).toBeDisabled();
     releasePatch?.();
-    await expect(page.getByText("Все правки сохранены", { exact: true })).toBeVisible();
+    await expect(page.getByText("Сохранено", { exact: true })).toBeVisible();
 
     const layout = await page.getByTestId("script-save-toolbar").evaluate((toolbar) => {
       const toolbarBox = toolbar.getBoundingClientRect();
@@ -196,9 +179,40 @@ test("script save error is announced without discarding the edited draft", async
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(scriptRoute);
 
-  const editor = page.getByRole("textbox", { name: "Текст выступления для слайда 1" });
+  const editor = page.getByRole("textbox", { name: "Текст выступления" });
   await editor.fill("Текст не должен исчезнуть, даже если сервер вернул ошибку сохранения. Он остаётся доступным для повторной попытки.");
-  await page.getByRole("button", { name: "Сохранить текст" }).click();
+  await page.getByRole("button", { name: "Сохранить черновик" }).click();
   await expect(page.getByTestId("script-action-error")).toBeVisible();
   await expect(editor).toHaveValue(/Текст не должен исчезнуть/);
+});
+
+test("generation submits the current draft directly without a confirmation dialog", async ({ page }) => {
+  let payload: { accept?: boolean; speechDraft?: string } | undefined;
+  await page.route("**/api/projects/script-review-demo/narration", async (route) => {
+    if (route.request().method() !== "PATCH") return route.fallback();
+    payload = route.request().postDataJSON() as { accept?: boolean; speechDraft?: string };
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        accessRole: "owner",
+        exports: [],
+        id: "script-review-demo",
+        narrationState: "accepted_speech",
+        presentation: null,
+        presentationRevision: 1,
+        slideCount: 14,
+        sources: [],
+        speechDraft: payload.speechDraft,
+        status: "queued",
+        title: "Проверка длинного текста выступления",
+      }),
+    });
+  });
+
+  await page.goto(scriptRoute);
+  await page.getByRole("button", { name: "Создать презентацию" }).click();
+
+  await expect.poll(() => payload?.accept).toBe(true);
+  await expect(page.locator('[role="dialog"]')).toHaveCount(0);
+  await expect(page.getByText("Собираем презентацию")).toBeVisible();
 });

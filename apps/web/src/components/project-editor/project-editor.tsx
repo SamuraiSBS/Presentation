@@ -4,7 +4,7 @@ import { type KeyboardEvent, type PointerEvent, useEffect, useRef, useState } fr
 import Link from "next/link";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { CanvasElement, CanvasImageElement, CanvasShapeElement, CanvasTextElement, Slide, SlideCanvas, SlideLayout, SlideVisual } from "@studydeck/shared";
-import { buildSlideCanvas, canvasBackgroundCss, ensureEditableCanvas, sortCanvasElements } from "@studydeck/shared";
+import { buildSlideCanvas, canvasBackgroundCss, ensureEditableCanvas, PRESENTATION_FONT_FAMILY, sortCanvasElements } from "@studydeck/shared";
 import { sanitizeProjectForDisplay } from "@/lib/presentation-display";
 import { PropertiesPanel } from "./advanced-properties-panel";
 import { CanvasElementView, TemplatePreviewFrame } from "./editor-canvas";
@@ -297,7 +297,7 @@ export function ProjectEditor({
       text: "Новый текст",
       runs: [{ text: "Новый текст" }],
       fontSize: 34,
-      fontFamily: theme.fonts.body,
+      fontFamily: PRESENTATION_FONT_FAMILY,
       color: theme.colors.text,
       bold: false,
       italic: false,
@@ -439,7 +439,7 @@ export function ProjectEditor({
         text: "Новый текст",
         runs: [{ text: "Новый текст" }],
         fontSize: 32,
-        fontFamily: theme.fonts.body,
+        fontFamily: PRESENTATION_FONT_FAMILY,
         color: theme.colors.text,
         bold: false,
         italic: false,

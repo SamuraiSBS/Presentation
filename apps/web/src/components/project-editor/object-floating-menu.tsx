@@ -68,19 +68,6 @@ export function ObjectFloatingMenu({
               Ж
             </button>
             <button
-              className={element.italic ? "tool-active" : ""}
-              type="button"
-              onClick={() =>
-                onUpdate({
-                  italic: !element.italic,
-                } as Partial<CanvasTextElement>)
-              }
-              disabled={element.locked}
-              title="Курсив"
-            >
-              К
-            </button>
-            <button
               className={element.align === "left" ? "tool-active" : ""}
               type="button"
               onClick={() =>

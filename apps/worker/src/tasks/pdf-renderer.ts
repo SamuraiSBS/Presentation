@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { withEmbeddedNunitoFont } from "./nunito-font.js";
 
 export async function renderHtmlToPdf(
   html: string,
@@ -27,7 +28,8 @@ export async function renderHtmlToPdf(
       height: options.viewportHeight || 720,
       deviceScaleFactor: 1,
     });
-    await page.setContent(html, { waitUntil: "domcontentloaded" });
+    await page.setContent(await withEmbeddedNunitoFont(html), { waitUntil: "domcontentloaded" });
+    await page.evaluate(async () => { await document.fonts.ready; });
     return Buffer.from(await page.pdf({
       printBackground: true,
       ...(options.format

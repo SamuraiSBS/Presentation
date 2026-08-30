@@ -17,11 +17,11 @@ export async function renderPdfCanvasElement(element: CanvasElement, dependencie
 
 function renderPdfText(element: CanvasTextElement) {
   if (!element.runs.length) return escapeHtml(element.text);
-  return element.runs.map((run) => `<span style="${[(run.bold ?? element.bold) ? "font-weight:800" : "", (run.italic ?? element.italic) ? "font-style:italic" : "", (run.underline ?? element.underline) ? "text-decoration:underline" : "", run.color ? `color:${run.color}` : ""].filter(Boolean).join(";")}">${escapeHtml(run.text)}</span>`).join("");
+  return element.runs.map((run) => `<span style="${[(run.bold ?? element.bold) ? "font-weight:800" : "", (run.underline ?? element.underline) ? "text-decoration:underline" : "", run.color ? `color:${run.color}` : ""].filter(Boolean).join(";")}">${escapeHtml(run.text)}</span>`).join("");
 }
 
 function pdfTextStyle(element: CanvasTextElement) {
-  return [`color:${element.color}`, `font-family:${exportPdfFontStack(element.fontFamily)}`, `font-size:${element.fontSize}px`, `font-weight:${element.bold ? 800 : 400}`, `font-style:${element.italic ? "italic" : "normal"}`, `text-decoration:${element.underline ? "underline" : "none"}`, `text-align:${element.align}`, "display:flex", "flex-direction:column", `justify-content:${element.valign === "middle" ? "center" : element.valign === "bottom" ? "flex-end" : "flex-start"}`, `line-height:${canvasTextLineHeight(element)}`, "overflow-wrap:anywhere", "word-break:normal"].join(";");
+  return [`color:${element.color}`, `font-family:${exportPdfFontStack(element.fontFamily)}`, `font-size:${element.fontSize}px`, `font-weight:${element.bold ? 800 : 400}`, "font-style:normal", `text-decoration:${element.underline ? "underline" : "none"}`, `text-align:${element.align}`, "display:flex", "flex-direction:column", `justify-content:${element.valign === "middle" ? "center" : element.valign === "bottom" ? "flex-end" : "flex-start"}`, `line-height:${canvasTextLineHeight(element)}`, "overflow-wrap:anywhere", "word-break:normal"].join(";");
 }
 
 function pdfShapeStyle(element: CanvasShapeElement) {

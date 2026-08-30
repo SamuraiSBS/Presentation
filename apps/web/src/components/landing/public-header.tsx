@@ -2,9 +2,8 @@ import Link from "next/link";
 import { ArrowUpRight, LayoutDashboard, LogIn } from "lucide-react";
 
 const landingLinks = [
-  { href: "#how-it-works", label: "Как работает" },
   { href: "#examples", label: "Примеры" },
-  { href: "#capabilities", label: "Возможности" },
+  { href: "#create", label: "Создать" },
 ] as const;
 
 export function PublicHeader({ isAuthenticated = false }: { isAuthenticated?: boolean }) {

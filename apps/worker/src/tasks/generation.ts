@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import {
   auditSlideCanvas,
   ensureEditableCanvas,
+  PRESENTATION_FONT_FAMILY,
   PREMIUM_PRESENTATION_THEMES,
   publicNarrationFailureMessage,
   type PresentationDocument,
@@ -675,8 +676,8 @@ export function buildEmergencyReadablePresentation(presentation: PresentationDoc
           background,
           elements: [
             { id: `${slide.id}-background`, type: "shape", shape: "rect", x: 0, y: 0, w: 1280, h: 720, rotation: 0, zIndex: 0, opacity: 1, locked: true, fill: background, stroke: background, strokeWidth: 0 },
-            { id: `${slide.id}-title`, type: "text", role: "title", typographyRole: "slideTitle", x: 96, y: 84, w: 1088, h: 88, rotation: 0, zIndex: 2, opacity: 1, locked: false, text: title, runs: [{ text: title }], fontSize: 40, autoFit: false, fontFamily: "Arial", color: "#111827", bold: true, italic: false, underline: false, align: "center", valign: "middle" },
-            { id: `${slide.id}-body`, type: "text", role: "body", typographyRole: "body", x: 130, y: 230, w: 1020, h: 250, rotation: 0, zIndex: 2, opacity: 1, locked: false, text: thesis, runs: [{ text: thesis }], fontSize: 28, autoFit: false, fontFamily: "Arial", color: "#334155", bold: false, italic: false, underline: false, align: "center", valign: "middle" },
+            { id: `${slide.id}-title`, type: "text", role: "title", typographyRole: "slideTitle", x: 96, y: 84, w: 1088, h: 88, rotation: 0, zIndex: 2, opacity: 1, locked: false, text: title, runs: [{ text: title }], fontSize: 40, autoFit: false, fontFamily: PRESENTATION_FONT_FAMILY, color: "#111827", bold: true, italic: false, underline: false, align: "center", valign: "middle" },
+            { id: `${slide.id}-body`, type: "text", role: "body", typographyRole: "body", x: 130, y: 230, w: 1020, h: 250, rotation: 0, zIndex: 2, opacity: 1, locked: false, text: thesis, runs: [{ text: thesis }], fontSize: 28, autoFit: false, fontFamily: PRESENTATION_FONT_FAMILY, color: "#334155", bold: false, italic: false, underline: false, align: "center", valign: "middle" },
             { id: `${slide.id}-custom-canvas-marker`, type: "shape", shape: "rect", x: 0, y: 0, w: 1, h: 1, rotation: 0, zIndex: 0, opacity: 0, locked: true, fill: background, stroke: background, strokeWidth: 0 },
           ],
         },
