@@ -2,6 +2,7 @@ import type { DesignBrief } from "../generation/schemas.js";
 import { designBriefSchema } from "../generation/schemas.js";
 import type { PresentationTheme } from "./schemas.js";
 import { presentationThemeSchema } from "./schemas.js";
+import { PRESENTATION_FONT_FAMILY } from "./fonts.js";
 export const PREMIUM_PRESENTATION_THEMES = {
   studydeckEditorial: {
     preset: "minimal",
@@ -18,8 +19,8 @@ export const PREMIUM_PRESENTATION_THEMES = {
       line: "#D7D4CE",
     },
     fonts: {
-      heading: "Arial",
-      body: "Arial",
+      heading: PRESENTATION_FONT_FAMILY,
+      body: PRESENTATION_FONT_FAMILY,
       tone: "bookish",
     },
   },
@@ -38,8 +39,8 @@ export const PREMIUM_PRESENTATION_THEMES = {
       line: "#DED2C4",
     },
     fonts: {
-      heading: "Arial",
-      body: "Arial",
+      heading: PRESENTATION_FONT_FAMILY,
+      body: PRESENTATION_FONT_FAMILY,
       tone: "bookish",
     },
   },
@@ -58,8 +59,8 @@ export const PREMIUM_PRESENTATION_THEMES = {
       line: "#D9E2EC",
     },
     fonts: {
-      heading: "Arial",
-      body: "Arial",
+      heading: PRESENTATION_FONT_FAMILY,
+      body: PRESENTATION_FONT_FAMILY,
       tone: "strict",
     },
   },
@@ -78,8 +79,8 @@ export const PREMIUM_PRESENTATION_THEMES = {
       line: "#303846",
     },
     fonts: {
-      heading: "Arial",
-      body: "Arial",
+      heading: PRESENTATION_FONT_FAMILY,
+      body: PRESENTATION_FONT_FAMILY,
       tone: "technical",
     },
   },
@@ -98,8 +99,8 @@ export const PREMIUM_PRESENTATION_THEMES = {
       line: "#D5C7B3",
     },
     fonts: {
-      heading: "Arial",
-      body: "Arial",
+      heading: PRESENTATION_FONT_FAMILY,
+      body: PRESENTATION_FONT_FAMILY,
       tone: "bookish",
     },
   },
@@ -118,8 +119,8 @@ export const PREMIUM_PRESENTATION_THEMES = {
       line: "#CFE2DE",
     },
     fonts: {
-      heading: "Arial",
-      body: "Arial",
+      heading: PRESENTATION_FONT_FAMILY,
+      body: PRESENTATION_FONT_FAMILY,
       tone: "technical",
     },
   },
@@ -138,8 +139,8 @@ export const PREMIUM_PRESENTATION_THEMES = {
       line: "#D8DEE9",
     },
     fonts: {
-      heading: "Arial",
-      body: "Arial",
+      heading: PRESENTATION_FONT_FAMILY,
+      body: PRESENTATION_FONT_FAMILY,
       tone: "strict",
     },
   },
@@ -158,8 +159,8 @@ export const PREMIUM_PRESENTATION_THEMES = {
       line: "#EAD8C3",
     },
     fonts: {
-      heading: "Arial",
-      body: "Arial",
+      heading: PRESENTATION_FONT_FAMILY,
+      body: PRESENTATION_FONT_FAMILY,
       tone: "rounded",
     },
   },

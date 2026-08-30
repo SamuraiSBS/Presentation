@@ -1,4 +1,5 @@
 /* Cascade order mirrors the previous monolithic stylesheet. */
+@import "@fontsource-variable/nunito";
 @import "./styles/tokens.css";
 @import "./styles/base.css";
 @import "./styles/app-shell.css";

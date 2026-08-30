@@ -3,9 +3,10 @@
 import { Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-const stages = ["Тема", "Объём", "Источники", "Текст", "Слайды", "Экспорт"];
+const generationStages = ["Тема", "Объём", "Материалы", "Текст", "Слайды"];
 
-export function WorkflowProgress({ current }: { current: number }) {
+export function WorkflowProgress({ current, includeExport = false }: { current: number; includeExport?: boolean }) {
+  const stages = includeExport ? [...generationStages, "Экспорт"] : generationStages;
   const progressRef = useRef<HTMLOListElement>(null);
   const [overflow, setOverflow] = useState({ start: false, end: false });
 
@@ -18,22 +19,30 @@ export function WorkflowProgress({ current }: { current: number }) {
       setOverflow({ start: progress.scrollLeft > 1, end: progress.scrollLeft < maxScrollLeft - 1 });
     };
 
-    const activeStep = progress.querySelector<HTMLElement>('[aria-current="step"]');
-    if (activeStep) {
-      const stepLeft = activeStep.offsetLeft;
-      const stepRight = stepLeft + activeStep.offsetWidth;
-      if (stepLeft < progress.scrollLeft || stepRight > progress.scrollLeft + progress.clientWidth) {
-        progress.scrollTo({
-          left: Math.max(0, stepLeft - (progress.clientWidth - activeStep.offsetWidth) / 2),
-          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-        });
+    const keepActiveStepVisible = () => {
+      const activeStep = progress.querySelector<HTMLElement>('[aria-current="step"]');
+      if (activeStep) {
+        const maxScrollLeft = Math.max(0, progress.scrollWidth - progress.clientWidth);
+        const targetScrollLeft = Math.min(
+          maxScrollLeft,
+          Math.max(0, activeStep.offsetLeft - (progress.clientWidth - activeStep.offsetWidth) / 2),
+        );
+        if (Math.abs(progress.scrollLeft - targetScrollLeft) > 1) {
+          if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+            progress.scrollLeft = targetScrollLeft;
+          } else {
+            progress.scrollTo({ left: targetScrollLeft, behavior: "smooth" });
+          }
+        }
       }
-    }
 
-    updateOverflow();
-    const animationFrame = window.requestAnimationFrame(updateOverflow);
+      updateOverflow();
+    };
+
+    keepActiveStepVisible();
+    const animationFrame = window.requestAnimationFrame(keepActiveStepVisible);
     progress.addEventListener("scroll", updateOverflow, { passive: true });
-    const resizeObserver = new ResizeObserver(updateOverflow);
+    const resizeObserver = new ResizeObserver(keepActiveStepVisible);
     resizeObserver.observe(progress);
     return () => {
       window.cancelAnimationFrame(animationFrame);

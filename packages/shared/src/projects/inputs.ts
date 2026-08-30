@@ -3,6 +3,8 @@ import { contentPlaceholderSchema } from "../defense/schemas.js";
 import { generationBriefSchema } from "../generation/schemas.js";
 import { slideBlockSchema, slideCanvasSchema, slideLayoutSchema, slideVisualSchema } from "../presentation/schemas.js";
 import { folderColorSchema, projectMemberRoleSchema, projectStatusSchema, scenarioSchema } from "./schemas.js";
+const projectCreationIdempotencyKeySchema = z.string().trim().min(8).max(200);
+
 export const createProjectInputSchema = z.object({
   title: z.string().min(2).max(140),
   prompt: z.string().min(18).max(12000),
@@ -11,6 +13,7 @@ export const createProjectInputSchema = z.object({
   mode: z.enum(["fast_draft", "with_sources", "explain_simpler"]),
   slideCount: z.number().int().min(4).max(20),
   generationBrief: generationBriefSchema.optional(),
+  idempotencyKey: projectCreationIdempotencyKeySchema.optional(),
 });
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
 

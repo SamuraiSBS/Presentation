@@ -6,7 +6,7 @@ import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
 import JSZip from "jszip";
 import sharp from "sharp";
-import { auditSlideCanvas, ensureEditableCanvas, presentationSchema } from "@studydeck/shared";
+import { auditSlideCanvas, ensureEditableCanvas, PRESENTATION_FONT_FAMILY, presentationSchema } from "@studydeck/shared";
 import { createPdf, createPptx, renderPdfHtml } from "./export.js";
 import { chromiumExecutablePath } from "./pdf-renderer.js";
 
@@ -87,8 +87,8 @@ function canvasDeck() {
         background: "#FFFFFF",
         elements: [
           { id: "shape-1", type: "shape" as const, shape: "roundRect" as const, x: 80, y: 90, w: 1120, h: 500, rotation: 0, zIndex: 1, opacity: 1, locked: false, fill: "#FF8A00", stroke: "#161A1F", strokeWidth: 2 },
-          { id: "text-1", type: "text" as const, role: "title" as const, x: 150, y: 160, w: 980, h: 120, rotation: 0, zIndex: 2, opacity: 1, locked: false, text: "Canvas title", runs: [{ text: "Canvas title", bold: true }], fontSize: 46, fontFamily: "Arial", color: "#161A1F", bold: true, italic: false, underline: false, align: "center" as const, valign: "middle" as const },
-          { id: "text-2", type: "text" as const, role: "body" as const, x: 220, y: 310, w: 840, h: 120, rotation: 0, zIndex: 3, opacity: 1, locked: false, text: "Canvas body", runs: [{ text: "Canvas body", italic: true }], fontSize: 30, fontFamily: "Arial", color: "#161A1F", bold: false, italic: true, underline: false, align: "center" as const, valign: "middle" as const },
+          { id: "text-1", type: "text" as const, role: "title" as const, x: 150, y: 160, w: 980, h: 120, rotation: 0, zIndex: 2, opacity: 1, locked: false, text: "Canvas title", runs: [{ text: "Canvas title", bold: true }], fontSize: 46, fontFamily: PRESENTATION_FONT_FAMILY, color: "#161A1F", bold: true, italic: false, underline: false, align: "center" as const, valign: "middle" as const },
+          { id: "text-2", type: "text" as const, role: "body" as const, x: 220, y: 310, w: 840, h: 120, rotation: 0, zIndex: 3, opacity: 1, locked: false, text: "Canvas body", runs: [{ text: "Canvas body" }], fontSize: 30, fontFamily: PRESENTATION_FONT_FAMILY, color: "#161A1F", bold: false, italic: false, underline: false, align: "center" as const, valign: "middle" as const },
         ],
       },
       speakerNotes: "Narration.",

@@ -27,11 +27,11 @@ test("public wow landing is a read-only walkthrough", async ({ page }) => {
   await expect(page.locator(".landing-page")).toBeVisible();
   await expect(page.locator(".public-header")).toBeVisible();
   await expect(page.getByTestId("hero-generation-demo")).toBeVisible();
-  await page.getByTestId("landing-demo-gallery-placeholder").scrollIntoViewIfNeeded();
-  await expect(page.locator(".landing-showcase-trigger")).toHaveCount(3);
+  await expect(page.locator(".landing-showcase-section")).toBeVisible();
+  await expect(page.locator(".landing-showcase")).toHaveCount(3);
   await waitForLandingHydration(page);
 
-  await page.locator(".landing-showcase-trigger").first().click();
+  await page.locator(".landing-showcase-open").first().click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(page.locator(".landing-showcase-dialog-deck .landing-demo-slide").first()).toBeVisible();
 
@@ -53,7 +53,7 @@ test("hero demo becomes static when reduced motion is requested", async ({ page 
   expect(unsafeRequests).toEqual([]);
 });
 
-test("final landing artifact stays inside compact phone viewports", async ({ page }) => {
+test("final landing CTA wizard stays inside compact phone viewports", async ({ page }) => {
   test.slow();
 
   for (const viewport of [
@@ -66,29 +66,21 @@ test("final landing artifact stays inside compact phone viewports", async ({ pag
     await page.goto("/", { waitUntil: "networkidle" });
     await waitForLandingHydration(page);
 
-    await page.getByTestId("landing-final-cta-artifact-placeholder").scrollIntoViewIfNeeded();
-    await expect(page.locator(".landing-final-cta-artifact")).toBeVisible();
-    const artifact = page.locator(".landing-final-cta-artifact");
-    await artifact.scrollIntoViewIfNeeded();
-    const bounds = await page.locator(".landing-final-cta-card-stack, .landing-final-cta-card, .landing-final-cta-card-hint").evaluateAll((elements) =>
-      elements.map((element) => {
-        const rect = element.getBoundingClientRect();
-        return { left: rect.left, right: rect.right };
-      }),
-    );
+    const cta = page.locator(".landing-final-cta");
+    await cta.scrollIntoViewIfNeeded();
+    await expect(page.getByTestId("landing-cta-topic")).toBeVisible();
+    const ctaBox = await cta.boundingBox();
+    expect(ctaBox).not.toBeNull();
+    expect(ctaBox!.x).toBeGreaterThanOrEqual(0);
+    expect(ctaBox!.x + ctaBox!.width).toBeLessThanOrEqual(viewport.width);
 
-    for (const rect of bounds) {
-      expect(rect.left).toBeGreaterThanOrEqual(0);
-      expect(rect.right).toBeLessThanOrEqual(viewport.width);
-    }
-    const action = page.locator(".landing-final-cta-action");
-    await action.scrollIntoViewIfNeeded();
-    const actionBox = await action.boundingBox();
-    expect(actionBox).not.toBeNull();
-    expect(actionBox!.x).toBeGreaterThanOrEqual(0);
-    expect(actionBox!.y).toBeGreaterThanOrEqual(0);
-    expect(actionBox!.x + actionBox!.width).toBeLessThanOrEqual(viewport.width);
-    expect(actionBox!.y + actionBox!.height).toBeLessThanOrEqual(viewport.height);
+    await page.getByTestId("landing-cta-topic").fill("Компактная проверка CTA");
+    await page.getByRole("button", { name: /Продолжить/ }).click();
+    await expect(page.getByRole("radiogroup", { name: "Количество слайдов" })).toBeVisible();
+    const wizardBox = await page.locator(".landing-cta-wizard").boundingBox();
+    expect(wizardBox).not.toBeNull();
+    expect(wizardBox!.x).toBeGreaterThanOrEqual(0);
+    expect(wizardBox!.x + wizardBox!.width).toBeLessThanOrEqual(viewport.width);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   }
 });

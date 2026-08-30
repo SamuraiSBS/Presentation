@@ -456,6 +456,11 @@
   overflow: auto;
 }
 
+.rich-text-content em,
+.rich-text-content i {
+  font-style: normal;
+}
+
 .rich-text-content:focus {
   border-color: var(--orange-bright);
   box-shadow: var(--focus-ring);

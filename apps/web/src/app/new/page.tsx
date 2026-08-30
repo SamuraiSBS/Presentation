@@ -27,9 +27,6 @@ export default async function NewProjectPage() {
     <main className="page new-page">
       <ScrollToTop />
       <CreationModePicker active="standard" />
-      <p className="new-page-kicker">Одна тема → готовое выступление</p>
-      <h1 className="page-title">О чём будешь выступать?</h1>
-      <p className="lead">Начни с темы: примерно через 5 минут у тебя будут презентация и связный текст выступления. Перед запуском всё можно проверить.</p>
       <NewProjectForm usage={dashboard.usage} />
     </main>
   );

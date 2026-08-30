@@ -53,6 +53,42 @@ test("new project wizard stays usable from 320px to 412px without horizontal ove
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
+test("new project wizard uses one large question heading per step", async ({ page }) => {
+  await page.setViewportSize({ width: 897, height: 742 });
+  await page.goto("/new");
+
+  for (const text of [
+    "О чём будешь выступать?",
+    "Одна тема → готовое выступление",
+    "Начни с темы: примерно через 5 минут у тебя будут презентация и связный текст выступления. Перед запуском всё можно проверить.",
+    "По умолчанию выбрали оптимальный объём для обычного выступления.",
+    "Выбери способ собрать материал для презентации.",
+  ]) {
+    await expect(page.getByText(text, { exact: true })).toHaveCount(0);
+  }
+
+  const topicHeading = page.getByRole("heading", { name: "О чём будет презентация?", exact: true, level: 1 });
+  await expect(topicHeading).toBeVisible();
+  const topicFontSize = await topicHeading.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+  expect(topicFontSize).toBeGreaterThanOrEqual(36);
+
+  await page.getByTestId("new-project-topic").fill("Проверка иерархии вопросов");
+  await page.getByTestId("new-project-next").click();
+
+  const volumeHeading = page.getByRole("heading", { name: "Сколько слайдов собрать?", exact: true, level: 1 });
+  await expect(volumeHeading).toBeVisible();
+  await expect(volumeHeading).toHaveCSS("font-size", `${topicFontSize}px`);
+  await expect(page.getByText("По умолчанию выбрали оптимальный объём для обычного выступления.", { exact: true })).toHaveCount(0);
+
+  await page.getByTestId("new-project-next").click();
+
+  const sourceHeading = page.getByRole("heading", { name: "На что опираться?", exact: true, level: 1 });
+  await expect(sourceHeading).toBeVisible();
+  await expect(sourceHeading).toHaveCSS("font-size", `${topicFontSize}px`);
+  await expect(page.getByText("Выбери способ собрать материал для презентации.", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".source-choice small, .source-web-note, .source-file-hint")).toHaveCount(0);
+});
+
 test("new project starts with its topic field visible and clears the mobile navigation", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 568 });
   await page.goto("/new");
@@ -96,6 +132,112 @@ test("new project starts with its topic field visible and clears the mobile navi
   expect(desktopAction!.x + desktopAction!.width).toBeLessThanOrEqual(1280);
   expect(desktopAction!.y + desktopAction!.height).toBeLessThanOrEqual(800);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
+test("new project draft restores the topic, step, volume, and file-mode recovery prompt", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/new");
+
+  await page.getByTestId("new-project-topic").fill("Повторная проверка draft состояния");
+  await page.getByTestId("new-project-next").click();
+  await expect(page.getByRole("radiogroup", { name: "Количество слайдов" })).toBeVisible();
+
+  const saved = await page.evaluate(() => JSON.parse(sessionStorage.getItem("studydeck:new-project:draft") || "null") as {
+    step: number;
+    topic: string;
+    idempotencyKey: string;
+    phase: string;
+  } | null);
+  expect(saved?.step).toBe(1);
+  expect(saved?.topic).toContain("Повторная");
+  expect(saved?.idempotencyKey.length).toBeGreaterThanOrEqual(8);
+  expect(saved?.phase).toBe("draft");
+
+  await page.reload();
+  await expect(page.getByRole("radiogroup", { name: "Количество слайдов" })).toBeVisible();
+  await page.locator(".wizard-pane-volume .new-wizard-actions .ghost").click();
+  await expect(page.getByTestId("new-project-topic")).toHaveValue(/Повторная/);
+
+  await page.getByTestId("new-project-next").click();
+  await expect(page.getByRole("radiogroup", { name: "Количество слайдов" })).toBeVisible();
+  await page.getByTestId("new-project-next").click();
+  await expect(page.locator(".source-choices")).toBeVisible();
+  await page.locator(".source-choice").nth(1).click();
+  await page.reload();
+
+  await expect(page.locator(".source-choices")).toBeVisible();
+  await expect(page.getByTestId("new-project-files-reselection")).toBeVisible();
+  await expect(page.locator(".wizard-progress-step-label")).toHaveCount(5);
+  await expect(page.locator(".wizard-progress-step-active")).toContainText("Материалы");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
+test("upload retry keeps the created project and does not repeat project creation", async ({ page }) => {
+  let projectCreateRequests = 0;
+  let uploadRequests = 0;
+  let narrationRequests = 0;
+
+  await page.route("**/api/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    projectCreateRequests += 1;
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ id: "project-retry" }) });
+  });
+  await page.route("**/api/projects/project-retry/uploads", async (route) => {
+    uploadRequests += 1;
+    if (uploadRequests === 1) {
+      await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "Upload failed" }) });
+      return;
+    }
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ sources: [] }) });
+  });
+  await page.route("**/api/projects/project-retry/narration", async (route) => {
+    narrationRequests += 1;
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ id: "project-retry", status: "script_queued" }) });
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/new");
+  await page.getByTestId("new-project-topic").fill("РџСЂРѕРІРµСЂРєР° РїРѕРІС‚РѕСЂРЅРѕР№ Р·Р°РіСЂСѓР·РєРё");
+  await page.getByTestId("new-project-next").click();
+  await page.getByTestId("new-project-next").click();
+  await page.locator(".source-choice").nth(1).click();
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "notes.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("Материалы для повторной загрузки", "utf8"),
+  });
+
+  await page.getByTestId("new-project-next").click();
+  await expect(page.getByTestId("new-project-upload-recovery")).toContainText("Проект создан, но файл не загрузился");
+  expect(projectCreateRequests).toBe(1);
+  expect(uploadRequests).toBe(1);
+
+  await page.getByTestId("new-project-next").click();
+  await expect.poll(() => uploadRequests).toBe(2);
+  await expect.poll(() => narrationRequests).toBe(1);
+  expect(projectCreateRequests).toBe(1);
+});
+
+test("new project radio groups keep roving focus and keyboard selection", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/new");
+  await page.getByTestId("new-project-topic").fill("Проверка клавиатурной навигации");
+  await page.getByTestId("new-project-next").click();
+
+  const slideRadios = page.locator('.slide-count-options [role="radio"]');
+  await expect(slideRadios).not.toHaveCount(0);
+  await expect.poll(async () => (await slideRadios.evaluateAll((radios) => radios.filter((radio) => (radio as HTMLButtonElement).tabIndex === 0).length))).toBe(1);
+  await slideRadios.first().focus();
+  await slideRadios.first().press("End");
+  await expect.poll(async () => (await slideRadios.evaluateAll((radios) => radios.filter((radio) => (radio as HTMLButtonElement).tabIndex === 0).length))).toBe(1);
+
+  await page.getByTestId("new-project-next").click();
+  const sourceRadios = page.locator('.source-choices [role="radio"]');
+  await sourceRadios.first().focus();
+  await sourceRadios.first().press("ArrowRight");
+  await expect(sourceRadios.nth(1)).toHaveAttribute("aria-checked", "true");
+  await expect(sourceRadios.nth(1)).toHaveAttribute("tabindex", "0");
+  await expect(sourceRadios.nth(0)).toHaveAttribute("tabindex", "-1");
 });
 
 test("workflow keeps the active stage visible without moving document scroll or focus", async ({ page }) => {
@@ -163,8 +305,6 @@ test("keyboard navigation reaches the creation action with a visible focus indic
   const topic = page.getByTestId("new-project-topic");
   const next = page.getByTestId("new-project-next");
   await topic.focus();
-  await page.keyboard.press("Tab");
-  await page.keyboard.press("Tab");
   await page.keyboard.press("Tab");
 
   await expect(next).toBeFocused();

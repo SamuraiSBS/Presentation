@@ -1,4 +1,5 @@
 import type { CSSProperties, PointerEvent } from "react";
+import { PRESENTATION_FONT_STACK } from "@studydeck/shared";
 import type { CanvasElement, CanvasShapeElement, CanvasTextElement, Slide, SlideCanvas } from "@studydeck/shared";
 
 export const CANVAS_WIDTH = 1280;
@@ -97,7 +98,7 @@ export function textFitsBox(
   if (!element.text.trim()) return true;
   const context = document.createElement("canvas").getContext("2d");
   if (!context) return true;
-  context.font = `${element.italic ? "italic " : ""}${element.bold ? 800 : 400} ${fontSize}px ${element.fontFamily}, Arial, sans-serif`;
+  context.font = `${element.bold ? 800 : 400} ${fontSize}px ${PRESENTATION_FONT_STACK}`;
 
   let lines = 0;
   for (const paragraph of element.text.split("\n")) {
@@ -138,10 +139,10 @@ export function textStyle(element: CanvasTextElement): CSSProperties {
     width: "100%",
     height: "100%",
     color: element.color,
-    fontFamily: `${element.fontFamily}, Arial, sans-serif`,
+    fontFamily: PRESENTATION_FONT_STACK,
     fontSize: `${element.fontSize}px`,
     fontWeight: element.bold ? 800 : 400,
-    fontStyle: element.italic ? "italic" : "normal",
+    fontStyle: "normal",
     textDecoration: element.underline ? "underline" : "none",
     textAlign: element.align,
     display: "flex",

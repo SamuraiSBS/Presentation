@@ -19,10 +19,11 @@ function telegramProvider(): OAuthConfig<TelegramProfile> {
   return {
     id: "telegram",
     name: "Telegram",
-    type: "oauth",
+    type: "oidc",
+    issuer: "https://oauth.telegram.org",
     wellKnown: "https://oauth.telegram.org/.well-known/openid-configuration",
     authorization: { params: { scope: "openid profile" } },
-    checks: ["pkce", "state"],
+    checks: ["pkce"],
     clientId: process.env.TELEGRAM_CLIENT_ID || "",
     clientSecret: process.env.TELEGRAM_CLIENT_SECRET || "",
     profile(profile) {
@@ -44,6 +45,10 @@ export function isTelegramAuthConfigured() {
 }
 
 const authConfig = {
+  // The app is deployed behind the single trusted Caddy proxy. Auth.js v5 only
+  // infers this from AUTH_URL/AUTH_TRUST_HOST, while this project configures
+  // the backwards-compatible NEXTAUTH_URL variable.
+  trustHost: true,
   // Auth.js v5 validates every configured OAuth provider at request time.
   // Keep the Telegram entry out of local/E2E environments until both required
   // credentials are supplied; the login UI already reflects this same state.

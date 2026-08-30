@@ -85,7 +85,7 @@ function renderStatementSlide(slide: PptxContentSlide, item: PresentationSlide, 
 
 function renderQuoteSlide(slide: PptxContentSlide, item: PresentationSlide, theme: ExportTheme) {
   renderSlideTitle(slide, item.title, theme);
-  slide.addText(`"${quoteText(item)}"`, { x: 1.1, y: 1.95, w: 11.1, h: 2.6, fontFace: theme.fonts.heading, fontSize: 27, bold: true, italic: true, color: theme.pptx.text, align: "center", valign: "mid", fit: "shrink" });
+  slide.addText(`"${quoteText(item)}"`, { x: 1.1, y: 1.95, w: 11.1, h: 2.6, fontFace: theme.fonts.heading, fontSize: 27, bold: true, italic: false, color: theme.pptx.text, align: "center", valign: "mid", fit: "shrink" });
   if (item.bullets[0]) slide.addText(item.bullets[0], { x: 2.1, y: 4.86, w: 9.1, h: 0.62, fontFace: theme.fonts.body, fontSize: 15, color: theme.pptx.muted, align: "center", fit: "shrink" });
 }
 

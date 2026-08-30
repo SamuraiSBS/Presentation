@@ -2,7 +2,7 @@
 
 import type { CSSProperties } from "react";
 import Image from "next/image";
-import { ArrowUpRight, FileText, Mic2 } from "lucide-react";
+import { ArrowUpRight, Check, FileText, Mic2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -16,7 +16,7 @@ import {
   type LandingShowcaseFixture,
   type LandingShowcaseFixtureId,
 } from "@/lib/landing-demo-data";
-import { DemoDeckPreview } from "@/components/landing/demo-deck-preview";
+import { DemoDeckPreview, DemoSlidePreview } from "@/components/landing/demo-deck-preview";
 
 const showcaseDetails = {
   "ai-education": {
@@ -34,63 +34,87 @@ const showcaseDetails = {
 } satisfies Record<LandingShowcaseFixtureId, { subtitle: string; accent: string }>;
 
 export function DemoGallery() {
+  const [featuredFixture, ...supportingFixtures] = LANDING_SHOWCASE_FIXTURES;
+
   return (
     <section className="landing-showcase-section" id="examples" aria-labelledby="landing-showcase-title">
       <header className="landing-section-heading landing-showcase-heading">
-        <h2 id="landing-showcase-title">Три темы. Три совершенно разные защиты.</h2>
+        <p className="landing-section-label">Результат вживую</p>
+        <h2 id="landing-showcase-title">Сначала посмотри, что получишь на выходе.</h2>
         <p>
-          Посмотри, как одна и та же студенческая задача превращается в цельную презентацию и связную речь.
+          Не обещание «сгенерируем файл», а сам результат: слайды с логикой и текст выступления, который помогает их объяснить.
         </p>
       </header>
 
-      <ul className="landing-showcase-list">
-        {LANDING_SHOWCASE_FIXTURES.map((fixture) => (
-          <li key={fixture.id}>
-            <ShowcaseCard fixture={fixture} />
-          </li>
-        ))}
-      </ul>
+      {featuredFixture ? <ShowcaseCard fixture={featuredFixture} featured /> : null}
+
+      {supportingFixtures.length ? (
+        <ul className="landing-showcase-list">
+          {supportingFixtures.map((fixture) => (
+            <li key={fixture.id}>
+              <ShowcaseCard fixture={fixture} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </section>
   );
 }
 
-function ShowcaseCard({ fixture }: { fixture: LandingShowcaseFixture }) {
+function ShowcaseCard({ fixture, featured = false }: { fixture: LandingShowcaseFixture; featured?: boolean }) {
   const details = showcaseDetails[fixture.id];
   const speechExcerpt = fixture.presentation.speechScript[0]?.text || fixture.presentation.slides[0]?.speakerNotes || "";
   const accentStyle = { "--landing-showcase-accent": details.accent } as CSSProperties;
 
   return (
-    <article className="landing-showcase" style={accentStyle}>
+    <article className={`landing-showcase ${featured ? "landing-showcase-featured" : ""}`} style={accentStyle}>
       <Dialog>
-        <DialogTrigger asChild>
-          <button
-            className="landing-showcase-trigger"
-            type="button"
-            aria-label={`Открыть пример презентации «${fixture.presentation.title}»`}
-            aria-haspopup="dialog"
-          >
-            <span className="landing-showcase-cover">
-              <Image
-                alt={fixture.cover.alt}
-                fill
-                sizes="(max-width: 720px) calc(100vw - 40px), (max-width: 1100px) 48vw, 32vw"
-                src={fixture.cover.src}
+        <div className="landing-showcase-top">
+          <div className="landing-showcase-cover">
+            <Image
+              alt={fixture.cover.alt}
+              fill
+              sizes="(max-width: 720px) calc(100vw - 40px), (max-width: 1100px) 48vw, 32vw"
+              src={fixture.cover.src}
+            />
+          </div>
+          <div className="landing-showcase-copy">
+            <span className="landing-showcase-type">{details.subtitle}</span>
+            <h3>{fixture.presentation.title}</h3>
+            <p className="landing-showcase-caption">{fixture.cover.caption}</p>
+            <span className="landing-showcase-ready"><Check aria-hidden="true" size={15} /> Готовая презентация и речь</span>
+          </div>
+        </div>
+
+        <div className="landing-showcase-output" aria-label="Пример презентации и текста выступления">
+          <div className="landing-showcase-preview">
+            <span className="landing-showcase-output-label"><FileText aria-hidden="true" size={15} /> Фрагмент презентации</span>
+            {featured ? (
+              <DemoDeckPreview
+                className="landing-showcase-inline-deck"
+                document={fixture.presentation}
+                title={fixture.presentation.title}
+                maxSlides={3}
+                variant="stack"
               />
-            </span>
-            <span className="landing-showcase-copy">
-              <span className="landing-showcase-type">{details.subtitle}</span>
-              <strong>{fixture.presentation.title}</strong>
-              <span className="landing-showcase-caption">{fixture.cover.caption}</span>
-              <span className="landing-showcase-open">
-                Открыть презентацию <ArrowUpRight aria-hidden="true" size={17} />
-              </span>
-            </span>
+            ) : <DemoSlidePreview document={fixture.presentation} />}
+          </div>
+          <div className="landing-showcase-speech-preview">
+            <span className="landing-showcase-output-label"><Mic2 aria-hidden="true" size={15} /> Текст выступления</span>
+            <p>{speechExcerpt}</p>
+            <span className="landing-showcase-speech-pages">Разбит по слайдам · можно редактировать</span>
+          </div>
+        </div>
+
+        <DialogTrigger asChild>
+          <button className="landing-showcase-open" type="button" aria-haspopup="dialog">
+            Открыть все слайды и речь <ArrowUpRight aria-hidden="true" size={17} />
           </button>
         </DialogTrigger>
 
         <DialogContent className="landing-showcase-dialog" style={accentStyle}>
           <DialogHeader className="landing-showcase-dialog-header">
-            <p className="landing-showcase-dialog-label">Showcase-презентация</p>
+            <p className="landing-showcase-dialog-label">Полный пример</p>
             <DialogTitle>{fixture.presentation.title}</DialogTitle>
             <DialogDescription>{details.subtitle}</DialogDescription>
           </DialogHeader>

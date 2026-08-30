@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import Placeholder from "@tiptap/extension-placeholder";
 import StarterKit from "@tiptap/starter-kit";
-import { Bold, Italic, List, Redo2, Undo2 } from "lucide-react";
+import { Bold, List, Redo2, Undo2 } from "lucide-react";
 
 type RichTextFieldProps = {
   value: string;
@@ -32,6 +32,7 @@ export function RichTextField({
         codeBlock: false,
         blockquote: false,
         horizontalRule: false,
+        italic: false,
       }),
       Placeholder.configure({ placeholder }),
     ],
@@ -75,14 +76,6 @@ export function RichTextField({
             title="Полужирный"
           >
             <Bold aria-hidden="true" size={15} />
-          </button>
-          <button
-            type="button"
-            className={editor.isActive("italic") ? "active" : ""}
-            onClick={() => editor.chain().focus().toggleItalic().run()}
-            title="Курсив"
-          >
-            <Italic aria-hidden="true" size={15} />
           </button>
           {multiline ? (
             <button
