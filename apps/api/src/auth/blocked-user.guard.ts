@@ -8,13 +8,17 @@ export class BlockedUserGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest<InternalRequest>();
-    const user = await this.prisma.user.findUnique({
+    // Auth.js and the API share the same user id, but the first authenticated
+    // API request can arrive before a corresponding domain profile exists.
+    // This guard runs only after InternalAuthGuard has authenticated the
+    // request, so provision the default profile atomically instead of turning
+    // a successful sign-in into a USER_NOT_FOUND response.
+    const user = await this.prisma.user.upsert({
       where: { id: request.userId },
+      create: { id: request.userId },
+      update: {},
       select: { id: true, blockedAt: true, blockReason: true, lastSeenAt: true },
     });
-    if (!user) {
-      throw new ForbiddenException({ code: "USER_NOT_FOUND", message: "Account is unavailable." });
-    }
     if (!user.blockedAt) {
       const staleBefore = new Date(Date.now() - 15 * 60 * 1000);
       if (user && (!user.lastSeenAt || user.lastSeenAt < staleBefore)) {
