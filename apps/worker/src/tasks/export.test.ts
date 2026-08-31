@@ -418,7 +418,7 @@ describe("createPptx", () => {
     expect(html).toContain('data-canvas-element="shape-1"');
     expect(html).toContain("opacity:0.4");
     expect(html).toContain("Canvas title");
-    expect(html).toContain('font-family:Arial, "Liberation Sans", "Noto Sans", "DejaVu Sans", sans-serif');
+    expect(html).toContain('font-family:"Nunito", "Nunito Variable", "Liberation Sans", "Noto Sans", "DejaVu Sans", sans-serif');
   });
 
   it("exports evidence sources compactly without breaking pptx", async () => {
@@ -477,7 +477,7 @@ describe("createPptx", () => {
 
       expect(slideXml, themeId).toContain(theme.colors.background.slice(1));
       expect(slideXml, themeId).toContain(theme.colors.text.slice(1));
-      expect(slideXml, themeId).toContain('typeface="Arial"');
+      expect(slideXml, themeId).toContain('typeface="Nunito"');
     }
   });
 

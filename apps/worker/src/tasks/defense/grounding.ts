@@ -3,6 +3,7 @@ import {
   defenseGroundingBundleSchema,
   defenseSourceMetadataSchema,
   presentationSchema,
+  PRESENTATION_FONT_FAMILY,
   requirementRuleSchema,
   resolvePresentationTheme,
   type DefenseAsset,
@@ -526,8 +527,8 @@ function applyStyleBrief(presentation: PresentationDocument, bundle: DefenseGrou
     },
     fonts: {
       ...theme.fonts,
-      ...(style.fonts.heading ? { heading: style.fonts.heading } : {}),
-      ...(style.fonts.body ? { body: style.fonts.body } : {}),
+      heading: PRESENTATION_FONT_FAMILY,
+      body: PRESENTATION_FONT_FAMILY,
     },
   };
 }

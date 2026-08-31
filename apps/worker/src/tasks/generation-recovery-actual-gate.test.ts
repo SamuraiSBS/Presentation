@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
 import { buildEmergencyReadablePresentation, handleGenerationJob, hasAcceptedNarrationRecoveryArtifacts } from "./generation.js";
 import { buildLocalPresentationFromAcceptedNarration } from "./presentation.js";
 import { productionQualityReleaseResult } from "./presentation-quality.js";
@@ -46,7 +45,28 @@ vi.mock("../observability.js", () => ({
   withTraceSpan: async (_name: string, _context: unknown, callback: () => Promise<unknown>) => callback(),
 }));
 
-const acceptedNarration = readFileSync(new URL("../../../../e2e-237-accepted-speech.txt", import.meta.url), "utf8");
+const acceptedNarrationTitles = [
+  "The photovoltaic effect",
+  "History of solar cells",
+  "Semiconductor materials",
+  "Charge separation",
+  "Solar panel construction",
+  "Efficiency factors",
+  "Environmental conditions",
+  "Engineering tradeoffs",
+  "Photovoltaic applications",
+  "Conclusions and next steps",
+];
+const acceptedNarration = Array.from({ length: 10 }, (_, index) => {
+  const order = index + 1;
+  const words = order === 1 ? 60 : order === 10 ? 80 : 70;
+  const firstSentenceWords = Math.floor(words / 2);
+  const sentence = (part: number) => Array.from(
+    { length: part === 1 ? words - firstSentenceWords : firstSentenceWords },
+    (_, wordIndex) => ["solar", "photon", "electron", "silicon", "current", "voltage", "panel", "spectrum", "charge", "circuit", "efficiency", "storage"][(wordIndex + part + order) % 12] + order,
+  ).join(" ");
+  return `\u0421\u043b\u0430\u0439\u0434 ${order}: ${acceptedNarrationTitles[index]}\n${sentence(0)}. ${sentence(1)}.`;
+}).join("\n\n");
 const sources = ["physics", "engineering", "energy"].map((id) => ({
   id, label: `${id} source`, type: "WEB" as const, size: 0,
   url: `https://science.example/${id}`,

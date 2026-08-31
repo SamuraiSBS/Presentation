@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import {
   auditSlideCanvas,
   ensureEditableCanvas,
+  PRESENTATION_FONT_FAMILY,
   PREMIUM_PRESENTATION_THEMES,
   publicNarrationFailureMessage,
   type PresentationDocument,
@@ -343,7 +344,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
           _count: { select: { costEvents: { where: { category: "image_search" } } } },
         },
       });
-      const economicGate = evaluateEconomicReleaseGate({
+      let economicGate = evaluateEconomicReleaseGate({
         presentation,
         sources,
         project: { ...generationProject, mandatorySourceSnapshot: true, acceptedNarrationRecovery: usedLocalPresentationRecovery },
@@ -357,6 +358,44 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
           imageSearchQueries: envelope._count.costEvents,
         },
       });
+      if (!economicGate.passed && economicGate.categories.includes("canvas_audit")) {
+        // The economic gate evaluates the exact persisted document. A local
+        // projection can still carry a provider-selected canvas family after
+        // the editorial gate has released it, so give it the same bounded
+        // roomier layout recovery used by the pre-save canvas audit.
+        presentation = repairPresentationLayout(presentation);
+        economicGate = evaluateEconomicReleaseGate({
+          presentation,
+          sources,
+          project: { ...generationProject, mandatorySourceSnapshot: true, acceptedNarrationRecovery: usedLocalPresentationRecovery },
+          envelope: {
+            limitRub: envelope.limitRub.toString(),
+            reservedRub: envelope.reservedRub.toString(),
+            settledRub: envelope.settledRub.toString(),
+            status: envelope.status,
+            sourceSnapshot: envelope.sourceSnapshot,
+            reservations: envelope.reservations,
+            imageSearchQueries: envelope._count.costEvents,
+          },
+        });
+        if (!economicGate.passed && economicGate.categories.includes("canvas_audit")) {
+          presentation = buildEmergencyReadablePresentation(presentation);
+          economicGate = evaluateEconomicReleaseGate({
+            presentation,
+            sources,
+            project: { ...generationProject, mandatorySourceSnapshot: true, acceptedNarrationRecovery: usedLocalPresentationRecovery },
+            envelope: {
+              limitRub: envelope.limitRub.toString(),
+              reservedRub: envelope.reservedRub.toString(),
+              settledRub: envelope.settledRub.toString(),
+              status: envelope.status,
+              sourceSnapshot: envelope.sourceSnapshot,
+              reservations: envelope.reservations,
+              imageSearchQueries: envelope._count.costEvents,
+            },
+          });
+        }
+      }
       logger.info({ projectId, jobId: job.id, stage: "validating", releaseGate: "economic_standard", passed: economicGate.passed, categories: economicGate.categories }, "economic presentation release gate");
       if (!economicGate.passed) throw new EconomicReleaseGateError(economicGate.categories);
     }
@@ -638,8 +677,8 @@ export function buildEmergencyReadablePresentation(presentation: PresentationDoc
           background,
           elements: [
             { id: `${slide.id}-background`, type: "shape", shape: "rect", x: 0, y: 0, w: 1280, h: 720, rotation: 0, zIndex: 0, opacity: 1, locked: true, fill: background, stroke: background, strokeWidth: 0 },
-            { id: `${slide.id}-title`, type: "text", role: "title", typographyRole: "slideTitle", x: 96, y: 84, w: 1088, h: 88, rotation: 0, zIndex: 2, opacity: 1, locked: false, text: title, runs: [{ text: title }], fontSize: 36, autoFit: false, fontFamily: "Arial", color: "#111827", bold: true, italic: false, underline: false, align: "center", valign: "middle" },
-            { id: `${slide.id}-body`, type: "text", role: "body", typographyRole: "body", x: 130, y: 230, w: 1020, h: 250, rotation: 0, zIndex: 2, opacity: 1, locked: false, text: thesis, runs: [{ text: thesis }], fontSize: 28, autoFit: false, fontFamily: "Arial", color: "#334155", bold: false, italic: false, underline: false, align: "center", valign: "middle" },
+            { id: `${slide.id}-title`, type: "text", role: "title", typographyRole: "slideTitle", x: 96, y: 84, w: 1088, h: 88, rotation: 0, zIndex: 2, opacity: 1, locked: false, text: title, runs: [{ text: title }], fontSize: 40, autoFit: false, fontFamily: PRESENTATION_FONT_FAMILY, color: "#111827", bold: true, italic: false, underline: false, align: "center", valign: "middle" },
+            { id: `${slide.id}-body`, type: "text", role: "body", typographyRole: "body", x: 130, y: 230, w: 1020, h: 250, rotation: 0, zIndex: 2, opacity: 1, locked: false, text: thesis, runs: [{ text: thesis }], fontSize: 28, autoFit: false, fontFamily: PRESENTATION_FONT_FAMILY, color: "#334155", bold: false, italic: false, underline: false, align: "center", valign: "middle" },
             { id: `${slide.id}-custom-canvas-marker`, type: "shape", shape: "rect", x: 0, y: 0, w: 1, h: 1, rotation: 0, zIndex: 0, opacity: 0, locked: true, fill: background, stroke: background, strokeWidth: 0 },
           ],
         },
@@ -682,6 +721,12 @@ export async function prepareGenerationSources(project: {
   // images, but never as factual grounding. Keep that boundary server-side so
   // a legacy `with_sources` mode cannot accidentally trigger Tavily research.
   const refreshWeb = project.workflow === "requirements_driven" ? false : options.refreshWeb ?? true;
+  // Staging can explicitly validate the one-job accepted-speech path without
+  // inventing a WEB source snapshot. This remains opt-in so production keeps
+  // the mandatory snapshot contract for ordinary presentation generation.
+  const allowAcceptedSpeechWithoutSourceSnapshot = process.env.ALLOW_PRESENTATION_WITHOUT_SOURCE_SNAPSHOT === "true"
+    && !refreshWeb
+    && Boolean(project.speechDraft?.trim());
   const sources: Source[] = [];
   const storedWebSources: Source[] = [];
 
@@ -692,7 +737,9 @@ export async function prepareGenerationSources(project: {
     });
     const snapshot = parseMandatorySourceSnapshot(envelope?.sourceSnapshot);
     if (snapshot) return snapshotSources(snapshot);
-    if (!refreshWeb) throw new Error("Mandatory source snapshot is unavailable for this generation run");
+    if (!refreshWeb && !allowAcceptedSpeechWithoutSourceSnapshot) {
+      throw new Error("Mandatory source snapshot is unavailable for this generation run");
+    }
   }
 
   for (const source of project.sources) {

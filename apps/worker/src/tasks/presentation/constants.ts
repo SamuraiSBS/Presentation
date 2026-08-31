@@ -27,6 +27,18 @@ export const STUDENT_CREATION_BRIEF_LINES = [
   "- treat the request as a university student assignment, seminar, report, or project defense, not a school class, teacher lesson, or child-oriented deck.",
 ].join("\n");
 
+export const GENERAL_CREATION_BRIEF_LINES = [
+  "Product focus: clear study presentations for the requested audience.",
+  "Creation brief:",
+  "- audience: general",
+  "- speechStyle: easy_professional",
+  "- slideDensity: brief_slides_full_speech",
+  "- visualStrategy: images_and_diagrams",
+  "- exportTarget: web_and_pptx_pdf",
+  "- create short, focused slides; keep the full explanation in speakerNotes and speechScript;",
+  "- adapt clarity and tone to the topic without assuming a specific education level;",
+].join("\n");
+
 export const NARRATION_SYSTEM_PROMPT = [
   "You write the full Russian oral narration for a university student study presentation.",
   "Return only plain text, not JSON and not markdown.",

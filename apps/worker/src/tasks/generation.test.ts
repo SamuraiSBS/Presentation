@@ -106,6 +106,7 @@ describe("prepareGenerationSources", () => {
     enrichPresentationImages.mockReset();
     materializePlannedVisuals.mockReset();
     materializePlannedVisuals.mockImplementation((presentation) => presentation);
+    process.env.WEB_SEARCH_PROVIDER = "tavily";
     costEnvelope.findUnique.mockReset();
     costEnvelope.findUniqueOrThrow.mockReset();
     costEnvelope.update.mockReset();
@@ -139,6 +140,28 @@ describe("prepareGenerationSources", () => {
         excerpt: "AI helps universities personalize feedback and automate routine checks.",
       }),
     ]);
+  });
+
+  it("allows the explicitly enabled accepted-speech presentation path without a source snapshot", async () => {
+    const previous = process.env.ALLOW_PRESENTATION_WITHOUT_SOURCE_SNAPSHOT;
+    process.env.ALLOW_PRESENTATION_WITHOUT_SOURCE_SNAPSHOT = "true";
+    costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: null, policySnapshot: { buckets: { sources: "0.50000000" } } });
+
+    try {
+      const sources = await prepareGenerationSources({
+        id: "project-accepted-speech",
+        prompt: "Explain photosynthesis",
+        mode: "fast_draft",
+        speechDraft: "Accepted narration provides the complete instructional context for this controlled staging presentation.",
+        sources: [],
+      }, { refreshWeb: false, costEnvelopeId: "envelope-accepted-speech" });
+
+      expect(sources).toEqual([expect.objectContaining({ type: "PROMPT", label: "Accepted speech text" })]);
+      expect(searchWebSources).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.ALLOW_PRESENTATION_WITHOUT_SOURCE_SNAPSHOT;
+      else process.env.ALLOW_PRESENTATION_WITHOUT_SOURCE_SNAPSHOT = previous;
+    }
   });
 
   it("keeps uploaded material when refreshing web research fails", async () => {
@@ -542,7 +565,7 @@ describe("prepareGenerationSources", () => {
 describe("accepted narration local recovery eligibility", () => {
   const acceptedNarration = Array.from({ length: 10 }, (_, index) => {
     const order = index + 1;
-    const words = Array.from({ length: order === 1 ? 118 : order === 10 ? 124 : 132 }, (_, word) => `evidence${order}_${word + 1}`);
+    const words = Array.from({ length: order === 1 ? 60 : order === 10 ? 80 : 70 }, (_, word) => `evidence${order}_${word + 1}`);
     const split = Math.floor(words.length / 2);
     return `Слайд ${order}: Saturn evidence ${order}\n${words.slice(0, split).join(" ")}. ${words.slice(split).join(" ")}.`;
   }).join("\n\n");
@@ -868,7 +891,7 @@ describe("handleGenerationJob failed narration envelope finalization", () => {
   it("marks the presentation ready after a structured provider failure using only accepted narration and its saved source snapshot", async () => {
     const acceptedNarration = Array.from({ length: 10 }, (_, index) => {
       const order = index + 1;
-      const words = Array.from({ length: order === 1 ? 118 : order === 10 ? 124 : 132 }, (_, word) => `evidence${order}_${word + 1}`);
+      const words = Array.from({ length: order === 1 ? 60 : order === 10 ? 80 : 70 }, (_, word) => `evidence${order}_${word + 1}`);
       const split = Math.floor(words.length / 2);
       return `Слайд ${order}: Saturn evidence ${order}\n${words.slice(0, split).join(" ")}. ${words.slice(split).join(" ")}.`;
     }).join("\n\n");
