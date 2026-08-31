@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import "./styles/slide-renderer.css";
 import "./landing.css";
 import { ArrowRight } from "lucide-react";
 import { LazyDemoGallery } from "@/components/landing/lazy-demo-gallery";
