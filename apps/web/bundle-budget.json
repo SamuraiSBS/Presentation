@@ -1,13 +1,13 @@
 {
   "shared": {
     "javascriptKiB": 1040,
-    "cssKiB": 48,
+    "cssKiB": 52,
     "totalKiB": 1088
   },
   "routes": {
     "/page": {
       "javascriptKiB": 1230,
-      "cssKiB": 48,
+      "cssKiB": 52,
       "totalKiB": 1280
     },
     "/projects/[id]/editor/page": {
