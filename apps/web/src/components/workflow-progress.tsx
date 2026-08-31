@@ -3,9 +3,10 @@
 import { Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-const stages = ["Тема", "Объём", "Источники", "Текст", "Слайды", "Экспорт"];
+const generationStages = ["Тема", "Объём", "Материалы", "Текст", "Слайды"];
 
-export function WorkflowProgress({ current }: { current: number }) {
+export function WorkflowProgress({ current, includeExport = false }: { current: number; includeExport?: boolean }) {
+  const stages = includeExport ? [...generationStages, "Экспорт"] : generationStages;
   const progressRef = useRef<HTMLOListElement>(null);
   const [overflow, setOverflow] = useState({ start: false, end: false });
 

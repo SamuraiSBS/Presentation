@@ -174,7 +174,7 @@
 
 @media (max-width: 760px) {
   .mobile-bottom-nav-inner { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-  .mobile-nav-item { min-height: 56px; padding-inline: 2px; font-size: 9.5px; }
+  .mobile-nav-item { min-height: 58px; padding-inline: 2px; font-size: 9.5px; }
   .mobile-nav-item-primary { color: var(--orange-deep); }
   .mobile-nav-item-primary > svg { width: 30px; height: 30px; margin-top: -14px; border-radius: 50%; padding: 6px; background: var(--orange); color: var(--ink); box-sizing: border-box; }
   .mobile-nav-item-primary.mobile-nav-item-active { background: transparent; }

@@ -356,12 +356,9 @@ export function TextStyleProperties({
         Шрифт
         <input
           className="input"
-          value={selected.fontFamily}
-          onChange={(event) =>
-            onUpdate({
-              fontFamily: event.target.value,
-            } as Partial<CanvasTextElement>)
-          }
+          value="Nunito"
+          readOnly
+          aria-label="Nunito font"
         />
       </label>
       <div className="segmented segmented-five">
@@ -374,16 +371,6 @@ export function TextStyleProperties({
           title="Полужирный"
         >
           Ж
-        </button>
-        <button
-          className={selected.italic ? "tool-active" : ""}
-          type="button"
-          onClick={() =>
-            onUpdate({ italic: !selected.italic } as Partial<CanvasTextElement>)
-          }
-          title="Курсив"
-        >
-          К
         </button>
         <button
           className={selected.underline ? "tool-active" : ""}

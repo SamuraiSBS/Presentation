@@ -7,7 +7,6 @@ import {
   Copy,
   Eye,
   Image as ImageIcon,
-  Italic,
   LayoutTemplate,
   Lock,
   MousePointer2,
@@ -48,7 +47,6 @@ export type IconName =
   | "plus"
   | "settings"
   | "bold"
-  | "italic"
   | "underline";
 
 const editorIcons: Record<IconName, LucideIcon> = {
@@ -73,7 +71,6 @@ const editorIcons: Record<IconName, LucideIcon> = {
   plus: Plus,
   settings: Settings2,
   bold: Bold,
-  italic: Italic,
   underline: Underline,
 };
 

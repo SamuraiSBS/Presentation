@@ -31,6 +31,7 @@ import type {
 } from "./schemas.js";
 import { resolvePresentationTheme } from "./themes.js";
 import { presentationTypography, typographyForCanvasText } from "./typography.js";
+import { PRESENTATION_FONT_FAMILY } from "./fonts.js";
 import {
     EDITORIAL_CONTENT_WIDTH,
     EDITORIAL_GUTTER,
@@ -1678,7 +1679,7 @@ function addQuoteCanvas(slide: Slide, theme: PresentationTheme, elements: Canvas
       fontFamily: theme.fonts.heading,
       color: theme.colors.text,
       bold: true,
-      italic: true,
+      italic: false,
       align: "center",
     }),
   );
@@ -2339,10 +2340,10 @@ function textElement(
     runs: [{ text }],
     fontSize: options.fontSize || 28,
     autoFit: options.autoFit,
-    fontFamily: options.fontFamily || "Arial",
+    fontFamily: PRESENTATION_FONT_FAMILY,
     color: options.color || "#161A1F",
     bold: Boolean(options.bold),
-    italic: Boolean(options.italic),
+    italic: false,
     underline: Boolean(options.underline),
     align: options.align || "left",
     valign: options.valign || "top",

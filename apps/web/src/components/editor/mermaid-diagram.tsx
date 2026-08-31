@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
+import { PRESENTATION_FONT_STACK } from "@studydeck/shared";
 import type { MermaidDiagramSpec } from "@studydeck/shared";
 
 type MermaidDiagramProps = {
@@ -28,7 +29,7 @@ export function MermaidDiagram({ diagram }: MermaidDiagramProps) {
           securityLevel: "strict",
           theme: "base",
           themeVariables: {
-            fontFamily: "Nunito, Arial, sans-serif",
+            fontFamily: PRESENTATION_FONT_STACK,
             primaryColor: "#FFF7EC",
             primaryTextColor: "#2C2116",
             primaryBorderColor: "#E3C5A2",

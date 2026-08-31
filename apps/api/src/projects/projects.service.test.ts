@@ -1,5 +1,6 @@
 import type { ConfigService } from "@nestjs/config";
 import type { Queue } from "bullmq";
+import { Prisma } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 import type { ProjectAccessService } from "../access/project-access.service.js";
 import type { PrismaService } from "../prisma/prisma.service.js";
@@ -72,6 +73,7 @@ function createHarness() {
   const prisma = {
     $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
     project: {
+      findFirst: vi.fn(),
       findUnique: vi.fn(),
       findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
@@ -150,6 +152,84 @@ describe("ProjectsService creation", () => {
       include: { sources: true, presentation: true },
     });
     expect(tx.project.create.mock.calls[0][0].data.prompt).toContain("brief_slides_full_speech");
+  });
+
+  it("returns the existing project for a repeated creation request", async () => {
+    const { service, prisma, tx, usage } = createHarness();
+    prisma.project.findFirst.mockResolvedValueOnce({ id: "project-existing" });
+    vi.spyOn(service, "getAccessible").mockResolvedValue({ id: "project-existing" } as never);
+
+    await expect(service.create("user-1", {
+      title: "AI in education",
+      prompt: "Create a concise presentation about AI in education.",
+      scenario: "general",
+      level: "general",
+      mode: "with_sources",
+      slideCount: 6,
+      idempotencyKey: "new-project-request-1",
+    })).resolves.toEqual({ id: "project-existing" });
+
+    expect(tx.project.create).not.toHaveBeenCalled();
+    expect(usage.assertSlideCount).not.toHaveBeenCalled();
+    expect(service.getAccessible).toHaveBeenCalledWith("user-1", "project-existing");
+  });
+
+  it("recovers the project created by a concurrent request after P2002", async () => {
+    const { service, prisma, tx } = createHarness();
+    const duplicate = new Prisma.PrismaClientKnownRequestError("duplicate", {
+      code: "P2002",
+      clientVersion: "test",
+    });
+    prisma.project.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "project-concurrent" });
+    tx.project.create.mockRejectedValueOnce(duplicate);
+    vi.spyOn(service, "getAccessible").mockResolvedValue({ id: "project-concurrent" } as never);
+
+    await expect(service.create("user-1", {
+      title: "AI in education",
+      prompt: "Create a concise presentation about AI in education.",
+      scenario: "general",
+      level: "general",
+      mode: "with_sources",
+      slideCount: 6,
+      idempotencyKey: "new-project-request-2",
+    })).resolves.toEqual({ id: "project-concurrent" });
+
+    expect(service.getAccessible).toHaveBeenCalledWith("user-1", "project-concurrent");
+  });
+
+  it("keeps different idempotency keys independent", async () => {
+    const { service, prisma, tx } = createHarness();
+    prisma.project.findFirst.mockResolvedValue(null);
+    tx.project.create
+      .mockResolvedValueOnce(project({ id: "project-a" }))
+      .mockResolvedValueOnce(project({ id: "project-b" }));
+
+    await service.create("user-1", {
+      title: "AI in education",
+      prompt: "Create a concise presentation about AI in education.",
+      scenario: "general",
+      level: "general",
+      mode: "with_sources",
+      slideCount: 6,
+      idempotencyKey: "new-project-request-a",
+    });
+    await service.create("user-1", {
+      title: "Climate in education",
+      prompt: "Create a concise presentation about climate in education.",
+      scenario: "general",
+      level: "general",
+      mode: "with_sources",
+      slideCount: 6,
+      idempotencyKey: "new-project-request-b",
+    });
+
+    expect(tx.project.create).toHaveBeenCalledTimes(2);
+    expect(tx.project.create.mock.calls.map(([call]) => call.data.creationRequestKey)).toEqual([
+      "new-project-request-a",
+      "new-project-request-b",
+    ]);
   });
 });
 

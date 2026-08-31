@@ -107,32 +107,54 @@ export class ProjectsService {
   }
 
   async create(userId: string, input: CreateProjectInput) {
-    const created = await withTraceSpan("api.project.create", {
-      "studydeck.stage": "project_create",
-      "studydeck.slide_count": input.slideCount,
-      "studydeck.mode": input.mode,
-    }, async () => this.prisma.$transaction(async (tx) => {
-      await this.usage.assertSlideCount(tx, userId, input.slideCount);
-      return tx.project.create({
-        data: {
-          userId,
-          title: input.title,
-          prompt: promptWithGenerationBrief(input.prompt, input.generationBrief),
-          scenario: input.scenario,
-          level: input.level,
-          mode: input.mode,
-          slideCount: input.slideCount,
-        },
-        include: { sources: true, presentation: true },
+    if (input.idempotencyKey) {
+      const repeated = await this.prisma.project.findFirst({
+        where: { userId, creationRequestKey: input.idempotencyKey, workflow: "standard" },
+        select: { id: true },
       });
-    }));
-    void this.productAnalytics?.capture(userId, "project_created", {
-      scenario: input.scenario,
-      mode: input.mode,
-      workflow: "standard",
-      slide_count: input.slideCount,
-    });
-    return created;
+      if (repeated) return this.getAccessible(userId, repeated.id);
+    }
+
+    try {
+      const created = await withTraceSpan("api.project.create", {
+        "studydeck.stage": "project_create",
+        "studydeck.slide_count": input.slideCount,
+        "studydeck.mode": input.mode,
+      }, async () => this.prisma.$transaction(async (tx) => {
+        await this.usage.assertSlideCount(tx, userId, input.slideCount);
+        return tx.project.create({
+          data: {
+            userId,
+            ...(input.idempotencyKey ? { creationRequestKey: input.idempotencyKey } : {}),
+            title: input.title,
+            prompt: promptWithGenerationBrief(input.prompt, input.generationBrief),
+            scenario: input.scenario,
+            level: input.level,
+            mode: input.mode,
+            slideCount: input.slideCount,
+          },
+          include: { sources: true, presentation: true },
+        });
+      }, {
+        maxWait: 10_000,
+        timeout: 15_000,
+      }));
+      void this.productAnalytics?.capture(userId, "project_created", {
+        scenario: input.scenario,
+        mode: input.mode,
+        workflow: "standard",
+        slide_count: input.slideCount,
+      });
+      return created;
+    } catch (error) {
+      if (!input.idempotencyKey || !isUniqueViolation(error)) throw error;
+      const concurrent = await this.prisma.project.findFirst({
+        where: { userId, creationRequestKey: input.idempotencyKey, workflow: "standard" },
+        select: { id: true },
+      });
+      if (!concurrent) throw error;
+      return this.getAccessible(userId, concurrent.id);
+    }
   }
 
   async getAccessible(userId: string, id: string) {
@@ -935,6 +957,10 @@ function safeFileName(value: string) {
 
 function cleanText(value: unknown) {
   return String(value || "").replace(/\u0000/g, "").replace(/\s+/g, " ").trim();
+}
+
+function isUniqueViolation(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 }
 
 function promptWithGenerationBrief(prompt: string, brief?: CreateProjectInput["generationBrief"]) {

@@ -313,7 +313,7 @@ export const generationPipelineArtifactsSchema = z.object({
 export type GenerationPipelineArtifacts = z.infer<typeof generationPipelineArtifactsSchema>;
 
 export const generationBriefSchema = z.object({
-  audience: z.enum(["school_student", "university_student"]).default("university_student"),
+  audience: z.enum(["general", "school_student", "university_student"]).default("general"),
   speechStyle: z.enum(["easy_professional"]).default("easy_professional"),
   slideDensity: z.enum(["brief_slides_full_speech"]).default("brief_slides_full_speech"),
   visualStrategy: z.enum(["images_and_diagrams"]).default("images_and_diagrams"),

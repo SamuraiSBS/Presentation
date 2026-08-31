@@ -69,6 +69,19 @@ input[type="file"]::file-selector-button:hover {
   color: var(--ink);
 }
 
+.file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 input[type="color"] {
   min-width: 42px;
   min-height: 38px;
@@ -244,4 +257,396 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   .route-error-state { grid-template-columns: 1fr; }
   .route-error-actions { grid-column: auto; }
   .route-error-actions > * { width: 100%; }
+}
+
+/* Shared workflow and UI primitives. These controls are rendered from the
+   private app shell on more routes than the creation and review pages. */
+.journey-progress {
+  position: relative;
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 18px;
+  overflow-x: auto;
+  padding: 2px 1rem 8px;
+  scroll-padding-inline: 1rem;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.journey-progress[data-overflow-start]::before,
+.journey-progress[data-overflow-end]::after {
+  position: absolute;
+  inset-block: 2px 8px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  color: var(--orange-deep);
+  font-size: 16px;
+  font-weight: 900;
+  pointer-events: none;
+}
+
+.journey-progress[data-overflow-start]::before {
+  content: "‹";
+  left: 0;
+  background: var(--surface);
+}
+
+.journey-progress[data-overflow-end]::after {
+  content: "›";
+  right: 0;
+  background: var(--surface);
+}
+
+.journey-progress li {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  flex: 0 0 auto;
+  border-radius: 12px;
+  padding: 7px 12px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.journey-progress li > span {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: #f1e8dd;
+}
+
+.journey-progress .journey-progress-complete { color: var(--green); }
+.journey-progress .journey-progress-complete > span { background: #ddf6e9; }
+.journey-progress .journey-progress-active { background: var(--orange-soft); color: var(--ink); }
+.journey-progress .journey-progress-active > span { background: var(--orange); }
+
+.ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius);
+  font-weight: 850;
+  line-height: 1;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    transform var(--motion-fast) var(--ease-out),
+    background var(--motion-base) var(--ease-out),
+    box-shadow var(--motion-base) var(--ease-out),
+    opacity var(--motion-base) var(--ease-out);
+}
+
+.ui-button:focus-visible,
+.ui-tabs-trigger:focus-visible,
+.ui-dropdown-item:focus-visible,
+.ui-dialog-close:focus-visible,
+.ui-tooltip-content:focus-visible {
+  outline: 0;
+  box-shadow: var(--focus-ring);
+}
+
+.ui-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.ui-button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.ui-button-default {
+  background: var(--orange);
+  color: var(--ink);
+}
+
+.ui-button-secondary,
+.ui-button-ghost {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.ui-button-ghost {
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+}
+
+.ui-button-danger {
+  background: var(--error);
+  color: #fff;
+}
+
+.ui-button-size-default {
+  min-height: var(--control-size);
+  padding: 0 14px;
+}
+
+.ui-button-size-sm {
+  min-height: var(--control-size-compact);
+  padding: 0 11px;
+  font-size: 13px;
+}
+
+.ui-button-size-icon {
+  width: var(--control-size);
+  min-width: var(--control-size);
+  min-height: var(--control-size);
+  padding: 0;
+}
+
+.ui-progress {
+  position: relative;
+  height: 7px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #efd8bd;
+}
+
+.ui-progress-indicator {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--orange);
+  transition: transform 450ms var(--ease-out);
+}
+
+.ui-tabs-list {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px;
+  background: color-mix(in srgb, var(--surface-2) 72%, var(--surface));
+}
+
+.ui-tabs-trigger {
+  min-height: 36px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 14px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.ui-tabs-trigger[data-state="active"] {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 3px 10px rgba(111, 61, 14, 0.08);
+}
+
+.ui-tabs-content {
+  margin-top: 18px;
+}
+
+.ui-dialog-overlay {
+  position: fixed;
+  z-index: var(--z-dialog);
+  inset: 0;
+  background: rgba(39, 27, 16, 0.42);
+  backdrop-filter: blur(5px);
+}
+
+.ui-dialog-content {
+  position: fixed;
+  z-index: calc(var(--z-dialog) + 1);
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: min(calc(100vw - 32px), 480px);
+  gap: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-major);
+  padding: 24px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 22px 60px rgba(58, 33, 9, 0.22);
+  transform: translate(-50%, -50%);
+}
+
+.ui-dialog-header {
+  display: grid;
+  gap: 8px;
+}
+
+.ui-dialog-title {
+  margin: 0;
+  padding-right: 34px;
+  font-size: 22px;
+  line-height: 1.15;
+}
+
+.ui-dialog-description {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.ui-dialog-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.ui-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.ui-dropdown-content {
+  z-index: var(--z-dropdown);
+  min-width: 210px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-editor);
+  padding: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-raised);
+}
+
+.ui-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 146px;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0 10px 0 12px;
+  background: linear-gradient(145deg, #fffefb, #fff6ea);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), background var(--motion-base) var(--ease-out);
+}
+
+.ui-select-trigger:hover,
+.ui-select-trigger[data-state="open"] {
+  border-color: var(--orange-bright);
+  background: #fff9f2;
+}
+
+.ui-select-trigger[data-state="open"] { box-shadow: var(--focus-ring); }
+.ui-select-trigger:disabled { cursor: not-allowed; opacity: .55; }
+.ui-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-select-chevron { flex: none; color: var(--orange-deep); transition: transform var(--motion-fast) var(--ease-out); }
+.ui-select-trigger[data-state="open"] .ui-select-chevron { transform: rotate(180deg); }
+
+.ui-select-content {
+  width: max(var(--radix-dropdown-menu-trigger-width), 190px);
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 7px;
+  border-color: color-mix(in srgb, var(--orange-bright) 44%, var(--line));
+  border-radius: 14px;
+  background: #fffdf9;
+}
+
+.ui-select-content .ui-dropdown-item { min-height: 38px; padding-inline: 10px; }
+.ui-select-content .ui-dropdown-indicator { width: 22px; color: var(--orange-deep); }
+.ui-select-content .ui-dropdown-indicator svg { width: 20px; height: 20px; stroke-width: 3.4; }
+
+.ui-dropdown-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  border-radius: 10px;
+  padding: 7px 9px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ui-dropdown-item[data-highlighted] {
+  outline: 0;
+  background: var(--orange-soft);
+  color: var(--orange-deep);
+}
+
+.ui-dropdown-item[data-disabled] {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.ui-dropdown-label {
+  padding: 7px 9px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.ui-dropdown-separator {
+  height: 1px;
+  margin: 6px -6px;
+  background: var(--line);
+}
+
+.ui-dropdown-indicator {
+  display: grid;
+  place-items: center;
+  width: 16px;
+}
+
+.ui-dropdown-chevron {
+  margin-left: auto;
+}
+
+.ui-dropdown-inset {
+  padding-left: 28px;
+}
+
+.ui-tooltip-content {
+  z-index: calc(var(--z-dropdown) + 1);
+  max-width: 260px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, var(--ink));
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.25;
+  box-shadow: var(--shadow-raised);
+  transform-origin: var(--radix-tooltip-content-transform-origin);
+  animation: tooltip-in 140ms var(--ease-out);
+}
+
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }

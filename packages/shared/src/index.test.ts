@@ -98,6 +98,28 @@ describe("shared contracts", () => {
     ).not.toThrow();
   });
 
+  it("accepts an optional project creation idempotency key", () => {
+    const parsed = createProjectInputSchema.parse({
+      title: "Idempotent project",
+      prompt: "Create a presentation with a stable retry key.",
+      scenario: "general",
+      level: "general",
+      mode: "with_sources",
+      slideCount: 6,
+      idempotencyKey: "new-project-request-123",
+    });
+
+    expect(parsed.idempotencyKey).toBe("new-project-request-123");
+    expect(createProjectInputSchema.parse({
+      title: "Without key",
+      prompt: "Create a presentation without an idempotency key.",
+      scenario: "general",
+      level: "general",
+      mode: "fast_draft",
+      slideCount: 6,
+    }).idempotencyKey).toBeUndefined();
+  });
+
   it("exposes the fixed subscription generation limits", () => {
     expect(planLimits.free.generationLimit).toBe(3);
     expect(planLimits.free.exports).toEqual(["pdf", "pptx"]);
@@ -107,9 +129,11 @@ describe("shared contracts", () => {
     expect(planLimits.pro.generationLimit).toBe(15);
   });
 
-  it("accepts both school and university audiences while keeping the university default", () => {
-    expect(generationBriefSchema.parse({}).audience).toBe("university_student");
+  it("accepts the neutral audience and keeps legacy audience values readable", () => {
+    expect(generationBriefSchema.parse({}).audience).toBe("general");
+    expect(generationBriefSchema.parse({ audience: "general" }).audience).toBe("general");
     expect(generationBriefSchema.parse({ audience: "school_student" }).audience).toBe("school_student");
+    expect(generationBriefSchema.parse({ audience: "university_student" }).audience).toBe("university_student");
   });
 
   it("validates personal-account mutation contracts", () => {
@@ -344,7 +368,7 @@ describe("shared contracts", () => {
 
     expect(parsed.scenario).toBe("university_report");
     expect(parsed.level).toBe("university_student");
-    expect(parsed.generationBrief).toEqual(generationBriefSchema.parse({}));
+    expect(parsed.generationBrief).toEqual(generationBriefSchema.parse({ audience: "university_student" }));
     expect(createProjectInputSchema.parse({
       title: "Legacy input",
       prompt: "Create a regular legacy presentation request with enough detail.",
@@ -1966,7 +1990,7 @@ describe("shared contracts", () => {
       const theme = presentationThemeSchema.parse(PREMIUM_PRESENTATION_THEMES[themeId]);
 
       expect(theme.themeId).toBe(themeId);
-      expect(theme.fonts).toMatchObject({ heading: "Arial", body: "Arial" });
+      expect(theme.fonts).toMatchObject({ heading: "Nunito", body: "Nunito" });
       for (const color of Object.values(theme.colors)) {
         expect(color).toMatch(/^#[0-9A-F]{6}$/);
       }

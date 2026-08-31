@@ -1,11 +1,12 @@
 /**
- * Exported decks intentionally use a single, Windows-compatible typeface.
- * PDF rendering uses Liberation Sans as the metric-compatible worker fallback;
- * the PPTX keeps Arial so it opens without a substitute on supported Windows
- * PowerPoint installations.
+ * Exported decks intentionally use the same rounded typeface as the product UI.
+ * PDF rendering keeps broad fallbacks for worker environments where the bundled
+ * webfont cannot be loaded.
  */
-export const EXPORT_FONT_FAMILY = "Arial";
-export const EXPORT_PDF_FONT_STACK = 'Arial, "Liberation Sans", "Noto Sans", "DejaVu Sans", sans-serif';
+import { PRESENTATION_FONT_FAMILY } from "../presentation/fonts.js";
+
+export const EXPORT_FONT_FAMILY = PRESENTATION_FONT_FAMILY;
+export const EXPORT_PDF_FONT_STACK = `"${PRESENTATION_FONT_FAMILY}", "${PRESENTATION_FONT_FAMILY} Variable", "Liberation Sans", "Noto Sans", "DejaVu Sans", sans-serif`;
 
 export function exportFontFamily(_requested?: string | null) {
   return EXPORT_FONT_FAMILY;

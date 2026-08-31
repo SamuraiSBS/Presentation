@@ -7,8 +7,8 @@
   --slide-accent: #ff8a00;
   --slide-accent-alt: #6d3df7;
   --slide-line: #ddd7c9;
-  --slide-heading-font: Inter, ui-sans-serif, system-ui, sans-serif;
-  --slide-body-font: Inter, ui-sans-serif, system-ui, sans-serif;
+  --slide-heading-font: "Nunito Variable", Nunito, ui-sans-serif, system-ui, sans-serif;
+  --slide-body-font: "Nunito Variable", Nunito, ui-sans-serif, system-ui, sans-serif;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -26,6 +26,7 @@
   overflow: hidden;
   padding: clamp(20px, 3vw, 34px);
   font-family: var(--slide-body-font);
+  font-style: normal;
 }
 
 .slide-canvas::before {

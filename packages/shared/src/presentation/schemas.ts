@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { contentPlaceholderSchema } from "../defense/schemas.js";
 import { sourceRefSchema } from "../projects/schemas.js";
+import { PRESENTATION_FONT_FAMILY } from "./fonts.js";
 const unsupportedGeneratedTextPatterns = [
   /слайд\s+должен/i,
   /на\s+этом\s+слайде\s+нужно/i,
@@ -169,7 +170,11 @@ export const presentationThemeSchema = z.object({
     heading: z.string().min(1),
     body: z.string().min(1),
     tone: z.enum(["strict", "rounded", "bookish", "technical", "neutral"]),
-  }),
+  }).transform((fonts) => ({
+    ...fonts,
+    heading: PRESENTATION_FONT_FAMILY,
+    body: PRESENTATION_FONT_FAMILY,
+  })),
 });
 export type PresentationTheme = z.infer<typeof presentationThemeSchema>;
 
@@ -291,7 +296,7 @@ export const canvasTextElementSchema = canvasElementBaseSchema.extend({
   runs: z.array(canvasTextRunSchema).default([]),
   fontSize: z.number().int().min(8).max(160).default(28),
   autoFit: z.boolean().optional(),
-  fontFamily: z.string().min(1).default("Arial"),
+  fontFamily: z.string().min(1).default(PRESENTATION_FONT_FAMILY),
   color: presentationThemeColorSchema.default("#161A1F"),
   bold: z.boolean().default(false),
   italic: z.boolean().default(false),
