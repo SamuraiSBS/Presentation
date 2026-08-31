@@ -19,6 +19,7 @@ import {
 } from "@studydeck/shared";
 import { z } from "zod";
 import { logger } from "../../../observability.js";
+import { isManagedSlideCount, visualQuotaForSlideCount } from "../visual-policy.js";
 
 type ProjectInput = {
   id: string;
@@ -173,6 +174,7 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
     };
   }
   directions = balanceDeterministicVisualDirections(directions, project, narrativePlan, hasGroundedVisualContext);
+  const managedQuota = visualQuotaForSlideCount(project.slideCount);
   return designBriefSchema.parse({
     themePreset: theme.preset,
     themeId,
@@ -184,7 +186,7 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
     rhythm: {
       titleStyle: theme.fonts.tone === "bookish" ? "editorial" : theme.fonts.tone === "strict" ? "academic" : "bold",
       density: "low",
-      imageFrequency: "rare",
+      imageFrequency: managedQuota ? "frequent" : "rare",
       sectionBreaks: project.slideCount >= 6,
     },
     visualDirection: `${researchBrief.topic}: ${researchBrief.angle}`,
@@ -195,7 +197,9 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
       "Keep every photo in its own 35-60 percent grid column and never put text over an image.",
       `Support ${Math.max(1, narrativePlan.length)} planned story beats with distinct visual rhythm.`,
     ],
-    imageStrategy: "New-generation visual policy: real_photo, diagram, or none only. Use one real photo per five slides (hard maximum two) and only for a concrete source-grounded person, place, object, event, model, or period; turn abstract claims into a diagram, comparison, timeline, or statement.",
+    imageStrategy: managedQuota
+      ? `New-generation visual policy for ${project.slideCount} slides: exactly ${managedQuota.photos} real_photo, ${managedQuota.diagrams} diagram, and ${managedQuota.text} text_only directions; the final slide is always text_only. Use photos only for concrete source-grounded people, places, objects, events, models, periods, or phenomena; turn unavailable photo slots into local diagrams.`
+      : "New-generation visual policy: real_photo, diagram, or none only. Use the compatible legacy photo budget for non-standard deck sizes and only for a concrete source-grounded person, place, object, event, model, or period; turn abstract claims into a diagram, comparison, timeline, or statement.",
     slideDirections: directions,
   });
 }
@@ -355,6 +359,9 @@ export function balanceDeterministicVisualDirections(
   narrativePlan: SlideNarrative[],
   hasGroundedVisualContext: boolean,
 ) {
+  if (isManagedSlideCount(project.slideCount)) {
+    return applyManagedVisualQuota(directions, project, narrativePlan, hasGroundedVisualContext);
+  }
   if (!hasGroundedVisualContext || directions.length < 3 || !hasConcreteVisualTopic(project, narrativePlan)) {
     return applyEconomicPhotoAllocation(diversifySceneTextModes(directions, project, narrativePlan), project, narrativePlan);
   }
@@ -427,6 +434,127 @@ export function balanceDeterministicVisualDirections(
   }
 
   return applyEconomicPhotoAllocation(diversifySceneTextModes(balanced, project, narrativePlan), project, narrativePlan);
+}
+
+export function applyManagedVisualQuota(
+  directions: DesignBrief["slideDirections"],
+  project: ProjectInput,
+  narrativePlan: SlideNarrative[],
+  hasGroundedVisualContext: boolean,
+) {
+  const quota = visualQuotaForSlideCount(project.slideCount);
+  if (!quota) return directions;
+
+  const normalized = Array.from({ length: project.slideCount }, (_, index) => {
+    const order = index + 1;
+    return directions.find((direction) => direction.slideOrder === order)
+      || buildFallbackDirection(project, narrativePlan[index], order);
+  });
+  const finalIndex = normalized.length - 1;
+  const candidateIndexes = normalized.map((_, index) => index).filter((index) => index !== finalIndex);
+  const canUsePhotos = hasGroundedVisualContext && hasConcreteVisualTopic(project, narrativePlan);
+
+  const photoIndexes = canUsePhotos
+    ? [...candidateIndexes]
+      .filter((index) => isPhotoCandidate(normalized[index], project, narrativePlan[index]))
+      .sort((left, right) => scorePhotoCandidate(normalized[right], right, narrativePlan) - scorePhotoCandidate(normalized[left], left, narrativePlan))
+      .slice(0, quota.photos)
+    : [];
+  const photoSet = new Set(photoIndexes);
+
+  const diagramIndexes = [...candidateIndexes]
+    .filter((index) => !photoSet.has(index))
+    .sort((left, right) => scoreDiagramCandidate(normalized[right], right, narrativePlan) - scoreDiagramCandidate(normalized[left], left, narrativePlan))
+    .slice(0, quota.diagrams);
+  const diagramSet = new Set(diagramIndexes);
+
+  return normalized.map((direction, index) => {
+    const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, direction.slideOrder);
+    if (index === finalIndex) return withVisualMode(direction, plan, project, "none", "summary", "text_only");
+    if (photoSet.has(index)) {
+      const layout = index === 0 ? "full_bleed_image" as const : "split_image_text" as const;
+      return withVisualMode(direction, plan, project, "real_photo", layout, "photo");
+    }
+    if (diagramSet.has(index)) {
+      const layout = diagramLayoutFor(direction);
+      return withVisualMode(direction, plan, project, "diagram", layout, visualPurposeFor(layout, "diagram"));
+    }
+    const layout = textLayoutFor(direction, index === 0);
+    return withVisualMode(direction, plan, project, "none", layout, "text_only");
+  });
+}
+
+function buildFallbackDirection(project: ProjectInput, plan: SlideNarrative | undefined, order: number): DesignBrief["slideDirections"][number] {
+  const fallbackPlan = plan || buildFallbackNarrativeItem(project, order);
+  const layout = order === 1 ? "statement" as const : order === project.slideCount ? "summary" as const : "cards" as const;
+  return {
+    slideOrder: order,
+    visualRole: order === 1 ? "hero" : order === project.slideCount ? "summary" : "explain",
+    layoutIntent: layout,
+    imageStrategy: "none",
+    visualPurpose: "text_only",
+    visualRationale: visualRationaleFor(fallbackPlan, layout, "none"),
+    sceneTextMode: buildSceneTextMode(order, project.slideCount, order === 1 ? "hero" : order === project.slideCount ? "summary" : "explain", layout, "none"),
+    visualPrompt: buildDeterministicVisualPrompt(project, fallbackPlan, "none", layout),
+  };
+}
+
+function withVisualMode(
+  direction: DesignBrief["slideDirections"][number],
+  plan: SlideNarrative,
+  project: ProjectInput,
+  imageStrategy: DesignBrief["slideDirections"][number]["imageStrategy"],
+  layoutIntent: DesignBrief["slideDirections"][number]["layoutIntent"],
+  visualPurpose: DesignBrief["slideDirections"][number]["visualPurpose"],
+) {
+  return {
+    ...direction,
+    layoutIntent,
+    imageStrategy,
+    visualPurpose,
+    visualRationale: visualRationaleFor(plan, layoutIntent, imageStrategy),
+    sceneTextMode: buildSceneTextMode(direction.slideOrder, project.slideCount, direction.visualRole, layoutIntent, imageStrategy),
+    visualPrompt: direction.imageStrategy === imageStrategy && direction.layoutIntent === layoutIntent
+      ? completeVisualPrompt(project, plan, imageStrategy, layoutIntent, direction.visualPrompt)
+      : buildDeterministicVisualPrompt(project, plan, imageStrategy, layoutIntent),
+  };
+}
+
+function isPhotoCandidate(
+  direction: DesignBrief["slideDirections"][number],
+  project: ProjectInput,
+  plan: SlideNarrative | undefined,
+) {
+  const text = `${project.title} ${project.prompt} ${plan?.slideTitle || ""} ${plan?.keyMessage || ""}`;
+  return isConcreteVisualScene(text) || hasSpecificVisualAnchor(text);
+}
+
+function scorePhotoCandidate(direction: DesignBrief["slideDirections"][number], index: number, narrativePlan: SlideNarrative[]) {
+  const plan = narrativePlan[index];
+  return (direction.imageStrategy === "real_photo" ? 100 : 0)
+    + (direction.visualRole === "hero" || direction.visualRole === "context" ? 20 : 0)
+    + (direction.visualRole === "evidence" ? 10 : 0)
+    + (plan?.slideTitle ? plan.slideTitle.length : 0);
+}
+
+function scoreDiagramCandidate(direction: DesignBrief["slideDirections"][number], index: number, narrativePlan: SlideNarrative[]) {
+  const plan = narrativePlan[index];
+  return (direction.imageStrategy === "diagram" ? 100 : 0)
+    + (["diagram", "timeline", "comparison", "evidence_board"].includes(direction.layoutIntent) ? 60 : 0)
+    + (["compare", "sequence", "evidence", "explain"].includes(direction.visualRole) ? 30 : 0)
+    + (isExplanationHeavyScene(`${plan?.slideTitle || ""} ${plan?.keyMessage || ""}`) ? 20 : 0);
+}
+
+function diagramLayoutFor(direction: DesignBrief["slideDirections"][number]): DesignBrief["slideDirections"][number]["layoutIntent"] {
+  if (direction.layoutIntent === "comparison" || direction.visualRole === "compare") return "comparison";
+  if (direction.layoutIntent === "timeline" || direction.visualRole === "sequence") return "timeline";
+  return "diagram";
+}
+
+function textLayoutFor(direction: DesignBrief["slideDirections"][number], isCover: boolean): DesignBrief["slideDirections"][number]["layoutIntent"] {
+  if (isCover || direction.visualRole === "hero") return "statement";
+  if (direction.layoutIntent === "quote_spread" || direction.visualRole === "quote") return "quote_spread";
+  return "cards";
 }
 
 /** Economic standard runs reserve at most two concrete web-photo directions. */

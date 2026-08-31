@@ -47,6 +47,7 @@ import { getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechTimingBu
 import { GENERAL_CREATION_BRIEF_LINES, STUDENT_CREATION_BRIEF_LINES } from "../constants.js";
 import type { AitunnelNarrationTimingReason, FullNarrationSafeDiagnostics } from "../narration/processing.js";
 import { cleanMultilineText } from "../utilities.js";
+import { isManagedSlideCount, visualQuotaForSlideCount } from "../visual-policy.js";
 
 export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[], _researchBrief?: ResearchBrief) {
   const timingBudget = getRussianStudentSpeechTimingBudget(project);
@@ -107,6 +108,10 @@ export function buildDesignBriefPrompt(
   slideTextPlans: SlideTextPlan[],
 ) {
   const themeIds = ["studydeckEditorial"].join(", ");
+  const quota = visualQuotaForSlideCount(project.slideCount);
+  const visualQuotaInstruction = quota
+    ? `Managed visual quota for exactly ${project.slideCount} slides: ${quota.photos} real_photo, ${quota.diagrams} diagram, ${quota.text} text_only. Apply this exact count after your response is normalized; the final slide must always be text_only. If a photo cannot be grounded or later fetched, replace that slot with a substantive local diagram.`
+    : "For non-standard slide counts, preserve the compatible legacy visual strategy and keep the final slide text-led.";
   return [
     "Create a Lazyum DesignBrief JSON. You are choosing art direction, not drawing the slides.",
     `User topic and request: ${project.prompt}`,
@@ -134,7 +139,10 @@ export function buildDesignBriefPrompt(
     "Use real_photo only for a concrete, searchable person, place, object, company, event, artwork, historical scene, laboratory object, product, or environment that makes the idea more memorable.",
     "Use diagram for processes, comparisons, causes and effects, concept maps, timelines, structures, and systems. Diagram slides must be understandable from deterministic shapes and labels without an external image.",
     "Use none for strong theses, abstract claims, thinly sourced topics, reflective moments, and the final takeaway. Never request a random stock image merely to fill space.",
-    "Economic standard policy: use at most one real_photo per five slides, rounded up, with a hard maximum of two photos per deck. Use local diagrams for the remaining explanatory slides.",
+    visualQuotaInstruction,
+    isManagedSlideCount(project.slideCount)
+      ? "Photo directions must name a concrete source-grounded person, place, object, event, model, period, or phenomenon. Diagram directions must name a process, comparison, causal chain, timeline, or structure. Text directions are reserved for the final takeaway and the exact remaining text_only quota."
+      : "Use real_photo only for concrete grounded subjects and use local diagrams for explanatory material; do not invent a photo merely to fill space.",
     "Every real photo must occupy 35-60 percent of the slide in a separate grid column. Never place text over an image.",
     "Keep density low: one strong claim and no more than three short supporting points. Full explanation belongs in speaker notes.",
     "For real_photo or generated_illustration, visualPrompt must be a short, concrete, searchable subject describing visible people, place, object, action, or event. Do not write generic phrases such as 'educational presentation image'.",

@@ -37,6 +37,8 @@ import { normalizePresentation } from "./normalization/presentation.js";
 import { buildDeckStory, buildDesignBrief, buildResearchBrief, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "./planning/builders.js";
 import { generateAitunnelFullNarrationOutcome, generateAitunnelNarration, generateAitunnelPresentationFromNarration, generateNarrativePlanWithProvider, generateOpenAINarration, generateOpenAIPresentationFromNarration, generateWithAitunnel, generateWithOpenAI, generateWithYandex, generateYandexNarration, generateYandexPresentationFromNarration } from "./providers/generation.js";
 import { selectAiProviders } from "./providers/provider-selection.js";
+import { materializePlannedVisuals } from "../presentation-quality.js";
+import { isManagedSlideCount } from "./visual-policy.js";
 import { assertPresentationQuality, isDemoGenerationAllowed } from "./quality/orchestration.js";
 import { buildFallbackGeneratedText, demoPresentation } from "./utilities.js";
 
@@ -265,15 +267,16 @@ export function buildLocalPresentationFromAcceptedNarration(
   // projection instead of failing here through the legacy visible-text gate
   // before the emergency readable canvas can run.
   if (!acceptedFullNarration) assertPresentationQuality(concise, project, "local");
+  const materialized = materializePlannedVisuals(concise, { fallbackMissingPhotos: isManagedSlideCount(project.slideCount) });
   return ensureEditableCanvas({
-    ...concise,
+    ...materialized,
     // Recovery is a content-safety operation, not a reason to replace the
     // product's presentation identity. The deterministic design brief and
     // editorial canvas already constrain their visible text independently of
     // the accepted long-form narration kept in speaker notes.
-    presentationTheme: concise.presentationTheme,
-    designBrief: concise.designBrief,
-    slides: concise.slides.map((slide) => ({
+    presentationTheme: materialized.presentationTheme,
+    designBrief: materialized.designBrief,
+    slides: materialized.slides.map((slide) => ({
       ...slide,
       // The accepted narration remains the canonical speech. Secondary
       // visible support points are compact projections and may otherwise

@@ -183,12 +183,17 @@ export function normalizePresentationNarrativePlan(
 export function normalizeDesignBrief(raw: unknown, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[]) {
   const parsed = designBriefSchema.safeParse(raw);
   if (parsed.success) {
-    return ensureDesignBriefDirections(parsed.data, project, narrativePlan);
+    return ensureDesignBriefDirections(parsed.data, project, narrativePlan, sources.some((source) => Boolean(source.excerpt || source.url)));
   }
   return buildDesignBrief(project, buildResearchBrief(project, sources), narrativePlan);
 }
 
-export function ensureDesignBriefDirections(brief: DesignBrief, project: ProjectInput, narrativePlan: SlideNarrative[]) {
+export function ensureDesignBriefDirections(
+  brief: DesignBrief,
+  project: ProjectInput,
+  narrativePlan: SlideNarrative[],
+  sourceGrounded = false,
+) {
   let normalized = brief;
   if (brief.slideDirections.length !== project.slideCount) {
     const fallback = buildDesignBrief(project, {
@@ -243,7 +248,8 @@ export function ensureDesignBriefDirections(brief: DesignBrief, project: Project
     };
   });
 
-  const hasGroundedVisualContext = normalized.slideDirections.some((direction) => direction.imageStrategy !== "none")
+  const hasGroundedVisualContext = sourceGrounded
+    || normalized.slideDirections.some((direction) => direction.imageStrategy !== "none")
     || /\b(?:[A-Z][A-Za-z]{2,}|\d{3,4})\b/.test(`${project.title} ${project.prompt}`);
   return designBriefSchema.parse({ ...normalized, slideDirections: balanceDeterministicVisualDirections(slideDirections, project, narrativePlan, hasGroundedVisualContext) });
 }

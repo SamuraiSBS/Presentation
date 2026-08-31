@@ -24,6 +24,7 @@ import {
   type GenerationProgressStage,
 } from "./job-progress.js";
 import { buildLocalPresentationFromAcceptedNarration, generateNarrationDraft, generatePresentationFromNarration } from "./presentation.js";
+import { isManagedSlideCount } from "./presentation/visual-policy.js";
 import { assessFullNarrationDocument } from "./presentation/narration/processing.js";
 import { searchWebSources } from "./web-search.js";
 import { enrichPresentationImages } from "./image-search.js";
@@ -264,7 +265,9 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     // Directions are not display data. Turn each planned local diagram into a
     // real slide visual before the canvas is built, including local recovery
     // documents which do not pass through the provider quality orchestrator.
-    const presentationWithPlannedVisuals = materializePlannedVisuals(groundedPresentation);
+    const presentationWithPlannedVisuals = materializePlannedVisuals(groundedPresentation, {
+      fallbackMissingPhotos: usedLocalPresentationRecovery && isManagedSlideCount(generationProject.slideCount),
+    });
     // A fresh presentation attempt may make its bounded, idempotent photo
     // lookups once. Recovery and retry paths stay entirely local: they reuse
     // only persisted narration/sources and diagram fallbacks, never Tavily.
@@ -598,7 +601,12 @@ export function repairPresentationLayout(presentation: PresentationDocument): Pr
       blocks: [],
       // An image is optional decoration. A local safe deck must never retain
       // an unfulfilled image requirement after image search or download fails.
-      visual: { ...slide.visual, type: slide.visual.type === "image" ? "schema" : slide.visual.type, image: undefined },
+      visual: {
+        ...slide.visual,
+        type: slide.visual.type === "image" ? "none" : slide.visual.type,
+        image: undefined,
+        description: slide.visual.type === "image" ? "Text-only local recovery surface." : slide.visual.description,
+      },
       canvas: undefined,
     })),
   });
@@ -669,7 +677,7 @@ export function buildEmergencyReadablePresentation(presentation: PresentationDoc
         // long narration; the full evidence remains in speaker notes.
         bullets: [],
         blocks: [],
-        visual: { type: "schema", title: `Схема: ${title}`, description: `Схема показывает: ${thesis}`, leftLabel: "", rightLabel: "", items: [], rows: [] },
+        visual: { type: "none", title: "", description: "Text-only emergency recovery surface.", leftLabel: "", rightLabel: "", items: [], rows: [] },
         canvas: {
           version: 2,
           width: 1280,

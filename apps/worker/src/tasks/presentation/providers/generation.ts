@@ -1290,7 +1290,12 @@ export async function generateDesignBriefWithProvider(
       prompt: buildDesignBriefPrompt(project, sources, researchBrief, narrativePlan, deckStory, slideTextPlans),
       schema: designBriefSchema as z.ZodType<DesignBrief>,
       schemaName: "studydeck_design_brief",
-      parse: (value): DesignBrief => ensureDesignBriefDirections(designBriefSchema.parse(parseJsonOutput(value)), project, narrativePlan),
+      parse: (value): DesignBrief => ensureDesignBriefDirections(
+        designBriefSchema.parse(parseJsonOutput(value)),
+        project,
+        narrativePlan,
+        sources.some((source) => Boolean(source.excerpt || source.url)),
+      ),
       jsonSchema: designBriefJsonSchema,
       maxAttempts: 1,
       yandexModelTier: "economy",

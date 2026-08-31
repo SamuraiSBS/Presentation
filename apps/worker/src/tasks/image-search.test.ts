@@ -83,14 +83,18 @@ describe("image search helpers", () => {
     expect(buildRefinedImageQueries({ id: "bmw", title: "BMW M3 history", prompt: "Explain the model" }, slide, direction)).toHaveLength(1);
   });
 
-  it("caps economic runs at one photo per five slides and two photos overall", () => {
+  it("uses the managed visual-policy photo quota and keeps the legacy fallback for other sizes", () => {
+    expect(economicPhotoLimit(6)).toBe(3);
+    expect(economicPhotoLimit(8)).toBe(4);
+    expect(economicPhotoLimit(10)).toBe(5);
+    expect(economicPhotoLimit(12)).toBe(6);
+    expect(economicPhotoLimit(14)).toBe(7);
     expect(economicPhotoLimit(1)).toBe(1);
     expect(economicPhotoLimit(5)).toBe(1);
-    expect(economicPhotoLimit(10)).toBe(2);
     expect(economicPhotoLimit(25)).toBe(2);
   });
 
-  it("keeps a ten-slide concrete deck to two searches and two stored web images", async () => {
+  it("keeps a ten-slide concrete deck to five searches and five stored web images", async () => {
     process.env.PRESENTATION_IMAGES_ENABLED = "true";
     const presentation = fixturePresentation();
     const slides = Array.from({ length: 10 }, (_, index) => ({
@@ -122,9 +126,9 @@ describe("image search helpers", () => {
       },
     );
 
-    expect(queries).toHaveLength(2);
-    expect(enriched.slides.filter((slide) => slide.visual.image?.provider === "tavily")).toHaveLength(2);
-    expect(enriched.designBrief?.slideDirections.filter((direction) => direction.imageStrategy === "real_photo")).toHaveLength(2);
+    expect(queries).toHaveLength(5);
+    expect(enriched.slides.filter((slide) => slide.visual.image?.provider === "tavily")).toHaveLength(5);
+    expect(enriched.designBrief?.slideDirections.filter((direction) => direction.imageStrategy === "real_photo")).toHaveLength(5);
   });
 
   it("uses a local fallback when the image bucket cannot be reserved", async () => {
@@ -469,6 +473,31 @@ describe("image search helpers", () => {
       layout: "process",
       visual: { type: "process_diagram", items: [{ text: "Collect the source material" }, { text: "Compare the key evidence" }, { text: "Explain the conclusion" }] },
     });
+  });
+
+  it("turns a Tavily search error into a visible local diagram", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    const slide = {
+      ...presentation.slides[0],
+      bullets: ["Identify the concrete subject", "Connect the evidence to the claim"],
+    };
+
+    const enriched = await enrichPresentationImages(
+      { id: "project-1", title: "AI in education", prompt: "Explain practical AI in school" },
+      { ...presentation, slides: [slide] },
+      {
+        searchImages: async () => { throw new Error("Tavily unavailable"); },
+        putObject: async () => undefined,
+      },
+    );
+
+    expect(enriched.slides[0]).toMatchObject({ layout: "process", visual: { type: "process_diagram" } });
+    expect(enriched.slides[0].visual.items.slice(0, 2)).toEqual([
+      { label: "1", text: "Identify the concrete subject" },
+      { label: "2", text: "Connect the evidence to the claim" },
+    ]);
+    expect(enriched.slides[0].visual.diagram?.source).toContain("-->");
   });
 
   it("resizes and normalizes oversized presentation images before upload", async () => {

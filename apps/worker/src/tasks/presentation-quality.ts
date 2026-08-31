@@ -16,6 +16,7 @@ import {
   type QualityIssue,
   type Slide,
   type Source,
+  type DesignBriefSlideDirection,
 } from "@studydeck/shared";
 import { errorLogFields, logger } from "../observability.js";
 import { STOP_WORDS } from "./presentation/constants.js";
@@ -28,8 +29,10 @@ import { normalizeVisual } from "./presentation/normalization/presentation.js";
 import { collectSemanticQualityIssues } from "./presentation/quality/semantic-rules.js";
 import { collectSourceGroundingIssues } from "./presentation/quality/source-grounding.js";
 import { applyInitialQualityRepairs } from "./presentation/quality/repair-orchestration.js";
+import { hasSubstantiveVisual, isManagedSlideCount } from "./presentation/visual-policy.js";
 
 export { findLongSlideTextIssues, isVisibleTextTooLong } from "./presentation/quality/visible-text-rules.js";
+export { hasSubstantiveVisual } from "./presentation/visual-policy.js";
 
 export type QualityProjectInput = {
   id: string;
@@ -936,17 +939,21 @@ export function findVisualDescriptionIssues(presentation: PresentationDocument):
 export function findVisualPlanIssues(presentation: PresentationDocument, project?: QualityProjectInput): QualityIssue[] {
   const contentSlides = presentation.slides.filter((slide) => slide.slideKind === "content");
   if (!contentSlides.length) return [];
+  // A plain emergency-readable document deliberately has no design brief or
+  // visual plan. There is no declared visual contract to enforce there, while
+  // legacy image-asset diagnostics below remain available.
+  const strictVisualPolicy = Boolean(presentation.designBrief)
+    && isManagedSlideCount(project?.slideCount ?? presentation.slideCount);
   const directionByOrder = new Map((presentation.designBrief?.slideDirections || []).map((direction) => [direction.slideOrder, direction]));
-  const hasVisualSupport = (slide: Slide) => {
-    const direction = directionByOrder.get(slide.order);
-    return Boolean(slide.visual.image)
-      || direction?.imageStrategy === "diagram"
-      || ["process_diagram", "comparison_diagram", "cause_effect_diagram", "timeline", "mind_map", "schema"].includes(slide.visual.type);
-  };
+  // Managed counts use the new substantive-visual contract. Legacy counts
+  // retain their historical non-none support semantics and allocation path.
+  const hasVisualSupport = (slide: Slide) => strictVisualPolicy
+    ? hasSubstantiveVisual(slide)
+    : slide.visual.type !== "none" || Boolean(slide.visual.image);
   const issues: QualityIssue[] = [];
   const supported = contentSlides.filter(hasVisualSupport);
 
-  if (contentSlides.length >= 3 && supported.length / contentSlides.length < 0.8) {
+  if (strictVisualPolicy && contentSlides.length >= 3 && supported.length / contentSlides.length < 0.8) {
     issues.push({
       severity: "major",
       category: "bad_visual",
@@ -956,7 +963,20 @@ export function findVisualPlanIssues(presentation: PresentationDocument, project
     });
   }
 
-  for (let index = 2; index < contentSlides.length; index += 1) {
+  for (const slide of strictVisualPolicy ? contentSlides : []) {
+    const direction = directionByOrder.get(slide.order);
+    if (direction?.imageStrategy !== "diagram" || hasSubstantiveVisual(slide)) continue;
+    issues.push({
+      slideId: slide.id,
+      severity: "major",
+      category: "bad_visual",
+      field: "visual",
+      message: "Planned diagram has no substantive visual payload.",
+      repairInstruction: "Build a local diagram with at least two labeled nodes and a connection from the slide thesis and supporting points.",
+    });
+  }
+
+  for (let index = 2; strictVisualPolicy && index < contentSlides.length; index += 1) {
     const run = contentSlides.slice(index - 2, index + 1);
     if (!run.every((slide) => !hasVisualSupport(slide))) continue;
     issues.push({
@@ -1029,9 +1049,12 @@ export function applyVisualPlanFallbacks(presentation: PresentationDocument, iss
     .filter((id): id is string => Boolean(id)));
   const needsCoverageRepair = issues.some((issue) => issue.message.includes("visual coverage") || issue.message.includes("Three consecutive"));
   const duplicateAssetIds = new Set(issues.filter((issue) => issue.field === "visual.image.objectKey").map((issue) => issue.slideId).filter((id): id is string => Boolean(id)));
-  const unfulfilledImageIds = new Set(issues.filter((issue) => issue.field === "visual.image.url").map((issue) => issue.slideId).filter((id): id is string => Boolean(id)));
+  const unfulfilledVisualIds = new Set(issues
+    .filter((issue) => issue.field === "visual.image.url" || issue.field === "visual")
+    .map((issue) => issue.slideId)
+    .filter((id): id is string => Boolean(id)));
   const slides = presentation.slides.map((slide) => {
-    if (unfulfilledImageIds.has(slide.id)) {
+    if (unfulfilledVisualIds.has(slide.id)) {
       return withGroundedDiagramFallback(slide);
     }
     if (duplicateAssetIds.has(slide.id) && slide.visual.image?.provider === "tavily") return withGroundedDiagramFallback(slide);
@@ -1043,12 +1066,12 @@ export function applyVisualPlanFallbacks(presentation: PresentationDocument, iss
     const contentDirections = designBrief.slideDirections.filter((direction) => slideByOrder.get(direction.slideOrder)?.slideKind === "content");
     const actualVisuals = contentDirections.filter((direction) => {
       const slide = slideByOrder.get(direction.slideOrder);
-      return Boolean(slide?.visual.image) || isSemanticDiagram(slide);
+      return hasSubstantiveVisual(slide);
     }).length;
     let remaining = Math.max(0, Math.ceil(contentDirections.length * 0.8) - actualVisuals);
     for (const direction of contentDirections) {
       const slide = slideByOrder.get(direction.slideOrder);
-      if (!remaining || !slide || Boolean(slide.visual.image) || isSemanticDiagram(slide)) continue;
+      if (!remaining || !slide || hasSubstantiveVisual(slide)) continue;
       coverageFallbackOrders.add(direction.slideOrder);
       remaining -= 1;
     }
@@ -1061,11 +1084,16 @@ export function applyVisualPlanFallbacks(presentation: PresentationDocument, iss
       ? { ...direction, layoutIntent: "summary" as const, imageStrategy: "none" as const, sceneTextMode: "takeaway" as const }
       : direction;
     const needsFallback = affectedIds.has(slide.id) || coverageFallbackOrders.has(direction.slideOrder);
-    if (!needsFallback || slide.visual.image) return direction;
+    const fallbackApplied = coverageFallbackOrders.has(direction.slideOrder)
+      || unfulfilledVisualIds.has(slide.id)
+      || duplicateAssetIds.has(slide.id);
+    if (!needsFallback || (!fallbackApplied && hasSubstantiveVisual(slide))) return direction;
     return {
       ...direction,
       layoutIntent: "diagram" as const,
       imageStrategy: "diagram" as const,
+      visualPurpose: "diagram" as const,
+      visualRationale: "A local diagram preserves the explanation when a photo or generated visual is unavailable.",
       sceneTextMode: "visual_labels" as const,
       visualPrompt: `Explanatory diagram for ${cleanText(slide.title)}`,
     };
@@ -1086,26 +1114,63 @@ export function applyVisualPlanFallbacks(presentation: PresentationDocument, iss
  */
 export function materializePlannedVisuals(
   presentation: PresentationDocument,
-  options: { refreshDiagramFallbacks?: boolean } = {},
+  options: { refreshDiagramFallbacks?: boolean; fallbackMissingPhotos?: boolean } = {},
 ): PresentationDocument {
   const directions = new Map((presentation.designBrief?.slideDirections || []).map((direction) => [direction.slideOrder, direction]));
+  const fallbackOrders = new Set<number>();
   let changed = false;
   const slides = presentation.slides.map((slide) => {
     const direction = directions.get(slide.order);
-    if (slide.visual.image || (isSemanticDiagram(slide) && !options.refreshDiagramFallbacks) || direction?.imageStrategy !== "diagram") return slide;
+    const missingPlannedPhoto = options.fallbackMissingPhotos
+      && direction?.imageStrategy === "real_photo"
+      && !slide.visual.image;
+    if (!missingPlannedPhoto && (slide.visual.image || (isSemanticDiagram(slide) && !options.refreshDiagramFallbacks) || direction?.imageStrategy !== "diagram")) return slide;
     changed = true;
+    fallbackOrders.add(slide.order);
     return withGroundedDiagramFallback(slide);
   });
-  return changed ? presentationSchema.parse({ ...presentation, slides }) : presentation;
+  if (!changed) return presentation;
+  const designBrief = presentation.designBrief
+    ? {
+      ...presentation.designBrief,
+      slideDirections: presentation.designBrief.slideDirections.map((direction) => {
+        if (!fallbackOrders.has(direction.slideOrder)) return direction;
+        const slide = slides.find((candidate) => candidate.order === direction.slideOrder);
+        return slide?.slideKind === "summary" ? {
+          ...direction,
+          layoutIntent: "summary" as const,
+          imageStrategy: "none" as const,
+          sceneTextMode: "takeaway" as const,
+        } : withDiagramDirection(direction, slide);
+      }),
+    }
+    : undefined;
+  return presentationSchema.parse({ ...presentation, slides, ...(designBrief ? { designBrief } : {}) });
 }
 
 function isSemanticDiagram(slide: Slide | undefined) {
-  return Boolean(slide && ["process_diagram", "comparison_diagram", "cause_effect_diagram", "timeline", "mind_map", "schema"].includes(slide.visual.type));
+  return hasSubstantiveVisual(slide);
+}
+
+function withDiagramDirection(
+  direction: DesignBriefSlideDirection,
+  slide: Slide | undefined,
+): DesignBriefSlideDirection {
+  return {
+    ...direction,
+    layoutIntent: "diagram",
+    imageStrategy: "diagram",
+    visualPurpose: "diagram",
+    visualRationale: "A local diagram preserves the explanation when a photo or generated visual is unavailable.",
+    sceneTextMode: "visual_labels",
+    visualPrompt: `Explanatory diagram for ${cleanText(slide?.title || direction.visualPrompt)}`,
+  };
 }
 
 function withGroundedDiagramFallback(slide: Slide): Slide {
-  const points = [slide.thesis, ...slide.bullets].map(cleanText).filter(Boolean).slice(0, 3);
-  const nodes = points.length >= 2 ? points : [cleanText(slide.thesis), cleanText(slide.title)].filter(Boolean);
+  const points = [slide.thesis, ...slide.bullets, slide.title].map(cleanText).filter(Boolean);
+  const nodes = [...new Set(points)].slice(0, 3);
+  while (nodes.length < 2) nodes.push(nodes.length ? `Implication of ${nodes[0]}` : "Topic context");
   const diagramSource = [
     "flowchart LR",
     ...nodes.map((point, index) => `    N${index}[${mermaidFallbackText(point)}]`),
@@ -1458,16 +1523,26 @@ export function findExportReadinessIssues(presentation: PresentationDocument): Q
 }
 
 export function findVisualFulfillmentIssues(presentation: PresentationDocument): QualityIssue[] {
-  return presentation.slides.flatMap((slide) => (slide.visual.type === "image" || slide.layout === "image-focus") && !slide.visual.image?.url
-    ? [{
+  return presentation.slides.flatMap((slide) => {
+    const plannedPhoto = presentation.designBrief?.slideDirections.some((direction) => direction.slideOrder === slide.order && direction.imageStrategy === "real_photo") || false;
+    const imageDeclared = slide.visual.type === "image" || (slide.layout === "image-focus" && (!plannedPhoto || isManagedSlideCount(presentation.slideCount)));
+    const diagramDeclared = (isManagedSlideCount(presentation.slideCount) || slide.visual.type === "process_diagram")
+      && ["process_diagram", "comparison_diagram", "cause_effect_diagram", "before_after_table", "pros_cons_table", "timeline", "mind_map", "schema"].includes(slide.visual.type);
+    if ((!imageDeclared && !diagramDeclared) || hasSubstantiveVisual(slide)) return [];
+    const imageMissing = imageDeclared;
+    return [{
         slideId: slide.id,
         severity: "blocker" as const,
         category: "bad_visual" as const,
-        field: "visual.image.url",
-        message: "Image visual or image-focus layout has no fulfilled image URL.",
-        repairInstruction: "Fulfill the requested image or replace this generated visual with a deterministic diagram; never leave an empty image slot.",
-      }]
-    : []);
+        field: imageMissing ? "visual.image.url" : "visual",
+        message: imageMissing
+          ? "Image visual or image-focus layout has no fulfilled image URL."
+          : "Diagram visual has no substantive payload.",
+        repairInstruction: imageMissing
+          ? "Fulfill the requested image or replace this generated visual with a deterministic diagram; never leave an empty image slot."
+          : "Build a deterministic diagram with at least two labeled nodes and a connection; never leave an empty diagram field.",
+      }];
+  });
 }
 
 export function findCanvasCanonicalContentIssues(presentation: PresentationDocument): QualityIssue[] {
@@ -1511,7 +1586,7 @@ export function productionQualityReleaseResult(
   const allowedGenerationModes = project.mandatorySourceSnapshot
     ? ["local", "aitunnel"]
     : ["yandex", "aitunnel"];
-  const issues = allowedGenerationModes.includes(presentation.generationMode)
+  const candidateIssues = allowedGenerationModes.includes(presentation.generationMode)
     ? critique.issues
     : [...critique.issues, {
         severity: "blocker" as const,
@@ -1524,6 +1599,15 @@ export function productionQualityReleaseResult(
           ? "Resume the linked presentation job from accepted narration using AITunnel or the local projection; do not use a demo or provider fallback document."
           : "Run a new generation with Yandex or AITunnel configured; do not substitute a local fallback document.",
       }];
+  // Accepted-narration recovery may intentionally concentrate deterministic
+  // diagram layouts after failed photo enrichment. Keep those advisory rhythm
+  // diagnostics out of the release result; substantive visual blockers and
+  // majors remain enforced.
+  const issues = project.acceptedNarrationRecovery
+    ? candidateIssues.filter((issue) => !(issue.category === "bad_visual"
+      && issue.severity === "minor"
+      && (issue.field === "layout" || issue.field?.startsWith("designBrief.slideDirections."))))
+    : candidateIssues;
   return {
     issueCategories: [...new Set(issues.map((issue) => issue.category))],
     attempts,

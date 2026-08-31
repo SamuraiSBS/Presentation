@@ -5,6 +5,7 @@ import { captureGenerationError, errorLogFields, logger } from "../observability
 import { putObjectBuffer } from "../storage.js";
 import { currentUsageContext, recordCostEvent } from "../usage-ledger.js";
 import { reserveCostEnvelope, settleCostEnvelope } from "../cost-envelope.js";
+import { isManagedSlideCount, visualQuotaForSlideCount } from "./presentation/visual-policy.js";
 
 type ProjectInput = {
   id: string;
@@ -57,7 +58,7 @@ type ProcessPresentationImageOptions = {
   maxHeight?: number;
 };
 
-type ImageReservation = { envelopeId: string; idempotencyKey: string };
+type ImageReservation = { envelopeId: string; idempotencyKey: string; amountRub: string };
 type ImageReservationResult = ImageReservation | "blocked" | undefined;
 
 export type ProcessedPresentationImage = {
@@ -82,7 +83,6 @@ type ImageSearchDependencies = {
 const TAVILY_QUERY_MAX_LENGTH = 400;
 const TAVILY_QUERY_SAFE_LENGTH = 380;
 const ECONOMIC_IMAGE_HARD_MAX = 2;
-const ECONOMIC_IMAGE_RESERVATION_RUB = String(Number(COST_ENVELOPE_BUCKETS.images) / ECONOMIC_IMAGE_HARD_MAX);
 
 export async function enrichPresentationImages(
   project: ProjectInput,
@@ -90,10 +90,10 @@ export async function enrichPresentationImages(
   dependencies: ImageSearchDependencies = {},
 ): Promise<PresentationDocument> {
   if (project.workflow === "requirements_driven" && project.allowWebImages !== true) {
-    return presentation;
+    return fallbackUnavailableManagedPhotos(presentation);
   }
   if (!isPresentationImagesEnabled(dependencies)) {
-    return presentation;
+    return fallbackUnavailableManagedPhotos(presentation);
   }
 
   const usedUrls = new Set<string>();
@@ -101,13 +101,14 @@ export async function enrichPresentationImages(
   const searchImages = dependencies.searchImages || searchTavilyImages;
   const downloadImage = dependencies.downloadImage || downloadRemoteImage;
   const putObject = dependencies.putObject || putObjectBuffer;
-  const reserveImage = dependencies.reserveImageBucket || reserveImageBucket;
   const settleImage = dependencies.settleImageBucket || settleImageBucket;
   const warn = dependencies.warn || ((message, error) => logger.warn({ ...errorLogFields(error) }, message));
 
   const slides = [];
   const fallbackDirections = new Map<number, DesignBriefSlideDirection>();
   const permittedPhotoOrders = permittedPhotoSlideOrders(presentation);
+  const reservePermittedImage = dependencies.reserveImageBucket
+    || ((slideOrder: number) => reserveImageBucket(slideOrder, presentation.slideCount || presentation.slides.length));
   for (const slide of presentation.slides) {
     const direction = presentation.designBrief?.slideDirections.find((item) => item.slideOrder === slide.order);
     if (!permittedPhotoOrders.has(slide.order)) {
@@ -124,7 +125,7 @@ export async function enrichPresentationImages(
     try {
       let image: SlideVisualImage | undefined;
       const query = buildSlideImageQuery(project, slide, direction);
-      const reservation = await reserveImage(slide.order);
+      const reservation = await reservePermittedImage(slide.order);
       if (reservation === "blocked") {
         const fallback = safeVisualFallback(direction, slide);
         if (fallback) fallbackDirections.set(fallback.slideOrder, fallback);
@@ -221,6 +222,28 @@ export async function enrichPresentationImages(
   };
 }
 
+function fallbackUnavailableManagedPhotos(presentation: PresentationDocument): PresentationDocument {
+  if (!isManagedSlideCount(presentation.slideCount || presentation.slides.length)) return presentation;
+  const fallbackDirections = new Map<number, DesignBriefSlideDirection>();
+  const slides = presentation.slides.map((slide) => {
+    const direction = presentation.designBrief?.slideDirections.find((item) => item.slideOrder === slide.order);
+    if (direction?.imageStrategy !== "real_photo" || slide.visual.image) return slide;
+    const fallback = safeVisualFallback(direction, slide);
+    if (fallback) fallbackDirections.set(fallback.slideOrder, fallback);
+    return fallbackSlideForMissingPhoto(slide, direction);
+  });
+  return {
+    ...presentation,
+    slides,
+    designBrief: presentation.designBrief && fallbackDirections.size
+      ? {
+        ...presentation.designBrief,
+        slideDirections: presentation.designBrief.slideDirections.map((direction) => fallbackDirections.get(direction.slideOrder) || direction),
+      }
+      : presentation.designBrief,
+  };
+}
+
 export function buildSlideImageQuery(
   project: ProjectInput,
   slide: PresentationDocument["slides"][number],
@@ -250,13 +273,14 @@ export function buildRefinedImageQueries(
   return [buildSlideImageQuery(project, slide, direction)].filter(Boolean);
 }
 
-/** One web photo per five slides, rounded up, never more than two per deck. */
+/** Managed decks use the exact visual-policy photo quota; other sizes keep the legacy cap. */
 export function economicPhotoLimit(slideCount: number) {
-  return Math.min(ECONOMIC_IMAGE_HARD_MAX, Math.max(0, Math.ceil(Math.max(0, slideCount) / 5)));
+  return visualQuotaForSlideCount(slideCount)?.photos
+    ?? Math.min(ECONOMIC_IMAGE_HARD_MAX, Math.max(0, Math.ceil(Math.max(0, slideCount) / 5)));
 }
 
 function permittedPhotoSlideOrders(presentation: PresentationDocument) {
-  const limit = economicPhotoLimit(presentation.slides.length);
+  const limit = economicPhotoLimit(presentation.slideCount || presentation.slides.length);
   const directions = presentation.designBrief?.slideDirections || [];
   return new Set(
     directions
@@ -270,23 +294,24 @@ function permittedPhotoSlideOrders(presentation: PresentationDocument) {
   );
 }
 
-async function reserveImageBucket(slideOrder: number): Promise<ImageReservationResult> {
+async function reserveImageBucket(slideOrder: number, slideCount: number): Promise<ImageReservationResult> {
   const envelopeId = currentUsageContext()?.costEnvelopeId;
   if (!envelopeId) return undefined;
   const idempotencyKey = `${envelopeId}:presentation-image:${slideOrder}`;
+  const amountRub = String(Number(COST_ENVELOPE_BUCKETS.images) / Math.max(1, economicPhotoLimit(slideCount)));
   const reservation = await reserveCostEnvelope({
     envelopeId,
     idempotencyKey,
     bucket: "images",
     stage: "presentation_image_search",
-    amountRub: ECONOMIC_IMAGE_RESERVATION_RUB,
+    amountRub,
   });
-  return reservation.status === "reserved" ? { envelopeId, idempotencyKey } : "blocked" as const;
+  return reservation.status === "reserved" ? { envelopeId, idempotencyKey, amountRub } : "blocked" as const;
 }
 
 async function settleImageBucket(reservation: ImageReservationResult) {
   if (!reservation || reservation === "blocked") return;
-  await settleCostEnvelope({ ...reservation, actualRub: ECONOMIC_IMAGE_RESERVATION_RUB, reason: "presentation_image_search" }).catch(() => undefined);
+  await settleCostEnvelope({ ...reservation, actualRub: reservation.amountRub, reason: "presentation_image_search" }).catch(() => undefined);
 }
 
 export function shouldSearchForSlideImage(
@@ -698,15 +723,14 @@ function safeVisualFallback(
   slide: PresentationDocument["slides"][number],
 ) {
   if (!direction || direction.imageStrategy !== "real_photo" || slide.visual.image) return undefined;
-  const diagramFriendly = direction.visualRole === "compare" || direction.visualRole === "sequence" || direction.visualRole === "evidence" || direction.visualRole === "explain" || direction.visualRole === "context";
   return {
     ...direction,
-    layoutIntent: diagramFriendly ? "diagram" as const : "statement" as const,
-    imageStrategy: diagramFriendly ? "diagram" as const : "none" as const,
-    sceneTextMode: diagramFriendly ? "visual_labels" as const : "talk_sentences" as const,
-    visualPrompt: diagramFriendly
-      ? `Explanatory diagram for ${cleanText(slide.title)}`
-      : `Text-led conclusion for ${cleanText(slide.title)}`,
+    layoutIntent: "diagram" as const,
+    imageStrategy: "diagram" as const,
+    visualPurpose: "diagram" as const,
+    visualRationale: "A local diagram preserves the explanation when a photo is unavailable.",
+    sceneTextMode: "visual_labels" as const,
+    visualPrompt: `Explanatory diagram for ${cleanText(slide.title)}`,
   };
 }
 
@@ -715,27 +739,40 @@ function fallbackSlideForMissingPhoto(
   direction?: DesignBriefSlideDirection,
 ) {
   if (direction?.imageStrategy !== "real_photo" || slide.visual.image) return slide;
-  const items = slide.bullets
-    .map((text, index) => ({ label: `${index + 1}`, text: cleanText(text) }))
-    .filter((item) => item.text)
-    .slice(0, 5);
-  // A failed photo lookup must not leave a decorative empty layout behind.
-  // Only promote the slide to a diagram when the generated slide already
-  // contains enough ordered material to explain a process.
-  if (items.length >= 3) {
-    return {
-      ...slide,
-      layout: "process" as const,
-      visual: {
-        ...slide.visual,
-        type: "process_diagram" as const,
-        title: cleanText(slide.title),
-        description: cleanText(slide.thesis),
-        items,
-      },
-    };
+  const points = [...slide.bullets, slide.thesis, slide.title]
+    .map(cleanText)
+    .filter(Boolean)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .slice(0, 3);
+  while (points.length < 2) {
+    points.push(points.length ? `Implication of ${points[0]}` : "Topic context");
   }
-  return { ...slide, layout: "statement" as const };
+  const items = points.map((text, index) => ({ label: `${index + 1}`, text: shorten(text, 180) }));
+  const mermaidNodes = items.map((item, index) => `    N${index}[${fallbackMermaidText(item.text)}]`);
+  const mermaidLinks = items.slice(0, -1).map((_, index) => `    N${index} --> N${index + 1}`);
+  return {
+    ...slide,
+    layout: "process" as const,
+    visual: {
+      ...slide.visual,
+      type: "process_diagram" as const,
+      title: shorten(slide.title, 100),
+      description: shorten(slide.thesis || slide.title, 260),
+      items,
+      diagram: {
+        kind: "flowchart" as const,
+        title: shorten(slide.title, 90),
+        caption: shorten(slide.thesis || slide.title, 160),
+        fallback: items.map((item) => item.text).join("\n"),
+        safety: "safe" as const,
+        source: ["flowchart LR", ...mermaidNodes, ...mermaidLinks].join("\n"),
+      },
+    },
+  };
+}
+
+function fallbackMermaidText(value: string) {
+  return cleanText(value).replace(/[<>{}[\]|"`]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "Topic";
 }
 
 function extensionFromContentType(contentType: string) {
