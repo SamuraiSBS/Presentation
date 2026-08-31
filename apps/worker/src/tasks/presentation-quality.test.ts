@@ -229,16 +229,16 @@ describe("presentation quality checks", () => {
     }) as PresentationDocument;
     const project = (slideCount: number) => ({ id: `timing-${slideCount}`, title: "Тема", prompt: "Тема", scenario: "university_report", level: "university_student", mode: "with_sources", slideCount });
 
-    expect(findSpeechTimingIssues(presentation(1169), project(10))).toHaveLength(1); // below 9 min
-    expect(findSpeechTimingIssues(presentation(1170), project(10))).toHaveLength(0); // 9 min
-    expect(findSpeechTimingIssues(presentation(1300), project(10))).toHaveLength(0);
-    expect(findSpeechTimingIssues(presentation(1560), project(10))).toHaveLength(0);
-    expect(findSpeechTimingIssues(presentation(1573), project(10))).toHaveLength(1); // 12.1 min
-    expect(findSpeechTimingIssues(presentation(1300), project(12))).toHaveLength(1);
-    expect(findSpeechTimingIssues(presentation(1560), project(12))).toHaveLength(0);
-    expect(findSpeechTimingIssues(presentation(1950), project(14))).toHaveLength(0);
-    expect(findSpeechTimingIssues(presentation(2600), project(14))).toHaveLength(0);
-    expect(findSpeechTimingIssues(presentation(900), project(6))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(599), project(10))).toHaveLength(1);
+    expect(findSpeechTimingIssues(presentation(600), project(10))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(700), project(10))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(800), project(10))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(801), project(10))).toHaveLength(1);
+    expect(findSpeechTimingIssues(presentation(599), project(12))).toHaveLength(1);
+    expect(findSpeechTimingIssues(presentation(800), project(12))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(599), project(14))).toHaveLength(1);
+    expect(findSpeechTimingIssues(presentation(800), project(14))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(600), project(6))).toHaveLength(0);
     expect(findSpeechTimingIssues(presentation(900), project(7))).toHaveLength(0);
     expect(findSpeechTimingIssues(presentation(900), { ...project(10), mode: "export" })).toHaveLength(0);
   });
@@ -855,7 +855,7 @@ describe("presentation quality checks", () => {
 
     const repaired = applyVisualPlanFallbacks(presentation, findVisualPlanIssues(presentation, project));
     const contentDirections = repaired.designBrief!.slideDirections.slice(0, 5);
-    expect(contentDirections.filter((direction) => direction.imageStrategy === "diagram" || direction.imageStrategy === "real_photo")).toHaveLength(3);
+    expect(contentDirections.filter((direction) => direction.imageStrategy === "diagram" || direction.imageStrategy === "real_photo")).toHaveLength(4);
     expect(repaired.designBrief!.slideDirections.at(-1)).toMatchObject({ imageStrategy: "none", layoutIntent: "summary" });
     expect(findVisualPlanIssues(repaired, project)).toHaveLength(0);
   });

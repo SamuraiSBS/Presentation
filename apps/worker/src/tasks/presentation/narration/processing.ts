@@ -428,21 +428,21 @@ export function validateNarrationSections(sections: NarrationSection[], project:
 
 /**
  * v6 full-document gate. It deliberately does not reuse the independent
- * section floors: the 10-slide total is authoritative and role targets are
+ * section floors: the whole-speech total is authoritative and role targets are
  * soft guidance. Diagnostics are typed so raw validator prose never has to
  * leave this module.
  */
 export function assessFullNarrationDocument(value: unknown, project: ProjectInput, narrativePlan: SlideNarrative[] = []): FullNarrationSafeDiagnostics {
   const text = cleanMultilineText(value);
   const sections = parseNarrationSections(text);
-  const expectedOrders = Array.from({ length: 10 }, (_, index) => index + 1);
+  const expectedOrders = Array.from({ length: project.slideCount }, (_, index) => index + 1);
   const issueCodes = new Set<FullNarrationIssueCode>();
   const affectedOrders = new Set<number>();
   const timing = getRussianStudentSpeechTimingBudget(project);
   const sectionWordCounts = sections.map((section) => wordCount(section.text));
   const headerLines = text.split("\n").filter((line) => parseNarrationHeader(line));
 
-  if (project.slideCount !== 10 || sections.length !== 10) {
+  if (sections.length !== project.slideCount) {
     issueCodes.add("section_count");
     expectedOrders.forEach((order) => affectedOrders.add(order));
   }
@@ -455,7 +455,7 @@ export function assessFullNarrationDocument(value: unknown, project: ProjectInpu
     expectedOrders.forEach((order) => affectedOrders.add(order));
   }
 
-  const sectionTargets = timing ? expectedOrders.map((order) => order === 1 ? timing.titleWordTarget : order === 10 ? timing.conclusionWordTarget : timing.contentWordTarget) : expectedOrders.map(() => 140);
+  const sectionTargets = timing ? expectedOrders.map((order) => order === 1 ? timing.titleWordTarget : order === project.slideCount ? timing.conclusionWordTarget : timing.contentWordTarget) : expectedOrders.map(() => 140);
   for (const [index, section] of sections.entries()) {
     const order = index + 1;
     const words = sectionWordCounts[index] || 0;
@@ -504,7 +504,7 @@ export function assessFullNarrationDocument(value: unknown, project: ProjectInpu
   const severeIssueCount = [...issueCodes].filter((code) => severeCodes.includes(code)).length;
   const hasCanonicalSectionCoverage = structuralIssueCount === 0;
   // Template, repetition and commentary defects are semantic repair work;
-  // they do not make a complete ten-section draft structurally unusable.
+  // they do not make a complete deck-sized draft structurally unusable.
   // Keeping this distinction lets the bounded targeted repair run and, if it
   // still cannot pass, preserves the best real-AI draft for review.
   const isStructurallyUsable = hasCanonicalSectionCoverage;
@@ -513,7 +513,7 @@ export function assessFullNarrationDocument(value: unknown, project: ProjectInpu
     totalWords,
     sectionWordCounts,
     issueCodes: [...issueCodes].sort(),
-    affectedSlideOrders: [...affectedOrders].filter((order) => Number.isInteger(order) && order >= 1 && order <= 10).sort((a, b) => a - b),
+    affectedSlideOrders: [...affectedOrders].filter((order) => Number.isInteger(order) && order >= 1 && order <= project.slideCount).sort((a, b) => a - b),
     isStructurallyUsable,
     isAccepted: isStructurallyUsable && issueCodes.size === 0,
     severeIssueCount,
@@ -556,7 +556,7 @@ export function selectBestFullNarrationAttempt(attempts: readonly FullNarrationA
     narration_full_rewrite: 1,
     narration_targeted_repair: 2,
   };
-  const targetWords = 1300;
+  const targetWords = 700;
   const best = [...eligible].sort((left, right) => {
     const leftIssues = left.diagnostics.severeIssueCount + left.diagnostics.structuralIssueCount;
     const rightIssues = right.diagnostics.severeIssueCount + right.diagnostics.structuralIssueCount;

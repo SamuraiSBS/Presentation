@@ -944,15 +944,14 @@ export function findVisualPlanIssues(presentation: PresentationDocument, project
       || ["process_diagram", "comparison_diagram", "cause_effect_diagram", "timeline", "mind_map", "schema"].includes(slide.visual.type);
   };
   const issues: QualityIssue[] = [];
-  const concreteTopic = isConcreteVisualTopic(presentation, project);
   const supported = contentSlides.filter(hasVisualSupport);
 
-  if (concreteTopic && contentSlides.length >= 3 && supported.length / contentSlides.length < 0.6) {
+  if (contentSlides.length >= 3 && supported.length / contentSlides.length < 0.8) {
     issues.push({
       severity: "major",
       category: "bad_visual",
       field: "designBrief.slideDirections.imageStrategy",
-      message: "Concrete topic visual coverage is below the 60% target after image enrichment.",
+      message: "Content-slide visual coverage is below the 80% target after image enrichment.",
       repairInstruction: "Convert the weakest text-led content directions to explanatory diagrams; do not insert an unrelated stock image.",
     });
   }
@@ -1046,7 +1045,7 @@ export function applyVisualPlanFallbacks(presentation: PresentationDocument, iss
       const slide = slideByOrder.get(direction.slideOrder);
       return Boolean(slide?.visual.image) || isSemanticDiagram(slide);
     }).length;
-    let remaining = Math.max(0, Math.ceil(contentDirections.length * 0.6) - actualVisuals);
+    let remaining = Math.max(0, Math.ceil(contentDirections.length * 0.8) - actualVisuals);
     for (const direction of contentDirections) {
       const slide = slideByOrder.get(direction.slideOrder);
       if (!remaining || !slide || Boolean(slide.visual.image) || isSemanticDiagram(slide)) continue;

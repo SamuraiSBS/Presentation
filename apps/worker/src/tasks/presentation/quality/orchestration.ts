@@ -318,7 +318,7 @@ export function repairReleaseCandidate(
 }
 
 function isAcceptedFullNarration(text: string, project: ProjectInput) {
-  return project.slideCount === 10 && assessFullNarrationDocument(text, project).isAccepted;
+  return assessFullNarrationDocument(text, project).isAccepted;
 }
 
 export function preserveAcceptedNarration(presentation: PresentationDocument, narrationText: string, project: ProjectInput): PresentationDocument {

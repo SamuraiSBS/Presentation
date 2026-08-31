@@ -318,7 +318,7 @@ export async function generateAitunnelFullNarrationOutcome(client: OpenAI, proje
     logV6NarrationRecoveryDecision(project.id, "repair_eligible", selected, attempts, calledStages, true);
     try {
       const repairRaw = await requestV6NarrationStage(client, project, "narration_targeted_repair", buildAitunnelTargetedNarrationRepairPrompt(project, sources, narrativePlan, rewritten, rewriteAttempt.diagnostics), reservations, calledStages, true);
-      const repaired = mergeV6TargetedRepair(rewritten, repairRaw, rewriteAttempt.diagnostics.affectedSlideOrders);
+      const repaired = mergeV6TargetedRepair(rewritten, repairRaw, rewriteAttempt.diagnostics.affectedSlideOrders, project.slideCount);
       const repairAttempt = { stage: "narration_targeted_repair" as const, text: repaired, diagnostics: assessFullNarrationDocument(repaired, project, narrativePlan) };
       attempts.push(repairAttempt);
       logV6NarrationAttemptAssessment(project.id, repairAttempt);
@@ -422,11 +422,13 @@ async function generateLegacyAitunnelNarration(client: OpenAI, model: string, pr
   }
 }
 
-function maximumFullNarrationDraft(_project: ProjectInput) {
-  return Array.from({ length: 10 }, (_, index) => {
+function maximumFullNarrationDraft(project: ProjectInput) {
+  const baseWords = Math.floor(800 / project.slideCount);
+  const extraWords = 800 % project.slideCount;
+  return Array.from({ length: project.slideCount }, (_, index) => {
     // `слово` is a representative Russian spoken-word fixture, not user text.
     // The envelope additionally budgets a 15% token safety margin.
-    const words = Array.from({ length: 156 }, (_unused, word) => `слово${index + 1}_${word + 1}`).join(" ");
+    const words = Array.from({ length: baseWords + (index < extraWords ? 1 : 0) }, (_unused, word) => `слово${index + 1}_${word + 1}`).join(" ");
     return `Слайд ${index + 1}: Раздел ${index + 1}\n${words}.`;
   }).join("\n\n");
 }
@@ -529,14 +531,14 @@ function buildV6NarrationRequest(stage: V6NarrationStage, prompt: string, json: 
   };
 }
 
-function mergeV6TargetedRepair(currentDraft: string, raw: string, requestedOrders: readonly number[]) {
+function mergeV6TargetedRepair(currentDraft: string, raw: string, requestedOrders: readonly number[], slideCount: number) {
   const parsed = aitunnelTargetedNarrationRepairResponseSchema.safeParse(parseJsonText(raw));
   if (!parsed.success) throw narrationFailure("quality");
   const received = Object.keys(parsed.data.replacements).map(Number).sort((left, right) => left - right);
   const expected = [...new Set(requestedOrders)].sort((left, right) => left - right);
   if (received.length !== expected.length || received.some((order, index) => order !== expected[index])) throw narrationFailure("quality");
   const sections = parseNarrationSections(currentDraft);
-  if (sections.length !== 10 || sections.some((section, index) => section.order !== index + 1)) throw narrationFailure("quality");
+  if (sections.length !== slideCount || sections.some((section, index) => section.order !== index + 1)) throw narrationFailure("quality");
   const replacements = new Map<number, string>();
   for (const [orderText, replacement] of Object.entries(parsed.data.replacements)) {
     const replacementSections = parseNarrationSections(replacement);
@@ -868,7 +870,7 @@ async function reservePersistedBatchedNarrationEnvelope(projectId: string, parts
 
 function buildAitunnelNarrationSections(project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[]): AitunnelNarrationSection[] {
   const timing = getRussianStudentSpeechTimingBudget(project);
-  if (!timing || project.slideCount !== 10 || narrativePlan.length !== 10) throw narrationFailure("quality");
+  if (!timing || narrativePlan.length !== project.slideCount) throw narrationFailure("quality");
   return narrativePlan.map((narrative, index) => {
     const slideOrder = index + 1;
     if (narrative.slideOrder !== slideOrder) throw narrationFailure("quality");

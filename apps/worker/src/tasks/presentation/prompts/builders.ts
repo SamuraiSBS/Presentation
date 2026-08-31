@@ -20,6 +20,16 @@ type ProjectInput = {
   slideCount: number;
 };
 
+function creationBriefLines(project: ProjectInput) {
+  return isGeneralProject(project)
+    ? GENERAL_CREATION_BRIEF_LINES
+    : STUDENT_CREATION_BRIEF_LINES;
+}
+
+function isGeneralProject(project: ProjectInput) {
+  return project.scenario === "general" || project.level === "general";
+}
+
 export class StructuredGenerationError extends Error {
   constructor(
     public readonly schemaName: string,
@@ -34,7 +44,7 @@ export class StructuredGenerationError extends Error {
 type PromptArtifacts = Partial<Pick<GenerationPipelineArtifacts, "researchBrief" | "deckStory" | "designBrief" | "slideBlueprints" | "slideTextPlans">>;
 
 import { getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechTimingBudget } from "@studydeck/shared";
-import { STUDENT_CREATION_BRIEF_LINES } from "../constants.js";
+import { GENERAL_CREATION_BRIEF_LINES, STUDENT_CREATION_BRIEF_LINES } from "../constants.js";
 import type { AitunnelNarrationTimingReason, FullNarrationSafeDiagnostics } from "../narration/processing.js";
 import { cleanMultilineText } from "../utilities.js";
 
@@ -51,7 +61,7 @@ export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[
     timingBudget
       ? `Контракт речи: ${timingBudget.label}, ${timingBudget.minMinutes}${timingBudget.maxMinutes === undefined ? "+" : `–${timingBudget.maxMinutes}`} минут; цель ${timingBudget.targetMinutes} минут / ${timingBudget.targetWords} слов. Распредели ${timingBudget.titleWordTarget} слов на обложку, ${timingBudget.contentWordTarget} на каждый содержательный слайд и ${timingBudget.conclusionWordTarget} на вывод.`
       : "",
-    STUDENT_CREATION_BRIEF_LINES,
+    creationBriefLines(project),
     `Верни ровно ${project.slideCount} элементов, без markdown и без пояснений.`,
     "Каждый элемент должен иметь строго такой вид:",
     JSON.stringify(
@@ -105,14 +115,16 @@ export function buildDesignBriefPrompt(
     `Audience level: ${project.level}`,
     `Exact slide count: ${project.slideCount}`,
     `Allowed themeId values: ${themeIds}.`,
-    STUDENT_CREATION_BRIEF_LINES,
+    creationBriefLines(project),
     "Choose one stable themeId. Do not invent custom theme IDs.",
     "Use studydeckEditorial for every deck. The palette is a stable Lazyum identity; topic variety comes from imagery and composition, not random colors.",
     "Return exactly one slideDirections item for every slide order.",
     "Do not output raw CSS, HTML, coordinates, pixel sizes, or layout code.",
     "Choose visualRole as a scene role: hero, problem, context, explain, compare, sequence, evidence, quote, visual_statement, or summary.",
     "Choose layoutIntent as an art-direction intent: split_image_text, statement, cards, timeline, diagram, comparison, evidence_board, quote_spread, or summary.",
-    "Build Gamma-like visual rhythm while preserving university clarity: strong cover, short text-led moments, image-led scenes only when grounded, diagrams for explanation, evidence support, and a strong final takeaway.",
+    isGeneralProject(project)
+      ? "Build Gamma-like visual rhythm while preserving clarity for the requested audience: strong cover, short text-led moments, image-led scenes only when grounded, diagrams for explanation, evidence support, and a strong final takeaway."
+      : "Build Gamma-like visual rhythm while preserving university clarity: strong cover, short text-led moments, image-led scenes only when grounded, diagrams for explanation, evidence support, and a strong final takeaway.",
     "Visible slide text should alternate between one strong phrase, 3-4 short sentence-like fragments, and diagram/photo labels. Full explanation belongs in narration and speaker notes.",
     "Do not repeat the same layoutIntent three times in a row. Do not make every slide a card grid.",
     "Choose sceneTextMode for every slide: hero_phrase, talk_sentences, visual_labels, or takeaway.",
@@ -173,7 +185,7 @@ export function buildNarrationPrompt(project: ProjectInput, sources: Source[], n
     `Audience level: ${project.level}`,
     `Exact slide count: ${project.slideCount}`,
     `Mode: ${project.mode}`,
-    STUDENT_CREATION_BRIEF_LINES,
+    creationBriefLines(project),
     researchBrief ? `Research brief to use for factual grounding:\n${JSON.stringify(researchBrief, null, 2)}` : "",
     planText ? `Narrative plan to follow exactly:\n${planText}` : "",
     "Output format:",
@@ -186,10 +198,14 @@ export function buildNarrationPrompt(project: ProjectInput, sources: Source[], n
       ? `- use the fixed Russian spoken-rate budget of ${timingBudget.wordsPerMinute} words/minute: ${timingBudget.minWords}${timingBudget.maxWords === undefined ? "+" : `-${timingBudget.maxWords}`} words total (${timingBudget.minMinutes}${timingBudget.maxMinutes === undefined ? "+" : `-${timingBudget.maxMinutes}`} minutes); target ${timingBudget.targetWords} words (${timingBudget.targetMinutes} minutes); title ${timingBudget.titleWordTarget}, content ${timingBudget.contentWordTarget}, conclusion ${timingBudget.conclusionWordTarget} words;`
       : "- target roughly 45-90 spoken words per slide and about 35-55 seconds of reading time per slide;",
     "- do not use bullet lists, markdown, JSON, citations, source names, or comments.",
-    "University speech rules:",
-    "- write as a prepared university student: natural, confident, easy to read aloud, and professional without bureaucratic wording;",
+    isGeneralProject(project) ? "Speech rules:" : "University speech rules:",
+    isGeneralProject(project)
+      ? "- write as a prepared presenter: natural, confident, easy to read aloud, and professional without bureaucratic wording;"
+      : "- write as a prepared university student: natural, confident, easy to read aloud, and professional without bureaucratic wording;",
     "- compose the whole answer as one continuous speech before splitting it into slide sections;",
-    "- the student must be able to read the result word for word, with no rewriting or improvised connective phrases;",
+    isGeneralProject(project)
+      ? "- the presenter must be able to read the result word for word, with no rewriting or improvised connective phrases;"
+      : "- the student must be able to read the result word for word, with no rewriting or improvised connective phrases;",
     "- the first section naturally establishes the subject and central question; do not begin with `Сегодня я расскажу`, `На этом слайде`, or another presentation cliché;",
     "- middle sections must grow out of the previous idea through facts, causes, contrasts, consequences, or chronology, without announcing a transition;",
     "- the last section must answer the central question with a real conclusion or judgment instead of repeating the slide list;",
@@ -198,7 +214,9 @@ export function buildNarrationPrompt(project: ProjectInput, sources: Source[], n
     "- keep the full explanation in narration; visible slide text will be compressed later;",
     "- prefer a compact, substantive explanation inside the allowed range to weak repetition, filler transitions, or meta-commentary; if a section needs more substance, rewrite it naturally from the grounded argument rather than padding it with local words;",
     "- make neighboring openings and endings different in wording and rhythm;",
-    "- make the final section a human university-level conclusion tied to the topic.",
+    isGeneralProject(project)
+      ? "- make the final section a human, topic-focused conclusion tied to the topic."
+      : "- make the final section a human university-level conclusion tied to the topic.",
     "Narrative plan rules:",
     "- every generatedText section must correspond to one narrativePlan element;",
     "- the section title must match or closely follow slideTitle;",
@@ -207,7 +225,9 @@ export function buildNarrationPrompt(project: ProjectInput, sources: Source[], n
     "- each content section must realize bridgeFromPrevious, evidenceOrExplanation, and whyItMatters as natural content rather than labels or meta commentary;",
     "- follow transitionToNext by meaning, but never write mechanical phrases like `перейдем к следующему слайду`.",
     "Style model:",
-    "- close to a university student report: direct, academic without stiffness, and easy to read aloud;",
+    isGeneralProject(project)
+      ? "- close to a clear, well-prepared presentation: direct, substantive, and easy to read aloud;"
+      : "- close to a university student report: direct, academic without stiffness, and easy to read aloud;",
     "- build one continuous report by meaning only: never explain that one slide, section, or paragraph connects to another;",
     "- each paragraph should explain the real topic, not the slide as an object;",
     "- start and finish neighboring paragraphs differently; do not reuse the same sentence pattern across slides;",
@@ -241,10 +261,12 @@ export function buildAitunnelFullNarrationCandidatePrompt(project: ProjectInput,
   const plan = compactFullNarrationPlan(narrativePlan);
   const snapshot = compactFullNarrationSourceSnapshot(sources);
   return [
-    "Write one complete Russian university speech for a Lazyum presentation, not a plan or commentary.",
+    isGeneralProject(project)
+      ? "Write one complete Russian speech for a Lazyum presentation, not a plan or commentary."
+      : "Write one complete Russian university speech for a Lazyum presentation, not a plan or commentary.",
     `Topic and user request: ${cleanMultilineText(project.prompt).slice(0, 240)}.`,
     `Project title: ${cleanMultilineText(project.title).slice(0, 120)}. Exact slide count: ${project.slideCount}.`,
-    "Return exactly ten ordered sections. Each section must start with `\u0421\u043b\u0430\u0439\u0434 N: semantic title`, followed by natural spoken prose.",
+    `Return exactly ${project.slideCount} ordered sections. Each section must start with \`\u0421\u043b\u0430\u0439\u0434 N: semantic title\`, followed by natural spoken prose.`,
     timing ? `The whole speech must contain ${timing.minWords}-${timing.maxWords} words; target ${timing.targetWords}. The shared ${timing.titleWordTarget}/${timing.contentWordTarget}/${timing.conclusionWordTarget} slide targets are soft distribution guidance, not independent hard gates.` : "Write a complete, naturally paced speech.",
     "Develop the argument as one coherent report before returning it. Explain definitions, mechanisms, causes, consequences, examples, limitations, and conclusions where useful.",
     "When the snapshot lacks a precise anchor, cautious general educational explanation is allowed. Do not invent exact names, dates, statistics, quotations, citations, or source labels.",
@@ -266,7 +288,9 @@ export function buildAitunnelFullNarrationRewriteWithDraftPrompt(
   const timing = getRussianStudentSpeechTimingBudget(project);
   const plan = compactFullNarrationRewritePlan(narrativePlan);
   return [
-    "Rewrite the complete Russian university speech below. Return only a fresh complete speech, never commentary.",
+    isGeneralProject(project)
+      ? "Rewrite the complete Russian speech below. Return only a fresh complete speech, never commentary."
+      : "Rewrite the complete Russian university speech below. Return only a fresh complete speech, never commentary.",
     `Return all ${project.slideCount} sections in order, each headed \`\u0421\u043b\u0430\u0439\u0434 N: semantic title\`. ${timing ? `Whole-speech contract: ${timing.minWords}-${timing.maxWords} words; target ${timing.targetWords}.` : ""}`,
     "Keep useful content, correct the listed defects, and redistribute detail across the whole argument. Cautious general educational explanation is allowed; do not invent precise facts or citations.",
     `Private diagnostics:\n${JSON.stringify(compactFullNarrationDiagnostics(diagnostics, diagnostics.sectionWordCounts.map((_count, index) => index + 1)))}`,
@@ -296,7 +320,9 @@ export function buildAitunnelTargetedNarrationRepairPrompt(
   const plan = compactFullNarrationRewritePlan(narrativePlan).filter((item) => orders.includes(item.slideOrder));
   const problemSections = extractRequestedNarrationSections(currentDraft, orders);
   return [
-    "Repair only the requested sections of this Russian university speech. Do not add commentary or return any unrequested slide.",
+    isGeneralProject(project)
+      ? "Repair only the requested sections of this Russian speech. Do not add commentary or return any unrequested slide."
+      : "Repair only the requested sections of this Russian university speech. Do not add commentary or return any unrequested slide.",
     `Requested slide orders: ${orders.join(", ")}.`,
     "Return JSON only in this exact shape: {\"replacements\":{\"N\":\"\u0421\u043b\u0430\u0439\u0434 N: semantic title\\ncomplete replacement prose\"}}. Return each requested order exactly once as a key and no other order.",
     "Every replacement must be complete, natural spoken Russian. Cautious general educational explanation is allowed; never invent precise facts or citations.",
@@ -375,7 +401,9 @@ export function buildAitunnelNarrationSectionPrompt(
     .map((source) => `${cleanMultilineText(source.label).slice(0, 40)}: ${cleanMultilineText(source.excerpt).slice(0, 120)}`)
     .filter(Boolean);
   return [
-    "Write one Russian university-student narration section, not a plan or commentary.",
+    isGeneralProject(project)
+      ? "Write one Russian presentation narration section, not a plan or commentary."
+      : "Write one Russian university-student narration section, not a plan or commentary.",
     `Topic: ${cleanMultilineText(project.title).slice(0, 96)}.`,
     `Current slide ${narrative.slideOrder}: ${cleanMultilineText(narrative.slideTitle).slice(0, 80)}.`,
     `Key message: ${cleanMultilineText(narrative.keyMessage).slice(0, 120)}.`,
@@ -405,7 +433,9 @@ export function buildAitunnelNarrationSectionReplacementPrompt(
     .map((source) => `${cleanMultilineText(source.label).slice(0, 28)}: ${cleanMultilineText(source.excerpt).slice(0, 40)}`)
     .filter(Boolean);
   return [
-    "Write a fresh Russian university-student narration section, not a patch, diagnosis, or commentary.",
+    isGeneralProject(project)
+      ? "Write a fresh Russian presentation narration section, not a patch, diagnosis, or commentary."
+      : "Write a fresh Russian university-student narration section, not a patch, diagnosis, or commentary.",
     `Topic: ${cleanMultilineText(project.title).slice(0, 64)}. Slide ${narrative.slideOrder}: ${cleanMultilineText(narrative.slideTitle).slice(0, 48)}.`,
     `Key point: ${cleanMultilineText(narrative.keyMessage).slice(0, 40)}. Write ${minWords}-${maxWords} words; target ${targetWords}; 2-7 sentences. Check count; avoid a boundary; never return under ${minWords} words.`,
     "Return exactly one section in the canonical format: `Слайд N: semantic title` followed by prose. Explain the topic itself; do not mention sources, validation, a rejected draft, a plan, or this instruction.",
@@ -422,7 +452,9 @@ export function buildAitunnelNarrationGlobalRewritePrompt(project: ProjectInput,
   const anchors = sources.filter((source) => source.included !== false).slice(0, 2)
     .map((source) => `${cleanMultilineText(source.label).slice(0, 24)}: ${cleanMultilineText(source.excerpt).slice(0, 32)}`).filter(Boolean);
   return [
-    "Write one fresh Russian university narration section.",
+    isGeneralProject(project)
+      ? "Write one fresh Russian presentation narration section."
+      : "Write one fresh Russian university narration section.",
     `Topic: ${cleanMultilineText(project.title).slice(0, 48)}. Slide ${narrative.slideOrder}: ${cleanMultilineText(narrative.slideTitle).slice(0, 36)}.`,
     `Key point: ${cleanMultilineText(narrative.keyMessage).slice(0, 40)}. Write ${bounds.minWords}-${bounds.maxWords} words; target ${bounds.targetWords}; 2-7 sentences. Check count; do not aim for a boundary; never return under ${bounds.minWords} words.`,
     "Return exactly `Слайд N: title` plus prose. Explain the topic; never mention sources, validation, drafts, plans, or instructions.",
@@ -446,7 +478,9 @@ export function buildNarrationRepairPrompt(
     "The previous narration answer failed validation.",
     `This is automatic full regeneration attempt ${attemptNumber} of 4.`,
     `Validation error: ${message}`,
-    "Rewrite the full narration from scratch as one coherent university student report and fix every listed issue.",
+    isGeneralProject(project)
+      ? "Rewrite the full narration from scratch as one coherent presentation and fix every listed issue."
+      : "Rewrite the full narration from scratch as one coherent university student report and fix every listed issue.",
     "Do not patch short sections with generic endings or transition phrases. Replace weak paragraphs with real topic content.",
     "Never explain how slides, sections, neighboring paragraphs, or next parts connect; write the connected content itself.",
     "Every slide section must contain 3-7 complete sentences and enough substance to be read word for word. Sections must not share the same opening or closing phrase.",
@@ -536,7 +570,9 @@ export function buildAitunnelFullNarrationRewritePrompt(
     evidence: source.excerpt.replace(/\s+/g, " ").trim().slice(0, 220),
   }));
   return [
-    "Write a fresh, complete Russian speech for a Lazyum university presentation.",
+    isGeneralProject(project)
+      ? "Write a fresh, complete Russian speech for a Lazyum presentation."
+      : "Write a fresh, complete Russian speech for a Lazyum university presentation.",
     `Topic and request: ${project.prompt}`,
     `Exact slide count: ${project.slideCount}. Return one section per slide in order, headed \`Слайд N: semantic title\`.`,
     "Each section needs 3-7 complete, natural sentences. Use the plan's key message as content, not as a label. Do not mention slides, sources, planning, or the rejected draft.",
@@ -580,7 +616,9 @@ export function buildAitunnelBatchedNarrationPrompt(
     evidence: source.excerpt.replace(/\s+/g, " ").trim().slice(0, 220),
   }));
   return [
-    "Write one self-contained part of a Russian university speech for StudyDeck.",
+    isGeneralProject(project)
+      ? "Write one self-contained part of a Russian presentation speech for StudyDeck."
+      : "Write one self-contained part of a Russian university speech for StudyDeck.",
     `Topic and request: ${project.prompt}`,
     `Return exactly the headed sections for slides ${slideOrders.join(", ")} in this order; each starts with \`Слайд N: semantic title\`.`,
     `This part must contain ${sectionBudget.minWords}${sectionBudget.maxWords === undefined ? "+" : `-${sectionBudget.maxWords}`} words total; target ${sectionBudget.targetWords} substantive words.`,
@@ -677,7 +715,7 @@ export function buildGenerationPrompt(
     `Audience level: ${project.level}`,
     `Exact slide count: ${project.slideCount}`,
     `Mode: ${project.mode}`,
-    STUDENT_CREATION_BRIEF_LINES,
+    creationBriefLines(project),
     "All slide-facing text must be in Russian.",
     researchText ? `Use this researchBrief as factual guardrails. Do not invent facts outside it or the source excerpts:\n${researchText}` : "",
     planText ? `Use this fixed narrativePlan and copy it into the final PresentationDocument:\n${planText}` : "",
@@ -703,7 +741,9 @@ export function buildGenerationPrompt(
     "- match image descriptions and visual choices to the theme mood: darker and stricter for serious material, lighter and softer for cheerful material;",
     "- vary block presentation from slide to slide through layout and visual.type; do not make every content slide feel like the same card/list template.",
     "Voice model:",
-    "- use the style of a university student academic study report: clear, concrete, calm, human, and professional enough to present aloud;",
+    isGeneralProject(project)
+      ? "- use the style of a clear, concrete, calm, human presentation that is professional enough to deliver aloud;"
+      : "- use the style of a university student academic study report: clear, concrete, calm, human, and professional enough to present aloud;",
     "- give the audience a path through the subject: what it is, why it matters, what changes, where the conflict or key tension is, and what conclusion follows;",
     "- use concrete details from the material: names, products, organizations, events, causes, consequences, comparisons, or examples;",
     "- when a personal or evaluative conclusion fits the scenario, write it plainly, for example 'Для меня эта история - предупреждение', but only if it suits the topic;",
@@ -812,7 +852,7 @@ export function legacyBuildGenerationPrompt(project: ProjectInput, sources: Sour
     `Уровень аудитории: ${project.level}`,
     `Количество слайдов: ${project.slideCount}`,
     `Режим: ${project.mode}`,
-    STUDENT_CREATION_BRIEF_LINES,
+    creationBriefLines(project),
     "Требования к слайдам:",
     "- каждый слайд выглядит как 16:9 учебный кадр: короткий заголовок и один блок текста на 1-2 фразы;",
     "- текст на слайде должен быть кратким сокращением speakerNotes: без маркированных списков, markdown-заголовков, длинных абзацев и метатекста о презентации;",

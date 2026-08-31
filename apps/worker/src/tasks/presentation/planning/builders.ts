@@ -364,8 +364,8 @@ export function balanceDeterministicVisualDirections(
     .filter(({ direction }) => direction.slideOrder !== 1 && direction.visualRole !== "summary");
   if (!contentIndexes.length) return applyEconomicPhotoAllocation(diversifySceneTextModes(directions, project, narrativePlan), project, narrativePlan);
 
-  const minimumVisuals = Math.ceil(contentIndexes.length * 0.6);
-  const maximumVisuals = Math.max(minimumVisuals, Math.floor(contentIndexes.length * 0.75));
+  const minimumVisuals = Math.ceil(contentIndexes.length * 0.8);
+  const maximumVisuals = Math.max(minimumVisuals, Math.floor(contentIndexes.length * 0.9));
   const isVisual = (direction: DesignBrief["slideDirections"][number]) => direction.imageStrategy === "real_photo" || direction.imageStrategy === "diagram";
   let visualCount = contentIndexes.filter(({ direction }) => isVisual(direction)).length;
   const balanced = [...directions];
@@ -444,16 +444,15 @@ export function applyEconomicPhotoAllocation(
       return direction;
     }
     const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, direction.slideOrder);
-    const diagram = ["context", "explain", "evidence", "sequence", "compare"].includes(direction.visualRole);
-    const imageStrategy = diagram ? "diagram" as const : "none" as const;
-    const layoutIntent = diagram ? "diagram" as const : "statement" as const;
+    const imageStrategy = "diagram" as const;
+    const layoutIntent = "diagram" as const;
     return {
       ...direction,
       imageStrategy,
       layoutIntent,
-      sceneTextMode: diagram ? "visual_labels" as const : "talk_sentences" as const,
-      visualPurpose: diagram ? "diagram" as const : "text_only" as const,
-      visualRationale: diagram ? "The economic photo allocation is exhausted; explain this material locally." : "The economic photo allocation is exhausted; keep this conclusion text-led.",
+      sceneTextMode: "visual_labels" as const,
+      visualPurpose: "diagram" as const,
+      visualRationale: "The economic photo allocation is exhausted; explain this material with a local diagram.",
       visualPrompt: buildDeterministicVisualPrompt(project, plan, imageStrategy, layoutIntent),
     };
   });

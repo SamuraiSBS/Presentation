@@ -27,7 +27,7 @@ export {
   type PublicNarrationState,
 } from "./generation/public-narration-state.js";
 export type { GenerationFailureCategory, SafeGenerationRecovery } from "./generation/recovery.js";
-export { RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE, RUSSIAN_STUDENT_SPEECH_TIMING_PRESETS, getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechTimingBudget, getRussianStudentSpeechSectionBounds, russianSpeechMinutesFromWords } from "./generation/speech-timing.js";
+export { RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE, RUSSIAN_STUDENT_SPEECH_WORD_RANGE, RUSSIAN_STUDENT_SPEECH_TIMING_PRESETS, getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechTimingBudget, getRussianStudentSpeechSectionBounds, russianSpeechMinutesFromWords } from "./generation/speech-timing.js";
 export type { SpeechTimingBudget, SpeechTimingProject, SpeechTimingSectionBounds } from "./generation/speech-timing.js";
 export { assessFullSpeechContract } from "./generation/narration-contract.js";
 export type { FullSpeechContractAssessment, FullSpeechContractIssue } from "./generation/narration-contract.js";
