@@ -19,7 +19,11 @@ function isUnsafeSecret(candidate: string) {
     || UNSAFE_VALUES.has(normalized)
     || normalized.startsWith("change-me")
     || normalized.startsWith("replace-me")
-    || normalized.startsWith("your-");
+    || normalized.startsWith("your-")
+    // Reject the literal values from .env.production.example as well. A long
+    // placeholder must not pass merely because it satisfies a length check.
+    || normalized.includes("replace_with")
+    || (normalized.startsWith("<") && normalized.endsWith(">"));
 }
 
 function publicHttpsHost(candidate: string) {
@@ -30,6 +34,10 @@ function publicHttpsHost(candidate: string) {
       || host.endsWith(".localhost")
       || host.endsWith(".local")
       || host.endsWith(".test")
+      || host === "example.com"
+      || host.endsWith(".example.com")
+      || host === "example"
+      || host.endsWith(".example")
       || host === "0.0.0.0"
       || host === "::1"
       || /^127\./.test(host)
@@ -94,12 +102,13 @@ export function productionConfigurationErrors(env: RuntimeEnvironment = process.
     errors.push("SITE_DOMAIN must match the public NEXTAUTH_URL hostname");
   }
 
-  if (!value(env, "TELEGRAM_CLIENT_ID") || !value(env, "TELEGRAM_CLIENT_SECRET")) {
+  if (isUnsafeSecret(value(env, "TELEGRAM_CLIENT_ID")) || isUnsafeSecret(value(env, "TELEGRAM_CLIENT_SECRET"))) {
     errors.push("Telegram OAuth credentials are required for production login");
   }
 
-  const adminIds = value(env, "ADMIN_TELEGRAM_IDS").split(",").map((entry) => entry.trim()).filter(Boolean);
-  if (!adminIds.length || adminIds.some((entry) => !/^\d+$/.test(entry))) {
+  const rawAdminIds = value(env, "ADMIN_TELEGRAM_IDS");
+  const adminIds = rawAdminIds.split(",").map((entry) => entry.trim()).filter(Boolean);
+  if (isUnsafeSecret(rawAdminIds) || !adminIds.length || adminIds.some((entry) => !/^\d+$/.test(entry))) {
     errors.push("ADMIN_TELEGRAM_IDS must contain at least one numeric Telegram ID");
   }
 

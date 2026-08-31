@@ -15,17 +15,17 @@ const productionEnvironment = {
   DATABASE_URL: "postgresql://studydeck:long-unique-password@postgres:5432/studydeck?schema=public",
   ALLOW_DEV_AUTH: "false",
   ALLOW_DEV_ADMIN: "false",
-  NEXTAUTH_URL: "https://app.studydeck.example",
-  SITE_DOMAIN: "app.studydeck.example",
+  NEXTAUTH_URL: "https://app.studydeck.ai",
+  SITE_DOMAIN: "app.studydeck.ai",
   TELEGRAM_CLIENT_ID: "telegram-client",
   TELEGRAM_CLIENT_SECRET: "telegram-secret",
   ADMIN_TELEGRAM_IDS: "123456789",
   LEGAL_ENTITY_NAME: "StudyDeck AI LLC",
-  SUPPORT_EMAIL: "support@studydeck.example",
+  SUPPORT_EMAIL: "support@studydeck.ai",
   BACKUP_ENABLED: "true",
   BACKUP_AGE_RECIPIENT: "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5h2w9e",
   BACKUP_AGE_IDENTITY_FILE: "/etc/studydeck/backup.agekey",
-  BACKUP_S3_ENDPOINT: "https://backups.studydeck.example",
+  BACKUP_S3_ENDPOINT: "https://backups.studydeck.ai",
   BACKUP_S3_BUCKET: "studydeck-production-backups",
   BACKUP_S3_ACCESS_KEY_ID: "studydeck-production-backup-access",
   BACKUP_S3_SECRET_ACCESS_KEY: `${secret}-backup`,
@@ -84,6 +84,26 @@ describe("production configuration", () => {
     expect(errors.join("\n")).toMatch(/HSTS_MAX_AGE/);
     expect(errors.join("\n")).toMatch(/TRUST_PROXY_HOPS/);
     expect(errors.join("\n")).toMatch(/MALWARE_SCAN_ENABLED/);
+  });
+
+  it("rejects production-template placeholders and reserved example domains", () => {
+    const errors = productionConfigurationErrors({
+      ...productionEnvironment,
+      NEXTAUTH_SECRET: "<set-a-unique-secret-in-your-secret-manager>",
+      INTERNAL_API_TOKEN: "REPLACE_WITH_A_SEPARATE_INTERNAL_TOKEN",
+      POSTGRES_PASSWORD: "REPLACE_WITH_A_UNIQUE_32_PLUS_CHARACTER_DATABASE_SECRET",
+      NEXTAUTH_URL: "https://app.example.com",
+      SITE_DOMAIN: "app.example.com",
+      TELEGRAM_CLIENT_ID: "REPLACE_WITH_TELEGRAM_CLIENT_ID",
+      TELEGRAM_CLIENT_SECRET: "REPLACE_WITH_TELEGRAM_CLIENT_SECRET",
+      ADMIN_TELEGRAM_IDS: "REPLACE_WITH_YOUR_NUMERIC_TELEGRAM_ID",
+    }).join("\n");
+    expect(errors).toMatch(/NEXTAUTH_SECRET/);
+    expect(errors).toMatch(/INTERNAL_API_TOKEN/);
+    expect(errors).toMatch(/POSTGRES_PASSWORD/);
+    expect(errors).toMatch(/NEXTAUTH_URL/);
+    expect(errors).toMatch(/Telegram OAuth/);
+    expect(errors).toMatch(/ADMIN_TELEGRAM_IDS/);
   });
 
   it("never enables dev auth when deployment is production", () => {

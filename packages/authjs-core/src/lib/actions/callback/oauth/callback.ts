@@ -73,7 +73,9 @@ export async function handleOAuth(
         "TODO: Authorization server did not provide a token endpoint."
       )
 
-    if (!as.userinfo_endpoint)
+    // OIDC providers such as Telegram can return all profile claims in the
+    // validated ID token and intentionally omit a separate userinfo endpoint.
+    if (!as.userinfo_endpoint && (!isOIDCProvider(provider) || provider.idToken === false))
       throw new TypeError(
         "TODO: Authorization server did not provide a userinfo endpoint."
       )

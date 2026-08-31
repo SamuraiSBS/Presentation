@@ -42,7 +42,7 @@ export async function handleOAuth(params, cookies, options) {
         as = await o.processDiscoveryResponse(issuer, discoveryResponse);
         if (!as.token_endpoint)
             throw new TypeError("TODO: Authorization server did not provide a token endpoint.");
-        if (!as.userinfo_endpoint)
+        if (!as.userinfo_endpoint && (!isOIDCProvider(provider) || provider.idToken === false))
             throw new TypeError("TODO: Authorization server did not provide a userinfo endpoint.");
     }
     else {
