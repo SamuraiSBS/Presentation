@@ -145,7 +145,7 @@ export class AdminService {
     const currentTotal = await this.currentCostTotal(range.from, range.to);
     return {
       summary: { totalRubAtEvent: add(decimal(aiSum._sum.rubCostAtEvent), decimal(otherSum._sum.rubCostAtEvent)), totalRubCurrent: currentTotal, unknownCount },
-      ai: ai.map((item) => ({ id: item.id, provider: item.provider, model: item.model, stage: item.stage, status: item.status, inputTokens: item.inputTokens, outputTokens: item.outputTokens, cachedInputTokens: item.cachedInputTokens, reasoningTokens: item.reasoningTokens, sourceCost: nullableDecimal(item.sourceCost), sourceCurrency: item.sourceCurrency, rubCostAtEvent: nullableDecimal(item.rubCostAtEvent), occurredAt: item.createdAt.toISOString() })),
+      ai: ai.map((item) => ({ id: item.id, provider: item.provider, model: item.model, stage: item.stage, status: item.status, inputTokens: item.inputTokens, outputTokens: item.outputTokens, cachedInputTokens: item.cachedInputTokens, cacheWriteTokens: item.cacheWriteTokens, reasoningTokens: item.reasoningTokens, sourceCost: nullableDecimal(item.sourceCost), sourceCurrency: item.sourceCurrency, rubCostAtEvent: nullableDecimal(item.rubCostAtEvent), occurredAt: item.createdAt.toISOString() })),
       other: other.map((item) => ({ id: item.id, category: item.category, provider: item.provider, quantity: decimal(item.quantity), unit: item.unit, sourceCost: nullableDecimal(item.sourceCost), sourceCurrency: item.sourceCurrency, rubCostAtEvent: nullableDecimal(item.rubCostAtEvent), measurement: item.measurement, occurredAt: item.occurredAt.toISOString() })),
       envelopes: envelopes.map((envelope) => {
         const terminal = envelope.reservations.find((item) => !["settled", "released"].includes(item.status));

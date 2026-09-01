@@ -1,11 +1,12 @@
 import OpenAI from "openai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { isApprovedAitunnelModel } from "./aitunnel-provider-catalog.js";
+import { AITUNNEL_ECONOMY_MODEL } from "./aitunnel-narration-budget.js";
 
 type EnvLike = Record<string, string | undefined>;
 
 export const AITUNNEL_DEFAULT_BASE_URL = "https://api.aitunnel.ru/v1";
-export const AITUNNEL_DEFAULT_NARRATION_MODEL = "gpt-5.6-terra";
+export const AITUNNEL_DEFAULT_NARRATION_MODEL = AITUNNEL_ECONOMY_MODEL;
 export const AITUNNEL_DEFAULT_SEARCH_MODEL = "gpt-5.6-luna";
 
 export type AitunnelConfig = {
@@ -59,7 +60,7 @@ export function aitunnelConfig(env: EnvLike = process.env): AitunnelConfig | und
 
 export function createAitunnelClient(env: EnvLike = process.env) {
   const config = aitunnelConfig(env);
-  if (!config) throw new Error("AITUNNEL_API_KEY and an explicit AITUNNEL_NARRATION_MODEL are required");
+  if (!config) throw new Error(`AITUNNEL_API_KEY and AITUNNEL_NARRATION_MODEL=${AITUNNEL_DEFAULT_NARRATION_MODEL} are required`);
   return new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
 }
 

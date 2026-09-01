@@ -7,7 +7,7 @@ import {
     type Source
 } from "@studydeck/shared";
 import { captureGenerationError, errorLogFields, logger } from "../../observability.js";
-import { aitunnelConfig, createAitunnelClient, createOpenAIClient } from "../../openai-client.js";
+import { AITUNNEL_DEFAULT_NARRATION_MODEL, aitunnelConfig, createAitunnelClient, createOpenAIClient } from "../../openai-client.js";
 import { currentUsageContext } from "../../usage-ledger.js";
 
 type ProjectInput = {
@@ -90,14 +90,14 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
 
       if (provider === "aitunnel") {
         const config = aitunnelConfig();
-        if (!config) throw new Error("AITUNNEL_API_KEY and an explicit AITUNNEL_NARRATION_MODEL are required");
+        if (!config) throw new Error(`AITUNNEL_API_KEY and AITUNNEL_NARRATION_MODEL=${AITUNNEL_DEFAULT_NARRATION_MODEL} are required`);
         const client = createAitunnelClient();
         return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), async () => {
           const researchBrief = buildResearchBrief(project, sources);
           const narrativePlan = await generateNarrativePlanWithProvider(provider, project, sources, researchBrief, { openAIClient: client, openAIModel: config.narrationModel });
           const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
           const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
-          const narrationOutcome = ["standard-generation-cost-envelope-v6", "standard-generation-cost-envelope-v7", "standard-generation-cost-envelope-v8", "standard-generation-cost-envelope-v9", "standard-generation-cost-envelope-v10"].includes(currentUsageContext()?.costEnvelopePolicyVersion || "")
+          const narrationOutcome = ["standard-generation-cost-envelope-v6", "standard-generation-cost-envelope-v7", "standard-generation-cost-envelope-v8", "standard-generation-cost-envelope-v9", "standard-generation-cost-envelope-v10", "standard-generation-cost-envelope-v11"].includes(currentUsageContext()?.costEnvelopePolicyVersion || "")
             ? await generateAitunnelFullNarrationOutcome(client, project, sources, narrativePlan)
             : undefined;
           // Every v6 outcome is narration-only. It must reach the persistence
@@ -152,8 +152,8 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
 }
 
 /**
- * AITunnel uses Terra for the final structured document after the narration
- * has been accepted. Other provider modes retain the local projection, which
+ * AITunnel uses the economy Luna model for the final structured document after
+ * the narration has been accepted. Other provider modes retain the local projection, which
  * keeps their established no-network post-acceptance behaviour unchanged.
  */
 export async function generatePresentationFromNarration(
@@ -349,7 +349,7 @@ export async function generatePresentationFromNarrationWithProviders(
     try {
       // Full-document AITunnel narration is accepted against its own contract,
       // whose per-slide targets are deliberately soft. Re-normalizing it here
-      // would reintroduce the retired legacy ceiling before Terra sees it.
+      // would reintroduce the retired legacy ceiling before the slide model sees it.
       const providerNarration = provider === "aitunnel"
         ? narrationText
         : normalizeNarrationText(narrationText, project);

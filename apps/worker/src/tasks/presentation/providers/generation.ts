@@ -29,7 +29,7 @@ import {
 } from "../../../aitunnel-narration-budget.js";
 import { failCostEnvelope, releaseCostEnvelope, reserveCostEnvelope, reserveCostEnvelopeBatch, settleCostEnvelope } from "../../../cost-envelope.js";
 import { errorLogFields, logger } from "../../../observability.js";
-import { aitunnelConfig, createAitunnelClient, createOpenAIClient, createOpenAIProvider } from "../../../openai-client.js";
+import { AITUNNEL_DEFAULT_NARRATION_MODEL, aitunnelConfig, createAitunnelClient, createOpenAIClient, createOpenAIProvider } from "../../../openai-client.js";
 import { getPrisma } from "../../../prisma.js";
 import { calculateProviderCost, currentUsageContext, normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
 
@@ -144,7 +144,7 @@ export async function generateWithOpenAI(project: ProjectInput, sources: Source[
 
 export async function generateWithAitunnel(project: ProjectInput, sources: Source[]) {
   const config = aitunnelConfig();
-  if (!config) throw new Error("AITUNNEL_API_KEY and an explicit AITUNNEL_NARRATION_MODEL are required");
+  if (!config) throw new Error(`AITUNNEL_API_KEY and AITUNNEL_NARRATION_MODEL=${AITUNNEL_DEFAULT_NARRATION_MODEL} are required`);
   const client = createAitunnelClient();
   return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), async () => {
   const researchBrief = buildResearchBrief(project, sources);
@@ -202,7 +202,7 @@ export async function generateOpenAIPresentationFromNarration(project: ProjectIn
 
 export async function generateAitunnelPresentationFromNarration(project: ProjectInput, sources: Source[], narrationText: string) {
   const config = aitunnelConfig();
-  if (!config) throw new Error("AITUNNEL_API_KEY and an explicit AITUNNEL_NARRATION_MODEL are required");
+  if (!config) throw new Error(`AITUNNEL_API_KEY and AITUNNEL_NARRATION_MODEL=${AITUNNEL_DEFAULT_NARRATION_MODEL} are required`);
   const client = createAitunnelClient();
   return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), async () => {
   const researchBrief = buildResearchBrief(project, sources);
@@ -365,7 +365,7 @@ type V6ProviderTerminationMetadata = {
 };
 
 function isFullNarrationCostEnvelopePolicy(version: string | undefined) {
-  return version === "standard-generation-cost-envelope-v6" || version === "standard-generation-cost-envelope-v7" || version === "standard-generation-cost-envelope-v8" || version === "standard-generation-cost-envelope-v9" || version === "standard-generation-cost-envelope-v10";
+  return version === "standard-generation-cost-envelope-v6" || version === "standard-generation-cost-envelope-v7" || version === "standard-generation-cost-envelope-v8" || version === "standard-generation-cost-envelope-v9" || version === "standard-generation-cost-envelope-v10" || version === "standard-generation-cost-envelope-v11";
 }
 
 async function generateLegacyAitunnelNarration(client: OpenAI, model: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief): Promise<string> {

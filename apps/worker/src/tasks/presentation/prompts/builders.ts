@@ -2,6 +2,7 @@ import {
     PREMIUM_PRESENTATION_THEME_IDS,
     resolvePresentationTheme,
     type DeckStory,
+    type DesignBrief,
     type GenerationPipelineArtifacts,
     type ResearchBrief,
     type SlideNarrative,
@@ -174,11 +175,11 @@ export function buildDesignBriefPrompt(
         },
       ],
     }, null, 2),
-    `Narrative plan:\n${formatNarrativePlanForPrompt(narrativePlan)}`,
-    `Deck story:\n${JSON.stringify(deckStory, null, 2)}`,
-    `Slide text plans:\n${JSON.stringify(slideTextPlans, null, 2)}`,
-    `Research brief:\n${JSON.stringify(researchBrief, null, 2)}`,
-    `Source excerpts for grounding:\n${formatSourceText(sources)}`,
+    `Narrative plan:\n${JSON.stringify(compactNarrativePlanForPrompt(narrativePlan))}`,
+    `Deck story:\n${JSON.stringify(compactDeckStoryForPrompt(deckStory))}`,
+    `Slide text plans:\n${JSON.stringify(compactSlideTextPlansForPrompt(slideTextPlans))}`,
+    `Research brief:\n${JSON.stringify(compactResearchBriefForPrompt(researchBrief))}`,
+    `Source registry for grounding:\n${JSON.stringify(compactSourceContextForPrompt(sources, researchBrief))}`,
   ].join("\n\n");
 }
 
@@ -699,6 +700,50 @@ export function formatNarrativePlanForPrompt(narrativePlan: SlideNarrative[]) {
   return JSON.stringify(narrativePlan, null, 2);
 }
 
+function compactPromptText(value: unknown, maxLength: number) {
+  const text = cleanMultilineText(value);
+  return text.length <= maxLength ? text : `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+function compactNarrativePlanForPrompt(narrativePlan: SlideNarrative[]) {
+  return narrativePlan.map((item) => {
+    const compact: Record<string, unknown> = { slideOrder: item.slideOrder, slideTitle: compactPromptText(item.slideTitle, 100), slidePurpose: compactPromptText(item.slidePurpose, 240), keyMessage: compactPromptText(item.keyMessage, 240), audienceQuestion: compactPromptText(item.audienceQuestion, 220), transitionToNext: compactPromptText(item.transitionToNext, 180) };
+    for (const [key, value] of [["storyJob", item.storyJob], ["bridgeFromPrevious", item.bridgeFromPrevious], ["evidenceOrExplanation", item.evidenceOrExplanation], ["whyItMatters", item.whyItMatters]] as const) if (value) compact[key] = compactPromptText(value, 220);
+    if (item.speechWordTarget !== undefined) compact.speechWordTarget = item.speechWordTarget;
+    if (item.supportedFactSourceIds?.length) compact.supportedFactSourceIds = item.supportedFactSourceIds.slice(0, 8);
+    if (item.entityAssertions?.length) compact.entityAssertions = item.entityAssertions.slice(0, 6).map((assertion) => ({ subject: compactPromptText(assertion.subject, 120), relation: compactPromptText(assertion.relation, 120), object: compactPromptText(assertion.object, 120), confidence: assertion.confidence, sourceIds: assertion.sourceIds.slice(0, 8) }));
+    return compact;
+  });
+}
+
+function compactResearchBriefForPrompt(researchBrief: ResearchBrief) {
+  return { topic: compactPromptText(researchBrief.topic, 180), angle: compactPromptText(researchBrief.angle, 260), facts: researchBrief.facts.map((fact) => ({ text: compactPromptText(fact.text, 300), ...(fact.sourceId ? { sourceId: fact.sourceId } : {}), confidence: fact.confidence })), warnings: researchBrief.warnings.slice(0, 4).map((warning) => compactPromptText(warning, 180)), vocabulary: researchBrief.vocabulary.slice(0, 6).map((item) => ({ term: compactPromptText(item.term, 80), explanation: compactPromptText(item.explanation, 140) })) };
+}
+
+function compactDeckStoryForPrompt(deckStory: DeckStory) {
+  return { mainIdea: compactPromptText(deckStory.mainIdea, 260), audienceQuestion: compactPromptText(deckStory.audienceQuestion, 220), tone: deckStory.tone, chapters: deckStory.chapters.map((chapter) => ({ title: compactPromptText(chapter.title, 100), purpose: compactPromptText(chapter.purpose, 200), slideOrders: chapter.slideOrders })), conclusion: compactPromptText(deckStory.conclusion, 260) };
+}
+
+function compactDesignBriefForPrompt(designBrief: DesignBrief) {
+  return { themeId: designBrief.themeId, ...(designBrief.themePreset ? { themePreset: designBrief.themePreset } : {}), mood: designBrief.mood, audienceFit: compactPromptText(designBrief.audienceFit, 180), visualMetaphor: compactPromptText(designBrief.visualMetaphor, 240), colorIntent: compactPromptText(designBrief.colorIntent, 180), typographyIntent: compactPromptText(designBrief.typographyIntent, 180), rhythm: designBrief.rhythm, slideDirections: designBrief.slideDirections.map((direction) => ({ slideOrder: direction.slideOrder, visualRole: direction.visualRole, layoutIntent: direction.layoutIntent, imageStrategy: direction.imageStrategy, ...(direction.visualPurpose ? { visualPurpose: direction.visualPurpose } : {}), ...(direction.visualRationale ? { visualRationale: compactPromptText(direction.visualRationale, 180) } : {}), ...(direction.sceneTextMode ? { sceneTextMode: direction.sceneTextMode } : {}), visualPrompt: compactPromptText(direction.visualPrompt, 180) })) };
+}
+
+function compactSlideBlueprintsForPrompt(slideBlueprints: GenerationPipelineArtifacts["slideBlueprints"]) {
+  return slideBlueprints.map((blueprint) => ({ slideOrder: blueprint.slideOrder, layoutCandidate: blueprint.layoutCandidate, textDensity: blueprint.textDensity, visualStrategy: compactPromptText(blueprint.visualStrategy, 240) }));
+}
+
+function compactSlideTextPlansForPrompt(slideTextPlans: SlideTextPlan[]) {
+  return slideTextPlans.map((plan) => ({ slideOrder: plan.slideOrder, title: compactPromptText(plan.title, 90), thesis: compactPromptText(plan.thesis, 220), bullets: plan.bullets.slice(0, 3).map((bullet) => compactPromptText(bullet, 120)), ...(plan.supportedFactSourceIds?.length ? { supportedFactSourceIds: plan.supportedFactSourceIds.slice(0, 8) } : {}) }));
+}
+
+function compactSourceContextForPrompt(sources: Source[], researchBrief?: ResearchBrief) {
+  const coveredSourceIds = new Set((researchBrief?.facts || []).map((fact) => fact.sourceId).filter((sourceId): sourceId is string => Boolean(sourceId)));
+  return sources.filter((source) => source.included !== false).map((source) => ({ id: source.id, label: compactPromptText(source.label, 100), ...(coveredSourceIds.has(source.id) ? {} : { evidence: compactPromptText(source.excerpt, 360) }) })).filter((source) => source.id || source.label || source.evidence);
+}
+
+export function compactGenerationPromptContext(sources: Source[], narrativePlan: SlideNarrative[], artifacts: PromptArtifacts = {}) {
+  return { researchBrief: artifacts.researchBrief ? compactResearchBriefForPrompt(artifacts.researchBrief) : undefined, narrativePlan: compactNarrativePlanForPrompt(narrativePlan), designBrief: artifacts.designBrief ? compactDesignBriefForPrompt(artifacts.designBrief) : undefined, slideBlueprints: artifacts.slideBlueprints?.length ? compactSlideBlueprintsForPrompt(artifacts.slideBlueprints) : [], slideTextPlans: artifacts.slideTextPlans?.length ? compactSlideTextPlansForPrompt(artifacts.slideTextPlans) : [], sources: compactSourceContextForPrompt(sources, artifacts.researchBrief) };
+}
 export function buildGenerationPrompt(
   project: ProjectInput,
   sources: Source[],
@@ -707,14 +752,16 @@ export function buildGenerationPrompt(
   artifacts: PromptArtifacts = {},
 ) {
   const fixedNarration = cleanMultilineText(narrationText);
-  const planText = formatNarrativePlanForPrompt(narrativePlan);
+  const compactContext = compactGenerationPromptContext(sources, narrativePlan, artifacts);
+  const planText = compactContext.narrativePlan.length ? JSON.stringify(compactContext.narrativePlan) : "";
   const theme = resolvePresentationTheme(project);
   const supportedThemeIds = PREMIUM_PRESENTATION_THEME_IDS.join(", ");
-  const researchText = artifacts.researchBrief ? JSON.stringify(artifacts.researchBrief, null, 2) : "";
-  const storyText = artifacts.deckStory ? JSON.stringify(artifacts.deckStory, null, 2) : "";
-  const designText = artifacts.designBrief ? JSON.stringify(artifacts.designBrief, null, 2) : "";
-  const blueprintText = artifacts.slideBlueprints?.length ? JSON.stringify(artifacts.slideBlueprints, null, 2) : "";
-  const textPlanText = artifacts.slideTextPlans?.length ? JSON.stringify(artifacts.slideTextPlans, null, 2) : "";
+  const researchText = compactContext.researchBrief ? JSON.stringify(compactContext.researchBrief) : "";
+
+  const designText = compactContext.designBrief ? JSON.stringify(compactContext.designBrief) : "";
+  const blueprintText = compactContext.slideBlueprints.length ? JSON.stringify(compactContext.slideBlueprints) : "";
+  const textPlanText = compactContext.slideTextPlans.length ? JSON.stringify(compactContext.slideTextPlans) : "";
+  const sourceText = compactContext.sources.length ? JSON.stringify(compactContext.sources) : "";
   return [
     "Create a complete Lazyum PresentationDocument as JSON.",
     `User topic and request: ${project.prompt}`,
@@ -725,12 +772,12 @@ export function buildGenerationPrompt(
     `Mode: ${project.mode}`,
     creationBriefLines(project),
     "All slide-facing text must be in Russian.",
-    researchText ? `Use this researchBrief as factual guardrails. Do not invent facts outside it or the source excerpts:\n${researchText}` : "",
-    planText ? `Use this fixed narrativePlan and copy it into the final PresentationDocument:\n${planText}` : "",
-    storyText ? `Use this deckStory as the deck-level content spine. Do not show it as a separate UI field:\n${storyText}` : "",
-    designText ? `Use this designBrief for deck-level visual direction:\n${designText}` : "",
-    blueprintText ? `Use these slideBlueprints as per-slide intent. Match slide order, purpose, layout candidate, visual strategy, and text density where possible:\n${blueprintText}` : "",
-    textPlanText ? `Use these slideTextPlans as compact projections of the matching accepted speech sections. They are constraints, not an additional story: title, thesis, bullets, blocks, definitions, and visible visual labels may only paraphrase the matching generatedText section. Do not use slideQuestion, narrative-plan fields, sources, or the project request as text donors:\n${textPlanText}` : "",
+    researchText ? `Use this compact researchBrief as factual guardrails. Source IDs in its facts map to the grounding registry below; do not invent facts outside these bounded records:\n${researchText}` : "",
+    planText ? `Use this compact fixed narrativePlan and copy it into the final PresentationDocument:\n${planText}` : "",
+
+    designText ? `Use this compact designBrief for deck-level visual direction; preserve its theme and per-slide visual directions:\n${designText}` : "",
+    blueprintText ? `Use these compact slideBlueprints only for layout candidate, visual strategy, and text density; narrativePlan supplies the content job:\n${blueprintText}` : "",
+    textPlanText ? `Use these compact slideTextPlans only as derived visible-text hints. The accepted narration remains the sole source of truth; title, thesis, bullets, blocks, definitions, and visible visual labels may only paraphrase its matching generatedText section:\n${textPlanText}` : "",
     fixedNarration
       ? `Use this fixed speech narration as the only source of truth. Copy it exactly into generatedText and do not rewrite its meaning:\n${fixedNarration}`
       : "Use generatedText as the single source of truth for the deck, divided exactly as `Слайд 1: ...` through the requested slide count.",
@@ -845,7 +892,7 @@ export function buildGenerationPrompt(
     "- Do not put markdown headings, source names, citations, sourceRefs, TODOs, or instructions into title, thesis, bullets, blocks, or speaker notes. sourceRefs remain structured metadata only.",
     "- Do not invent precise facts when the material does not support them; give a general explanation instead.",
     "- Keep detailed narration only in speakerNotes and speechScript.",
-    `Source material for factual grounding. Keep source labels only in structured sourceRefs, primarily for evidence layouts:\n${formatSourceText(sources)}`,
+    sourceText ? `Grounding source registry. Preserve these source IDs for structured sourceRefs; use evidence only when it supports the matching narration:\n${sourceText}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");

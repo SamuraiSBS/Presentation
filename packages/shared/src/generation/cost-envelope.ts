@@ -1,5 +1,5 @@
-export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v10";
-export const COST_ENVELOPE_LIMIT_RUB = "27.90000000";
+export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v11";
+export const COST_ENVELOPE_LIMIT_RUB = "12.00000000";
 export const COST_ENVELOPE_BUCKETS = {
   // A source snapshot is valid only when at least three sources pass the
   // relevance gate. Reserve three bounded Tavily attempts so a weak first
@@ -9,12 +9,14 @@ export const COST_ENVELOPE_BUCKETS = {
   // accepted speech is turned into slides.
   narrative_plan: "1.50000000",
   narration_full_candidate: "1.00000000",
-  narration_full_rewrite: "7.50000000",
+  // Luna recovery reservation after the measured prompt/output recalculation.
+  narration_full_rewrite: "1.50000000",
   narration_targeted_repair: "0.75000000",
   design_brief: "0.50000000",
-  // Terra produces the final structured presentation. This is the dominant
-  // post-narration request and must be inside the persisted project cap.
-  presentation: "12.00000000",
+  // The CSV's 12,317 prompt / 6,000 completion sample recalculates to
+  // 2.03600000 RUB at Luna's catalog rate. Keep 2.10 RUB for variance after
+  // prompt compression and structured-output overhead; this is not a tariff.
+  presentation: "2.10000000",
   quality_critique: "0.30000000",
   quality_repair: "1.00000000",
   slide_text_repair: "0.60000000",

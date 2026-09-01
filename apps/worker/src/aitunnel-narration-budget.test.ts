@@ -13,7 +13,7 @@ import {
 } from "./aitunnel-narration-budget.js";
 
 describe("AITUNNEL narration budget", () => {
-  it("routes Luna everywhere except the final presentation and complete narration rewrite", () => {
+  it("routes every standard generation stage through Luna", () => {
     expect(aitunnelModelForStage("narrative_plan")).toBe("gpt-5.6-luna");
     expect(aitunnelModelForStage("design_brief")).toBe("gpt-5.6-luna");
     expect(aitunnelModelForStage("quality_critique")).toBe("gpt-5.6-luna");
@@ -22,9 +22,9 @@ describe("AITUNNEL narration budget", () => {
     expect(aitunnelModelForStage("narration_global_rewrite")).toBe("gpt-5.6-luna");
     expect(aitunnelModelForStage("narration")).toBe("gpt-5.6-luna");
     expect(aitunnelModelForStage("narration_full_candidate")).toBe("gpt-5.6-luna");
-    expect(aitunnelModelForStage("narration_full_rewrite")).toBe("gpt-5.6-terra");
+    expect(aitunnelModelForStage("narration_full_rewrite")).toBe("gpt-5.6-luna");
     expect(aitunnelModelForStage("narration_targeted_repair")).toBe("gpt-5.6-luna");
-    expect(aitunnelModelForStage("presentation")).toBe("gpt-5.6-terra");
+    expect(aitunnelModelForStage("presentation")).toBe("gpt-5.6-luna");
     expect(aitunnelModelForStage("quality_repair")).toBe("gpt-5.6-luna");
     expect(aitunnelModelForStage("narrative_plan", { AITUNNEL_ECONOMY_MODEL: "auto" })).toBeUndefined();
     expect(aitunnelModelForStage("narrative_plan", { AITUNNEL_ECONOMY_MODEL: "other" })).toBeUndefined();

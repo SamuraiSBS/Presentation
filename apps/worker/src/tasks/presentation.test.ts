@@ -22,7 +22,7 @@ import { findAitunnelNarrationTimingReasons, normalizeNarrationText, parseNarrat
 import { normalizeLayout as normalizeLayoutFromLayer, normalizeVisual } from "./presentation/normalization/presentation.js";
 import { generatePresentationFromNarrationWithProviders, generatePresentation as generatePresentationFromOrchestrator } from "./presentation/orchestrator.js";
 import { buildFallbackNarrativeItem, normalizeNarrativePlan as normalizeNarrativePlanFromLayer, sourceEvidenceForSlide } from "./presentation/planning/builders.js";
-import { buildAitunnelFullNarrationRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt, buildFullNarrationDurationRewritePrompt, buildGenerationPrompt as buildGenerationPromptFromLayer, buildNarrationPrompt, buildNarrativePlanPrompt } from "./presentation/prompts/builders.js";
+import { buildAitunnelFullNarrationRewritePrompt, buildAitunnelNarrationSectionPrompt, buildAitunnelNarrationSectionReplacementPrompt, buildFullNarrationDurationRewritePrompt, buildGenerationPrompt as buildGenerationPromptFromLayer, buildNarrationPrompt, buildNarrativePlanPrompt, compactGenerationPromptContext } from "./presentation/prompts/builders.js";
 import { classifyAitunnelNarrationRewriteFailure, generateAitunnelNarration, generateYandexNarration, isRecoverableYandexStructuredPresentationError, MAX_AITUNNEL_NARRATION_TEXT_CALLS, MAX_YANDEX_NARRATION_TEXT_CALLS, presentationRecoveryChunks, StructuredGenerationError } from "./presentation/providers/generation.js";
 import { applyNarrationFallbacks, findSlideTextIssues as findSlideTextIssuesFromLayer, looksLikeSentenceFragment } from "./presentation/quality/orchestration.js";
 import { shortenSentence } from "./presentation/utilities.js";
@@ -702,7 +702,7 @@ describe("Yandex narration full duration rewrite", () => {
       responses: { create: async (request: { model: string }) => { models.push(request.model); const order = ++calls; return { output_text: narrationSection(order, order === 1 ? 60 : order === 10 ? 80 : 70), usage: { input_tokens: 100, output_tokens: 100 } }; } },
     } as never;
 
-    const result = await generateAitunnelNarration(client, "gpt-5.6-terra", project, [], plan);
+    const result = await generateAitunnelNarration(client, "gpt-5.6-luna", project, [], plan);
     expect(MAX_AITUNNEL_NARRATION_TEXT_CALLS).toBe(3);
     expect(calls).toBe(10);
     expect(models).toEqual(Array(10).fill("gpt-5.6-luna"));
@@ -830,7 +830,7 @@ describe("Yandex narration full duration rewrite", () => {
       responses: { create: async (request: { model: string }) => { models.push(request.model); const order = ++calls; return { output_text: narrationSection(order, order === 1 ? 60 : order === 10 ? 80 : 70), usage: { input_tokens: 100, output_tokens: 100 }, id: `response-${calls}` }; } },
     } as never;
 
-    await expect(generateAitunnelNarration(client, "gpt-5.6-terra", project, [], plan)).resolves.toContain("Слайд 1:");
+    await expect(generateAitunnelNarration(client, "gpt-5.6-luna", project, [], plan)).resolves.toContain("Слайд 1:");
     expect(calls).toBe(10);
     expect(models).toEqual(Array(10).fill("gpt-5.6-luna"));
   });
@@ -846,7 +846,7 @@ describe("Yandex narration full duration rewrite", () => {
       return { output_text: calls === 1 ? short : narrationSection(order, order === 1 ? 60 : order === 10 ? 80 : 70), usage: { input_tokens: 100, output_tokens: 100 } };
     } } } as never;
 
-    await expect(generateAitunnelNarration(client, "gpt-5.6-terra", project, [], plan)).resolves.toContain("Слайд 10:");
+    await expect(generateAitunnelNarration(client, "gpt-5.6-luna", project, [], plan)).resolves.toContain("Слайд 10:");
     expect(models).toEqual(Array(11).fill("gpt-5.6-luna"));
   });
 
@@ -863,7 +863,7 @@ describe("Yandex narration full duration rewrite", () => {
     } as never;
 
     try {
-      await expect(generateAitunnelNarration(client, "gpt-5.6-terra", project, [], plan)).rejects.not.toThrow(sentinel);
+      await expect(generateAitunnelNarration(client, "gpt-5.6-luna", project, [], plan)).rejects.not.toThrow(sentinel);
       expect(JSON.stringify(logged)).not.toContain(sentinel);
       expect(logged.length).toBeGreaterThanOrEqual(2);
     } finally {
@@ -876,7 +876,7 @@ describe("Yandex narration full duration rewrite", () => {
     const client = { responses: { create: async () => { calls += 1; return { output_text: completeNarration(), usage: { input_tokens: 100, output_tokens: 100 } }; } } } as never;
     const budget = new AitunnelProjectBudget({ AITUNNEL_PROJECT_BUDGET_RUB: "0.00000001", AITUNNEL_NARRATION_JOB_BUDGET_RUB: "0.00000001" });
 
-    await expect(runWithAitunnelProjectBudget(budget, () => generateAitunnelNarration(client, "gpt-5.6-terra", project, [], plan))).rejects.toThrow("narration_budget_exhausted_failure");
+    await expect(runWithAitunnelProjectBudget(budget, () => generateAitunnelNarration(client, "gpt-5.6-luna", project, [], plan))).rejects.toThrow("narration_budget_exhausted_failure");
     expect(calls).toBe(0);
   });
 
@@ -886,7 +886,7 @@ describe("Yandex narration full duration rewrite", () => {
       responses: { create: async () => { calls += 1; throw new Error("provider unavailable"); } },
     } as never;
 
-    await expect(generateAitunnelNarration(client, "gpt-5.6-terra", project, [], plan)).rejects.toThrow("narration_provider_failure");
+    await expect(generateAitunnelNarration(client, "gpt-5.6-luna", project, [], plan)).rejects.toThrow("narration_provider_failure");
     expect(calls).toBe(1);
   });
 
@@ -904,7 +904,7 @@ describe("Yandex narration full duration rewrite", () => {
       } },
     } as never;
 
-    await expect(generateAitunnelNarration(client, "gpt-5.6-terra", project, [], plan)).rejects.toThrow("narration_usage_unavailable_failure");
+    await expect(generateAitunnelNarration(client, "gpt-5.6-luna", project, [], plan)).rejects.toThrow("narration_usage_unavailable_failure");
     expect(calls).toBe(1);
   });
 });
@@ -1201,6 +1201,30 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("web_and_pptx_pdf");
     expect(prompt).toContain("short beautiful slides");
     expect(prompt).toContain("full explanation in speakerNotes and speechScript");
+  });
+
+  it("compresses repeated pipeline context and keeps accepted narration authoritative", () => {
+    const repeated = "Подробный повторяющийся контекст для проверки сжатия. ".repeat(40);
+    const narration = "Слайд 1: Принцип\nКороткое принятое объяснение факта.";
+    const sources = [{ id: "src-1", label: "Research source", type: "WEB", size: 0, excerpt: repeated, url: "https://example.com/should-not-be-forwarded" }];
+    const narrativePlan = [{ slideOrder: 1, slideTitle: repeated, slidePurpose: repeated, keyMessage: repeated, audienceQuestion: repeated, transitionToNext: repeated, supportedFactSourceIds: ["src-1"] }];
+    const artifacts = {
+      researchBrief: { topic: repeated, angle: repeated, facts: [{ text: repeated, sourceId: "src-1", confidence: "high" }], warnings: [], vocabulary: [] },
+      deckStory: { mainIdea: "Do not duplicate this deck story", audienceQuestion: "What is the answer?", tone: "school_report", chapters: [{ title: "Chapter", purpose: repeated, slideOrders: [1] }], conclusion: repeated, factualTopicProfile: { topicTerms: [], allowedEntities: [], timeRange: "", domainAnchors: [] } },
+      designBrief: { themeId: "academicClean", mood: "serious", audienceFit: repeated, visualMetaphor: repeated, colorIntent: repeated, typographyIntent: repeated, rhythm: { titleStyle: "academic", density: "medium", imageFrequency: "rare", sectionBreaks: true }, slideDirections: [] },
+      slideBlueprints: [{ slideOrder: 1, purpose: repeated, title: "Blueprint title", visualStrategy: repeated, layoutCandidate: "statement", textDensity: "low" }],
+      slideTextPlans: [{ slideOrder: 1, slideQuestion: "Question", coreClaim: repeated, evidenceOrExample: repeated, listenerTakeaway: repeated, title: "Text title", thesis: repeated, bullets: ["One bullet"], speakerNotes: repeated, supportedFactSourceIds: ["src-1"] }],
+    } as never;
+
+    const prompt = buildGenerationPromptFromLayer({ id: "compact", title: "Compact", prompt: "Explain the subject", scenario: "lesson", level: "beginner", mode: "with_sources", slideCount: 1 }, sources, narration, narrativePlan, artifacts);
+    const compact = compactGenerationPromptContext(sources, narrativePlan, artifacts);
+
+    expect(prompt).toContain(narration);
+    expect(prompt).toContain("accepted narration remains the sole source of truth");
+    expect(prompt).not.toContain("Do not duplicate this deck story");
+    expect(prompt).not.toContain("https://example.com/should-not-be-forwarded");
+    expect(JSON.stringify(compact)).not.toContain("Do not duplicate this deck story");
+    expect(prompt.length).toBeLessThan(repeated.length * 12);
   });
 });
 

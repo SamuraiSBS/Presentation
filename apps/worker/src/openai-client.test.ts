@@ -20,7 +20,7 @@ describe("openAIClientOptions", () => {
     expect(aitunnelConfig({ OPENAI_API_KEY: "sk-openai", AITUNNEL_API_KEY: "aitunnel-key" })).toMatchObject({
       apiKey: "aitunnel-key",
       baseURL: AITUNNEL_DEFAULT_BASE_URL,
-      narrationModel: "gpt-5.6-terra",
+      narrationModel: "gpt-5.6-luna",
     });
     expect(aitunnelConfig({ AITUNNEL_API_KEY: "aitunnel-key", AITUNNEL_NARRATION_MODEL: "auto" })).toBeUndefined();
     expect(aitunnelConfig({ AITUNNEL_NARRATION_MODEL: "gpt-5.6-terra" })).toBeUndefined();

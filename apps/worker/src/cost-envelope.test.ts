@@ -17,22 +17,22 @@ const { prismaMock, transactionMock } = vi.hoisted(() => {
 vi.mock("./prisma.js", () => ({ getPrisma: () => prismaMock }));
 
 describe("standard generation cost envelope policy", () => {
-  it("has the exact v10 27.90 RUB cap including the final Terra presentation", () => {
+  it("has the exact v11 12.00 RUB cap with Luna presentation generation", () => {
     const policy = standardGenerationCostPolicy();
     expect(policy.limitRub).toBe(COST_ENVELOPE_LIMIT_RUB);
     expect(policy.buckets).toEqual(COST_ENVELOPE_BUCKETS);
     expect(policy.buckets.narrative_plan).toBe("1.50000000");
     expect(policy.buckets.narration_full_candidate).toBe("1.00000000");
-    expect(policy.buckets.narration_full_rewrite).toBe("7.50000000");
+    expect(policy.buckets.narration_full_rewrite).toBe("1.50000000");
     expect(policy.buckets.narration_targeted_repair).toBe("0.75000000");
-    expect(policy.buckets.presentation).toBe("12.00000000");
+    expect(policy.buckets.presentation).toBe("2.10000000");
     expect(costEnvelopePolicyIsValid(policy)).toBe(true);
   });
 
-  it("keeps narration reservations at exactly 9.25 RUB and includes all provider stages in the cap", () => {
+  it("keeps narration reservations at exactly 3.25 RUB and includes all provider stages in the cap", () => {
     const policy = standardGenerationCostPolicy();
-    expect(Number(policy.buckets.narration_full_candidate) + Number(policy.buckets.narration_full_rewrite) + Number(policy.buckets.narration_targeted_repair)).toBeCloseTo(9.25, 8);
-    expect(Object.values(policy.buckets).reduce((sum, amount) => sum + Number(amount), 0)).toBeCloseTo(27.9, 8);
+    expect(Number(policy.buckets.narration_full_candidate) + Number(policy.buckets.narration_full_rewrite) + Number(policy.buckets.narration_targeted_repair)).toBeCloseTo(3.25, 8);
+    expect(Object.values(policy.buckets).reduce((sum, amount) => sum + Number(amount), 0)).toBeCloseTo(12, 8);
   });
 
   it("continues to validate persisted v5 snapshots without treating them as v6", () => {
@@ -58,8 +58,8 @@ describe("standard generation cost envelope policy", () => {
     transactionMock.costEnvelope.findUnique.mockResolvedValue({
       id: "inherited-envelope",
       status: "active",
-      limitRub: { toString: () => "27.90000000" },
-      settledRub: { toString: () => "24.00000000" },
+      limitRub: { toString: () => "12.00000000" },
+      settledRub: { toString: () => "10.00000000" },
       reservedRub: { toString: () => "3.50000000" },
       policySnapshot: policy,
     });
@@ -78,6 +78,6 @@ describe("standard generation cost envelope policy", () => {
     expect(transactionMock.costEnvelopeReservation.create).not.toHaveBeenCalled();
     expect(transactionMock.costEnvelope.update).not.toHaveBeenCalled();
     expect(transactionMock.costEnvelope.create).not.toHaveBeenCalled();
-    expect(Number("24.00000000") + Number("3.50000000") + Number("1.00000000")).toBeGreaterThan(Number("27.90000000"));
+    expect(Number("10.00000000") + Number("3.50000000") + Number("1.00000000")).toBeGreaterThan(Number("12.00000000"));
   });
 });

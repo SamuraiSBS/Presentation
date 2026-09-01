@@ -71,7 +71,7 @@ function fullSpeech(wordsBySlide: readonly number[]) {
 describe("Plan 18 v6 full-document narration foundation", () => {
   it("uses exactly the three future narration stages, models, and output caps", () => {
     expect(aitunnelModelForStage("narration_full_candidate")).toBe("gpt-5.6-luna");
-    expect(aitunnelModelForStage("narration_full_rewrite")).toBe("gpt-5.6-terra");
+    expect(aitunnelModelForStage("narration_full_rewrite")).toBe("gpt-5.6-luna");
     expect(aitunnelModelForStage("narration_targeted_repair")).toBe("gpt-5.6-luna");
     expect(aitunnelStagePolicy("narration_full_candidate").maxOutputTokens).toBe(AITUNNEL_NARRATION_FULL_CANDIDATE_MAX_OUTPUT_TOKENS);
     expect(aitunnelStagePolicy("narration_full_rewrite").maxOutputTokens).toBe(AITUNNEL_NARRATION_FULL_REWRITE_MAX_OUTPUT_TOKENS);
@@ -116,7 +116,7 @@ describe("Plan 18 v6 full-document narration foundation", () => {
     const repairReservation = reserveAitunnelStageCall("narration_targeted_repair", productionRequestFor("narration_targeted_repair", repair))!;
 
     expect(candidateReservation).toMatchObject({ inputTokens: 2939, outputTokens: 4500, costRub: "0.59878000" });
-    expect(rewriteReservation).toMatchObject({ inputTokens: 8463, outputTokens: 4500, costRub: "7.09260000" });
+    expect(rewriteReservation).toMatchObject({ inputTokens: 8463, outputTokens: 4500, costRub: "0.70926000" });
     expect(repairReservation).toMatchObject({ inputTokens: 3134, outputTokens: 1400, costRub: "0.23068000" });
     expect(Number(candidateReservation.costRub)).toBeLessThanOrEqual(Number(buckets.narration_full_candidate));
     expect(Number(rewriteReservation.costRub)).toBeLessThanOrEqual(Number(buckets.narration_full_rewrite));
@@ -180,7 +180,7 @@ describe("Plan 18 v6 full-document narration foundation", () => {
       systemInstructionsTokens: 1192,
       instructionsTokens: 420,
       compactEstimatedInputTokens: 3104,
-      compactWorstCaseCostRub: "6.02080000",
+      compactWorstCaseCostRub: "0.60208000",
     });
   });
 

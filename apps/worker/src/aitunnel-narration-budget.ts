@@ -4,6 +4,7 @@ import { AITUNNEL_PROVIDER_CATALOG, aitunnelPriceForApprovedModel } from "./aitu
 type EnvLike = Record<string, string | undefined>;
 
 export const AITUNNEL_ECONOMY_PRICE = AITUNNEL_PROVIDER_CATALOG["gpt-5.6-luna"];
+// Retained only for pricing historical/non-standard Terra snapshots.
 export const AITUNNEL_PRIMARY_PRICE = AITUNNEL_PROVIDER_CATALOG["gpt-5.6-terra"];
 // Kept for compatibility with the Lite-only section route.
 export const AITUNNEL_NARRATION_PRICE = AITUNNEL_ECONOMY_PRICE;
@@ -29,6 +30,8 @@ export const AITUNNEL_NARRATION_FULL_REWRITE_MAX_OUTPUT_TOKENS = 4500;
 export const AITUNNEL_NARRATION_TARGETED_REPAIR_MAX_OUTPUT_TOKENS = 1400;
 export const AITUNNEL_NARRATION_DEFAULT_REASONING_EFFORT = "minimal";
 export const AITUNNEL_ECONOMY_MODEL = "gpt-5.6-luna";
+// Retained only for historical/non-standard policy snapshots. Current
+// standard-generation stages below are all explicitly economy/Luna.
 export const AITUNNEL_PRIMARY_MODEL = "gpt-5.6-terra";
 
 type AitunnelNarrationSlideOrder = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
@@ -62,11 +65,11 @@ const STAGE_POLICIES: Record<AitunnelStage, { model: "economy" | "primary"; maxO
   // section-route stages above stay typed temporarily so historical v5 jobs
   // and their snapshots are never reinterpreted during the staged rollout.
   narration_full_candidate: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_FULL_CANDIDATE_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
-  narration_full_rewrite: { model: "primary", maxOutputTokens: AITUNNEL_NARRATION_FULL_REWRITE_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
+  narration_full_rewrite: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_FULL_REWRITE_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
   narration_targeted_repair: { model: "economy", maxOutputTokens: AITUNNEL_NARRATION_TARGETED_REPAIR_MAX_OUTPUT_TOKENS, reasoningEffort: "minimal" },
   narration: { model: "economy", maxOutputTokens: 2400, reasoningEffort: "minimal" },
   narration_rewrite: { model: "economy", maxOutputTokens: 2400, reasoningEffort: "minimal" },
-  presentation: { model: "primary", maxOutputTokens: 6000, reasoningEffort: "minimal" },
+  presentation: { model: "economy", maxOutputTokens: 6000, reasoningEffort: "minimal" },
   slide_text_repair: { model: "economy", maxOutputTokens: 2400, reasoningEffort: "minimal" },
   quality_repair: { model: "economy", maxOutputTokens: 3600, reasoningEffort: "minimal" },
 };
