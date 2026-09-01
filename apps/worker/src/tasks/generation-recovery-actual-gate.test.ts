@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { presentationSchema } from "@studydeck/shared";
 import { buildEmergencyReadablePresentation, handleGenerationJob, hasAcceptedNarrationRecoveryArtifacts } from "./generation.js";
 import { buildLocalPresentationFromAcceptedNarration } from "./presentation.js";
 import { productionQualityReleaseResult } from "./presentation-quality.js";
@@ -112,6 +113,11 @@ describe("accepted narration local recovery with the actual production gate", ()
     const document = prismaMock.presentation.upsert.mock.calls[0]?.[0]?.create?.document;
     const release = productionQualityReleaseResult(document, sources, { ...project, mandatorySourceSnapshot: true, acceptedNarrationRecovery: true });
     expect(release).toMatchObject({ finalDisposition: "released", issueCategories: [], issues: [] });
+    expect(document.presentationTheme?.themeId).toBe("studydeckEditorial");
+    expect(document.designBrief?.themeId).toBe("studydeckEditorial");
+    expect(document.productionQualityGate).toMatchObject({ recoveryApplied: true });
+    expect(["accepted_narration", "canvas_layout", "emergency"]).toContain(document.productionQualityGate.recoveryStage);
+    expect(document.productionQualityGate.recoveryReason).toEqual(expect.any(String));
     expect(generatePresentationFromNarration).toHaveBeenCalledTimes(1);
     expect(enrichPresentationImages).not.toHaveBeenCalled();
     expect(searchWebSources).not.toHaveBeenCalled();
@@ -134,6 +140,8 @@ describe("accepted narration local recovery with the actual production gate", ()
     }).finalDisposition).toBe("rejected");
 
     const emergency = buildEmergencyReadablePresentation(rejectedEditorialProjection);
+    expect(emergency.presentationTheme?.themeId).toBe("studydeckEditorial");
+    expect(emergency.productionQualityGate).toMatchObject({ recoveryApplied: true, recoveryStage: "emergency" });
     const emergencyRelease = productionQualityReleaseResult(emergency, sources, {
       ...project,
       mandatorySourceSnapshot: true,
@@ -141,6 +149,43 @@ describe("accepted narration local recovery with the actual production gate", ()
     });
     expect(emergencyRelease.issues).toEqual([]);
     expect(emergencyRelease).toMatchObject({ finalDisposition: "released", issueCategories: [] });
+  });
+
+  it("keeps available images and grounded diagrams in emergency recovery", () => {
+    const local = buildLocalPresentationFromAcceptedNarration(project, sources, acceptedNarration);
+    const imageSlide = {
+      ...local.slides[1],
+      layout: "image-focus" as const,
+      visual: {
+        type: "image" as const,
+        title: "",
+        description: "A stored documentary photograph supports this topic.",
+        leftLabel: "",
+        rightLabel: "",
+        items: [],
+        rows: [],
+        image: {
+          url: "https://example.com/recovery.jpg",
+          objectKey: "projects/recovery-project/images/recovery.jpg",
+          alt: "Recovery evidence",
+          query: "recovery evidence",
+          provider: "archive" as const,
+          contentType: "image/jpeg",
+          sourceTitle: "Recovery archive",
+          warnings: [],
+        },
+      },
+    };
+    const emergency = buildEmergencyReadablePresentation({
+      ...local,
+      slides: [local.slides[0], imageSlide, ...local.slides.slice(2)],
+    });
+
+    expect(emergency.slides[1].visual.image?.objectKey).toBe("projects/recovery-project/images/recovery.jpg");
+    expect(emergency.slides[1].canvas?.elements.some((element) => element.type === "image")).toBe(true);
+    expect(emergency.slides.some((slide) => slide.visual.type === "process_diagram")).toBe(true);
+    expect(emergency.slides.some((slide) => slide.canvas?.elements.some((element) => element.type === "shape" && element.id.includes("recovery-card")))).toBe(true);
+    expect(() => presentationSchema.parse(emergency)).not.toThrow();
   });
 
   it("does not spend again when a retry inherits a terminal envelope", async () => {
