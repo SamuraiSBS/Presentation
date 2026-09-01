@@ -580,6 +580,31 @@ describe("export preflight", () => {
     expect(result.document).toEqual(released);
   });
 
+  it("allows released exports with advisory visual findings without rewriting the document", async () => {
+    const narration = "This complete explanation keeps the accepted topic clear and gives the audience enough context to understand the main claim and its practical meaning.";
+    const source = generatedPreflightDeck();
+    const released = presentationSchema.parse({
+      ...source,
+      generatedText: `Slide 1: ${source.slides[0]!.title}\n${narration}`,
+      productionQualityGate: { version: 1, capability: "silent-production-quality-gate" },
+      speechScript: [{ slideOrder: 1, slideTitle: source.slides[0]!.title, text: narration }],
+      slides: source.slides.map((slide) => ({ ...slide, speakerNotes: narration })),
+    });
+
+    const [pptx, pdf] = await Promise.all([
+      preparePresentationForExport(released, { format: "pptx", project, readObject: readAvailableObject }),
+      preparePresentationForExport(released, { format: "pdf", project, readObject: readAvailableObject }),
+    ]);
+
+    expect(pptx.report).toMatchObject({ passed: true, repaired: false, format: "pptx" });
+    expect(pdf.report).toMatchObject({ passed: true, repaired: false, format: "pdf" });
+    expect(pptx.report.slideIssues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ slideId: released.slides[0]!.id, categories: expect.arrayContaining(["bad_visual"]) }),
+    ]));
+    expect(pptx.document).toEqual(released);
+    expect(pdf.document).toEqual(released);
+  });
+
   it("does not re-report synchronized accepted narration during released export validation", async () => {
     const source = generatedPreflightDeck();
     const acceptedNarration = "Материал связывает ключевые наблюдения с темой и показывает, как проверяемые примеры помогают сделать вывод понятным для аудитории без потери исходного смысла и без повторения общих формулировок. Он объясняет практическое значение каждого примера для самостоятельной подготовки к выступлению на занятии.";
