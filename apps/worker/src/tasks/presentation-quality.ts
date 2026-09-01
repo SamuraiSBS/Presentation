@@ -943,7 +943,8 @@ export function findVisualPlanIssues(presentation: PresentationDocument, project
   // visual plan. There is no declared visual contract to enforce there, while
   // legacy image-asset diagnostics below remain available.
   const strictVisualPolicy = Boolean(presentation.designBrief)
-    && isManagedSlideCount(project?.slideCount ?? presentation.slideCount);
+    && isManagedSlideCount(project?.slideCount ?? presentation.slideCount)
+    && presentation.productionQualityGate?.recoveryStage !== "emergency";
   const directionByOrder = new Map((presentation.designBrief?.slideDirections || []).map((direction) => [direction.slideOrder, direction]));
   // Managed counts use the new substantive-visual contract. Legacy counts
   // retain their historical non-none support semantics and allocation path.
@@ -1121,10 +1122,15 @@ export function materializePlannedVisuals(
   let changed = false;
   const slides = presentation.slides.map((slide) => {
     const direction = directions.get(slide.order);
-    const missingPlannedPhoto = options.fallbackMissingPhotos
+    const missingPlannedPhoto = slide.slideKind === "content"
+      && options.fallbackMissingPhotos
       && direction?.imageStrategy === "real_photo"
       && !slide.visual.image;
-    if (!missingPlannedPhoto && (slide.visual.image || (isSemanticDiagram(slide) && !options.refreshDiagramFallbacks) || direction?.imageStrategy !== "diagram")) return slide;
+    const missingImageVisual = options.fallbackMissingPhotos
+      && slide.slideKind === "content"
+      && ["image", "illustration"].includes(slide.visual.type)
+      && !slide.visual.image;
+    if (!missingPlannedPhoto && !missingImageVisual && (slide.visual.image || (isSemanticDiagram(slide) && !options.refreshDiagramFallbacks) || direction?.imageStrategy !== "diagram")) return slide;
     changed = true;
     fallbackOrders.add(slide.order);
     return withGroundedDiagramFallback(slide);

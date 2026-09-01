@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { auditSlideCanvas, ensureEditableCanvas, presentationSchema, type PresentationDocument } from "@studydeck/shared";
+import { auditSlideCanvas, ensureEditableCanvas, presentationSchema, PREMIUM_PRESENTATION_THEMES, type PresentationDocument } from "@studydeck/shared";
 import {
   applyQualityRepairs,
   applyConclusionFallbacks,
@@ -886,6 +886,74 @@ describe("presentation quality checks", () => {
     expect(materialized.slides[1]).toMatchObject({ layout: "process", visual: { type: "process_diagram" } });
     expect(materialized.slides[0].visual.type).toBe("none");
     expect(materialized.slides[2].visual.type).toBe("none");
+  });
+
+  it("turns a missing content image into a grounded local diagram and materializes recovery cards", () => {
+    const slides = Array.from({ length: 6 }, (_, index) => {
+      const order = index + 1;
+      const isTitle = order === 1;
+      const isSummary = order === 6;
+      const isImage = order === 2 || order === 4;
+      const isDiagram = order === 3 || order === 5;
+      return {
+        ...makeSlide(order, `Recovery point ${order}`, `Recovery point ${order} explains a distinct grounded idea.`, [
+          `Evidence for recovery point ${order}`,
+          `Implication of recovery point ${order}`,
+        ]),
+        slideKind: isTitle ? "title" as const : isSummary ? "summary" as const : "content" as const,
+        layout: isTitle ? "hero" as const : isSummary ? "summary" as const : isImage ? "image-focus" as const : isDiagram ? "process" as const : "statement" as const,
+        visual: isImage
+          ? {
+            type: "image" as const,
+            title: "",
+            description: "A grounded recovery image",
+            leftLabel: "",
+            rightLabel: "",
+            items: [],
+            rows: [],
+            ...(order === 2 ? { image: { url: "https://example.com/recovery.jpg", alt: "Recovery evidence", query: "recovery", provider: "archive" as const, warnings: [] } } : {}),
+          }
+          : isDiagram
+            ? {
+              type: "process_diagram" as const,
+              title: "",
+              description: "A grounded recovery diagram",
+              leftLabel: "",
+              rightLabel: "",
+              items: [{ label: "Cause", text: "Grounded cause" }, { label: "Effect", text: "Grounded effect" }],
+              rows: [],
+            }
+            : {
+              type: "none" as const,
+              title: "",
+              description: "A text-led recovery slide",
+              leftLabel: "",
+              rightLabel: "",
+              items: [],
+              rows: [],
+            },
+      };
+    });
+    const presentation = makePresentation({ title: "Recovery deck", slides: slides as any, designBrief: undefined });
+    const materialized = materializePlannedVisuals(presentation, { fallbackMissingPhotos: true });
+    const recovered = ensureEditableCanvas({
+      ...materialized,
+      presentationTheme: PREMIUM_PRESENTATION_THEMES.studydeckEditorial,
+      slides: materialized.slides.map((slide) => ({ ...slide, canvas: undefined })),
+    }, { recovery: true });
+
+    expect(materialized.slides[3].visual).toMatchObject({ type: "process_diagram", diagram: { safety: "safe" } });
+    expect(materialized.slides[3].visual.image).toBeUndefined();
+    expect(materialized.slides[3].visual.diagram?.source).toContain("Recovery point 4");
+    expect(recovered.presentationTheme?.themeId).toBe("studydeckEditorial");
+    expect(recovered.slides[0].visual.type).toBe("none");
+    expect(recovered.slides[5].visual.type).toBe("none");
+    expect(recovered.slides.filter((slide) => slide.visual.image).length).toBe(1);
+    expect(recovered.slides.filter((slide) => slide.visual.type === "process_diagram").length).toBe(3);
+    expect(recovered.slides.filter((slide) => slide.visual.type === "none").length).toBe(2);
+    expect(recovered.slides.slice(0, 5).every((slide) => slide.canvas?.elements.some((element) => element.type === "shape" || element.type === "image"))).toBe(true);
+    expect(recovered.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!))).toEqual([]);
+    expect(() => presentationSchema.parse(recovered)).not.toThrow();
   });
 
   it("keeps generated diagram metadata inside the shared schema limits", () => {

@@ -134,7 +134,10 @@ export function normalizePresentation(
       prompt: project.prompt,
       scenario: cleanText(input.scenario) || project.scenario,
       level: cleanText(input.level) || project.level,
-      presentationTheme: input.presentationTheme,
+      // New documents use the fixed StudyDeck identity. Older saved
+      // documents are normalized by their consumers without passing through
+      // this generation-only path, so their historical theme remains intact.
+      presentationTheme: isStudyDeckEditorialTheme(input.presentationTheme) ? input.presentationTheme : undefined,
       designBrief: normalizedDesignBrief,
     }),
     designBrief: normalizedDesignBrief,
@@ -183,9 +186,18 @@ export function normalizePresentationNarrativePlan(
 export function normalizeDesignBrief(raw: unknown, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[]) {
   const parsed = designBriefSchema.safeParse(raw);
   if (parsed.success) {
-    return ensureDesignBriefDirections(parsed.data, project, narrativePlan, sources.some((source) => Boolean(source.excerpt || source.url)));
+    return ensureDesignBriefDirections({
+      ...parsed.data,
+      themeId: "studydeckEditorial",
+      themePreset: "minimal",
+      mood: "serious",
+    }, project, narrativePlan, sources.some((source) => Boolean(source.excerpt || source.url)));
   }
   return buildDesignBrief(project, buildResearchBrief(project, sources), narrativePlan);
+}
+
+function isStudyDeckEditorialTheme(value: unknown) {
+  return Boolean(value && typeof value === "object" && (value as { themeId?: unknown }).themeId === "studydeckEditorial");
 }
 
 export function ensureDesignBriefDirections(

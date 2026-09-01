@@ -29,7 +29,7 @@ import type {
     SlideCanvas,
     SlideVisual
 } from "./schemas.js";
-import { resolvePresentationTheme } from "./themes.js";
+import { PREMIUM_PRESENTATION_THEMES, resolvePresentationTheme } from "./themes.js";
 import { presentationTypography, typographyForCanvasText } from "./typography.js";
 import { PRESENTATION_FONT_FAMILY } from "./fonts.js";
 import {
@@ -42,21 +42,27 @@ import {
     READABLE_PLAQUE_FONT_SIZE,
 } from "./canvas-tokens.js";
 
-export function ensureEditableCanvas(document: PresentationDocument): PresentationDocument {
-  const theme = resolvePresentationTheme({
-    title: document.title,
-    scenario: document.scenario,
-    level: document.level,
-    presentationTheme: document.presentationTheme,
-    designBrief: document.designBrief,
-  });
+export function ensureEditableCanvas(
+  document: PresentationDocument,
+  options: { recovery?: boolean } = {},
+): PresentationDocument {
+  const recovery = options.recovery || document.productionQualityGate?.recoveryApplied === true;
+  const theme = recovery
+    ? PREMIUM_PRESENTATION_THEMES.studydeckEditorial
+    : resolvePresentationTheme({
+      title: document.title,
+      scenario: document.scenario,
+      level: document.level,
+      presentationTheme: document.presentationTheme,
+      designBrief: document.designBrief,
+    });
 
   return {
     ...document,
     presentationTheme: theme,
     slides: document.slides.map((slide) => {
       const designDirection = document.designBrief?.slideDirections.find((direction) => direction.slideOrder === slide.order);
-      const generatedCanvas = buildSlideCanvas(slide, theme, { designDirection });
+      const generatedCanvas = buildSlideCanvas(slide, theme, { designDirection, recovery });
       const hasExplicitCustomCanvas = slide.canvas?.elements.some(
         (element) => element.id === `${slide.id}-custom-canvas-marker`,
       );
@@ -78,12 +84,16 @@ export function ensureEditableCanvas(document: PresentationDocument): Presentati
 
 type BuildSlideCanvasOptions = {
   designDirection?: DesignBriefSlideDirection;
+  recovery?: boolean;
 };
 
 export function buildSlideCanvas(slide: Slide, theme: PresentationTheme, options: BuildSlideCanvasOptions = {}): SlideCanvas {
   // Canvas is a projection of the structured slide, not its source of truth.
   // Keep the rich narration intact while reducing this projection to the
   // capacity of the chosen composition before any font-size fallback occurs.
+  if (options.recovery) {
+    return buildRecoveryCanvas(slide, theme);
+  }
   slide = constrainSlideToLayoutCapacity(slide);
   if (theme.themeId === STUDYDECK_EDITORIAL_THEME_ID) {
     return buildStudyDeckEditorialCanvas(slide, theme, options.designDirection);
@@ -171,6 +181,244 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme, options
   addSlideAttributionCanvas(slide, theme, elements);
 
   return { version: 2, width: 1280, height: 720, background, backgroundStyle, elements: finalizeGeneratedElements(elements, theme) };
+}
+
+function buildRecoveryCanvas(slide: Slide, theme: PresentationTheme): SlideCanvas {
+  const isDark = slide.slideKind === "title" || slide.slideKind === "section" || slide.slideKind === "summary";
+  const background = isDark ? theme.colors.text : theme.colors.background;
+  const foreground = isDark ? theme.colors.background : theme.colors.text;
+  const muted = isDark ? theme.colors.line : theme.colors.muted;
+  const elements: CanvasElement[] = [];
+
+  if (slide.slideKind === "title" || slide.slideKind === "section" || slide.slideKind === "summary") {
+    addRecoveryStatementCanvas(slide, theme, elements, foreground, muted, isDark);
+  } else if (slide.visual.image) {
+    addRecoveryImageCanvas(slide, theme, elements);
+  } else if (isRecoveryDiagram(slide.visual.type)) {
+    addRecoveryDiagramCanvas(slide, theme, elements);
+  } else {
+    addRecoveryStatementCanvas(slide, theme, elements, foreground, muted, isDark);
+  }
+
+  addSlideAttributionCanvas(slide, theme, elements, muted);
+  return {
+    version: 3,
+    width: 1280,
+    height: 720,
+    background,
+    backgroundStyle: { type: "solid", color: background },
+    elements: finalizeGeneratedElements(elements, theme),
+  };
+}
+
+function addRecoveryStatementCanvas(
+  slide: Slide,
+  theme: PresentationTheme,
+  elements: CanvasElement[],
+  foreground: string,
+  muted: string,
+  isDark: boolean,
+) {
+  const body = slide.thesis || slideBodyText(slide);
+  elements.push(
+    shapeElement(`${slide.id}-recovery-rule`, "rect", 72, 78, 112, 7, 2, theme.colors.accentAlt, theme.colors.accentAlt, 0, 1),
+    textElement(`${slide.id}-title`, slide.title, 72, 112, 760, 112, 4, {
+      role: "title",
+      typographyRole: slide.slideKind === "title" ? "deckTitle" : "slideTitle",
+      fontSize: fittedFontSize(slide.title, slide.slideKind === "title" ? 54 : 43, 30, 112),
+      fontFamily: theme.fonts.heading,
+      color: foreground,
+      bold: true,
+      valign: "middle",
+    }),
+    textElement(`${slide.id}-body`, body, 72, 264, 690, 176, 4, {
+      role: "body",
+      typographyRole: "body",
+      fontSize: fittedFontSize(body, 30, 21, 176),
+      fontFamily: theme.fonts.body,
+      color: muted,
+      valign: "middle",
+    }),
+  );
+  addRecoverySupportBlocks(slide, theme, elements, 72, 486, 690, isDark);
+}
+
+function addRecoveryImageCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  const image = slide.visual.image;
+  if (!image) return addRecoveryStatementCanvas(slide, theme, elements, theme.colors.text, theme.colors.muted, false);
+  const body = slide.thesis || slideBodyText(slide);
+  elements.push(
+    shapeElement(`${slide.id}-recovery-rule`, "rect", 72, 70, 112, 7, 2, theme.colors.accentAlt, theme.colors.accentAlt, 0, 1),
+    textElement(`${slide.id}-title`, slide.title, 72, 104, 610, 92, 4, {
+      role: "title",
+      typographyRole: "slideTitle",
+      fontSize: fittedFontSize(slide.title, 42, 29, 92),
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.text,
+      bold: true,
+      valign: "middle",
+    }),
+    textElement(`${slide.id}-body`, body, 72, 224, 600, 210, 4, {
+      role: "body",
+      typographyRole: "body",
+      fontSize: fittedFontSize(body, 29, 21, 210),
+      fontFamily: theme.fonts.body,
+      color: theme.colors.text,
+      valign: "middle",
+    }),
+    imageElement(`${slide.id}-recovery-image`, image, 770, 126, 420, 456, 2, 1, imageFitForVisual(slide)),
+  );
+  addRecoverySupportBlocks(slide, theme, elements, 72, 486, 600, false);
+}
+
+function addRecoveryDiagramCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+  const body = slide.thesis || slideBodyText(slide);
+  const nodes = recoveryDiagramNodes(slide).slice(0, 3);
+  const cardGap = 22;
+  const cardWidth = Math.floor((1136 - cardGap * (nodes.length - 1)) / nodes.length);
+  const cardHeight = 188;
+  const cardY = 356;
+  const cardStartX = 72;
+
+  elements.push(
+    shapeElement(`${slide.id}-recovery-rule`, "rect", 72, 70, 112, 7, 2, theme.colors.accentAlt, theme.colors.accentAlt, 0, 1),
+    textElement(`${slide.id}-title`, slide.title, 72, 104, 1136, 82, 4, {
+      role: "title",
+      typographyRole: "slideTitle",
+      fontSize: fittedFontSize(slide.title, 42, 29, 82),
+      fontFamily: theme.fonts.heading,
+      color: theme.colors.text,
+      bold: true,
+      valign: "middle",
+    }),
+    textElement(`${slide.id}-body`, body, 72, 206, 1136, 125, 4, {
+      role: "body",
+      typographyRole: "body",
+      fontSize: fittedFontSize(body, 27, 21, 292),
+      fontFamily: theme.fonts.body,
+      color: theme.colors.text,
+      valign: "middle",
+    }),
+  );
+
+  nodes.forEach((node, index) => {
+    const x = cardStartX + index * (cardWidth + cardGap);
+    const groupId = `group:${slide.id}-recovery-card-${index}`;
+    const detail = node.detail || "";
+    elements.push(
+      { ...shapeElement(`${slide.id}-recovery-card-${index}`, "roundRect", x, cardY, cardWidth, cardHeight, 2, theme.colors.accentAlt, theme.colors.accentAlt, 1, 1), groupId },
+      textElement(`${slide.id}-recovery-card-${index}-label`, node.label, x + 20, cardY + 26, cardWidth - 40, detail ? 58 : 132, 4, {
+        role: "body",
+        typographyRole: "supporting",
+        fontSize: fittedFontSize(node.label, 25, 19, detail ? 58 : 132),
+        autoFit: false,
+        fontFamily: theme.fonts.heading,
+        color: theme.colors.background,
+        bold: true,
+        align: "center",
+        valign: "middle",
+        groupId,
+      }),
+      ...(detail ? [textElement(`${slide.id}-recovery-card-${index}-detail`, detail, x + 20, cardY + 100, cardWidth - 40, 62, 4, {
+        role: "caption",
+        typographyRole: "supporting",
+        fontSize: fittedFontSize(detail, 19, 16, 62),
+        autoFit: false,
+        fontFamily: theme.fonts.body,
+        color: theme.colors.background,
+        align: "center",
+        valign: "middle",
+        groupId,
+      })] : []),
+    );
+    if (index < nodes.length - 1) {
+      elements.push(shapeElement(`${slide.id}-recovery-connector-${index}`, "line", x + cardWidth + 4, cardY + cardHeight / 2, cardGap - 8, 3, 1, theme.colors.accentAlt, theme.colors.accentAlt, 0, 1));
+    }
+  });
+}
+
+function addRecoverySupportBlocks(
+  slide: Slide,
+  theme: PresentationTheme,
+  elements: CanvasElement[],
+  x: number,
+  y: number,
+  width: number,
+  isDark: boolean,
+) {
+  const points = [...slide.bullets, ...slide.blocks.flatMap((block) => block.type === "bullets" ? block.items : [block.content])]
+    .map((item) => compactRecoveryText(item, 90))
+    .filter(Boolean)
+    .filter((item, index, all) => all.indexOf(item) === index)
+    .slice(0, 2);
+  if (!points.length) return;
+  const gap = 16;
+  const blockWidth = points.length === 1 ? Math.min(520, width) : Math.floor((width - gap) / 2);
+  const groupFill = isDark ? theme.colors.surfaceAlt : theme.colors.accentAlt;
+  points.forEach((point, index) => {
+    const blockX = x + index * (blockWidth + gap);
+    const groupId = `group:${slide.id}-recovery-support-${index}`;
+    elements.push(
+      { ...shapeElement(`${slide.id}-recovery-support-${index}`, "roundRect", blockX, y, blockWidth, 102, 2, groupFill, groupFill, 1, 1), groupId },
+      textElement(`${slide.id}-recovery-support-${index}-text`, point, blockX + 18, y + 15, blockWidth - 36, 72, 3, {
+        role: "caption",
+        typographyRole: "supporting",
+        fontSize: fittedFontSize(point, 18, 16, 72),
+        autoFit: false,
+        fontFamily: theme.fonts.body,
+        color: isDark ? theme.colors.text : theme.colors.background,
+        bold: true,
+        align: "center",
+        valign: "middle",
+        groupId,
+      }),
+    );
+  });
+}
+
+function isRecoveryDiagram(type: SlideVisual["type"]) {
+  return ["process_diagram", "comparison_diagram", "cause_effect_diagram", "before_after_table", "pros_cons_table", "timeline", "mind_map", "schema"].includes(type);
+}
+
+function recoveryDiagramNodes(slide: Slide) {
+  if (slide.visual.graph?.nodes.length) {
+    return slide.visual.graph.nodes.map((node) => ({
+      label: compactRecoveryText(node.label, 72),
+      detail: compactRecoveryText(node.detail, 96),
+    }));
+  }
+  if (slide.visual.rows.length) {
+    return slide.visual.rows.slice(0, 3).map((row, index) => ({
+      label: compactRecoveryText(row.label || `Point ${index + 1}`, 72),
+      detail: compactRecoveryText([row.left, row.right].filter(Boolean).join(" · "), 96),
+    }));
+  }
+  if (slide.visual.items.length) {
+    return slide.visual.items.map((item) => ({
+      label: compactRecoveryText(item.label || item.text, 72),
+      detail: compactRecoveryText(item.text && item.text !== item.label ? item.text : "", 96),
+    }));
+  }
+  return [slide.thesis, ...slide.bullets, slide.title]
+    .map((value) => compactRecoveryText(value, 96))
+    .filter(Boolean)
+    .filter((value, index, all) => all.indexOf(value) === index)
+    .map((value) => ({ label: value, detail: "" }));
+}
+
+function compactRecoveryText(value: string, maximum: number) {
+  const text = cleanCanvasText(value);
+  if (text.length <= maximum) return text;
+  const sentence = text.split(/(?<=[.!?])\s+/u).find((part) => part.length <= maximum && part.trim());
+  if (sentence) return sentence.trim();
+  const words = text.split(/\s+/u);
+  let result = "";
+  for (const word of words) {
+    const candidate = result ? `${result} ${word}` : word;
+    if (candidate.length > maximum) break;
+    result = candidate;
+  }
+  return result || text.slice(0, maximum).trim();
 }
 
 function buildStudyDeckEditorialCanvas(

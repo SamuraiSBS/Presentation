@@ -1944,7 +1944,7 @@ describe("generatePresentation fallback behavior", () => {
       expect(presentation.designBrief?.slideDirections).toHaveLength(2);
       expect(presentation.designBrief?.slideDirections[0].imageStrategy).toBe("real_photo");
       expect(presentation.designBrief?.slideDirections[0].sceneTextMode).toBe("visual_labels");
-      expect(presentation.presentationTheme?.themeId).toBe("editorialMagazine");
+      expect(presentation.presentationTheme?.themeId).toBe("studydeckEditorial");
       expect(presentation.slides[0].thesis).toContain("Внешний успех");
       expect(presentation.slides[1].bullets.every((bullet) => bullet.trim().length > 0)).toBe(true);
       expectNoForbiddenNarration(visiblePresentationText(presentation));

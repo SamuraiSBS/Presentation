@@ -286,7 +286,7 @@ export function buildLocalPresentationFromAcceptedNarration(
       blocks: acceptedFullNarration ? [] : slide.blocks,
       canvas: undefined,
     })),
-  });
+  }, { recovery: true });
 }
 
 function localNarrativeFields(sectionText: string) {
@@ -395,7 +395,7 @@ export function buildSafePresentationFromNarration(
   );
   const sections = parseNarrationSections(acceptedNarration);
   if (sections.length !== project.slideCount || sections.some((section, index) => section.order !== index + 1 || !section.text)) {
-    return ensureEditableCanvas(normalized);
+    return ensureEditableCanvas(normalized, { recovery: true });
   }
 
   // `normalizePresentation` is intentionally allowed to replace malformed
@@ -414,5 +414,5 @@ export function buildSafePresentationFromNarration(
       slideTitle: slide.title,
       text: sections[index].text,
     })),
-  }));
+  }), { recovery: true });
 }

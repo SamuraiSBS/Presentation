@@ -553,11 +553,12 @@ describe("prepareGenerationSources", () => {
 
     const repaired = repairPresentationLayout(presentation);
 
-    expect(repaired.slides[0].layout).toBe("statement");
-    expect(repaired.slides[0].visual.image).toBeUndefined();
-    expect(repaired.slides[0].visual.type).not.toBe("image");
-    expect(repaired.presentationTheme?.themeId).toBe("academicClean");
-    expect(repaired.designBrief).toBeUndefined();
+    expect(repaired.slides[0].layout).toBe("image-focus");
+    expect(repaired.slides[0].visual.image?.url).toBe("https://example.com/image.jpg");
+    expect(repaired.slides[0].visual.type).toBe("illustration");
+    expect(repaired.presentationTheme?.themeId).toBe("studydeckEditorial");
+    expect(repaired.designBrief?.themeId).toBe("studydeckEditorial");
+    expect(repaired.slides[0].canvas?.elements.some((element) => element.type === "image")).toBe(true);
     expect(repaired.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!))).toEqual([]);
   });
 });
