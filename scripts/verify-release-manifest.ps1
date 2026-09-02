@@ -16,20 +16,9 @@ if ($manifest.gitSha -ne $head) {
   throw "Release manifest gitSha does not match HEAD ($head)."
 }
 
-if ($manifest.releaseGate -ne "passed") {
-  throw "Release manifest does not prove a passed release gate."
-}
-
-if ($manifest.migrationCompatibility -ne "no-schema-change") {
-  throw "Release manifest must prove the no-schema-change migration policy."
-}
-
-$requiredImages = @("api", "worker", "web")
-foreach ($service in $requiredImages) {
-  $imageReference = [string]$manifest.images.$service
-  if ($imageReference -notmatch '^[a-z0-9][a-z0-9._/-]*(?::[0-9]+)?/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$') {
-    throw "Release manifest image '$service' must be a full immutable registry reference ending in @sha256:<digest>."
-  }
+& node (Join-Path $repositoryPath "scripts/validate-release-manifest.mjs") --manifest $Path --repository $repositoryPath
+if ($LASTEXITCODE -ne 0) {
+  throw "Release manifest compatibility or image validation failed."
 }
 
 Write-Host "Release manifest accepted for $head."

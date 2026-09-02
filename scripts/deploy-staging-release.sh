@@ -56,18 +56,7 @@ fi
 
 validate_manifest() {
   local manifest="$1"
-  node - "$manifest" <<'NODE'
-const fs = require('fs');
-const path = process.argv[2];
-const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
-const imagePattern = /^[a-z0-9][a-z0-9._/-]*(?::[0-9]+)?\/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$/;
-if (!/^[0-9a-f]{40}$/i.test(manifest.gitSha || '')) throw new Error('manifest gitSha must be a commit SHA');
-if (manifest.releaseGate !== 'passed') throw new Error('manifest does not prove a passed release gate');
-if (manifest.migrationCompatibility !== 'no-schema-change') throw new Error('manifest must prove the no-schema-change migration policy');
-for (const service of ['api', 'worker', 'web']) {
-  if (!imagePattern.test(manifest.images?.[service] || '')) throw new Error(`manifest image ${service} is not an immutable digest reference`);
-}
-NODE
+  node "$directory/scripts/validate-release-manifest.mjs" --manifest "$manifest" --repository "$directory"
 }
 
 manifest_value() {
@@ -210,6 +199,8 @@ activate_release() {
   compose_for "$directory" pull "${APP_SERVICES[@]}" || return
   compose_for "$directory" up -d --no-build "${DEPENDENCY_SERVICES[@]}" || return
   wait_for_dependencies "$directory" || return
+  # The accepted manifest proves that this is an expand-only nullable change;
+  # migrate before starting the new API/worker images and keep rollback app-only.
   compose_for "$directory" run --rm --no-deps --entrypoint ./node_modules/.bin/prisma api migrate deploy || return
   compose_for "$directory" up -d --no-build "${APP_SERVICES[@]}" || return
   verify_runtime_images "$directory" || return

@@ -48,18 +48,7 @@ fi
 
 validate_manifest() {
   local manifest="$1"
-  node - "$manifest" <<'NODE'
-const fs = require('fs');
-const path = process.argv[2];
-const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
-const imagePattern = /^[a-z0-9][a-z0-9._/-]*(?::[0-9]+)?\/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$/;
-if (!/^[0-9a-f]{40}$/i.test(manifest.gitSha || '')) throw new Error('manifest gitSha must be a commit SHA');
-if (manifest.releaseGate !== 'passed') throw new Error('manifest does not prove a passed release gate');
-if (manifest.migrationCompatibility !== 'no-schema-change') throw new Error('manifest must prove the no-schema-change migration policy');
-for (const service of ['api', 'worker', 'web']) {
-  if (!imagePattern.test(manifest.images?.[service] || '')) throw new Error(`manifest image ${service} is not an immutable digest reference`);
-}
-NODE
+  node "$directory/scripts/validate-release-manifest.mjs" --manifest "$manifest" --repository "$directory"
 }
 
 manifest_value() {
@@ -152,10 +141,10 @@ activate_release() {
   # the immutable images and database state have passed preflight.
   compose_for "$directory" up -d --no-build postgres redis minio create-bucket || return
   backup_database "$directory" || return
-  # CI refuses unclassified Prisma migration changes; the accepted policy for
-  # this deploy path is therefore forward-only application rollout with no
-  # schema change. Keep the deploy command explicit for the future migration
-  # policy extension and for Prisma's applied-migrations check.
+  # CI has already proved the migration policy embedded in the manifest. This
+  # command applies an expand-only nullable migration before the new app starts.
+  # Rollback is application-only: the previous Prisma schema ignores the extra
+  # nullable column, so attempting a destructive database rollback is unsafe.
   compose_for "$directory" run --rm --no-deps --no-build --entrypoint ./node_modules/.bin/prisma api migrate deploy || return
   compose_for "$directory" up -d --no-build || return
   wait_for_healthy "$directory" || return
