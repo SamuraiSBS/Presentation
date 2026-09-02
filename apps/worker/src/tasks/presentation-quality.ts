@@ -1067,10 +1067,7 @@ export function applyVisualPlanFallbacks(presentation: PresentationDocument, iss
     if (unfulfilledVisualIds.has(slide.id)) {
       return withGroundedDiagramFallback(slide);
     }
-    if ((duplicateAssetIds.has(slide.id) || unsafeTavilyImageIds.has(slide.id)) && slide.visual.image?.provider === "tavily") {
-      return withGroundedDiagramFallback(slide);
-    }
-    if (genericVisualDescriptionIds.has(slide.id) && !slide.visual.image) return withGroundedDiagramFallback(slide);
+    if (duplicateAssetIds.has(slide.id) && slide.visual.image?.provider === "tavily") return withGroundedDiagramFallback(slide);
     return slide;
   });
   const validSlides = slides.filter((slide): slide is PresentationDocument["slides"][number] => Boolean(slide));
@@ -1285,6 +1282,8 @@ function compactDiagramText(value: string, maximum: number) {
   return /[.!?…]$/u.test(compact) ? compact : `${compact}.`;
 }
 
+// Kept as a named helper for the visual-quality rules that may consume it in a later gate.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function isConcreteVisualTopic(presentation: PresentationDocument, project?: QualityProjectInput) {
   const text = [presentation.title, project?.title, project?.prompt, ...presentation.slides.map((slide) => slide.title)].filter(Boolean).join(" ");
   return /\b(?:porsche|bmw|mercedes|ferrari|car|vehicle|aircraft|ship|museum|painting|building|factory|laboratory|battle|city|country|person|product|device|model)\b|(?:автомобил|машин|самолет|корабл|музе|картина|здани|завод|лаборатор|город|стран|модель|\b\d{3,4}\b)/iu.test(text);
@@ -1642,15 +1641,6 @@ export function productionQualityReleaseResult(
         issues: baseCritique.issues.filter((issue) => !(
           (issue.category === "generic_text" || issue.category === "bad_narration")
           && (issue.field === "speakerNotes" || (project.acceptedNarrationRecovery && issue.field === "speechScript"))
-        ) && !(
-          // The visible claim was deterministically projected from the
-          // accepted narration. A missing optional source match is advisory
-          // here; real factual blockers and mandatory snapshot checks remain
-          // untouched below.
-          (project.acceptedNarrationRecovery || hasCanonicalAcceptedNarration)
-          && issue.category === "factual_risk"
-          && issue.severity === "minor"
-          && issue.message === "A precise visible claim has no matching source reference or source context."
         )),
       }
     : baseCritique;
@@ -2649,8 +2639,7 @@ function acceptedNarrationSentences(values: string[]) {
 }
 
 function compactTitle(value: string) {
-  const text = cleanText(value).replace(/[.!?]+$/g, "").split(/\s+/).slice(0, 12).join(" ");
-  return compactVisibleText(text, 84) || "Ключевой вывод";
+  return cleanText(value).replace(/[.!?]+$/g, "").split(/\s+/).slice(0, 12).join(" ") || "Ключевой вывод";
 }
 
 /** A generic accepted heading may be retained in narration, but it is not a useful screen label. */
@@ -2659,28 +2648,20 @@ function compactAcceptedNarrationTitle(sectionTitle: string, sentences: string[]
   return isGenericTitle(title) ? compactTitle(sentences[0] || sectionTitle) : title;
 }
 
-function compactSentence(value: string, maxWords: number, maxCharacters = 200) {
+function compactSentence(value: string, maxWords: number) {
   const words = cleanText(value).replace(/[.!?]+$/g, "").split(/\s+/).filter(Boolean).slice(0, maxWords);
-  const compact = compactVisibleText(words.join(" "), Math.max(1, maxCharacters - 1));
-  return compact ? `${compact}.` : "";
+  return words.length ? `${words.join(" ")}.` : "";
 }
 
 function uniqueCompactSentences(values: string[], thesis: string) {
   const thesisKey = normalizeQualityText(thesis);
   const seen = new Set<string>([thesisKey]);
-  return values.map((value) => compactSentence(value, 18, 120)).filter((value) => {
+  return values.map((value) => compactSentence(value, 18)).filter((value) => {
     const key = normalizeQualityText(value);
     if (!key || seen.has(key) || value.split(/\s+/).length < 4 || [...seen].some((candidate) => candidate && semanticallyRepeats(value, candidate))) return false;
     seen.add(key);
     return true;
   });
-}
-
-function compactVisibleText(value: string, maximum: number) {
-  const text = cleanText(value);
-  if (text.length <= maximum) return text;
-  const boundary = text.slice(0, maximum).replace(/\s+\S*$/, "").trim();
-  return boundary || text.slice(0, maximum).trim();
 }
 
 function isLowInformationProjection(value: string) {

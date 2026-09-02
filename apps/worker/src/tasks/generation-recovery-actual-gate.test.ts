@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { presentationSchema } from "@studydeck/shared";
 import { buildEmergencyReadablePresentation, handleGenerationJob, hasAcceptedNarrationRecoveryArtifacts, mergeRecoveredVisuals } from "./generation.js";
 import { buildLocalPresentationFromAcceptedNarration } from "./presentation.js";
-import { repairReleaseCandidate } from "./presentation/quality/orchestration.js";
 import { productionQualityReleaseResult } from "./presentation-quality.js";
 import { searchWebSources } from "./web-search.js";
 

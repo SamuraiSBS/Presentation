@@ -117,40 +117,8 @@ export function productionConfigurationErrors(env: RuntimeEnvironment = process.
     errors.push("SUPPORT_EMAIL must be a valid public support address");
   }
 
-  // Explicit operator-approved first-launch exception. Keep the strict
-  // off-site backup contract as the default and require backups to be
-  // disabled explicitly when this temporary exception is enabled.
-  const backupBypass = value(env, "ALLOW_PRODUCTION_WITHOUT_BACKUP").toLowerCase() === "true";
-  if (backupBypass) {
-    if (value(env, "BACKUP_ENABLED").toLowerCase() !== "false") {
-      errors.push("BACKUP_ENABLED must be false when ALLOW_PRODUCTION_WITHOUT_BACKUP is true");
-    }
-  } else {
-    if (value(env, "BACKUP_ENABLED").toLowerCase() !== "true") {
-      errors.push("BACKUP_ENABLED must be true in production");
-    }
-    const backupEndpoint = value(env, "BACKUP_S3_ENDPOINT");
-    if (!publicHttpsHost(backupEndpoint) || backupEndpoint === value(env, "S3_ENDPOINT")) {
-      errors.push("BACKUP_S3_ENDPOINT must be a separate public HTTPS object-storage endpoint");
-    }
-    if (!value(env, "BACKUP_S3_BUCKET") || value(env, "BACKUP_S3_BUCKET") === value(env, "S3_BUCKET")) {
-      errors.push("BACKUP_S3_BUCKET must be set and separate from S3_BUCKET");
-    }
-    if (isUnsafeSecret(value(env, "BACKUP_S3_SECRET_ACCESS_KEY")) || value(env, "BACKUP_S3_SECRET_ACCESS_KEY").length < 32) {
-      errors.push("BACKUP_S3_SECRET_ACCESS_KEY must be a unique non-default secret of at least 32 characters");
-    }
-    if (isUnsafeSecret(value(env, "BACKUP_S3_ACCESS_KEY_ID"))) {
-      errors.push("BACKUP_S3_ACCESS_KEY_ID must be a non-default dedicated credential");
-    }
-    const retentionDays = positiveInteger(value(env, "BACKUP_RETENTION_DAYS"));
-    const objectLockDays = positiveInteger(value(env, "BACKUP_OBJECT_LOCK_RETENTION_DAYS"));
-    if (!retentionDays || retentionDays < 7) errors.push("BACKUP_RETENTION_DAYS must be at least 7");
-    if (!objectLockDays || (retentionDays && objectLockDays < retentionDays)) {
-      errors.push("BACKUP_OBJECT_LOCK_RETENTION_DAYS must be at least BACKUP_RETENTION_DAYS");
-    }
-    if (!positiveInteger(value(env, "BACKUP_RPO_HOURS"))) errors.push("BACKUP_RPO_HOURS must be a positive integer");
-    if (!positiveInteger(value(env, "BACKUP_RTO_HOURS"))) errors.push("BACKUP_RTO_HOURS must be a positive integer");
-    if (!positiveInteger(value(env, "BACKUP_DRILL_MAX_AGE_DAYS"))) errors.push("BACKUP_DRILL_MAX_AGE_DAYS must be a positive integer");
+  if (value(env, "BACKUP_ENABLED").toLowerCase() !== "true") {
+    errors.push("BACKUP_ENABLED must be true in production");
   }
   const backupEndpoint = value(env, "BACKUP_S3_ENDPOINT");
   if (!publicHttpsHost(backupEndpoint) || backupEndpoint === value(env, "S3_ENDPOINT")) {

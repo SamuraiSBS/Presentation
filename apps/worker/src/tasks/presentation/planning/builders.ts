@@ -630,7 +630,7 @@ export function diversifySceneTextModes(
           ? "cards"
           : current.layoutIntent;
     const nextImageStrategy = current.imageStrategy;
-    const preservedVisualLayout = current.imageStrategy === "real_photo" || current.imageStrategy === "generated_illustration" || current.imageStrategy === "diagram";
+    const preservedVisualLayout = current.imageStrategy === "real_photo" || current.imageStrategy === "diagram";
     balanced[index] = {
       ...current,
       sceneTextMode: replacement,

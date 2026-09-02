@@ -115,11 +115,9 @@ export async function enrichPresentationImages(
   const usedDomains = new Set<string>();
   const generateImage = dependencies.generateImage || generateAitunnelImage;
   const searchImages = dependencies.searchImages || searchTavilyImages;
-  const generateImage = dependencies.generateImage || generateAitunnelImage;
   const downloadImage = dependencies.downloadImage || downloadRemoteImage;
   const putObject = dependencies.putObject || putObjectBuffer;
   const settleImage = dependencies.settleImageBucket || settleImageBucket;
-  const failImage = dependencies.failImageBucket || failImageBucket;
   const warn = dependencies.warn || ((message, error) => logger.warn({ ...errorLogFields(error) }, message));
   const skipSlideOrders = new Set(dependencies.skipSlideOrders || []);
   const attemptedSlideOrders = dependencies.attemptedSlideOrders;
@@ -143,6 +141,10 @@ export async function enrichPresentationImages(
       const fallback = safeVisualFallback(direction, slide);
       if (fallback) fallbackDirections.set(fallback.slideOrder, fallback);
       slides.push(fallback ? fallbackSlideForMissingPhoto(slide, direction) : slide);
+      continue;
+    }
+    if (!shouldSearchForSlideImage(slide, direction)) {
+      slides.push(slide);
       continue;
     }
 
@@ -362,10 +364,10 @@ function permittedPhotoSlideOrders(presentation: PresentationDocument) {
   const directions = presentation.designBrief?.slideDirections || [];
   return new Set(
     directions
-      .filter((direction) => direction.imageStrategy === "real_photo" || direction.imageStrategy === "generated_illustration")
+      .filter((direction) => direction.imageStrategy === "real_photo")
       .filter((direction) => {
         const slide = presentation.slides.find((item) => item.order === direction.slideOrder);
-        return Boolean(slide && (shouldSearchForSlideImage(slide, direction) || shouldGenerateForSlideImage(slide, direction)));
+        return Boolean(slide && shouldSearchForSlideImage(slide, direction));
       })
       .slice(0, limit)
       .map((direction) => direction.slideOrder),
@@ -442,18 +444,6 @@ export function shouldSearchForSlideImage(
     .filter((word) => word.length >= 3);
 
   return meaningfulWords.length >= 3 && meaningfulWords.some((word) => slideWords.includes(word));
-}
-
-export function shouldGenerateForSlideImage(
-  slide: PresentationDocument["slides"][number],
-  direction?: DesignBriefSlideDirection,
-) {
-  return Boolean(
-    isAitunnelImageProviderEnabled()
-      && !slide.visual.image
-      && direction?.imageStrategy === "generated_illustration"
-      && cleanText(direction.visualPrompt),
-  );
 }
 
 const GENERIC_VISUAL_PROMPT_WORDS = new Set([
