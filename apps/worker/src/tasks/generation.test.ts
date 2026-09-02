@@ -106,6 +106,7 @@ describe("prepareGenerationSources", () => {
     enrichPresentationImages.mockReset();
     materializePlannedVisuals.mockReset();
     materializePlannedVisuals.mockImplementation((presentation) => presentation);
+    enrichPresentationImages.mockImplementation(async (_project, presentation) => presentation);
     process.env.WEB_SEARCH_PROVIDER = "tavily";
     costEnvelope.findUnique.mockReset();
     costEnvelope.findUniqueOrThrow.mockReset();
@@ -807,6 +808,7 @@ describe("handleGenerationJob failed narration envelope finalization", () => {
     enrichPresentationImages.mockReset();
     materializePlannedVisuals.mockReset();
     materializePlannedVisuals.mockImplementation((presentation) => presentation);
+    enrichPresentationImages.mockImplementation(async (_project, presentation) => presentation);
     prismaMock.project.update.mockResolvedValue({});
     prismaMock.project.findUnique.mockResolvedValue({ speechDraft: null });
     prismaMock.project.findUniqueOrThrow.mockResolvedValue(narrationProject());

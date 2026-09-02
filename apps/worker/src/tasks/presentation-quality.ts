@@ -469,35 +469,35 @@ export function contentSlideExceptionReason(slide: Slide): string | null {
 export function findIntraSlideDuplicateIssues(presentation: PresentationDocument): QualityIssue[] {
   const issues: QualityIssue[] = [];
   for (const slide of presentation.slides) {
-    const seen = new Map<string, string>();
-    const supportPoints = new Set([slide.thesis, ...slide.bullets]
-      .map((value) => normalizedMessage(value))
-      .filter(Boolean));
-    for (const entry of visibleTextIntegrityEntries(slide).filter((entry) => !entry.label)) {
-      // Blocks are a layout-dependent renderer fallback. Their relation to
-      // visible bullets is resolved by layout normalization, while this pass
-      // targets independently rendered thesis, bullet, and visual fields.
-      if (entry.field.startsWith("blocks.")) continue;
+    const seen: Array<{ field: string; value: string }> = [];
+    for (const entry of visibleTextIntegrityEntries(slide).filter((candidate) =>
+      // Keep one-word structural labels out of prose duplicate detection, but
+      // include the slide title and visual title as semantic text anchors.
+      !candidate.label || candidate.field === "title" || candidate.field === "visual.title",
+    )) {
       const key = normalizedMessage(entry.value);
       if (!key || key.length < 8) continue;
-      // Process and timeline visuals intentionally restate short bullet text as
-      // labeled steps. This is a semantic visual fallback, not duplicated prose.
-      if (/^visual\.items\.\d+\.text$/u.test(entry.field) && supportPoints.has(key)) continue;
-      const duplicateOf = seen.get(key);
-      if (/^bullets\.\d+$/u.test(entry.field) && supportPoints.has(key) && /^visual\.items\.\d+\.text$/u.test(duplicateOf || "")) continue;
+      const duplicateOf = seen.find((candidate) => {
+        // A title is a normal prefix of a callout or a thesis. Treat it as a
+        // duplicate only when the entire text is the same, not when the
+        // longer sentence explains that title.
+        if ((entry.field === "title" || candidate.field === "title")
+          && normalizedMessage(entry.value) !== normalizedMessage(candidate.value)) return false;
+        return semanticallyRepeats(entry.value, candidate.value);
+      });
       if (!duplicateOf) {
-        seen.set(key, entry.field);
+        seen.push({ field: entry.field, value: entry.value });
         continue;
       }
       issues.push({
         slideId: slide.id,
-        severity: slide.slideKind !== "content" && /^bullets\.\d+$/u.test(entry.field) && duplicateOf === "thesis"
+        severity: slide.slideKind !== "content" && /^bullets\.\d+$/u.test(entry.field) && duplicateOf.field === "thesis"
           ? "minor"
           : "major",
         category: "duplicate",
         field: entry.field,
-        message: `Visible text duplicates ${duplicateOf} on the same slide.`,
-        repairInstruction: "Remove the exact duplicate. If the layout needs another point, derive a distinct short point from the accepted narration without adding unsupported facts.",
+        message: `Visible text duplicates ${duplicateOf.field} on the same slide.`,
+        repairInstruction: "Remove the repeated or paraphrased text. If the layout needs another point, derive a distinct short point from the accepted narration without adding unsupported facts.",
       });
     }
   }
@@ -529,9 +529,18 @@ export function findDeckWideDuplicateIssues(presentation: PresentationDocument):
       const left = filtered[leftIndex];
       const right = filtered[rightIndex];
       const sameCentralClaim = left.central.length >= 18 && left.central === right.central;
+      const centralTokens = uniqueTokens(topicTokens(left.central));
+      const rightCentralTokens = uniqueTokens(topicTokens(right.central));
+      const semanticallySameCentralClaim = left.central.length >= 18
+        && right.central.length >= 18
+        && centralTokens.length >= 5
+        && rightCentralTokens.length >= 5
+        && semanticOverlap(left.central, right.central) >= 0.82;
+      const centralJaccard = jaccardSimilarity(centralTokens, rightCentralTokens);
+      const semanticCentralRepeat = semanticallySameCentralClaim && centralJaccard >= 0.72;
       const similarity = jaccardSimilarity(left.tokens, right.tokens);
       const intersection = left.tokens.filter((token) => right.tokens.includes(token)).length;
-      if (!sameCentralClaim && !(left.tokens.length >= 6 && right.tokens.length >= 6 && similarity >= 0.9 && intersection >= 5)) continue;
+      if (!sameCentralClaim && !semanticCentralRepeat && !(left.tokens.length >= 6 && right.tokens.length >= 6 && similarity >= 0.9 && intersection >= 5)) continue;
       issues.push({
         slideId: right.slide.id,
         severity: sameCentralClaim || similarity >= 0.9 ? "blocker" : "major",
@@ -1061,7 +1070,8 @@ export function applyVisualPlanFallbacks(presentation: PresentationDocument, iss
     if (duplicateAssetIds.has(slide.id) && slide.visual.image?.provider === "tavily") return withGroundedDiagramFallback(slide);
     return slide;
   });
-  const slideByOrder = new Map(slides.map((slide) => [slide.order, slide]));
+  const validSlides = slides.filter((slide): slide is PresentationDocument["slides"][number] => Boolean(slide));
+  const slideByOrder = new Map(validSlides.map((slide) => [slide.order, slide]));
   const coverageFallbackOrders = new Set<number>();
   if (needsCoverageRepair && designBrief) {
     const contentDirections = designBrief.slideDirections.filter((direction) => slideByOrder.get(direction.slideOrder)?.slideKind === "content");
@@ -1077,7 +1087,9 @@ export function applyVisualPlanFallbacks(presentation: PresentationDocument, iss
       remaining -= 1;
     }
   }
-  const fallbackSlides = slides.map((slide) => coverageFallbackOrders.has(slide.order) ? withGroundedDiagramFallback(slide) : slide);
+  const fallbackSlides = validSlides
+    .map((slide) => coverageFallbackOrders.has(slide.order) ? withGroundedDiagramFallback(slide) : slide)
+    .filter((slide): slide is PresentationDocument["slides"][number] => Boolean(slide));
   const fallbackSlideByOrder = new Map(fallbackSlides.map((slide) => [slide.order, slide]));
   const directions = designBrief?.slideDirections.map((direction) => {
     const slide = fallbackSlideByOrder.get(direction.slideOrder);
@@ -1131,9 +1143,11 @@ export function materializePlannedVisuals(
       && ["image", "illustration"].includes(slide.visual.type)
       && !slide.visual.image;
     if (!missingPlannedPhoto && !missingImageVisual && (slide.visual.image || (isSemanticDiagram(slide) && !options.refreshDiagramFallbacks) || direction?.imageStrategy !== "diagram")) return slide;
+    const fallback = withGroundedDiagramFallback(slide);
+    if (!fallback) return slide;
     changed = true;
     fallbackOrders.add(slide.order);
-    return withGroundedDiagramFallback(slide);
+    return fallback;
   });
   if (!changed) return presentation;
   const designBrief = presentation.designBrief
@@ -1173,14 +1187,39 @@ function withDiagramDirection(
   };
 }
 
-function withGroundedDiagramFallback(slide: Slide): Slide {
-  const points = [slide.thesis, ...slide.bullets, slide.title].map(cleanText).filter(Boolean);
-  const nodes = [...new Set(points)].slice(0, 3);
-  while (nodes.length < 2) nodes.push(nodes.length ? `Implication of ${nodes[0]}` : "Topic context");
+function withGroundedDiagramFallback(slide: Slide): Slide | null {
+  const title = cleanText(slide.title);
+  const thesis = cleanText(slide.thesis);
+  const contentPoints = [
+    ...slide.bullets,
+    ...acceptedNarrationSentences([slide.speakerNotes]),
+  ].map(cleanText).filter((point) => point
+    && !semanticallyRepeats(point, title)
+    && !semanticallyRepeats(point, thesis));
+  const nodes: string[] = [];
+  for (const point of contentPoints) {
+    const key = normalizeQualityText(point);
+    if (!key || nodes.some((node) => normalizeQualityText(node) === key)) continue;
+    nodes.push(point);
+    if (nodes.length === 3) break;
+  }
+  // A sparse section must stay sparse. Do not turn its title, thesis, or a
+  // fabricated implication into a second diagram node.
+  if (nodes.length < 2) return null;
+  const diagramNodes: string[] = [];
+  for (const node of nodes) {
+    const compactNode = compactDiagramText(node, 120);
+    const key = normalizeQualityText(compactNode);
+    if (!key || diagramNodes.some((existing) => normalizeQualityText(existing) === key)) continue;
+    diagramNodes.push(compactNode);
+  }
+  // The compact label is what the editor actually renders. Do not keep two
+  // distinct long sentences if their visible labels collapse to one node.
+  if (diagramNodes.length < 2) return null;
   const diagramSource = [
     "flowchart LR",
-    ...nodes.map((point, index) => `    N${index}[${mermaidFallbackText(point)}]`),
-    ...nodes.slice(0, -1).map((_, index) => `    N${index} --> N${index + 1}`),
+    ...diagramNodes.map((point, index) => `    N${index}[${mermaidFallbackText(point)}]`),
+    ...diagramNodes.slice(0, -1).map((_, index) => `    N${index} --> N${index + 1}`),
   ].join("\n");
   return {
     ...slide,
@@ -1201,10 +1240,28 @@ function withGroundedDiagramFallback(slide: Slide): Slide {
         // the fallback itself schema-valid so a single verbose model response
         // cannot turn a release-ready document into a terminal job failure.
         title: compactDiagramText(slide.title, 90),
-        caption: compactDiagramText(slide.thesis, 160),
-        fallback: nodes.map((node) => compactDiagramText(node, 360)).join("\n"),
+        caption: "",
+        fallback: diagramNodes.join("\n"),
         safety: "safe" as const,
         source: diagramSource,
+      },
+      // Recovery canvas reads graph nodes directly. Keeping them separate
+      // from bullets avoids reintroducing the thesis/title as a visual node.
+      graph: {
+        layoutDirection: "LR" as const,
+        nodes: diagramNodes.map((node, index) => ({
+          id: `recovery-node-${index + 1}`,
+          label: node,
+          detail: "",
+        })),
+        edges: diagramNodes.slice(0, -1).map((_, index) => ({
+          id: `recovery-edge-${index + 1}`,
+          source: `recovery-node-${index + 1}`,
+          target: `recovery-node-${index + 2}`,
+          label: "",
+        })),
+        fallback: diagramNodes.join("\n"),
+        title: compactDiagramText(slide.title, 90),
       },
     },
   };
@@ -2089,9 +2146,9 @@ export function applyConclusionFallbacks(
     const visual = {
       ...slide.visual,
       title: "",
-      description: thesis,
-      leftLabel: slide.visual.leftLabel ? compactTitle(supporting[0] || title) : "",
-      rightLabel: slide.visual.rightLabel ? compactTitle(supporting[1] || title) : "",
+      description: "",
+      leftLabel: "",
+      rightLabel: "",
       items: [],
       rows: [],
     };
@@ -2102,7 +2159,9 @@ export function applyConclusionFallbacks(
       layout: "summary" as const,
       thesis,
       bullets: supporting,
-      blocks: supporting.length ? [{ type: "bullets" as const, items: supporting }] : [],
+      // Bullets are the canonical compact projection. Do not mirror them into
+      // a second rendered block during repair.
+      blocks: [],
       definition: slide.definition ? { term: title, text: thesis } : null,
       // The accepted narration and source refs are evidence-reviewed; do not
       // replace either one just to make the compact final surface look nicer.
@@ -2145,19 +2204,31 @@ function rebuildVisibleContentFromAcceptedNarration(
     const title = compactAcceptedNarrationTitle(acceptedSection?.title || "", candidates);
     const thesis = compactSentence(candidates[0], 26);
     const candidateBullets = uniqueCompactSentences(candidates.slice(1), thesis).slice(0, 3);
-    const repairedBullets = candidateBullets.filter((bullet) =>
-      normalizedMessage(bullet) !== normalizedMessage(thesis)
+    const narrationBullets = candidateBullets.filter((bullet) =>
+      !semanticallyRepeats(bullet, thesis)
       && !isLowInformationProjection(bullet)
       && !hasMetaSlideLanguage(bullet)
       && !visibleTextIntegrityReason(bullet, false),
     );
+    const existingBullets = uniqueRecoveryBullets(slide.bullets, title, thesis);
+    const bulletFieldAffected = [...affectedFields || []].some((field) => field === "bullets" || field.startsWith("bullets."));
+    // A field-aware repair may preserve already-valid bullets.  When the
+    // caller has no field map (speech-alignment repair), the existing visible
+    // projection is not trusted and must be rebuilt from accepted narration.
+    const preserveExistingBullets = Boolean(affectedFields)
+      && !bulletFieldAffected
+      && existingBullets.length > 0;
+    const repairedBullets = preserveExistingBullets ? existingBullets : narrationBullets;
     const compactBullets = slide.slideKind === "title" ? [] : repairedBullets;
+    const visualDescription = candidates.find((candidate, index) => index > 0
+      && !semanticallyRepeats(candidate, thesis)
+      && !compactBullets.some((bullet) => semanticallyRepeats(candidate, bullet))) || "";
     const visual = {
       ...slide.visual,
       title: needsField("visual.title") ? "" : slide.visual.title,
-      description: needsField("visual.description") ? thesis : slide.visual.description,
-      leftLabel: slide.visual.leftLabel ? compactTitle(compactBullets[0] || title) : "",
-      rightLabel: slide.visual.rightLabel ? compactTitle(compactBullets[1] || title) : "",
+      description: needsField("visual.description") ? visualDescription : slide.visual.description,
+      leftLabel: needsField("visual") || affectedFields?.has("duplicate") ? "" : slide.visual.leftLabel,
+      rightLabel: needsField("visual") || affectedFields?.has("duplicate") ? "" : slide.visual.rightLabel,
       // Do not mirror repaired bullets into visual labels: those labels are
       // inspected as visible text and were producing the same duplicate again.
       items: needsField("visual") || affectedFields?.has("duplicate") ? [] : slide.visual.items,
@@ -2168,8 +2239,10 @@ function rebuildVisibleContentFromAcceptedNarration(
       title: needsField("title") ? title : slide.title,
       thesis: needsField("thesis") ? thesis : slide.thesis,
       bullets: needsField("bullets") ? compactBullets.slice(0, 3) : slide.bullets,
-      blocks: needsField("blocks") ? (compactBullets.length ? [{ type: "bullets" as const, items: compactBullets }] : []) : slide.blocks,
-      definition: slide.definition && (needsField("definition") || replaceAllVisible) ? { term: compactTitle(title), text: thesis } : slide.definition,
+      blocks: needsField("blocks") ? [] : slide.blocks,
+      definition: slide.definition && (needsField("definition") || replaceAllVisible)
+        ? (compactBullets.find((bullet) => !semanticallyRepeats(bullet, thesis)) ? { term: compactTitle(title), text: compactBullets.find((bullet) => !semanticallyRepeats(bullet, thesis))! } : null)
+        : slide.definition,
       visual: needsField("visual") ? visual : slide.visual,
       // Speaker notes are accepted evidence-reviewed narration and must remain canonical.
       speakerNotes: slide.speakerNotes,
@@ -2453,6 +2526,39 @@ function semanticOverlap(left: string, right: string) {
   return overlapCount(leftTokens, rightTokens) / Math.min(leftTokens.length, rightTokens.length);
 }
 
+function uniqueRecoveryBullets(values: string[], title: string, thesis: string) {
+  const result: string[] = [];
+  for (const value of values) {
+    const bullet = cleanText(value);
+    if (!bullet
+      || semanticallyRepeats(bullet, title)
+      || semanticallyRepeats(bullet, thesis)
+      || isLowInformationProjection(bullet)
+      || hasMetaSlideLanguage(bullet)
+      || visibleTextIntegrityReason(bullet, false)
+      || result.some((existing) => semanticallyRepeats(existing, bullet))) {
+      continue;
+    }
+    result.push(bullet);
+    if (result.length === 3) break;
+  }
+  return result;
+}
+
+function semanticallyRepeats(left: string, right: string) {
+  const leftKey = normalizedMessage(left);
+  const rightKey = normalizedMessage(right);
+  if (!leftKey || !rightKey) return false;
+  if (leftKey === rightKey) return true;
+  const shorter = leftKey.length < rightKey.length ? leftKey : rightKey;
+  const longer = leftKey.length < rightKey.length ? rightKey : leftKey;
+  if (shorter.length >= 18 && longer.includes(shorter) && topicTokens(shorter).length >= 3) return true;
+  const leftTokens = uniqueTokens(topicTokens(leftKey));
+  const rightTokens = uniqueTokens(topicTokens(rightKey));
+  return Math.min(leftTokens.length, rightTokens.length) >= 3
+    && semanticOverlap(leftKey, rightKey) >= 0.78;
+}
+
 function parseAcceptedNarrationSections(value: string) {
   const text = cleanMultilineText(value);
   const sections: Array<{ order: number; title: string; text: string }> = [];
@@ -2550,7 +2656,7 @@ function uniqueCompactSentences(values: string[], thesis: string) {
   const seen = new Set<string>([thesisKey]);
   return values.map((value) => compactSentence(value, 18)).filter((value) => {
     const key = normalizeQualityText(value);
-    if (!key || seen.has(key) || value.split(/\s+/).length < 4) return false;
+    if (!key || seen.has(key) || value.split(/\s+/).length < 4 || [...seen].some((candidate) => candidate && semanticallyRepeats(value, candidate))) return false;
     seen.add(key);
     return true;
   });

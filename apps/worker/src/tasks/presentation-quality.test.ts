@@ -989,6 +989,40 @@ describe("presentation quality checks", () => {
     expect(() => presentationSchema.parse(materialized)).not.toThrow();
   });
 
+  it("uses distinct accepted narration sentences for a recovery diagram when visible bullets are empty", () => {
+    const title = "System readiness";
+    const thesis = "The basic smoke path confirms that the service can accept a request and return a usable response.";
+    const slide = {
+      ...makeSlide(1, title, thesis, []),
+      slideKind: "content" as const,
+      speakerNotes: `${thesis} The configuration is checked before the request leaves the application. The response is then inspected for usable content.`,
+      visual: { type: "none" as const, title: "", description: "Text-led placeholder", leftLabel: "", rightLabel: "", items: [], rows: [] },
+    };
+    const presentation = makePresentation({
+      slides: [slide] as any,
+      designBrief: {
+        ...makePresentation().designBrief!,
+        slideDirections: [{
+          slideOrder: 1,
+          visualRole: "explain" as const,
+          layoutIntent: "diagram" as const,
+          imageStrategy: "diagram" as const,
+          sceneTextMode: "visual_labels" as const,
+          visualPrompt: "System readiness process",
+        }],
+      },
+    });
+
+    const materialized = materializePlannedVisuals(presentation);
+    const source = materialized.slides[0].visual.diagram?.source || "";
+
+    expect(source).not.toContain("The basic smoke path confirms");
+    expect(source).toContain("The configuration is checked");
+    expect(source).toContain("The response is then inspected");
+    expect(source).not.toContain("N2[System readiness]");
+    expect(() => presentationSchema.parse(materialized)).not.toThrow();
+  });
+
   it("accepts a ten-slide visual fixture with six sourced photos and three semantic diagrams", () => {
     const slides = Array.from({ length: 10 }, (_, index) => {
       const order = index + 1;
@@ -1406,6 +1440,40 @@ describe("presentation quality checks", () => {
       ] as any,
     });
     expect(findDeckWideDuplicateIssues(timeline)).toHaveLength(0);
+  });
+
+  it("detects paraphrased repeats between thesis, support points, and visual text", () => {
+    const base = makePresentation();
+    const repeatedThesis = "Feedback changes a student's study strategy after mistakes.";
+    const presentation = makePresentation({
+      slides: [
+        {
+          ...base.slides[0],
+          slideKind: "content",
+          layout: "statement",
+          title: "Feedback loop",
+          thesis: repeatedThesis,
+          bullets: ["After mistakes, feedback changes the student's study strategy.", "The control group keeps its original plan."],
+          visual: {
+            ...base.slides[0].visual,
+            type: "schema",
+            items: [{ label: "Loop", text: "Feedback changes the study strategy after mistakes." }],
+          },
+        },
+        {
+          ...base.slides[1],
+          title: "Feedback result",
+          thesis: "After mistakes, feedback changes the student's study strategy.",
+        },
+      ] as any,
+    });
+
+    const intra = findIntraSlideDuplicateIssues(presentation);
+    expect(intra).toEqual(expect.arrayContaining([
+      expect.objectContaining({ slideId: "slide-1", field: "bullets.0", category: "duplicate" }),
+      expect.objectContaining({ slideId: "slide-1", field: "visual.items.0.text", category: "duplicate" }),
+    ]));
+    expect(findDeckWideDuplicateIssues(presentation)).toContainEqual(expect.objectContaining({ slideId: "slide-2", category: "duplicate" }));
   });
 
   it("flags and safely repairs BMW 328 as a BMW M model without inventing a source", () => {

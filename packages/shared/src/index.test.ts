@@ -2361,6 +2361,43 @@ describe("shared contracts", () => {
     expect(auditSlideCanvas(talkCanvas).filter((issue) => issue.includes("overlaps"))).toEqual([]);
   });
 
+  it("keeps an enriched image visible on a recovered title slide", () => {
+    const document = presentationSchema.parse({
+      id: "presentation-recovery-title-image",
+      title: "Recovery title image",
+      scenario: "lesson",
+      level: "beginner",
+      slideCount: 1,
+      generationMode: "demo",
+      sources: [],
+      outline: ["Recovery image"],
+      speechScript: [{ slideOrder: 1, slideTitle: "Recovery image", text: "Narration." }],
+      slides: [{
+        id: "slide-recovery-title-image",
+        order: 1,
+        title: "Recovery image",
+        slideKind: "title",
+        layout: "hero",
+        thesis: "The restored visual remains part of the recovered slide.",
+        bullets: ["Stored visual"],
+        visual: {
+          type: "image",
+          description: "A restored educational illustration",
+          image: { url: "https://cdn.example.com/recovered.jpg", alt: "Restored illustration" },
+        },
+        blocks: [],
+        speakerNotes: "Narration.",
+        timingSeconds: 45,
+        sourceRefs: [],
+      }],
+    });
+
+    const canvas = ensureEditableCanvas(document, { recovery: true }).slides[0].canvas!;
+    expect(canvas.elements).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "slide-recovery-title-image-recovery-image", type: "image" }),
+    ]));
+  });
+
   it("keeps old presentations without themeId valid", () => {
     const parsed = presentationThemeSchema.parse({
       preset: "academic",

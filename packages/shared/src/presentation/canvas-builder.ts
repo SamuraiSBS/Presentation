@@ -190,7 +190,9 @@ function buildRecoveryCanvas(slide: Slide, theme: PresentationTheme): SlideCanva
   const muted = isDark ? theme.colors.line : theme.colors.muted;
   const elements: CanvasElement[] = [];
 
-  if (slide.slideKind === "title" || slide.slideKind === "section" || slide.slideKind === "summary") {
+  if (slide.visual.image) {
+    addRecoveryImageCanvas(slide, theme, elements, foreground, muted, isDark);
+  } else if (slide.slideKind === "title" || slide.slideKind === "section" || slide.slideKind === "summary") {
     addRecoveryStatementCanvas(slide, theme, elements, foreground, muted, isDark);
   } else if (slide.visual.image) {
     addRecoveryImageCanvas(slide, theme, elements);
@@ -243,7 +245,14 @@ function addRecoveryStatementCanvas(
   addRecoverySupportBlocks(slide, theme, elements, 72, 486, 690, isDark);
 }
 
-function addRecoveryImageCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
+function addRecoveryImageCanvas(
+  slide: Slide,
+  theme: PresentationTheme,
+  elements: CanvasElement[],
+  foreground = theme.colors.text,
+  muted = theme.colors.muted,
+  isDark = false,
+) {
   const image = slide.visual.image;
   if (!image) return addRecoveryStatementCanvas(slide, theme, elements, theme.colors.text, theme.colors.muted, false);
   const body = slide.thesis || slideBodyText(slide);
@@ -254,7 +263,7 @@ function addRecoveryImageCanvas(slide: Slide, theme: PresentationTheme, elements
       typographyRole: "slideTitle",
       fontSize: fittedFontSize(slide.title, 42, 29, 92),
       fontFamily: theme.fonts.heading,
-      color: theme.colors.text,
+      color: foreground,
       bold: true,
       valign: "middle",
     }),
@@ -263,7 +272,7 @@ function addRecoveryImageCanvas(slide: Slide, theme: PresentationTheme, elements
       typographyRole: "body",
       fontSize: fittedFontSize(body, 29, 21, 210),
       fontFamily: theme.fonts.body,
-      color: theme.colors.text,
+      color: muted,
       valign: "middle",
     }),
     imageElement(`${slide.id}-recovery-image`, image, 770, 126, 420, 456, 2, 1, imageFitForVisual(slide)),
@@ -354,16 +363,18 @@ function addRecoverySupportBlocks(
   if (!points.length) return;
   const gap = 16;
   const blockWidth = points.length === 1 ? Math.min(520, width) : Math.floor((width - gap) / 2);
+  const blockHeight = 162;
+  const textHeight = 132;
   const groupFill = isDark ? theme.colors.surfaceAlt : theme.colors.accentAlt;
   points.forEach((point, index) => {
     const blockX = x + index * (blockWidth + gap);
     const groupId = `group:${slide.id}-recovery-support-${index}`;
     elements.push(
-      { ...shapeElement(`${slide.id}-recovery-support-${index}`, "roundRect", blockX, y, blockWidth, 102, 2, groupFill, groupFill, 1, 1), groupId },
-      textElement(`${slide.id}-recovery-support-${index}-text`, point, blockX + 18, y + 15, blockWidth - 36, 72, 3, {
+      { ...shapeElement(`${slide.id}-recovery-support-${index}`, "roundRect", blockX, y, blockWidth, blockHeight, 2, groupFill, groupFill, 1, 1), groupId },
+      textElement(`${slide.id}-recovery-support-${index}-text`, point, blockX + 18, y + 15, blockWidth - 36, textHeight, 3, {
         role: "caption",
         typographyRole: "supporting",
-        fontSize: fittedFontSize(point, 18, 16, 72),
+        fontSize: fittedFontSize(point, 18, 16, textHeight),
         autoFit: false,
         fontFamily: theme.fonts.body,
         color: isDark ? theme.colors.text : theme.colors.background,

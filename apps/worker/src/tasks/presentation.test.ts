@@ -482,19 +482,28 @@ describe("Yandex narration full duration rewrite", () => {
     evidenceOrExplanation: `Grounded explanation ${index + 1}`,
     whyItMatters: `Meaning ${index + 1}`,
   }));
-  const narrationVocabulary = ["system", "evidence", "context", "change", "method", "result", "example", "relation", "reason", "effect", "model", "detail"];
+  const narrationVocabulary = [
+    ["system", "evidence", "context", "change", "method", "result", "example", "relation", "reason", "effect", "model", "detail"],
+    ["orbit", "rings", "inclination", "shadow", "spectral", "tilt", "visibility", "planet", "distance", "signal", "observation", "pattern"],
+    ["moon", "tides", "resonance", "crater", "gravity", "migration", "satellite", "mass", "rotation", "interaction", "stability", "systematic"],
+  ];
+  const compactNarrationVocabulary = [
+    ["sun", "gas", "ion", "red", "hot", "air", "map", "key", "law", "fit", "use", "day"],
+    ["orb", "ring", "ice", "til", "arc", "ray", "dot", "sky", "bit", "far", "way", "set"],
+    ["moons", "tide", "rock", "sea", "mass", "spin", "ray", "arc", "low", "new", "old", "mix"],
+  ];
 
-  function narrationSection(order: number, words: number) {
-    const sentenceWords = Math.floor(words / 3);
+  function narrationSection(order: number, words: number, vocabulary = narrationVocabulary) {
+    const sentenceWords = vocabulary === compactNarrationVocabulary ? Math.min(18, Math.floor(words / 3)) : Math.floor(words / 3);
     const sentence = (part: number) => Array.from(
       { length: part === 2 ? words - sentenceWords * 2 : sentenceWords },
-      (_, index) => `${narrationVocabulary[(index + part + order) % narrationVocabulary.length]}${order}`,
+      (_, index) => `${vocabulary[part][(index + order) % vocabulary[part].length]}${order}`,
     ).join(" ");
     return `Слайд ${order}: Saturn ${order}\n${sentence(0)}. ${sentence(1)}. ${sentence(2)}.`;
   }
 
-  function completeNarration(contentWords = 70) {
-    return Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, index === 0 ? 60 : index === 9 ? 80 : contentWords)).join("\n\n");
+  function completeNarration(contentWords = 70, vocabulary = narrationVocabulary) {
+    return Array.from({ length: 10 }, (_, index) => narrationSection(index + 1, index === 0 ? 60 : index === 9 ? 80 : contentWords, vocabulary)).join("\n\n");
   }  it("builds a release-ready ten-slide local document from accepted narration without provider calls", async () => {
     const accepted = completeNarration();
     const originalFetch = global.fetch;
@@ -552,6 +561,35 @@ describe("Yandex narration full duration rewrite", () => {
     expect(presentation.designBrief?.slideDirections).toHaveLength(10);
     expect(presentation.slides.every((slide) => slide.canvas?.version === 3)).toBe(true);
     expect(presentation.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!))).toEqual([]);
+  });
+
+  it("persists reviewed support points as canonical recovery bullets without duplicating canvas text", () => {
+    const accepted = completeNarration(65, compactNarrationVocabulary);
+    const presentation = buildLocalPresentationFromAcceptedNarration(project, [{
+      id: "saturn-source", label: "Saturn reference", type: "WEB", url: "https://science.example/saturn",
+      excerpt: "Saturn is a planet with rings and a complex system of moons.",
+    }], accepted);
+
+    const contentSlides = presentation.slides.filter((slide) => slide.slideKind === "content");
+    expect(contentSlides.every((slide) => slide.bullets.length > 0 && slide.bullets.length <= 3)).toBe(true);
+    contentSlides.forEach((slide) => {
+      const keys = slide.bullets.map((bullet) => bullet.toLocaleLowerCase().replace(/[^\p{L}\p{N}\s]/gu, "").replace(/\s+/g, " ").trim());
+      expect(new Set(keys).size).toBe(keys.length);
+      expect(slide.bullets.every((bullet) => /[.!?]$/u.test(bullet))).toBe(true);
+      expect(slide.bullets).not.toContain(slide.title);
+      expect(slide.bullets).not.toContain(slide.thesis);
+      expect(slide.blocks).toEqual([]);
+
+      const canvasTexts = slide.canvas?.elements.filter((element) => element.type === "text").map((element) => element.text) || [];
+      slide.bullets.forEach((bullet) => {
+        expect(canvasTexts.filter((text) => text === bullet).length).toBeLessThanOrEqual(1);
+      });
+      const graphNodes = slide.visual.graph?.nodes.map((node) => node.label) || [];
+      const graphKeys = graphNodes.map((node) => node.toLocaleLowerCase().replace(/[^\p{L}\p{N}\s]/gu, "").replace(/\s+/g, " ").trim());
+      expect(new Set(graphKeys).size).toBe(graphKeys.length);
+      expect(graphNodes).not.toContain(slide.title);
+      expect(graphNodes).not.toContain(slide.thesis);
+    });
   });
 
   it("gives the ten-slide full rewrite an exact budget-derived editorial structure", () => {
@@ -1160,6 +1198,9 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("never turn list order into a metric");
     expect(prompt).toContain("do not use the same content layout more than twice in a row");
     expect(prompt).toContain("one clear thesis plus 2-3 short meaningful points");
+    expect(prompt).toContain("SlideTextPlan v2 is a mandatory editorial contract");
+    expect(prompt).toContain("Each support point must answer the thesis and add new meaning");
+    expect(prompt).toContain("up to 5 only for an enumeration, comparison, cause-effect, process, or timeline");
     expect(prompt).toContain("semantic and memorable");
     expect(prompt).toContain("keyConcepts: return an empty array");
     expect(prompt).toContain("highlights: return an empty array");
@@ -2889,7 +2930,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("reads Yandex completion text from result alternatives", async () => {
+  it("reads Yandex completion text and keeps bullets as the canonical text projection", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -2932,11 +2973,11 @@ describe("generatePresentation fallback behavior", () => {
       );
 
       expect(presentation.generationMode).toBe("yandex");
-      expect(presentation.slides[0].blocks).toEqual([{ type: "bullets", items: presentation.slides[0].bullets }]);
+      expect(presentation.slides[0].blocks).toEqual([]);
       expect(presentation.slides[0].bullets.length).toBeGreaterThanOrEqual(2);
       expect(presentation.slides[0].bullets[0]).toContain("Home premieres");
       expect(presentation.slides[0].bullets).not.toContain(presentation.slides[0].thesis);
-      expect(presentation.slides[0].visual.description).toBeTruthy();
+      expect(presentation.slides[0].visual.description).not.toBe(presentation.slides[0].thesis);
       expect(sentenceCount(presentation.speechScript[0].text)).toBeGreaterThanOrEqual(3);
       expect(sentenceCount(presentation.speechScript[0].text)).toBeLessThanOrEqual(7);
       expect(presentation.speechScript[0].text.toLowerCase()).toContain("online platforms");
@@ -2945,7 +2986,7 @@ describe("generatePresentation fallback behavior", () => {
     }
   });
 
-  it("rebuilds a non-aligned string block from canonical narration", async () => {
+  it("drops a non-aligned string block instead of duplicating canonical narration", async () => {
     process.env.AI_PROVIDER = "yandex";
     process.env.OPENAI_API_KEY = "";
     process.env.YANDEX_API_KEY = "yandex-key";
@@ -2980,7 +3021,7 @@ describe("generatePresentation fallback behavior", () => {
       );
 
       expect(() => presentationSchema.parse(presentation)).not.toThrow();
-      expect(presentation.slides[0].blocks).toEqual([{ type: "bullets", items: presentation.slides[0].bullets }]);
+      expect(presentation.slides[0].blocks).toEqual([]);
     } finally {
       global.fetch = originalFetch;
     }

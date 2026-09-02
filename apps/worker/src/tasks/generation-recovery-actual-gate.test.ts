@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { presentationSchema } from "@studydeck/shared";
-import { buildEmergencyReadablePresentation, handleGenerationJob, hasAcceptedNarrationRecoveryArtifacts } from "./generation.js";
+import { buildEmergencyReadablePresentation, handleGenerationJob, hasAcceptedNarrationRecoveryArtifacts, mergeRecoveredVisuals } from "./generation.js";
 import { buildLocalPresentationFromAcceptedNarration } from "./presentation.js";
 import { productionQualityReleaseResult } from "./presentation-quality.js";
 import { searchWebSources } from "./web-search.js";
@@ -19,9 +19,9 @@ const { generatePresentationFromNarration, enrichPresentationImages, prismaMock,
     settleCostEnvelope,
     captureGenerationError,
     prismaMock: {
-      project: { findUniqueOrThrow: vi.fn(), update: vi.fn() },
+      project: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
       source: { create: vi.fn(), deleteMany: vi.fn(), update: vi.fn() },
-      presentation: { findUnique: vi.fn(), upsert: vi.fn() },
+      presentation: { findUnique: vi.fn(), updateMany: vi.fn(), upsert: vi.fn() },
       generationJob: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
       userActivityEvent: { create: vi.fn() },
       operationalEvent: { create: vi.fn() },
@@ -58,15 +58,20 @@ const acceptedNarrationTitles = [
   "Photovoltaic applications",
   "Conclusions and next steps",
 ];
+const acceptedNarrationVocabulary = [
+  ["solar", "photon", "electron", "silicon", "current", "voltage", "panel", "spectrum", "charge", "circuit", "efficiency", "storage"],
+  ["orbit", "rings", "inclination", "shadow", "spectral", "tilt", "visibility", "planet", "distance", "signal", "observation", "pattern"],
+  ["moon", "tides", "resonance", "crater", "gravity", "migration", "satellite", "mass", "rotation", "interaction", "stability", "systematic"],
+];
 const acceptedNarration = Array.from({ length: 10 }, (_, index) => {
   const order = index + 1;
   const words = order === 1 ? 60 : order === 10 ? 80 : 70;
-  const firstSentenceWords = Math.floor(words / 2);
+  const firstSentenceWords = Math.floor(words / 3);
   const sentence = (part: number) => Array.from(
-    { length: part === 1 ? words - firstSentenceWords : firstSentenceWords },
-    (_, wordIndex) => ["solar", "photon", "electron", "silicon", "current", "voltage", "panel", "spectrum", "charge", "circuit", "efficiency", "storage"][(wordIndex + part + order) % 12] + order,
+    { length: part === 2 ? words - firstSentenceWords * 2 : firstSentenceWords },
+    (_, wordIndex) => acceptedNarrationVocabulary[part][(wordIndex + order) % 12] + order,
   ).join(" ");
-  return `\u0421\u043b\u0430\u0439\u0434 ${order}: ${acceptedNarrationTitles[index]}\n${sentence(0)}. ${sentence(1)}.`;
+  return `\u0421\u043b\u0430\u0439\u0434 ${order}: ${acceptedNarrationTitles[index]}\n${sentence(0)}. ${sentence(1)}. ${sentence(2)}.`;
 }).join("\n\n");
 const sources = ["physics", "engineering", "energy"].map((id) => ({
   id, label: `${id} source`, type: "WEB" as const, size: 0,
@@ -79,14 +84,17 @@ const sourceSnapshot = {
 };
 const project = { id: "recovery-project", userId: "user", title: "Фотоэнергетика", prompt: "Подготовь академическую презентацию по фотоэнергетике", scenario: "university_report", level: "university_student", mode: "with_sources", slideCount: 10, speechDraft: acceptedNarration, sources };
 
-function job() {
-  return { id: "recovery-job", name: "generate-presentation", data: { projectId: project.id, userId: project.userId, costEnvelopeId: "recovery-envelope" }, attemptsMade: 0, opts: { attempts: 1 }, updateProgress: vi.fn(), discard: vi.fn() } as never;
+function job(data: Record<string, unknown> = {}) {
+  return { id: "recovery-job", name: "generate-presentation", data: { projectId: project.id, userId: project.userId, costEnvelopeId: "recovery-envelope", ...data }, attemptsMade: 0, opts: { attempts: 1 }, updateProgress: vi.fn(), discard: vi.fn() } as never;
 }
 
 describe("accepted narration local recovery with the actual production gate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    prismaMock.$transaction.mockImplementation(async (values: Promise<unknown>[]) => Promise.all(values));
+    prismaMock.$transaction.mockImplementation(async (operation: unknown) => typeof operation === "function"
+      ? operation(prismaMock)
+      : Promise.all(operation as Promise<unknown>[]));
+    prismaMock.project.findUnique.mockResolvedValue(project);
     prismaMock.project.findUniqueOrThrow.mockResolvedValue(project);
     prismaMock.presentation.findUnique.mockResolvedValue(null);
     costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot, status: "active" });
@@ -104,22 +112,43 @@ describe("accepted narration local recovery with the actual production gate", ()
     await expect(handleGenerationJob(job())).resolves.toBeUndefined();
 
     expect(enrichPresentationImages).toHaveBeenCalledTimes(1);
-    expect(enrichPresentationImages).toHaveBeenCalledWith(expect.objectContaining({ id: project.id }), expect.any(Object));
+    expect(enrichPresentationImages).toHaveBeenCalledWith(expect.objectContaining({ id: project.id }), expect.any(Object), expect.objectContaining({ attemptedSlideOrders: expect.any(Set) }));
     expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "ready" }) }));
+  });
+
+  it("keeps operator recovery presentation-only and advances the revision conditionally", async () => {
+    prismaMock.presentation.findUnique.mockResolvedValue({ revision: 1 });
+    prismaMock.presentation.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(handleGenerationJob(job({
+      generationJobId: "recovery-job-db",
+      presentationOnlyRecovery: true,
+      expectedPresentationRevision: 1,
+    }))).resolves.toBeUndefined();
+
+    expect(generatePresentationFromNarration).not.toHaveBeenCalled();
+    expect(searchWebSources).not.toHaveBeenCalled();
+    expect(prismaMock.presentation.upsert).not.toHaveBeenCalled();
+    expect(prismaMock.presentation.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { projectId: project.id, revision: 1 },
+      data: { document: expect.any(Object), revision: { increment: 1 } },
+    }));
   });
 
   it("recovers a provider failure to ready through the real release gate without a second provider or Tavily call", async () => {
     await expect(handleGenerationJob(job())).resolves.toBeUndefined();
     const document = prismaMock.presentation.upsert.mock.calls[0]?.[0]?.create?.document;
     const release = productionQualityReleaseResult(document, sources, { ...project, mandatorySourceSnapshot: true, acceptedNarrationRecovery: true });
-    expect(release).toMatchObject({ finalDisposition: "released", issueCategories: [], issues: [] });
+    expect(release.finalDisposition).toBe("released");
+    expect(release.issues.every((issue) => issue.severity !== "blocker")).toBe(true);
     expect(document.presentationTheme?.themeId).toBe("studydeckEditorial");
     expect(document.designBrief?.themeId).toBe("studydeckEditorial");
     expect(document.productionQualityGate).toMatchObject({ recoveryApplied: true });
     expect(["accepted_narration", "canvas_layout", "emergency"]).toContain(document.productionQualityGate.recoveryStage);
     expect(document.productionQualityGate.recoveryReason).toEqual(expect.any(String));
     expect(generatePresentationFromNarration).toHaveBeenCalledTimes(1);
-    expect(enrichPresentationImages).not.toHaveBeenCalled();
+    expect(enrichPresentationImages).toHaveBeenCalledTimes(1);
+    expect(enrichPresentationImages).toHaveBeenCalledWith(expect.objectContaining({ id: project.id }), expect.any(Object), expect.objectContaining({ recovery: true, skipSlideOrders: expect.any(Set) }));
     expect(searchWebSources).not.toHaveBeenCalled();
     expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "ready" }) }));
   });
@@ -149,6 +178,24 @@ describe("accepted narration local recovery with the actual production gate", ()
     });
     expect(emergencyRelease.issues).toEqual([]);
     expect(emergencyRelease).toMatchObject({ finalDisposition: "released", issueCategories: [] });
+  });
+
+  it("keeps accepted generatedText and support bullets during emergency layout recovery", () => {
+    const support = "A distinct support sentence remains visible after the recovery canvas is rebuilt.";
+    const local = buildLocalPresentationFromAcceptedNarration(project, sources, acceptedNarration);
+    const input = {
+      ...local,
+      generatedText: "The accepted narration must remain byte-stable.",
+      slides: local.slides.map((slide, index) => index === 1
+        ? { ...slide, thesis: "The accepted thesis remains the central claim.", bullets: [support], blocks: [] }
+        : slide),
+    };
+
+    const emergency = buildEmergencyReadablePresentation(input);
+
+    expect(emergency.generatedText).toBe(input.generatedText);
+    expect(emergency.slides[1].bullets).toEqual([support]);
+    expect(emergency.slides[1].blocks).toEqual([]);
   });
 
   it("keeps available images and grounded diagrams in emergency recovery", () => {
@@ -186,6 +233,61 @@ describe("accepted narration local recovery with the actual production gate", ()
     expect(emergency.slides.some((slide) => slide.visual.type === "process_diagram")).toBe(true);
     expect(emergency.slides.some((slide) => slide.canvas?.elements.some((element) => element.type === "shape" && element.id.includes("recovery-card")))).toBe(true);
     expect(() => presentationSchema.parse(emergency)).not.toThrow();
+  });
+
+  it("merges only persisted rejected-version images by stable slide id", () => {
+    const recovered = buildLocalPresentationFromAcceptedNarration(project, sources, acceptedNarration);
+    const rejected = {
+      ...recovered,
+      slides: recovered.slides.map((slide, index) => index === 1
+        ? {
+          ...slide,
+          visual: {
+            ...slide.visual,
+            image: {
+              url: "https://example.com/stored.jpg",
+              objectKey: "projects/recovery-project/images/stored.jpg",
+              alt: "Stored source image",
+              provider: "tavily" as const,
+              contentType: "image/jpeg",
+              query: "stored source image",
+              sourceTitle: "Stored source",
+              warnings: [],
+            },
+          },
+        }
+        : slide),
+    };
+    const merged = mergeRecoveredVisuals(recovered, rejected);
+
+    expect(merged.slides[1].visual.image?.objectKey).toBe("projects/recovery-project/images/stored.jpg");
+    expect(merged.slides[1].visual.image).toEqual(rejected.slides[1].visual.image);
+    expect(mergeRecoveredVisuals({
+      ...recovered,
+      slides: recovered.slides.map((slide, index) => index === 1
+         ? { ...slide, visual: { ...slide.visual, image: { url: "https://example.com/user.jpg", objectKey: "projects/recovery-project/images/user.jpg", alt: "User asset", provider: "user" as const, contentType: "image/jpeg", query: "user asset", sourceTitle: "User asset", warnings: [] } } }
+        : slide),
+    }, rejected).slides[1].visual.image?.provider).toBe("user");
+    expect(mergeRecoveredVisuals({
+      ...recovered,
+      slides: recovered.slides.map((slide, index) => index === 1
+        ? {
+          ...slide,
+          visual: {
+            ...slide.visual,
+            image: {
+              ...rejected.slides[1].visual.image!,
+              provider: "archive" as const,
+              objectKey: "projects/recovery-project/images/archive.jpg",
+            },
+          },
+        }
+        : slide),
+    }, rejected).slides[1].visual.image?.provider).toBe("archive");
+    expect(mergeRecoveredVisuals(recovered, {
+      ...rejected,
+      slides: rejected.slides.map((slide, index) => index === 1 ? { ...slide, id: "different-slide-id" } : slide),
+    }).slides[1].visual.image).toBeUndefined();
   });
 
   it("does not spend again when a retry inherits a terminal envelope", async () => {

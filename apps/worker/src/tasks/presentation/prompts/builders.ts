@@ -131,7 +131,7 @@ export function buildDesignBriefPrompt(
     isGeneralProject(project)
       ? "Build Gamma-like visual rhythm while preserving clarity for the requested audience: strong cover, short text-led moments, image-led scenes only when grounded, diagrams for explanation, evidence support, and a strong final takeaway."
       : "Build Gamma-like visual rhythm while preserving university clarity: strong cover, short text-led moments, image-led scenes only when grounded, diagrams for explanation, evidence support, and a strong final takeaway.",
-    "Visible slide text should alternate between one strong phrase, 3-4 short sentence-like fragments, and diagram/photo labels. Full explanation belongs in narration and speaker notes.",
+    "Visible slide text must follow SlideTextPlan v2: one thesis plus 2-3 linked support points by default, with up to five only for a genuinely structured composition. Use complete independent sentences, or short labels only when a diagram or schema needs them. Full explanation belongs in narration and speaker notes.",
     "Do not repeat the same layoutIntent three times in a row. Do not make every slide a card grid.",
     "Choose sceneTextMode for every slide: hero_phrase, talk_sentences, visual_labels, or takeaway.",
     "Use hero_phrase for the cover, title-like claims, quote spreads, and transition moments; use talk_sentences for 3-4 short spoken beats; use visual_labels for diagrams/photos; use takeaway for the final slide.",
@@ -145,7 +145,7 @@ export function buildDesignBriefPrompt(
       ? "Photo directions must name a concrete source-grounded person, place, object, event, model, period, or phenomenon. Diagram directions must name a process, comparison, causal chain, timeline, or structure. Text directions are reserved for the final takeaway and the exact remaining text_only quota."
       : "Use real_photo only for concrete grounded subjects and use local diagrams for explanatory material; do not invent a photo merely to fill space.",
     "Every real photo must occupy 35-60 percent of the slide in a separate grid column. Never place text over an image.",
-    "Keep density low: one strong claim and no more than three short supporting points. Full explanation belongs in speaker notes.",
+    "Keep density low: one thesis and no more than three short supporting points by default. Full explanation belongs in speaker notes.",
     "For real_photo or generated_illustration, visualPrompt must be a short, concrete, searchable subject describing visible people, place, object, action, or event. Do not write generic phrases such as 'educational presentation image'.",
     "For diagram, visualPrompt must name the specific process, comparison, causal chain, timeline, or structure to draw. For none, describe the text-led emphasis briefly.",
     "Required JSON shape:",
@@ -733,7 +733,16 @@ function compactSlideBlueprintsForPrompt(slideBlueprints: GenerationPipelineArti
 }
 
 function compactSlideTextPlansForPrompt(slideTextPlans: SlideTextPlan[]) {
-  return slideTextPlans.map((plan) => ({ slideOrder: plan.slideOrder, title: compactPromptText(plan.title, 90), thesis: compactPromptText(plan.thesis, 220), bullets: plan.bullets.slice(0, 3).map((bullet) => compactPromptText(bullet, 120)), ...(plan.supportedFactSourceIds?.length ? { supportedFactSourceIds: plan.supportedFactSourceIds.slice(0, 8) } : {}) }));
+  return slideTextPlans.map((plan) => ({
+    slideOrder: plan.slideOrder,
+    composition: plan.composition || "statement",
+    supportPointMode: plan.supportPointMode || "sentences",
+    title: compactPromptText(plan.title, 90),
+    thesis: compactPromptText(plan.thesis, 220),
+    supportPoints: (Array.isArray(plan.supportPoints) ? plan.supportPoints : []).slice(0, 5).map((point) => ({ role: point.role, text: compactPromptText(point.text, 120) })),
+    bullets: plan.bullets.slice(0, 3).map((bullet) => compactPromptText(bullet, 120)),
+    ...(plan.supportedFactSourceIds?.length ? { supportedFactSourceIds: plan.supportedFactSourceIds.slice(0, 8) } : {}),
+  }));
 }
 
 function compactSourceContextForPrompt(sources: Source[], researchBrief?: ResearchBrief) {
@@ -757,6 +766,7 @@ export function buildGenerationPrompt(
   const theme = resolvePresentationTheme(project);
   const supportedThemeIds = PREMIUM_PRESENTATION_THEME_IDS.join(", ");
   const researchText = compactContext.researchBrief ? JSON.stringify(compactContext.researchBrief) : "";
+  const semanticSlideTextV2 = String(process.env.SEMANTIC_SLIDE_TEXT_V2 ?? "true").trim().toLowerCase() !== "false";
 
   const designText = compactContext.designBrief ? JSON.stringify(compactContext.designBrief) : "";
   const blueprintText = compactContext.slideBlueprints.length ? JSON.stringify(compactContext.slideBlueprints) : "";
@@ -777,7 +787,11 @@ export function buildGenerationPrompt(
 
     designText ? `Use this compact designBrief for deck-level visual direction; preserve its theme and per-slide visual directions:\n${designText}` : "",
     blueprintText ? `Use these compact slideBlueprints only for layout candidate, visual strategy, and text density; narrativePlan supplies the content job:\n${blueprintText}` : "",
-    textPlanText ? `Use these compact slideTextPlans only as derived visible-text hints. The accepted narration remains the sole source of truth; title, thesis, bullets, blocks, definitions, and visible visual labels may only paraphrase its matching generatedText section:\n${textPlanText}` : "",
+    textPlanText
+      ? semanticSlideTextV2
+        ? `Use these compact slideTextPlans as the mandatory editorial plan for visible text. The accepted narration remains the sole source of truth; preserve each plan's composition, thesis, and support point roles while paraphrasing only its matching generatedText section:\n${textPlanText}`
+        : `Use these compact slideTextPlans only as derived visible-text hints. The accepted narration remains the sole source of truth; title, thesis, bullets, blocks, definitions, and visible visual labels may only paraphrase its matching generatedText section:\n${textPlanText}`
+      : "",
     fixedNarration
       ? `Use this fixed speech narration as the only source of truth. Copy it exactly into generatedText and do not rewrite its meaning:\n${fixedNarration}`
       : "Use generatedText as the single source of truth for the deck, divided exactly as `Слайд 1: ...` through the requested slide count.",
@@ -785,7 +799,12 @@ export function buildGenerationPrompt(
     "Each slide has one distinct story job and audience question. Do not reuse a conclusion or chapter label as a second slide's job.",
     "For a date, model, number, biography, legal or scientific claim, use only a matching source excerpt and structured sourceRefs. If support is absent, use a cautious general explanation; never guess an entity category, period, or relation.",
     "Do not merge model families or names: for example BMW 328 is not a BMW M model, and BMW 8 Series is not automatically an M model.",
-    "Treat slideTextPlans as a bounded compression layer: keep one supported thesis and zero to three distinct supported bullets. If the speech section has no additional concrete support, omit bullets instead of filling the layout.",
+    semanticSlideTextV2
+      ? "SlideTextPlan v2 is a mandatory editorial contract: every slide has one thesis and linked supportPoints whose roles explain the thesis. Use 2-3 independent support points by default, up to 5 only for an enumeration, comparison, cause-effect, process, or timeline that genuinely contains that many separate ideas. If the speech section contains only one real idea, use fewer points or empty bullets; never invent filler."
+      : "Treat slideTextPlans as a bounded compression layer: keep one supported thesis and zero to three distinct supported bullets. If the speech section has no additional concrete support, omit bullets instead of filling the layout.",
+    semanticSlideTextV2
+      ? "Each support point must answer the thesis and add new meaning. Do not repeat the thesis in bullets, blocks, definition text, or visual labels; visual labels are allowed only when the selected image/schema needs a short label, and must not duplicate nearby prose. Add elements only when they carry a new fact, relation, example, consequence, or step."
+      : "",
     "Do not generate a separate second story outside generatedText or narrativePlan.",
     "Do not put slidePurpose or transitionToNext on the slide as visible text.",
     "Visual theme rules:",
@@ -827,13 +846,13 @@ export function buildGenerationPrompt(
     "- title: short, ideally 6-8 words or fewer;",
     "- title: semantic and memorable. Avoid generic titles such as 'Контекст', 'Ключевые факты', 'Примеры', 'Выводы', and 'Итоги' unless there is only one such title in the whole deck;",
     "- thesis: one concise sentence about the real subject matter, not a meta sentence about the slide;",
-    "- every content slide must contain one clear thesis plus 2-3 short meaningful points; the thesis and each point must be complete and distinct, and each point adds a fact, explanation, example, or consequence rather than restating the thesis;",
+    "- every content slide must contain one clear thesis plus 2-3 short meaningful points by default; the thesis and each point must be complete and distinct, and each point adds a fact, explanation, example, or consequence rather than restating the thesis;",
     "- title and summary slides may be more compact. A content slide may omit the 2-3 bullets only for a genuine central quote or a structured explanatory diagram; make that semantic reason explicit in the quote or diagram data.",
     "- bullets: use 2-3 short meaningful points on ordinary content slides; every bullet must be a compressed phrase from the matching narration section;",
     "- definition: { term, text } only when an important term needs a simple definition; otherwise null;",
     "- keyConcepts: return an empty array; do not create small keyword chips on slides;",
     "- highlights: return an empty array; do not create small highlighted word badges on slides;",
-    "- blocks: keep a backward-compatible fallback using callout, quote, or bullets; mirror the chosen layout instead of always returning bullets.",
+    "- blocks: keep a backward-compatible fallback using callout, quote, or bullets; mirror the chosen layout instead of always returning bullets, and never repeat the thesis or a support point without adding new meaning.",
     "Slide-facing text style:",
     "- every visible title, thesis, bullet, block, definition, and visual item must be a complete thought; never end visible text with an unfinished phrase such as 'the first thing to note is rich';",
     "- every layout slot is independent: never begin a bullet, block, or visual explanation as the grammatical continuation of another slot;",
