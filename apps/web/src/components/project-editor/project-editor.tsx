@@ -809,7 +809,11 @@ export function ProjectEditor({
         onReconnect={() => {
           if (!hasUnsavedChangesRef.current || revisionConflict) return;
           setActionError("");
-          retryLatestSave();
+          return new Promise<void>((resolve) => {
+            window.setTimeout(() => {
+              void retryLatestSave().finally(() => resolve());
+            }, 250);
+          });
         }}
       />
       <section className="editor-workspace" data-testid="project-editor">

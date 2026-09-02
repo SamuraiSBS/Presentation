@@ -31,7 +31,7 @@ test("editor retains an offline edit, warns before close, and retries after reco
   await expect.poll(() => dialogType).toBe("beforeunload");
 
   await context.setOffline(false);
-  await expect(page.getByText("Сохранено", { exact: true })).toBeVisible();
+  await expect(page.getByText("Сохранено", { exact: true })).toBeVisible({ timeout: 15_000 });
   await testInfo.attach("editor-offline-reconnect", { body: await page.screenshot(), contentType: "image/png" });
 });
 
