@@ -1067,7 +1067,10 @@ export function applyVisualPlanFallbacks(presentation: PresentationDocument, iss
     if (unfulfilledVisualIds.has(slide.id)) {
       return withGroundedDiagramFallback(slide);
     }
-    if (duplicateAssetIds.has(slide.id) && slide.visual.image?.provider === "tavily") return withGroundedDiagramFallback(slide);
+    if ((duplicateAssetIds.has(slide.id) || unsafeTavilyImageIds.has(slide.id)) && slide.visual.image?.provider === "tavily") {
+      return withGroundedDiagramFallback(slide);
+    }
+    if (genericVisualDescriptionIds.has(slide.id) && !slide.visual.image) return withGroundedDiagramFallback(slide);
     return slide;
   });
   const validSlides = slides.filter((slide): slide is PresentationDocument["slides"][number] => Boolean(slide));
@@ -1639,6 +1642,15 @@ export function productionQualityReleaseResult(
         issues: baseCritique.issues.filter((issue) => !(
           (issue.category === "generic_text" || issue.category === "bad_narration")
           && (issue.field === "speakerNotes" || (project.acceptedNarrationRecovery && issue.field === "speechScript"))
+        ) && !(
+          // The visible claim was deterministically projected from the
+          // accepted narration. A missing optional source match is advisory
+          // here; real factual blockers and mandatory snapshot checks remain
+          // untouched below.
+          (project.acceptedNarrationRecovery || hasCanonicalAcceptedNarration)
+          && issue.category === "factual_risk"
+          && issue.severity === "minor"
+          && issue.message === "A precise visible claim has no matching source reference or source context."
         )),
       }
     : baseCritique;
@@ -2637,7 +2649,8 @@ function acceptedNarrationSentences(values: string[]) {
 }
 
 function compactTitle(value: string) {
-  return cleanText(value).replace(/[.!?]+$/g, "").split(/\s+/).slice(0, 12).join(" ") || "Ключевой вывод";
+  const text = cleanText(value).replace(/[.!?]+$/g, "").split(/\s+/).slice(0, 12).join(" ");
+  return compactVisibleText(text, 84) || "Ключевой вывод";
 }
 
 /** A generic accepted heading may be retained in narration, but it is not a useful screen label. */
@@ -2646,20 +2659,28 @@ function compactAcceptedNarrationTitle(sectionTitle: string, sentences: string[]
   return isGenericTitle(title) ? compactTitle(sentences[0] || sectionTitle) : title;
 }
 
-function compactSentence(value: string, maxWords: number) {
+function compactSentence(value: string, maxWords: number, maxCharacters = 200) {
   const words = cleanText(value).replace(/[.!?]+$/g, "").split(/\s+/).filter(Boolean).slice(0, maxWords);
-  return words.length ? `${words.join(" ")}.` : "";
+  const compact = compactVisibleText(words.join(" "), Math.max(1, maxCharacters - 1));
+  return compact ? `${compact}.` : "";
 }
 
 function uniqueCompactSentences(values: string[], thesis: string) {
   const thesisKey = normalizeQualityText(thesis);
   const seen = new Set<string>([thesisKey]);
-  return values.map((value) => compactSentence(value, 18)).filter((value) => {
+  return values.map((value) => compactSentence(value, 18, 120)).filter((value) => {
     const key = normalizeQualityText(value);
     if (!key || seen.has(key) || value.split(/\s+/).length < 4 || [...seen].some((candidate) => candidate && semanticallyRepeats(value, candidate))) return false;
     seen.add(key);
     return true;
   });
+}
+
+function compactVisibleText(value: string, maximum: number) {
+  const text = cleanText(value);
+  if (text.length <= maximum) return text;
+  const boundary = text.slice(0, maximum).replace(/\s+\S*$/, "").trim();
+  return boundary || text.slice(0, maximum).trim();
 }
 
 function isLowInformationProjection(value: string) {

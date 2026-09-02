@@ -60,7 +60,8 @@ describe("BillingService YooKassa purchases", () => {
   it("extends the same active tariff without changing its quota epoch", async () => {
     const { service, tx } = fixture();
     tx.yooKassaPayment.upsert.mockResolvedValue({ id: "purchase-1", activatedAt: null });
-    const activeUntil = new Date("2026-08-30T10:00:00.000Z");
+    const activeUntil = new Date(Date.now() + 60 * 60 * 1000);
+    const expectedExpiresAt = new Date(activeUntil.getTime() + 30 * 24 * 60 * 60 * 1000);
     tx.user.findUniqueOrThrow.mockResolvedValue({ planCode: "student", subscriptionExpiresAt: activeUntil, subscriptionQuotaEpoch: "week-epoch" });
     tx.yooKassaPayment.update.mockResolvedValue({});
     tx.user.update.mockResolvedValue({});
@@ -75,7 +76,7 @@ describe("BillingService YooKassa purchases", () => {
       .resolves.toEqual({ received: true, activated: true });
 
     expect(tx.user.update).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ planCode: "student", subscriptionQuotaEpoch: "week-epoch", subscriptionExpiresAt: new Date("2026-09-29T10:00:00.000Z") }),
+      data: expect.objectContaining({ planCode: "student", subscriptionQuotaEpoch: "week-epoch", subscriptionExpiresAt: expectedExpiresAt }),
     }));
   });
 

@@ -100,13 +100,13 @@ export function auditCanonicalSlideCanvas(slide: {
   title: string;
   thesis: string;
   bullets?: string[];
-  visual?: { type?: string; image?: { url?: string } };
+  visual?: { type?: string; image?: { url?: string; objectKey?: string } };
   canvas?: SlideCanvas;
 }) {
   if (slide.canvas?.elements.some((element) => element.id === `${slide.id}-custom-canvas-marker`)) return [];
   const issues = auditGeneratedCanvasText(slide.canvas, slide);
-  if (slide.visual?.type === "image" && !slide.visual.image?.url) {
-    issues.push("image visual has no canonical image URL");
+  if (slide.visual?.type === "image" && !slide.visual.image?.url && !slide.visual.image?.objectKey) {
+    issues.push("image visual has no canonical image asset");
   }
   if (!slide.canvas) return issues;
   const text = slide.canvas.elements

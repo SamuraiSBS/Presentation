@@ -44,6 +44,17 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install --yes poppler-utils
       - run: CHROMIUM_PATH="$(node -e "console.log(require('@playwright/test').chromium.executablePath())")" npm test
       - run: npm audit --omit=dev --audit-level=high
+      - name: Validate staging deployment contract
+        run: |
+          bash -n scripts/deploy-staging-release.sh
+          STUDYDECK_API_IMAGE=ghcr.io/example/studydeck-api@sha256:$(printf '%064d' 1) \
+          STUDYDECK_WORKER_IMAGE=ghcr.io/example/studydeck-worker@sha256:$(printf '%064d' 2) \
+          STUDYDECK_WEB_IMAGE=ghcr.io/example/studydeck-web@sha256:$(printf '%064d' 3) \
+          DATABASE_URL=postgresql://studydeck:studydeck@postgres:5432/studydeck?schema=public \
+          AI_PROVIDER=openai \
+          PRODUCTION_ENV_FILE=.env.example \
+            docker compose --project-name studydeck-staging \
+              -f compose.production.yml -f compose.release.yml -f compose.staging.yml config --quiet
 
   secrets:
     name: Secret scan

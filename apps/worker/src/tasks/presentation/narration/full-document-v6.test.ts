@@ -128,6 +128,21 @@ describe("Plan 18 v6 full-document narration foundation", () => {
     expect(repair).not.toContain("Слайд 4:");
   });
 
+  it("accepts a complete narration with the project's allowed six-slide count", () => {
+    const sixSlideProject = { ...project, slideCount: 6 };
+    const sixSlidePlan = plan.slice(0, 6);
+
+    const diagnostics = assessFullNarrationDocument(fullSpeech(Array(6).fill(117)), sixSlideProject, sixSlidePlan);
+
+    expect(diagnostics).toMatchObject({
+      issueCodes: [],
+      affectedSlideOrders: [],
+      hasCanonicalSectionCoverage: true,
+      isStructurallyUsable: true,
+      isAccepted: true,
+    });
+  });
+
   it("accounts for the original Flash overflow without retaining prompt text", () => {
     const candidateDraft = fullSpeech(Array(10).fill(70));
     const diagnostics = assessFullNarrationDocument(candidateDraft, project, plan);

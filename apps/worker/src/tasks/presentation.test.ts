@@ -4,6 +4,7 @@ import { z } from "zod";
 import { AitunnelProjectBudget, estimateInputTokens, reserveAitunnelStageCall, runWithAitunnelProjectBudget } from "../aitunnel-narration-budget.js";
 import { logger } from "../observability.js";
 import { productionQualityReleaseResult } from "./presentation-quality.js";
+import { buildEmergencyReadablePresentation } from "./generation.js";
 import {
     buildGenerationPrompt,
     buildLocalPresentationFromAcceptedNarration,
@@ -101,6 +102,50 @@ describe("presentation compatibility facade", () => {
     expect(diagram.type).toBe("process_diagram");
     expect(unknown).toMatchObject({ type: "none", items: [], rows: [] });
     expect(unknown).not.toHaveProperty("image");
+  });
+
+  it("derives a required visual label when the provider leaves it empty", () => {
+    const project = { id: "empty-visual-label", title: "Study", prompt: "Explain the topic", scenario: "lesson", level: "university_student", mode: "with_sources", slideCount: 6 };
+    const visual = normalizeVisual({ type: "process_diagram", items: [{ label: "", text: "A provider item with usable supporting text." }, { label: "Second stage", text: "A second item keeps the process visual useful." }] }, "Study", "The topic has a clear mechanism.", ["The mechanism has two stages."], "content", project, 2);
+
+    expect(visual.items).toEqual([
+      { label: "A provider item with usable supporting text.", text: "A provider item with usable supporting text." },
+      { label: "Second stage", text: "A second item keeps the process visual useful." },
+    ]);
+  });
+
+  it("keeps emergency accepted-narration recovery releasable for a six-slide plan", () => {
+    const project = { id: "emergency-six", title: "Generative AI and student learning", prompt: "Prepare a university presentation about generative AI and student learning.", scenario: "university_report", level: "university_student", mode: "with_sources", slideCount: 6 };
+    const sources = [1, 2, 3].map((index) => ({ id: `source-${index}`, label: `Learning source ${index}`, type: "WEB" as const, url: `https://example.edu/${index}`, excerpt: "Generative AI and student learning require transparent methods, source checking, and ethical safeguards." }));
+    const narration = Array.from({ length: 6 }, (_, index) => {
+      const words = Array.from({ length: index === 0 ? 106 : index === 5 ? 100 : 125 }, (_, word) => `evidence${index + 1}_${word + 1}`);
+      const split = Math.floor(words.length / 2);
+      const flaggedLead = index === 4 ? "\u0412 \u044d\u0442\u043e\u0439 \u0442\u0435\u043c\u0435 \u043e\u0441\u043e\u0431\u0435\u043d\u043d\u043e \u0432\u0430\u0436\u0435\u043d \u043f\u0435\u0440\u0435\u0445\u043e\u0434 \u043e\u0442 \u043e\u0442\u043d\u043e\u0448\u0435\u043d\u0438\u044f \u043a \u0418\u0418 \u043a \u0438\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442\u0443." : "";
+      return `\u0421\u043b\u0430\u0439\u0434 ${index + 1}: ${index === 0 ? "\u0412\u0432\u0435\u0434\u0435\u043d\u0438\u0435" : index === 5 ? "\u0418\u0442\u043e\u0433\u0438" : "\u041e\u0441\u043d\u043e\u0432\u043d\u044b\u0435 \u0444\u0430\u043a\u0442\u044b"}\n${flaggedLead}${flaggedLead ? " " : ""}${words.slice(0, split).join(" ")}. ${words.slice(split).join(" ")}.`;
+    }).join("\n\n");
+    const local = buildLocalPresentationFromAcceptedNarration(project, sources, narration);
+    const emergency = buildEmergencyReadablePresentation(local);
+    const release = productionQualityReleaseResult(emergency, sources, { ...project, mandatorySourceSnapshot: true, acceptedNarrationRecovery: true });
+
+    expect(emergency.slides[0].title).toContain(project.title);
+    expect(emergency.slides[4].thesis).not.toContain("\u043f\u0435\u0440\u0435\u0445\u043e\u0434");
+    expect(emergency.slides.every((slide) => !["\u0412\u0432\u0435\u0434\u0435\u043d\u0438\u0435", "\u041e\u0441\u043d\u043e\u0432\u043d\u044b\u0435 \u0444\u0430\u043a\u0442\u044b", "\u0418\u0442\u043e\u0433\u0438"].includes(slide.title))).toBe(true);
+    expect(emergency.slides.every((slide) => !slide.visual.description.includes("shows:"))).toBe(true);
+    expect(release).toMatchObject({ finalDisposition: "released", issueCategories: [] });
+
+    const completeLongClaim = "Ответственное применение ИИ требует определить учебную цель, выбрать допустимую роль инструмента, проверить полученный материал, зафиксировать собственный вклад и сохранить возможность объяснить каждое принятое решение аудитории.";
+    const longClaimRecovery = buildEmergencyReadablePresentation({
+      ...local,
+      slides: local.slides.map((slide, index) => index === 5 ? { ...slide, speakerNotes: completeLongClaim } : slide),
+    });
+    expect(longClaimRecovery.slides[5].thesis).toBe(completeLongClaim);
+
+    const dependentLead = "Чтобы оценивать влияние генеративного ИИ, недостаточно сравнить впечатления студентов. Надёжное исследование должно сопоставлять разные условия обучения и измерять понимание материала.";
+    const dependentLeadRecovery = buildEmergencyReadablePresentation({
+      ...local,
+      slides: local.slides.map((slide, index) => index === 1 ? { ...slide, speakerNotes: dependentLead } : slide),
+    });
+    expect(dependentLeadRecovery.slides[1].thesis).toBe("Надёжное исследование должно сопоставлять разные условия обучения и измерять понимание материала.");
   });
 
   it("builds a local deck from accepted narration without a configured AI provider", () => {
@@ -521,7 +566,7 @@ describe("Yandex narration full duration rewrite", () => {
       expect(presentation.designBrief?.themeId).toBe("studydeckEditorial");
       expect(presentation.designBrief?.slideDirections).toHaveLength(10);
       expect(presentation.slides.every((slide) => slide.canvas?.version === 3)).toBe(true);
-      expect(presentation.speechScript.map((item) => item.text).join("\n\n")).toBe(accepted.replace(/Слайд \d+: [^\n]+\n/g, "").trim());
+      expect(presentation.speechScript.map((item) => item.text).join("\n\n")).toBe(accepted.replace(/\r\n?/g, "\n").replace(/Слайд \d+: [^\n]+\n/g, "").trim());
       expect(presentation.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!))).toEqual([]);
       expect(release.finalDisposition).toBe("released");
       expect(release.issues.every((issue) => issue.severity === "minor" && issue.repairable)).toBe(true);
