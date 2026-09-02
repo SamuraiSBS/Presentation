@@ -2,6 +2,7 @@ import {
     PREMIUM_PRESENTATION_THEME_IDS,
     resolvePresentationTheme,
     type DeckStory,
+    type DesignBrief,
     type GenerationPipelineArtifacts,
     type ResearchBrief,
     type SlideNarrative,
@@ -47,6 +48,7 @@ import { getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechTimingBu
 import { GENERAL_CREATION_BRIEF_LINES, STUDENT_CREATION_BRIEF_LINES } from "../constants.js";
 import type { AitunnelNarrationTimingReason, FullNarrationSafeDiagnostics } from "../narration/processing.js";
 import { cleanMultilineText } from "../utilities.js";
+import { isManagedSlideCount, visualQuotaForSlideCount } from "../visual-policy.js";
 
 export function buildNarrativePlanPrompt(project: ProjectInput, sources: Source[], _researchBrief?: ResearchBrief) {
   const timingBudget = getRussianStudentSpeechTimingBudget(project);
@@ -107,6 +109,10 @@ export function buildDesignBriefPrompt(
   slideTextPlans: SlideTextPlan[],
 ) {
   const themeIds = ["studydeckEditorial"].join(", ");
+  const quota = visualQuotaForSlideCount(project.slideCount);
+  const visualQuotaInstruction = quota
+    ? `Managed visual quota for exactly ${project.slideCount} slides: ${quota.photos} real_photo, ${quota.diagrams} diagram, ${quota.text} text_only. Apply this exact count after your response is normalized; the final slide must always be text_only. If a photo cannot be grounded or later fetched, replace that slot with a substantive local diagram.`
+    : "For non-standard slide counts, preserve the compatible legacy visual strategy and keep the final slide text-led.";
   return [
     "Create a Lazyum DesignBrief JSON. You are choosing art direction, not drawing the slides.",
     `User topic and request: ${project.prompt}`,
@@ -125,7 +131,7 @@ export function buildDesignBriefPrompt(
     isGeneralProject(project)
       ? "Build Gamma-like visual rhythm while preserving clarity for the requested audience: strong cover, short text-led moments, image-led scenes only when grounded, diagrams for explanation, evidence support, and a strong final takeaway."
       : "Build Gamma-like visual rhythm while preserving university clarity: strong cover, short text-led moments, image-led scenes only when grounded, diagrams for explanation, evidence support, and a strong final takeaway.",
-    "Visible slide text should alternate between one strong phrase, 3-4 short sentence-like fragments, and diagram/photo labels. Full explanation belongs in narration and speaker notes.",
+    "Visible slide text must follow SlideTextPlan v2: one thesis plus 2-3 linked support points by default, with up to five only for a genuinely structured composition. Use complete independent sentences, or short labels only when a diagram or schema needs them. Full explanation belongs in narration and speaker notes.",
     "Do not repeat the same layoutIntent three times in a row. Do not make every slide a card grid.",
     "Choose sceneTextMode for every slide: hero_phrase, talk_sentences, visual_labels, or takeaway.",
     "Use hero_phrase for the cover, title-like claims, quote spreads, and transition moments; use talk_sentences for 3-4 short spoken beats; use visual_labels for diagrams/photos; use takeaway for the final slide.",
@@ -134,9 +140,12 @@ export function buildDesignBriefPrompt(
     "Use real_photo only for a concrete, searchable person, place, object, company, event, artwork, historical scene, laboratory object, product, or environment that makes the idea more memorable.",
     "Use diagram for processes, comparisons, causes and effects, concept maps, timelines, structures, and systems. Diagram slides must be understandable from deterministic shapes and labels without an external image.",
     "Use none for strong theses, abstract claims, thinly sourced topics, reflective moments, and the final takeaway. Never request a random stock image merely to fill space.",
-    "Economic standard policy: use at most one real_photo per five slides, rounded up, with a hard maximum of two photos per deck. Use local diagrams for the remaining explanatory slides.",
+    visualQuotaInstruction,
+    isManagedSlideCount(project.slideCount)
+      ? "Photo directions must name a concrete source-grounded person, place, object, event, model, period, or phenomenon. Diagram directions must name a process, comparison, causal chain, timeline, or structure. Text directions are reserved for the final takeaway and the exact remaining text_only quota."
+      : "Use real_photo only for concrete grounded subjects and use local diagrams for explanatory material; do not invent a photo merely to fill space.",
     "Every real photo must occupy 35-60 percent of the slide in a separate grid column. Never place text over an image.",
-    "Keep density low: one strong claim and no more than three short supporting points. Full explanation belongs in speaker notes.",
+    "Keep density low: one thesis and no more than three short supporting points by default. Full explanation belongs in speaker notes.",
     "For real_photo or generated_illustration, visualPrompt must be a short, concrete, searchable subject describing visible people, place, object, action, or event. Do not write generic phrases such as 'educational presentation image'.",
     "For diagram, visualPrompt must name the specific process, comparison, causal chain, timeline, or structure to draw. For none, describe the text-led emphasis briefly.",
     "Required JSON shape:",
@@ -166,11 +175,11 @@ export function buildDesignBriefPrompt(
         },
       ],
     }, null, 2),
-    `Narrative plan:\n${formatNarrativePlanForPrompt(narrativePlan)}`,
-    `Deck story:\n${JSON.stringify(deckStory, null, 2)}`,
-    `Slide text plans:\n${JSON.stringify(slideTextPlans, null, 2)}`,
-    `Research brief:\n${JSON.stringify(researchBrief, null, 2)}`,
-    `Source excerpts for grounding:\n${formatSourceText(sources)}`,
+    `Narrative plan:\n${JSON.stringify(compactNarrativePlanForPrompt(narrativePlan))}`,
+    `Deck story:\n${JSON.stringify(compactDeckStoryForPrompt(deckStory))}`,
+    `Slide text plans:\n${JSON.stringify(compactSlideTextPlansForPrompt(slideTextPlans))}`,
+    `Research brief:\n${JSON.stringify(compactResearchBriefForPrompt(researchBrief))}`,
+    `Source registry for grounding:\n${JSON.stringify(compactSourceContextForPrompt(sources, researchBrief))}`,
   ].join("\n\n");
 }
 
@@ -266,7 +275,7 @@ export function buildAitunnelFullNarrationCandidatePrompt(project: ProjectInput,
       : "Write one complete Russian university speech for a Lazyum presentation, not a plan or commentary.",
     `Topic and user request: ${cleanMultilineText(project.prompt).slice(0, 240)}.`,
     `Project title: ${cleanMultilineText(project.title).slice(0, 120)}. Exact slide count: ${project.slideCount}.`,
-    "Return exactly ten ordered sections. Each section must start with `\u0421\u043b\u0430\u0439\u0434 N: semantic title`, followed by natural spoken prose.",
+    `Return exactly ${project.slideCount} ordered sections. Each section must start with \`\u0421\u043b\u0430\u0439\u0434 N: semantic title\`, followed by natural spoken prose.`,
     timing ? `The whole speech must contain ${timing.minWords}-${timing.maxWords} words; target ${timing.targetWords}. The shared ${timing.titleWordTarget}/${timing.contentWordTarget}/${timing.conclusionWordTarget} slide targets are soft distribution guidance, not independent hard gates.` : "Write a complete, naturally paced speech.",
     "Develop the argument as one coherent report before returning it. Explain definitions, mechanisms, causes, consequences, examples, limitations, and conclusions where useful.",
     "When the snapshot lacks a precise anchor, cautious general educational explanation is allowed. Do not invent exact names, dates, statistics, quotations, citations, or source labels.",
@@ -691,6 +700,59 @@ export function formatNarrativePlanForPrompt(narrativePlan: SlideNarrative[]) {
   return JSON.stringify(narrativePlan, null, 2);
 }
 
+function compactPromptText(value: unknown, maxLength: number) {
+  const text = cleanMultilineText(value);
+  return text.length <= maxLength ? text : `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+function compactNarrativePlanForPrompt(narrativePlan: SlideNarrative[]) {
+  return narrativePlan.map((item) => {
+    const compact: Record<string, unknown> = { slideOrder: item.slideOrder, slideTitle: compactPromptText(item.slideTitle, 100), slidePurpose: compactPromptText(item.slidePurpose, 240), keyMessage: compactPromptText(item.keyMessage, 240), audienceQuestion: compactPromptText(item.audienceQuestion, 220), transitionToNext: compactPromptText(item.transitionToNext, 180) };
+    for (const [key, value] of [["storyJob", item.storyJob], ["bridgeFromPrevious", item.bridgeFromPrevious], ["evidenceOrExplanation", item.evidenceOrExplanation], ["whyItMatters", item.whyItMatters]] as const) if (value) compact[key] = compactPromptText(value, 220);
+    if (item.speechWordTarget !== undefined) compact.speechWordTarget = item.speechWordTarget;
+    if (item.supportedFactSourceIds?.length) compact.supportedFactSourceIds = item.supportedFactSourceIds.slice(0, 8);
+    if (item.entityAssertions?.length) compact.entityAssertions = item.entityAssertions.slice(0, 6).map((assertion) => ({ subject: compactPromptText(assertion.subject, 120), relation: compactPromptText(assertion.relation, 120), object: compactPromptText(assertion.object, 120), confidence: assertion.confidence, sourceIds: assertion.sourceIds.slice(0, 8) }));
+    return compact;
+  });
+}
+
+function compactResearchBriefForPrompt(researchBrief: ResearchBrief) {
+  return { topic: compactPromptText(researchBrief.topic, 180), angle: compactPromptText(researchBrief.angle, 260), facts: researchBrief.facts.map((fact) => ({ text: compactPromptText(fact.text, 300), ...(fact.sourceId ? { sourceId: fact.sourceId } : {}), confidence: fact.confidence })), warnings: researchBrief.warnings.slice(0, 4).map((warning) => compactPromptText(warning, 180)), vocabulary: researchBrief.vocabulary.slice(0, 6).map((item) => ({ term: compactPromptText(item.term, 80), explanation: compactPromptText(item.explanation, 140) })) };
+}
+
+function compactDeckStoryForPrompt(deckStory: DeckStory) {
+  return { mainIdea: compactPromptText(deckStory.mainIdea, 260), audienceQuestion: compactPromptText(deckStory.audienceQuestion, 220), tone: deckStory.tone, chapters: deckStory.chapters.map((chapter) => ({ title: compactPromptText(chapter.title, 100), purpose: compactPromptText(chapter.purpose, 200), slideOrders: chapter.slideOrders })), conclusion: compactPromptText(deckStory.conclusion, 260) };
+}
+
+function compactDesignBriefForPrompt(designBrief: DesignBrief) {
+  return { themeId: designBrief.themeId, ...(designBrief.themePreset ? { themePreset: designBrief.themePreset } : {}), mood: designBrief.mood, audienceFit: compactPromptText(designBrief.audienceFit, 180), visualMetaphor: compactPromptText(designBrief.visualMetaphor, 240), colorIntent: compactPromptText(designBrief.colorIntent, 180), typographyIntent: compactPromptText(designBrief.typographyIntent, 180), rhythm: designBrief.rhythm, slideDirections: designBrief.slideDirections.map((direction) => ({ slideOrder: direction.slideOrder, visualRole: direction.visualRole, layoutIntent: direction.layoutIntent, imageStrategy: direction.imageStrategy, ...(direction.visualPurpose ? { visualPurpose: direction.visualPurpose } : {}), ...(direction.visualRationale ? { visualRationale: compactPromptText(direction.visualRationale, 180) } : {}), ...(direction.sceneTextMode ? { sceneTextMode: direction.sceneTextMode } : {}), visualPrompt: compactPromptText(direction.visualPrompt, 180) })) };
+}
+
+function compactSlideBlueprintsForPrompt(slideBlueprints: GenerationPipelineArtifacts["slideBlueprints"]) {
+  return slideBlueprints.map((blueprint) => ({ slideOrder: blueprint.slideOrder, layoutCandidate: blueprint.layoutCandidate, textDensity: blueprint.textDensity, visualStrategy: compactPromptText(blueprint.visualStrategy, 240) }));
+}
+
+function compactSlideTextPlansForPrompt(slideTextPlans: SlideTextPlan[]) {
+  return slideTextPlans.map((plan) => ({
+    slideOrder: plan.slideOrder,
+    composition: plan.composition || "statement",
+    supportPointMode: plan.supportPointMode || "sentences",
+    title: compactPromptText(plan.title, 90),
+    thesis: compactPromptText(plan.thesis, 220),
+    supportPoints: (Array.isArray(plan.supportPoints) ? plan.supportPoints : []).slice(0, 5).map((point) => ({ role: point.role, text: compactPromptText(point.text, 120) })),
+    bullets: plan.bullets.slice(0, 3).map((bullet) => compactPromptText(bullet, 120)),
+    ...(plan.supportedFactSourceIds?.length ? { supportedFactSourceIds: plan.supportedFactSourceIds.slice(0, 8) } : {}),
+  }));
+}
+
+function compactSourceContextForPrompt(sources: Source[], researchBrief?: ResearchBrief) {
+  const coveredSourceIds = new Set((researchBrief?.facts || []).map((fact) => fact.sourceId).filter((sourceId): sourceId is string => Boolean(sourceId)));
+  return sources.filter((source) => source.included !== false).map((source) => ({ id: source.id, label: compactPromptText(source.label, 100), ...(coveredSourceIds.has(source.id) ? {} : { evidence: compactPromptText(source.excerpt, 360) }) })).filter((source) => source.id || source.label || source.evidence);
+}
+
+export function compactGenerationPromptContext(sources: Source[], narrativePlan: SlideNarrative[], artifacts: PromptArtifacts = {}) {
+  return { researchBrief: artifacts.researchBrief ? compactResearchBriefForPrompt(artifacts.researchBrief) : undefined, narrativePlan: compactNarrativePlanForPrompt(narrativePlan), designBrief: artifacts.designBrief ? compactDesignBriefForPrompt(artifacts.designBrief) : undefined, slideBlueprints: artifacts.slideBlueprints?.length ? compactSlideBlueprintsForPrompt(artifacts.slideBlueprints) : [], slideTextPlans: artifacts.slideTextPlans?.length ? compactSlideTextPlansForPrompt(artifacts.slideTextPlans) : [], sources: compactSourceContextForPrompt(sources, artifacts.researchBrief) };
+}
 export function buildGenerationPrompt(
   project: ProjectInput,
   sources: Source[],
@@ -699,14 +761,17 @@ export function buildGenerationPrompt(
   artifacts: PromptArtifacts = {},
 ) {
   const fixedNarration = cleanMultilineText(narrationText);
-  const planText = formatNarrativePlanForPrompt(narrativePlan);
+  const compactContext = compactGenerationPromptContext(sources, narrativePlan, artifacts);
+  const planText = compactContext.narrativePlan.length ? JSON.stringify(compactContext.narrativePlan) : "";
   const theme = resolvePresentationTheme(project);
   const supportedThemeIds = PREMIUM_PRESENTATION_THEME_IDS.join(", ");
-  const researchText = artifacts.researchBrief ? JSON.stringify(artifacts.researchBrief, null, 2) : "";
-  const storyText = artifacts.deckStory ? JSON.stringify(artifacts.deckStory, null, 2) : "";
-  const designText = artifacts.designBrief ? JSON.stringify(artifacts.designBrief, null, 2) : "";
-  const blueprintText = artifacts.slideBlueprints?.length ? JSON.stringify(artifacts.slideBlueprints, null, 2) : "";
-  const textPlanText = artifacts.slideTextPlans?.length ? JSON.stringify(artifacts.slideTextPlans, null, 2) : "";
+  const researchText = compactContext.researchBrief ? JSON.stringify(compactContext.researchBrief) : "";
+  const semanticSlideTextV2 = String(process.env.SEMANTIC_SLIDE_TEXT_V2 ?? "true").trim().toLowerCase() !== "false";
+
+  const designText = compactContext.designBrief ? JSON.stringify(compactContext.designBrief) : "";
+  const blueprintText = compactContext.slideBlueprints.length ? JSON.stringify(compactContext.slideBlueprints) : "";
+  const textPlanText = compactContext.slideTextPlans.length ? JSON.stringify(compactContext.slideTextPlans) : "";
+  const sourceText = compactContext.sources.length ? JSON.stringify(compactContext.sources) : "";
   return [
     "Create a complete Lazyum PresentationDocument as JSON.",
     `User topic and request: ${project.prompt}`,
@@ -717,12 +782,16 @@ export function buildGenerationPrompt(
     `Mode: ${project.mode}`,
     creationBriefLines(project),
     "All slide-facing text must be in Russian.",
-    researchText ? `Use this researchBrief as factual guardrails. Do not invent facts outside it or the source excerpts:\n${researchText}` : "",
-    planText ? `Use this fixed narrativePlan and copy it into the final PresentationDocument:\n${planText}` : "",
-    storyText ? `Use this deckStory as the deck-level content spine. Do not show it as a separate UI field:\n${storyText}` : "",
-    designText ? `Use this designBrief for deck-level visual direction:\n${designText}` : "",
-    blueprintText ? `Use these slideBlueprints as per-slide intent. Match slide order, purpose, layout candidate, visual strategy, and text density where possible:\n${blueprintText}` : "",
-    textPlanText ? `Use these slideTextPlans as compact projections of the matching accepted speech sections. They are constraints, not an additional story: title, thesis, bullets, blocks, definitions, and visible visual labels may only paraphrase the matching generatedText section. Do not use slideQuestion, narrative-plan fields, sources, or the project request as text donors:\n${textPlanText}` : "",
+    researchText ? `Use this compact researchBrief as factual guardrails. Source IDs in its facts map to the grounding registry below; do not invent facts outside these bounded records:\n${researchText}` : "",
+    planText ? `Use this compact fixed narrativePlan and copy it into the final PresentationDocument:\n${planText}` : "",
+
+    designText ? `Use this compact designBrief for deck-level visual direction; preserve its theme and per-slide visual directions:\n${designText}` : "",
+    blueprintText ? `Use these compact slideBlueprints only for layout candidate, visual strategy, and text density; narrativePlan supplies the content job:\n${blueprintText}` : "",
+    textPlanText
+      ? semanticSlideTextV2
+        ? `Use these compact slideTextPlans as the mandatory editorial plan for visible text. The accepted narration remains the sole source of truth; preserve each plan's composition, thesis, and support point roles while paraphrasing only its matching generatedText section:\n${textPlanText}`
+        : `Use these compact slideTextPlans only as derived visible-text hints. The accepted narration remains the sole source of truth; title, thesis, bullets, blocks, definitions, and visible visual labels may only paraphrase its matching generatedText section:\n${textPlanText}`
+      : "",
     fixedNarration
       ? `Use this fixed speech narration as the only source of truth. Copy it exactly into generatedText and do not rewrite its meaning:\n${fixedNarration}`
       : "Use generatedText as the single source of truth for the deck, divided exactly as `Слайд 1: ...` through the requested slide count.",
@@ -730,7 +799,12 @@ export function buildGenerationPrompt(
     "Each slide has one distinct story job and audience question. Do not reuse a conclusion or chapter label as a second slide's job.",
     "For a date, model, number, biography, legal or scientific claim, use only a matching source excerpt and structured sourceRefs. If support is absent, use a cautious general explanation; never guess an entity category, period, or relation.",
     "Do not merge model families or names: for example BMW 328 is not a BMW M model, and BMW 8 Series is not automatically an M model.",
-    "Treat slideTextPlans as a bounded compression layer: keep one supported thesis and zero to three distinct supported bullets. If the speech section has no additional concrete support, omit bullets instead of filling the layout.",
+    semanticSlideTextV2
+      ? "SlideTextPlan v2 is a mandatory editorial contract: every slide has one thesis and linked supportPoints whose roles explain the thesis. Use 2-3 independent support points by default, up to 5 only for an enumeration, comparison, cause-effect, process, or timeline that genuinely contains that many separate ideas. If the speech section contains only one real idea, use fewer points or empty bullets; never invent filler."
+      : "Treat slideTextPlans as a bounded compression layer: keep one supported thesis and zero to three distinct supported bullets. If the speech section has no additional concrete support, omit bullets instead of filling the layout.",
+    semanticSlideTextV2
+      ? "Each support point must answer the thesis and add new meaning. Do not repeat the thesis in bullets, blocks, definition text, or visual labels; visual labels are allowed only when the selected image/schema needs a short label, and must not duplicate nearby prose. Add elements only when they carry a new fact, relation, example, consequence, or step."
+      : "",
     "Do not generate a separate second story outside generatedText or narrativePlan.",
     "Do not put slidePurpose or transitionToNext on the slide as visible text.",
     "Visual theme rules:",
@@ -772,13 +846,13 @@ export function buildGenerationPrompt(
     "- title: short, ideally 6-8 words or fewer;",
     "- title: semantic and memorable. Avoid generic titles such as 'Контекст', 'Ключевые факты', 'Примеры', 'Выводы', and 'Итоги' unless there is only one such title in the whole deck;",
     "- thesis: one concise sentence about the real subject matter, not a meta sentence about the slide;",
-    "- every content slide must contain one clear thesis plus 2-3 short meaningful points; the thesis and each point must be complete and distinct, and each point adds a fact, explanation, example, or consequence rather than restating the thesis;",
+    "- every content slide must contain one clear thesis plus 2-3 short meaningful points by default; the thesis and each point must be complete and distinct, and each point adds a fact, explanation, example, or consequence rather than restating the thesis;",
     "- title and summary slides may be more compact. A content slide may omit the 2-3 bullets only for a genuine central quote or a structured explanatory diagram; make that semantic reason explicit in the quote or diagram data.",
     "- bullets: use 2-3 short meaningful points on ordinary content slides; every bullet must be a compressed phrase from the matching narration section;",
     "- definition: { term, text } only when an important term needs a simple definition; otherwise null;",
     "- keyConcepts: return an empty array; do not create small keyword chips on slides;",
     "- highlights: return an empty array; do not create small highlighted word badges on slides;",
-    "- blocks: keep a backward-compatible fallback using callout, quote, or bullets; mirror the chosen layout instead of always returning bullets.",
+    "- blocks: keep a backward-compatible fallback using callout, quote, or bullets; mirror the chosen layout instead of always returning bullets, and never repeat the thesis or a support point without adding new meaning.",
     "Slide-facing text style:",
     "- every visible title, thesis, bullet, block, definition, and visual item must be a complete thought; never end visible text with an unfinished phrase such as 'the first thing to note is rich';",
     "- every layout slot is independent: never begin a bullet, block, or visual explanation as the grammatical continuation of another slot;",
@@ -837,7 +911,7 @@ export function buildGenerationPrompt(
     "- Do not put markdown headings, source names, citations, sourceRefs, TODOs, or instructions into title, thesis, bullets, blocks, or speaker notes. sourceRefs remain structured metadata only.",
     "- Do not invent precise facts when the material does not support them; give a general explanation instead.",
     "- Keep detailed narration only in speakerNotes and speechScript.",
-    `Source material for factual grounding. Keep source labels only in structured sourceRefs, primarily for evidence layouts:\n${formatSourceText(sources)}`,
+    sourceText ? `Grounding source registry. Preserve these source IDs for structured sourceRefs; use evidence only when it supports the matching narration:\n${sourceText}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");

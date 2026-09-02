@@ -14,11 +14,14 @@ import {
     type ResearchBrief,
     type SlideBlueprint,
     type SlideNarrative,
+    type SlideSupportPoint,
+    type SlideTextComposition,
     type SlideTextPlan,
     type Source
 } from "@studydeck/shared";
 import { z } from "zod";
 import { logger } from "../../../observability.js";
+import { isManagedSlideCount, visualQuotaForSlideCount } from "../visual-policy.js";
 
 type ProjectInput = {
   id: string;
@@ -37,6 +40,15 @@ type SlideTextIssue = {
   fields: string[];
   reasons: string[];
 };
+
+export const SEMANTIC_SLIDE_TEXT_V2_ENV = "SEMANTIC_SLIDE_TEXT_V2";
+
+type SpeechClaim = {
+  text: string;
+  listItem: boolean;
+};
+
+type SupportPointRole = SlideSupportPoint["role"];
 
 export class StructuredGenerationError extends Error {
   constructor(
@@ -173,6 +185,7 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
     };
   }
   directions = balanceDeterministicVisualDirections(directions, project, narrativePlan, hasGroundedVisualContext);
+  const managedQuota = visualQuotaForSlideCount(project.slideCount);
   return designBriefSchema.parse({
     themePreset: theme.preset,
     themeId,
@@ -184,7 +197,7 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
     rhythm: {
       titleStyle: theme.fonts.tone === "bookish" ? "editorial" : theme.fonts.tone === "strict" ? "academic" : "bold",
       density: "low",
-      imageFrequency: "rare",
+      imageFrequency: managedQuota ? "frequent" : "rare",
       sectionBreaks: project.slideCount >= 6,
     },
     visualDirection: `${researchBrief.topic}: ${researchBrief.angle}`,
@@ -195,7 +208,9 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
       "Keep every photo in its own 35-60 percent grid column and never put text over an image.",
       `Support ${Math.max(1, narrativePlan.length)} planned story beats with distinct visual rhythm.`,
     ],
-    imageStrategy: "New-generation visual policy: real_photo, diagram, or none only. Use one real photo per five slides (hard maximum two) and only for a concrete source-grounded person, place, object, event, model, or period; turn abstract claims into a diagram, comparison, timeline, or statement.",
+    imageStrategy: managedQuota
+      ? `New-generation visual policy for ${project.slideCount} slides: exactly ${managedQuota.photos} real_photo, ${managedQuota.diagrams} diagram, and ${managedQuota.text} text_only directions; the final slide is always text_only. Use photos only for concrete source-grounded people, places, objects, events, models, periods, or phenomena; turn unavailable photo slots into local diagrams.`
+      : "New-generation visual policy: real_photo, diagram, or none only. Use the compatible legacy photo budget for non-standard deck sizes and only for a concrete source-grounded person, place, object, event, model, or period; turn abstract claims into a diagram, comparison, timeline, or statement.",
     slideDirections: directions,
   });
 }
@@ -355,6 +370,9 @@ export function balanceDeterministicVisualDirections(
   narrativePlan: SlideNarrative[],
   hasGroundedVisualContext: boolean,
 ) {
+  if (isManagedSlideCount(project.slideCount)) {
+    return applyManagedVisualQuota(directions, project, narrativePlan, hasGroundedVisualContext);
+  }
   if (!hasGroundedVisualContext || directions.length < 3 || !hasConcreteVisualTopic(project, narrativePlan)) {
     return applyEconomicPhotoAllocation(diversifySceneTextModes(directions, project, narrativePlan), project, narrativePlan);
   }
@@ -364,9 +382,9 @@ export function balanceDeterministicVisualDirections(
     .filter(({ direction }) => direction.slideOrder !== 1 && direction.visualRole !== "summary");
   if (!contentIndexes.length) return applyEconomicPhotoAllocation(diversifySceneTextModes(directions, project, narrativePlan), project, narrativePlan);
 
-  const minimumVisuals = Math.ceil(contentIndexes.length * 0.6);
-  const maximumVisuals = Math.max(minimumVisuals, Math.floor(contentIndexes.length * 0.75));
-  const isVisual = (direction: DesignBrief["slideDirections"][number]) => direction.imageStrategy === "real_photo" || direction.imageStrategy === "generated_illustration" || direction.imageStrategy === "diagram";
+  const minimumVisuals = Math.ceil(contentIndexes.length * 0.8);
+  const maximumVisuals = Math.max(minimumVisuals, Math.floor(contentIndexes.length * 0.9));
+  const isVisual = (direction: DesignBrief["slideDirections"][number]) => direction.imageStrategy === "real_photo" || direction.imageStrategy === "diagram";
   let visualCount = contentIndexes.filter(({ direction }) => isVisual(direction)).length;
   const balanced = [...directions];
 
@@ -429,6 +447,127 @@ export function balanceDeterministicVisualDirections(
   return applyEconomicPhotoAllocation(diversifySceneTextModes(balanced, project, narrativePlan), project, narrativePlan);
 }
 
+export function applyManagedVisualQuota(
+  directions: DesignBrief["slideDirections"],
+  project: ProjectInput,
+  narrativePlan: SlideNarrative[],
+  hasGroundedVisualContext: boolean,
+) {
+  const quota = visualQuotaForSlideCount(project.slideCount);
+  if (!quota) return directions;
+
+  const normalized = Array.from({ length: project.slideCount }, (_, index) => {
+    const order = index + 1;
+    return directions.find((direction) => direction.slideOrder === order)
+      || buildFallbackDirection(project, narrativePlan[index], order);
+  });
+  const finalIndex = normalized.length - 1;
+  const candidateIndexes = normalized.map((_, index) => index).filter((index) => index !== finalIndex);
+  const canUsePhotos = hasGroundedVisualContext && hasConcreteVisualTopic(project, narrativePlan);
+
+  const photoIndexes = canUsePhotos
+    ? [...candidateIndexes]
+      .filter((index) => isPhotoCandidate(normalized[index], project, narrativePlan[index]))
+      .sort((left, right) => scorePhotoCandidate(normalized[right], right, narrativePlan) - scorePhotoCandidate(normalized[left], left, narrativePlan))
+      .slice(0, quota.photos)
+    : [];
+  const photoSet = new Set(photoIndexes);
+
+  const diagramIndexes = [...candidateIndexes]
+    .filter((index) => !photoSet.has(index))
+    .sort((left, right) => scoreDiagramCandidate(normalized[right], right, narrativePlan) - scoreDiagramCandidate(normalized[left], left, narrativePlan))
+    .slice(0, quota.diagrams);
+  const diagramSet = new Set(diagramIndexes);
+
+  return normalized.map((direction, index) => {
+    const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, direction.slideOrder);
+    if (index === finalIndex) return withVisualMode(direction, plan, project, "none", "summary", "text_only");
+    if (photoSet.has(index)) {
+      const layout = index === 0 ? "full_bleed_image" as const : "split_image_text" as const;
+      return withVisualMode(direction, plan, project, "real_photo", layout, "photo");
+    }
+    if (diagramSet.has(index)) {
+      const layout = diagramLayoutFor(direction);
+      return withVisualMode(direction, plan, project, "diagram", layout, visualPurposeFor(layout, "diagram"));
+    }
+    const layout = textLayoutFor(direction, index === 0);
+    return withVisualMode(direction, plan, project, "none", layout, "text_only");
+  });
+}
+
+function buildFallbackDirection(project: ProjectInput, plan: SlideNarrative | undefined, order: number): DesignBrief["slideDirections"][number] {
+  const fallbackPlan = plan || buildFallbackNarrativeItem(project, order);
+  const layout = order === 1 ? "statement" as const : order === project.slideCount ? "summary" as const : "cards" as const;
+  return {
+    slideOrder: order,
+    visualRole: order === 1 ? "hero" : order === project.slideCount ? "summary" : "explain",
+    layoutIntent: layout,
+    imageStrategy: "none",
+    visualPurpose: "text_only",
+    visualRationale: visualRationaleFor(fallbackPlan, layout, "none"),
+    sceneTextMode: buildSceneTextMode(order, project.slideCount, order === 1 ? "hero" : order === project.slideCount ? "summary" : "explain", layout, "none"),
+    visualPrompt: buildDeterministicVisualPrompt(project, fallbackPlan, "none", layout),
+  };
+}
+
+function withVisualMode(
+  direction: DesignBrief["slideDirections"][number],
+  plan: SlideNarrative,
+  project: ProjectInput,
+  imageStrategy: DesignBrief["slideDirections"][number]["imageStrategy"],
+  layoutIntent: DesignBrief["slideDirections"][number]["layoutIntent"],
+  visualPurpose: DesignBrief["slideDirections"][number]["visualPurpose"],
+) {
+  return {
+    ...direction,
+    layoutIntent,
+    imageStrategy,
+    visualPurpose,
+    visualRationale: visualRationaleFor(plan, layoutIntent, imageStrategy),
+    sceneTextMode: buildSceneTextMode(direction.slideOrder, project.slideCount, direction.visualRole, layoutIntent, imageStrategy),
+    visualPrompt: direction.imageStrategy === imageStrategy && direction.layoutIntent === layoutIntent
+      ? completeVisualPrompt(project, plan, imageStrategy, layoutIntent, direction.visualPrompt)
+      : buildDeterministicVisualPrompt(project, plan, imageStrategy, layoutIntent),
+  };
+}
+
+function isPhotoCandidate(
+  direction: DesignBrief["slideDirections"][number],
+  project: ProjectInput,
+  plan: SlideNarrative | undefined,
+) {
+  const text = `${project.title} ${project.prompt} ${plan?.slideTitle || ""} ${plan?.keyMessage || ""}`;
+  return isConcreteVisualScene(text) || hasSpecificVisualAnchor(text);
+}
+
+function scorePhotoCandidate(direction: DesignBrief["slideDirections"][number], index: number, narrativePlan: SlideNarrative[]) {
+  const plan = narrativePlan[index];
+  return (direction.imageStrategy === "real_photo" ? 100 : 0)
+    + (direction.visualRole === "hero" || direction.visualRole === "context" ? 20 : 0)
+    + (direction.visualRole === "evidence" ? 10 : 0)
+    + (plan?.slideTitle ? plan.slideTitle.length : 0);
+}
+
+function scoreDiagramCandidate(direction: DesignBrief["slideDirections"][number], index: number, narrativePlan: SlideNarrative[]) {
+  const plan = narrativePlan[index];
+  return (direction.imageStrategy === "diagram" ? 100 : 0)
+    + (["diagram", "timeline", "comparison", "evidence_board"].includes(direction.layoutIntent) ? 60 : 0)
+    + (["compare", "sequence", "evidence", "explain"].includes(direction.visualRole) ? 30 : 0)
+    + (isExplanationHeavyScene(`${plan?.slideTitle || ""} ${plan?.keyMessage || ""}`) ? 20 : 0);
+}
+
+function diagramLayoutFor(direction: DesignBrief["slideDirections"][number]): DesignBrief["slideDirections"][number]["layoutIntent"] {
+  if (direction.layoutIntent === "comparison" || direction.visualRole === "compare") return "comparison";
+  if (direction.layoutIntent === "timeline" || direction.visualRole === "sequence") return "timeline";
+  return "diagram";
+}
+
+function textLayoutFor(direction: DesignBrief["slideDirections"][number], isCover: boolean): DesignBrief["slideDirections"][number]["layoutIntent"] {
+  if (isCover || direction.visualRole === "hero") return "statement";
+  if (direction.layoutIntent === "quote_spread" || direction.visualRole === "quote") return "quote_spread";
+  return "cards";
+}
+
 /** Economic standard runs reserve at most two concrete web-photo directions. */
 export function applyEconomicPhotoAllocation(
   directions: DesignBrief["slideDirections"],
@@ -444,16 +583,15 @@ export function applyEconomicPhotoAllocation(
       return direction;
     }
     const plan = narrativePlan[index] || buildFallbackNarrativeItem(project, direction.slideOrder);
-    const diagram = ["context", "explain", "evidence", "sequence", "compare"].includes(direction.visualRole);
-    const imageStrategy = diagram ? "diagram" as const : "none" as const;
-    const layoutIntent = diagram ? "diagram" as const : "statement" as const;
+    const imageStrategy = "diagram" as const;
+    const layoutIntent = "diagram" as const;
     return {
       ...direction,
       imageStrategy,
       layoutIntent,
-      sceneTextMode: diagram ? "visual_labels" as const : "talk_sentences" as const,
-      visualPurpose: diagram ? "diagram" as const : "text_only" as const,
-      visualRationale: diagram ? "The economic photo allocation is exhausted; explain this material locally." : "The economic photo allocation is exhausted; keep this conclusion text-led.",
+      sceneTextMode: "visual_labels" as const,
+      visualPurpose: "diagram" as const,
+      visualRationale: "The economic photo allocation is exhausted; explain this material with a local diagram.",
       visualPrompt: buildDeterministicVisualPrompt(project, plan, imageStrategy, layoutIntent),
     };
   });
@@ -492,7 +630,7 @@ export function diversifySceneTextModes(
           ? "cards"
           : current.layoutIntent;
     const nextImageStrategy = current.imageStrategy;
-    const preservedVisualLayout = current.imageStrategy === "real_photo" || current.imageStrategy === "generated_illustration" || current.imageStrategy === "diagram";
+    const preservedVisualLayout = current.imageStrategy === "real_photo" || current.imageStrategy === "diagram";
     balanced[index] = {
       ...current,
       sceneTextMode: replacement,
@@ -587,6 +725,66 @@ export function buildSlideTextPlans(
   _sources: Source[],
   options?: { acceptedFullNarration?: boolean },
 ): SlideTextPlan[] {
+  if (!isSemanticSlideTextV2Enabled()) {
+    return buildLegacySlideTextPlans(project, narrationText, options);
+  }
+
+  const sections = options?.acceptedFullNarration
+    ? parseNarrationSections(narrationText)
+    : parseNarrationSections(normalizeNarrationText(narrationText, project));
+  if (options?.acceptedFullNarration && (
+    sections.length !== project.slideCount
+    || sections.some((section, index) => section.order !== index + 1 || !section.title || !section.text.trim())
+  )) {
+    throw new Error("Accepted narration does not contain one complete section per slide");
+  }
+
+  return Array.from({ length: project.slideCount }, (_, index) => {
+    const order = index + 1;
+    const section = sections[index];
+    if (!section?.text.trim()) {
+      throw new Error(`Narration section ${order} is required before a slide text plan can be built`);
+    }
+
+    const claims = extractSpeechClaims(section.text);
+    const composition = inferSlideTextComposition(section.text, order, project.slideCount, claims);
+    const thesis = buildCompositionThesis(section.text, claims, composition);
+    const supportPoints = buildSemanticSupportPoints(claims, thesis, composition);
+    const title = shortenVisibleTitle(section.title || firstSentence(thesis));
+    const bullets = supportPoints.slice(0, 3).map((point) => point.text);
+    const lastClaim = claims.at(-1)?.text || thesis;
+    const listenerTakeaway = supportPoints.find((point) => point.role === "takeaway")?.text || lastClaim;
+
+    return slideTextPlanSchema.parse({
+      slideOrder: order,
+      slideQuestion: thesis,
+      coreClaim: thesis,
+      evidenceOrExample: supportPoints[0]?.text || "",
+      listenerTakeaway,
+      title,
+      thesis,
+      bullets,
+      composition,
+      supportPoints,
+      supportPointMode: supportPointModeFor(composition, claims),
+      // Keep the accepted speech section intact as the plan's canonical
+      // narration reference. Visible text is derived from claims above.
+      speakerNotes: cleanText(section.text),
+      supportedFactSourceIds: [],
+      entityAssertions: [],
+    });
+  });
+}
+
+export function isSemanticSlideTextV2Enabled(value = process.env[SEMANTIC_SLIDE_TEXT_V2_ENV]) {
+  return String(value ?? "true").trim().toLowerCase() !== "false";
+}
+
+function buildLegacySlideTextPlans(
+  project: ProjectInput,
+  narrationText: string,
+  options?: { acceptedFullNarration?: boolean },
+): SlideTextPlan[] {
   // Full-document narration has already passed its own v6/v7 contract before
   // this stage. Its distribution targets are intentionally soft, so sending
   // it through the legacy per-slide ceiling can reject a valid accepted draft
@@ -633,6 +831,205 @@ export function buildSlideTextPlans(
       entityAssertions: [],
     });
   });
+}
+
+function extractSpeechClaims(value: string): SpeechClaim[] {
+  return cleanText(value)
+    .split(/(?<=[.!?])\s+/)
+    .flatMap(splitSpeechSentence)
+    .map((claim) => ({ text: ensureSentence(cleanText(claim.text)), listItem: claim.listItem }))
+    .filter((claim) => wordCount(claim.text) >= (claim.listItem ? 1 : 4))
+    .filter((claim) => isCompleteScreenSentence(claim.text) || claim.listItem)
+    .filter((claim) => !hasGenericOrMetaScreenText(claim.text) && (claim.listItem || !looksLikeSentenceFragment(claim.text)))
+    .filter((claim, index, all) => all.findIndex((candidate) => semanticDuplicateText(candidate.text, claim.text)) === index);
+}
+
+function splitSpeechSentence(value: string): SpeechClaim[] {
+  const text = cleanText(value);
+  const list = extractListTail(text);
+  if (list) {
+    return [
+      { text: list.prefix, listItem: false },
+      ...list.items.map((item) => ({ text: item, listItem: true })),
+    ];
+  }
+
+  // A long colon sentence often contains a short independent lead claim and
+  // a dense explanation. Preserve that real lead claim as a complete support
+  // point; do not pass the whole dense tail to the word-budget compactor.
+  const colonIndex = text.indexOf(":");
+  if (colonIndex > 0) {
+    const prefix = cleanText(text.slice(0, colonIndex));
+    const suffix = cleanText(text.slice(colonIndex + 1));
+    if (wordCount(prefix) >= 4 && wordCount(suffix) >= 4) {
+      return [
+        { text: prefix, listItem: false },
+        { text: suffix, listItem: false },
+      ];
+    }
+  }
+
+  const semicolonParts = text.split(/\s*;\s*/u).map(cleanText).filter(Boolean);
+  if (semicolonParts.length > 1 && semicolonParts.every((part) => wordCount(part) >= 3)) {
+    return semicolonParts.map((part) => ({ text: part, listItem: false }));
+  }
+
+  const conjunctionParts = text
+    .split(/,\s+(?=(?:а|но|однако|при этом|также|whereas|however|but|while|because|therefore|so)\b)|\s+(?=(?:but|while|whereas|because|therefore|so|но|потому что|поэтому)\b)/iu)
+    .map(cleanText)
+    .filter(Boolean);
+  if (conjunctionParts.length > 1 && conjunctionParts.every((part) => wordCount(part) >= 4)) {
+    return conjunctionParts.map((part) => ({ text: part, listItem: false }));
+  }
+
+  return [{ text, listItem: false }];
+}
+
+function extractListTail(value: string) {
+  const match = value.match(/^(.{12,}?):\s*(.+)$/u);
+  if (!match) return null;
+  const prefix = cleanText(match[1]);
+  const tail = cleanText(match[2]).replace(/[.!?]+$/g, "");
+  const items = tail
+    .split(/\s*(?:;|,)\s*|\s+(?:и|или|and|or)\s+/iu)
+    .map((item) => cleanText(item).replace(/^(?:и|или|and|or)\s+/iu, ""))
+    .filter(Boolean);
+  // Only split a colon tail into label-like list items. Longer clauses are
+  // usually a sentence after a colon; turning each clause into a labelled
+  // "point" produces fragments such as "and the result..." in recovery.
+  if (items.length < 2 || items.some((item) => wordCount(item) > 2)) return null;
+  return { prefix, items };
+}
+
+function inferSlideTextComposition(
+  sectionText: string,
+  order: number,
+  slideCount: number,
+  claims: SpeechClaim[],
+): SlideTextComposition {
+  const text = cleanText(sectionText).toLocaleLowerCase();
+  if (order === slideCount) return "summary";
+  if (/\b(?:timeline|chronolog\w*|era|period|generation|19\d{2}|20\d{2})\b|(?:хронолог|эпох|период|поколени|\b\d{4}\b)/iu.test(text)) return "timeline";
+  if (/\b(?:process|workflow|step|stage|sequence)\b|(?:процесс|этап|шаг|последовательно)/iu.test(text)
+    || /(?:^|[.!?]\s+)(?:first|then|finally|сначала|затем|после этого|наконец)\b/iu.test(text)) return "process";
+  if (/\b(?:compare|comparison|versus|different|difference|both|whereas)\b|(?:сравнен|различ|отлич|общ(?:ий|ая|ие)|обо(?:и|е)|в отличие|по сравнению)/iu.test(text)) return "comparison";
+  if (/\b(?:because|therefore|cause|effect|leads?\s+to|results?\s+in)\b|(?:потому что|так как|из-за|причин|следств|приводит к|вызывает|поэтому|результат)/iu.test(text)) return "cause_effect";
+  if (/\b(?:definition|means|refers to)\b|(?:это|означает|называют|определяется как|термин)/iu.test(text)) return "definition";
+  if (/\b(?:for example|example|instance)\b|(?:например|пример|в частности)/iu.test(text)) return "example";
+  if (claims.some((claim) => claim.listItem) || /(?:несколько|множество|услови|фактор|признак|компонент|включает)/iu.test(text)) return "enumeration";
+  return "statement";
+}
+
+function buildCompositionThesis(sectionText: string, claims: SpeechClaim[], composition: SlideTextComposition) {
+  const list = extractListTail(cleanText(sectionText).split(/(?<=[.!?])\s+/)[0] || "");
+  const candidate = composition === "enumeration" && list
+    ? list.prefix
+    : composition === "comparison"
+      ? claims.find((claim) => /(?:both|same|common|общ(?:ий|ая|ие)|обо(?:и|е)|одинаков)/iu.test(claim.text))?.text || claims[0]?.text
+      : claims[0]?.text || firstSentence(sectionText);
+  return ensureSentence(shortenSentence(cleanText(candidate), 340));
+}
+
+function buildSemanticSupportPoints(
+  claims: SpeechClaim[],
+  thesis: string,
+  composition: SlideTextComposition,
+): SlideSupportPoint[] {
+  const candidates = claims.filter((claim) => !semanticDuplicateText(claim.text, thesis));
+  const complex = new Set<SlideTextComposition>(["enumeration", "comparison", "cause_effect", "process", "timeline"]).has(composition);
+  const maxPoints = complex ? 5 : 3;
+
+  const roleCandidates = candidates.map((claim, index) => ({
+    // Support points are rendered directly on the recovery canvas. Never
+    // turn a long sentence into a word-cut fragment with a synthetic period;
+    // keep only an original complete sentence that fits the visible budget.
+    text: claim.listItem ? completeSupportLabel(claim.text) : completeSupportPoint(claim.text),
+    role: supportPointRoleFor(claim.text, composition, index, candidates.length, thesis),
+  }));
+  const result: SlideSupportPoint[] = [];
+  for (const candidate of roleCandidates) {
+    if (!candidate.text || hasGenericOrMetaScreenText(candidate.text)) continue;
+    if (result.some((existing) => semanticDuplicateText(existing.text, candidate.text))) continue;
+    result.push(candidate);
+    if (result.length >= maxPoints) break;
+  }
+  return result;
+}
+
+function completeSupportPoint(value: string) {
+  const text = cleanText(value);
+  if (text.length > 130 || wordCount(text) > 18 || !/[.!?]$/u.test(text)) return "";
+  if (!isCompleteScreenSentence(text) || /^(?:а|и|но|или|также|однако|поэтому|затем|после)(?=\s|$)/iu.test(text)) return "";
+  return text;
+}
+
+function completeSupportLabel(value: string) {
+  const text = cleanText(value);
+  if (text.length > 40 || wordCount(text) > 2 || !/[.!?]$/u.test(text)) return "";
+  if (/^(?:а|и|но|или|также|однако|поэтому|затем|после)(?=\s|$)/iu.test(text)) return "";
+  return text;
+}
+
+function supportPointRoleFor(value: string, composition: SlideTextComposition, index: number, total: number, thesis = ""): SupportPointRole {
+  const text = value.toLocaleLowerCase();
+  if (composition === "enumeration") return "factor";
+  if (composition === "comparison") {
+    if (/(?:общ|both|similar|одинаков)/iu.test(text)) return "common";
+    if (/(?:различ|отлич|whereas|different|в отличие)/iu.test(text)) return "difference";
+    if (/(?:общ|both|same|similar|одинаков)/iu.test(thesis)) return "difference";
+    return index === 0 ? "common" : "difference";
+  }
+  if (composition === "cause_effect") {
+    if (/(?:причин|because|из-за|так как|поскольку|фактор)/iu.test(text)) return "cause";
+    if (/(?:следств|effect|поэтому|приводит|результат|вызывает|therefore|as a result|so)\b/iu.test(text)) return "effect";
+    return index === 0 ? "cause" : "effect";
+  }
+  if (composition === "process" || composition === "timeline") return "step";
+  if (composition === "definition") return index === 0 ? "evidence" : "example";
+  if (composition === "example") return "example";
+  if (composition === "summary") return index === total - 1 ? "takeaway" : "evidence";
+  return index === total - 1 ? "takeaway" : "evidence";
+}
+
+function supportPointModeFor(composition: SlideTextComposition, claims: SpeechClaim[]) {
+  return claims.some((claim) => claim.listItem)
+    || new Set<SlideTextComposition>(["comparison", "cause_effect", "process", "timeline"]).has(composition)
+    ? "labels" as const
+    : "sentences" as const;
+}
+
+function semanticDuplicateText(left: string, right: string) {
+  const leftKey = semanticTextKey(left);
+  const rightKey = semanticTextKey(right);
+  if (!leftKey || !rightKey) return false;
+  if (leftKey === rightKey) return true;
+  const shorter = leftKey.length < rightKey.length ? leftKey : rightKey;
+  const longer = leftKey.length < rightKey.length ? rightKey : leftKey;
+  if (shorter.length >= 24 && longer.includes(shorter)) return true;
+  const leftTokens = semanticTokens(leftKey);
+  const rightTokens = semanticTokens(rightKey);
+  if (leftTokens.length < 3 || rightTokens.length < 3) return false;
+  const overlap = leftTokens.filter((token) => rightTokens.includes(token)).length;
+  return overlap >= 3 && overlap / Math.min(leftTokens.length, rightTokens.length) >= 0.78;
+}
+
+function semanticTextKey(value: string) {
+  return cleanText(value)
+    .toLocaleLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function semanticTokens(value: string) {
+  return [...new Set(value.split(/\s+/).map(semanticStem).filter((token) => token.length >= 4 && !STOP_WORDS.has(token)))];
+}
+
+function semanticStem(value: string) {
+  return value
+    .replace(/(?:иями|ями|ами|ого|ему|ыми|ими|иях|ость|ости|ение|ения|ений|ировать|ировать|ского|скому|ская|ские|ный|ная|ные|ов|ев|ом|ем|ой|ий|ый|ая|ое|ие|ах|ях|ы|и|а|я|у|ю|е)$/u, "")
+    .replace(/(?:ing|tion|ions|ment|ments|ed|es|s)$/u, "");
 }
 
 export function compressVisibleSlideText(values: string[]) {

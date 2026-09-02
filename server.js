@@ -385,8 +385,8 @@ async function createPptx(presentation) {
   pptx.title = presentation.title || "Lazyum";
   pptx.lang = "ru-RU";
   pptx.theme = {
-    headFontFace: "Arial",
-    bodyFontFace: "Arial",
+    headFontFace: "Nunito",
+    bodyFontFace: "Nunito",
     lang: "ru-RU",
   };
 
@@ -398,7 +398,7 @@ async function createPptx(presentation) {
       y: 0.35,
       w: 12.1,
       h: 0.65,
-      fontFace: "Arial",
+      fontFace: "Nunito",
       fontSize: 25,
       bold: true,
       color: "17201B",
@@ -412,7 +412,7 @@ async function createPptx(presentation) {
       y: 1.55,
       w: 11.5,
       h: 2.2,
-      fontFace: "Arial",
+      fontFace: "Nunito",
       fontSize: 22,
       color: "27362F",
       fit: "shrink",

@@ -29,6 +29,6 @@ services:
       # Do not teach browsers to pin the test deployment as a production host.
       HSTS_MAX_AGE: "0"
 
-# Do not declare driver options for the default network here. The staging
-# project already owns an active bridge, and Compose must reuse it instead of
-# trying to update or replace the network during an application rollout.
+networks:
+  default:
+    enable_ipv6: true

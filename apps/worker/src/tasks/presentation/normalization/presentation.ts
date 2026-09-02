@@ -21,7 +21,6 @@ import {
     type Source
 } from "@studydeck/shared";
 import crypto from "node:crypto";
-import { isAitunnelImageProviderEnabled } from "../../presentation-image-provider.js";
 
 type ProjectInput = {
   id: string;
@@ -53,7 +52,7 @@ export class StructuredGenerationError extends Error {
   }
 }
 
-import { CONTENT_LAYOUT_CYCLE, SLIDE_LAYOUTS } from "../constants.js";
+import { CONTENT_LAYOUT_CYCLE, SLIDE_LAYOUTS, STOP_WORDS } from "../constants.js";
 import { isGenericNarrationSentence, isPromptEchoSentence, parseNarrationSections } from "../narration/processing.js";
 import { balanceDeterministicVisualDirections, buildDesignBrief, buildFallbackNarrativeItem, buildResearchBrief, buildSceneTextMode, cleanNarrativeField, completeVisualPrompt, normalizeNarrativePlan, parseNarrativePlanRaw } from "../planning/builders.js";
 import { assertPresentationQuality, assertRawGenerationQuality, firstCompleteScreenSentence, hasForbiddenTemplateText, isCompleteScreenSentence, looksLikeSentenceFragment, normalizeForQuality, pickCanonicalGeneratedText, shortenCompleteSentence } from "../quality/orchestration.js";
@@ -135,7 +134,10 @@ export function normalizePresentation(
       prompt: project.prompt,
       scenario: cleanText(input.scenario) || project.scenario,
       level: cleanText(input.level) || project.level,
-      presentationTheme: input.presentationTheme,
+      // New documents use the fixed StudyDeck identity. Older saved
+      // documents are normalized by their consumers without passing through
+      // this generation-only path, so their historical theme remains intact.
+      presentationTheme: isStudyDeckEditorialTheme(input.presentationTheme) ? input.presentationTheme : undefined,
       designBrief: normalizedDesignBrief,
     }),
     designBrief: normalizedDesignBrief,
@@ -184,12 +186,26 @@ export function normalizePresentationNarrativePlan(
 export function normalizeDesignBrief(raw: unknown, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[]) {
   const parsed = designBriefSchema.safeParse(raw);
   if (parsed.success) {
-    return ensureDesignBriefDirections(parsed.data, project, narrativePlan);
+    return ensureDesignBriefDirections({
+      ...parsed.data,
+      themeId: "studydeckEditorial",
+      themePreset: "minimal",
+      mood: "serious",
+    }, project, narrativePlan, sources.some((source) => Boolean(source.excerpt || source.url)));
   }
   return buildDesignBrief(project, buildResearchBrief(project, sources), narrativePlan);
 }
 
-export function ensureDesignBriefDirections(brief: DesignBrief, project: ProjectInput, narrativePlan: SlideNarrative[]) {
+function isStudyDeckEditorialTheme(value: unknown) {
+  return Boolean(value && typeof value === "object" && (value as { themeId?: unknown }).themeId === "studydeckEditorial");
+}
+
+export function ensureDesignBriefDirections(
+  brief: DesignBrief,
+  project: ProjectInput,
+  narrativePlan: SlideNarrative[],
+  sourceGrounded = false,
+) {
   let normalized = brief;
   if (brief.slideDirections.length !== project.slideCount) {
     const fallback = buildDesignBrief(project, {
@@ -218,16 +234,6 @@ export function ensureDesignBriefDirections(brief: DesignBrief, project: Project
         visualPrompt: completeVisualPrompt(project, plan, "none", "summary", direction.visualPrompt),
       };
     }
-    if (direction.imageStrategy === "generated_illustration" && isAitunnelImageProviderEnabled()) {
-      return {
-        ...direction,
-        layoutIntent: direction.visualRole === "hero" ? "statement" as const : "cards" as const,
-        imageStrategy: "generated_illustration" as const,
-        visualPurpose: "illustration" as const,
-        sceneTextMode: direction.visualRole === "hero" ? "hero_phrase" as const : "talk_sentences" as const,
-        visualPrompt: completeVisualPrompt(project, plan, "generated_illustration", direction.visualRole === "hero" ? "statement" : "cards", direction.visualPrompt),
-      };
-    }
     if (direction.imageStrategy === "generated_illustration") {
       return {
         ...direction,
@@ -254,7 +260,8 @@ export function ensureDesignBriefDirections(brief: DesignBrief, project: Project
     };
   });
 
-  const hasGroundedVisualContext = normalized.slideDirections.some((direction) => direction.imageStrategy !== "none")
+  const hasGroundedVisualContext = sourceGrounded
+    || normalized.slideDirections.some((direction) => direction.imageStrategy !== "none")
     || /\b(?:[A-Z][A-Za-z]{2,}|\d{3,4})\b/.test(`${project.title} ${project.prompt}`);
   return designBriefSchema.parse({ ...normalized, slideDirections: balanceDeterministicVisualDirections(slideDirections, project, narrativePlan, hasGroundedVisualContext) });
 }
@@ -280,11 +287,21 @@ export function normalizeSlide(rawSlide: unknown, order: number, sources: Source
     slideKind,
     fallbackSource,
     acceptedNarration,
+  ).filter((item, index, all) =>
+    !isSemanticallyDuplicateDisplayText(item, title)
+    && !isSemanticallyDuplicateDisplayText(item, thesis)
+    && all.findIndex((candidate) => isSemanticallyDuplicateDisplayText(candidate, item)) === index,
   );
   const definition = normalizeDefinition(slide.definition);
   const keyConcepts = normalizeKeyConcepts(slide.keyConcepts, title, bullets, slideKind);
   const highlights = normalizeHighlights(slide.highlights, thesis, bullets, slideKind);
-  const visual = normalizeVisual(slide.visual, title, thesis, bullets, slideKind, project, order, acceptedNarration ? thesis : "");
+  // A missing visual description may use only the matching accepted speech
+  // section, never the project prompt or title. This keeps the visual donor
+  // ordered with the slide while preventing cross-slide/project leakage.
+  const acceptedVisualFallback = acceptedNarration
+    ? firstNonDuplicateVisualSentence(acceptedNarration, [title, thesis, ...bullets])
+    : "";
+  const visual = normalizeVisual(slide.visual, title, thesis, bullets, slideKind, project, order, acceptedVisualFallback);
   const blocks = normalizeSlideBlocks(rawBlocks, project, order, thesis, bullets, slideKind, acceptedNarration);
 
   return {
@@ -365,6 +382,8 @@ export function normalizeBullets(value: unknown, blocks: SlideBlock[], project: 
   const items = uniqueShortItems([...fromValue, ...fromBlocks])
     .filter((item) => !looksLikeSentenceFragment(item))
     .filter((item) => !isDuplicateDisplayText(item, title))
+    .filter((item) => !isSemanticallyDuplicateDisplayText(item, title))
+    .filter((item, index, all) => all.findIndex((candidate) => isSemanticallyDuplicateDisplayText(candidate, item)) === index)
     .slice(0, 5);
 
   if (slideKind === "title" || slideKind === "section") {
@@ -385,7 +404,11 @@ export function normalizeBullets(value: unknown, blocks: SlideBlock[], project: 
 }
 
 export function ensureSlideSentenceDensity(items: string[], thesis: string, project: ProjectInput, order: number, slideKind: SlideKind, fallbackSource = "", acceptedNarration = "") {
-  const existing = uniqueShortItems(items).filter((item) => !looksLikeSentenceFragment(item)).slice(0, slideKind === "summary" ? 5 : 3);
+  const existing = uniqueShortItems(items)
+    .filter((item) => !looksLikeSentenceFragment(item))
+    .filter((item) => !isSemanticallyDuplicateDisplayText(item, thesis))
+    .filter((item, index, all) => all.findIndex((candidate) => isSemanticallyDuplicateDisplayText(candidate, item)) === index)
+    .slice(0, slideKind === "summary" ? 5 : 3);
   const visibleSentenceCount = splitIntoSentences([thesis, ...existing].join(" ")).length;
   const minimum = slideKind === "summary" ? 3 : 2;
 
@@ -395,7 +418,9 @@ export function ensureSlideSentenceDensity(items: string[], thesis: string, proj
 
   if (acceptedNarration.trim()) return existing;
 
-  const fallback = buildFallbackBulletItems(project, order, fallbackSource).filter((item) => item.toLowerCase() !== thesis.toLowerCase());
+  const fallback = buildFallbackBulletItems(project, order, fallbackSource)
+    .filter((item) => !isSemanticallyDuplicateDisplayText(item, thesis))
+    .filter((item, index, all) => all.findIndex((candidate) => isSemanticallyDuplicateDisplayText(candidate, item)) === index);
   return uniqueShortItems([...existing, ...fallback]).slice(0, slideKind === "summary" ? 5 : 3);
 }
 
@@ -427,8 +452,14 @@ export function normalizeVisual(
 ): SlideVisual {
   const candidate = value && typeof value === "object" ? (value as Partial<SlideVisual>) : {};
   const requestedType = normalizeVisualType(candidate.type);
+  const descriptionCandidate = sanitizeScreenText(candidate.description);
   const description = shortenSentence(
-    sanitizeScreenText(candidate.description) || acceptedFallbackDescription || imageConcept(project, order, title, thesis, bullets, slideKind),
+    [descriptionCandidate, acceptedFallbackDescription]
+      .map(sanitizeScreenText)
+      .find((item) => item
+        && !isSemanticallyDuplicateDisplayText(item, title)
+        && !isSemanticallyDuplicateDisplayText(item, thesis)
+        && !bullets.some((bullet) => isSemanticallyDuplicateDisplayText(item, bullet))) || "",
     260,
   );
   const rows = Array.isArray(candidate.rows)
@@ -443,12 +474,11 @@ export function normalizeVisual(
     : [];
   const items = Array.isArray(candidate.items)
     ? candidate.items
-        .map((item) => {
-          const text = shortenSentence(sanitizeScreenText(item?.text), 180);
-          const label = shortenSentence(sanitizeScreenText(item?.label) || text, 100);
-          return { label, text };
-        })
-        .filter((item) => item.label)
+        .map((item) => ({
+          label: shortenSentence(sanitizeScreenText(item?.label), 100),
+          text: shortenSentence(sanitizeScreenText(item?.text), 180),
+        }))
+        .filter((item) => item.label || item.text)
         .slice(0, 8)
     : [];
   const completeRows = rows.filter((row) => row.left && row.right);
@@ -674,7 +704,7 @@ export function buildFallbackSlide(order: number, project: ProjectInput, sources
   );
   const definition = null;
   const visual = acceptedNarration
-    ? { ...emptyVisual(), description: thesis }
+    ? { ...emptyVisual(), description: firstNonDuplicateVisualSentence(acceptedNarration, [title, thesis, ...bullets]) }
     : fallbackVisual(order, title, thesis, bullets, slideKind, project);
   const blocks = buildFallbackBlocks(project, order, thesis, bullets, slideKind);
   return {
@@ -698,6 +728,9 @@ export function buildFallbackSlide(order: number, project: ProjectInput, sources
 }
 
 export function buildFallbackBlocks(project: ProjectInput, order = 1, thesis = "", bullets: string[] = [], slideKind: SlideKind = "content"): SlideBlock[] {
+  // Canonical thesis/bullets already render the meaning. Do not manufacture a
+  // second block containing the same phrase just to satisfy an old layout.
+  if (thesis || bullets.length) return [];
   if (slideKind === "title" || slideKind === "section") {
     return [{ type: "callout", content: thesis || fallbackSlideText(project, order) }];
   }
@@ -776,7 +809,8 @@ export function normalizeSlideBlocks(
   acceptedNarration = "",
 ): SlideBlock[] {
   if (blocks.length) {
-    const normalized = blocks.slice(0, 3);
+    const normalized = distinctSlideBlocks(blocks.slice(0, 3), [thesis, ...bullets]);
+    if (!normalized.length && acceptedNarration.trim()) return [];
     const text = slideText(normalized);
     if (splitIntoSentences([thesis, text].filter(Boolean).join(" ")).length >= 2) {
       return normalized;
@@ -1075,6 +1109,55 @@ export function isDuplicateDisplayText(value: string, reference: string) {
   return shorter.length >= 18 && longer.includes(shorter);
 }
 
+/** Detects paraphrased repeats, not only byte-for-byte copies. */
+export function isSemanticallyDuplicateDisplayText(value: string, reference: string) {
+  if (isDuplicateDisplayText(value, reference)) return true;
+  const left = semanticDisplayTokens(value);
+  const right = semanticDisplayTokens(reference);
+  if (left.length < 3 || right.length < 3) return false;
+  const overlap = left.filter((token) => right.includes(token)).length;
+  return overlap >= 3 && overlap / Math.min(left.length, right.length) >= 0.78;
+}
+
+function firstNonDuplicateVisualSentence(value: string, anchors: string[]) {
+  for (const sentence of speechSentences(value)) {
+    const candidate = firstCompleteScreenSentence(sentence);
+    if (candidate && anchors.every((anchor) => !isSemanticallyDuplicateDisplayText(candidate, anchor))) return candidate;
+  }
+  return "";
+}
+
+function semanticDisplayTokens(value: string) {
+  return [...new Set(normalizeComparableText(value)
+    .split(/\s+/)
+    .map((token) => token.replace(/(?:ами|ого|ему|ыми|ими|ость|ости|ение|ения|ов|ев|ом|ем|ой|ый|ая|ое|ие|ах|ях|ы|и|а|я|у|ю|е)$/u, ""))
+    .filter((token) => token.length >= 4 && !STOP_WORDS.has(token)))];
+}
+
+function distinctSlideBlocks(blocks: SlideBlock[], anchors: string[]) {
+  const seen = anchors.filter(Boolean).map(normalizeComparableText);
+  const result: SlideBlock[] = [];
+  for (const block of blocks) {
+    if (block.type === "bullets") {
+      const items = block.items
+        .map((item) => shortenSentence(sanitizeScreenText(item), 130))
+        .filter(Boolean)
+        .filter((item, index, all) => all.findIndex((candidate) => isSemanticallyDuplicateDisplayText(candidate, item)) === index)
+        .filter((item) => !seen.some((anchor) => isSemanticallyDuplicateDisplayText(item, anchor)));
+      if (items.length) {
+        result.push({ type: "bullets", items });
+        seen.push(...items.map(normalizeComparableText));
+      }
+      continue;
+    }
+    const content = shortenSentence(sanitizeScreenText(block.content), 180);
+    if (!content || seen.some((anchor) => isSemanticallyDuplicateDisplayText(content, anchor))) continue;
+    result.push({ type: block.type, content });
+    seen.push(normalizeComparableText(content));
+  }
+  return result;
+}
+
 export function normalizeComparableText(value: string) {
   return cleanText(value)
     .toLowerCase()
@@ -1140,7 +1223,7 @@ export function inferContentLayout(
   slide: Pick<Slide, "title" | "thesis" | "bullets" | "definition" | "visual" | "blocks"> & Partial<Pick<Slide, "sourceRefs">>,
   order: number,
 ): Slide["layout"] {
-  if (slide.visual.image?.url || slide.visual.image?.objectKey) return "image-focus";
+  if (slide.visual.image?.url) return "image-focus";
   if (slide.blocks.some((block) => block.type === "quote")) return "quote";
   if (slide.visual.type === "timeline" && layoutHasEnoughContent("timeline", slide)) return "timeline";
   if (slide.visual.type === "process_diagram" && layoutHasEnoughContent("process", slide)) return "process";
@@ -1226,7 +1309,7 @@ export function layoutHasEnoughContent(layout: SlideLayout, slide: Pick<Slide, "
   if (layout === "evidence") return Boolean(slide.thesis && slide.bullets.length >= 2);
   if (layout === "problem-solution") return slide.visual.items.length >= 3 || slide.bullets.length >= 3;
   if (layout === "explain-example") return Boolean(slide.definition || slide.thesis) && slide.bullets.length >= 1;
-  if (layout === "image-focus") return Boolean(slide.visual.image?.url || slide.visual.image?.objectKey);
+  if (layout === "image-focus") return Boolean(slide.visual.image?.url);
   return true;
 }
 

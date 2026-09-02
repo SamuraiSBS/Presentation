@@ -133,6 +133,12 @@ async function collectIssues(document: PresentationDocument, options: ExportPref
       slideId,
       category,
       repairable: !customById.get(slideId),
+      // A released document may retain advisory quality findings because the
+      // production gate deliberately permits minor issues and major issues
+      // above the calibrated quality threshold. Only a blocker or an export
+      // schema risk should prevent serializing that already accepted revision.
+      blocking: Boolean(document.productionQualityGate)
+        && (qualityIssue.severity === "blocker" || qualityIssue.category === "schema_risk"),
     });
   }
 
@@ -179,11 +185,10 @@ async function collectIssues(document: PresentationDocument, options: ExportPref
     }
   }
 
-  // A released document cannot be repaired only for this export. Any defect
-  // must be handled through the normal persisted revision path first.
-  return dedupeIssues(issues.map((issue) => document.productionQualityGate
-    ? { ...issue, blocking: true }
-    : issue));
+  // A released document cannot be repaired only for this export. Blocking
+  // defects must be handled through the normal persisted revision path first;
+  // advisory quality findings remain visible in the transient report.
+  return dedupeIssues(issues);
 }
 
 function hasReleasedCanonicalNarration(document: PresentationDocument) {

@@ -5,6 +5,11 @@ import { presentationThemeSchema, slideSchema, speechScriptItemSchema } from "./
 export const productionQualityGateSchema = z.object({
   version: z.literal(1),
   capability: z.literal("silent-production-quality-gate"),
+  recoveryApplied: z.boolean().optional(),
+  recoveryStage: z.enum(["accepted_narration", "canvas_layout", "emergency"]).optional(),
+  recoveryReason: z.string().trim().max(240).optional(),
+  replacedImages: z.number().int().nonnegative().optional(),
+  replacedDiagrams: z.number().int().nonnegative().optional(),
 });
 export const presentationSchema = z.object({
   id: z.string(),

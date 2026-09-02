@@ -20,6 +20,7 @@ export type NormalizedUsage = {
   inputTokens?: number;
   outputTokens?: number;
   cachedInputTokens?: number;
+  cacheWriteTokens?: number;
   reasoningTokens?: number;
   totalTokens?: number;
 };
@@ -83,6 +84,7 @@ export async function recordAiUsage(input: {
         inputTokens: usage?.inputTokens,
         outputTokens: usage?.outputTokens,
         cachedInputTokens: usage?.cachedInputTokens,
+        cacheWriteTokens: usage?.cacheWriteTokens,
         reasoningTokens: usage?.reasoningTokens,
         totalTokens: usage?.totalTokens,
         durationMs: Math.max(0, finishedAt.getTime() - input.startedAt.getTime()),
@@ -181,12 +183,14 @@ export async function recordCostEvent(input: {
 export function normalizeOpenAIUsage(value: unknown): NormalizedUsage | undefined {
   const usage = record(value);
   if (!usage) return undefined;
-  const inputDetails = record(usage.inputTokenDetails || usage.input_tokens_details);
-  const outputDetails = record(usage.outputTokenDetails || usage.output_tokens_details);
+  const inputDetails = record(usage.inputTokenDetails || usage.input_tokens_details || usage.promptTokensDetails || usage.prompt_tokens_details);
+  const outputDetails = record(usage.outputTokenDetails || usage.output_tokens_details || usage.completionTokensDetails || usage.completion_tokens_details);
+  const cacheWriteTokens = integer(inputDetails?.cacheWriteTokens ?? inputDetails?.cache_write_tokens ?? inputDetails?.cacheCreationInputTokens ?? inputDetails?.cache_creation_input_tokens ?? usage.cacheWriteTokens ?? usage.cache_write_tokens ?? usage.cacheCreationInputTokens ?? usage.cache_creation_input_tokens);
   const normalized = {
     inputTokens: integer(usage.inputTokens ?? usage.input_tokens ?? usage.promptTokens),
     outputTokens: integer(usage.outputTokens ?? usage.output_tokens ?? usage.completionTokens),
-    cachedInputTokens: integer(inputDetails?.cacheReadTokens ?? inputDetails?.cached_tokens),
+    cachedInputTokens: integer(inputDetails?.cacheReadTokens ?? inputDetails?.cached_tokens ?? inputDetails?.cache_read_input_tokens ?? usage.cacheReadTokens ?? usage.cache_read_input_tokens),
+    ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
     reasoningTokens: integer(outputDetails?.reasoningTokens ?? outputDetails?.reasoning_tokens),
     totalTokens: integer(usage.totalTokens ?? usage.total_tokens),
   };
@@ -239,10 +243,20 @@ function yandexPrice(rate: string, version: string): Price {
 
 export function calculateProviderCost(provider: "openai" | "yandex" | "aitunnel", model: string, at: Date, usage: NormalizedUsage) {
   const price = priceFor(provider, model, at);
-  return price ? { status: "priced" as const, sourceCost: calculateCost(usage, price), currency: price.currency, version: price.version } : { status: "unknown_price" as const, sourceCost: null, currency: null, version: null };
+  if (!price) return { status: "unknown_price" as const, sourceCost: null, currency: null, version: null };
+  return {
+    status: "priced" as const,
+    sourceCost: calculateCost(usage, price),
+    currency: price.currency,
+    version: price.version,
+    ...(usage.cacheWriteTokens !== undefined ? { unpricedCacheWriteTokens: usage.cacheWriteTokens } : {}),
+  };
 }
 
 function calculateCost(usage: NormalizedUsage, price: Price) {
+  // AITUNNEL has not supplied a verified cache-write tariff. Keep those
+  // tokens in regular input until a provider tariff is verified, while
+  // persisting the count so the discrepancy is visible in telemetry.
   const regularInput = Math.max(0, (usage.inputTokens || 0) - (usage.cachedInputTokens || 0));
   const output = Math.max(0, (usage.outputTokens || 0) - (usage.reasoningTokens || 0));
   const micros = BigInt(regularInput) * toScaled(price.input)

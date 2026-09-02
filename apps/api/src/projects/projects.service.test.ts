@@ -7,11 +7,12 @@ import type { PrismaService } from "../prisma/prisma.service.js";
 import type { ProjectStorageService } from "../storage/project-storage.service.js";
 import type { UsageService } from "../usage/usage.service.js";
 import type { MalwareScanService } from "../security/malware-scan.service.js";
+import { COST_ENVELOPE_POLICY_VERSION } from "@studydeck/shared";
 import { ProjectsService } from "./projects.service.js";
 
 const speechDraft = "Слайд 1: Введение\nЭто достаточно длинный текст выступления для проверки запуска презентации.";
 
-function acceptedTenSlideSpeech(wordsPerSection = 117) {
+function acceptedTenSlideSpeech(wordsPerSection = 70) {
   return Array.from({ length: 10 }, (_, index) => {
     const words = Array.from({ length: wordsPerSection }, (_, word) => `fact${index + 1}_${word + 1}`);
     const split = Math.floor(words.length / 2);
@@ -344,7 +345,7 @@ describe("ProjectsService generation", () => {
     tx.generationJob.create.mockResolvedValueOnce({ id: "presentation-retry-job" });
     tx.costEnvelope.findMany.mockResolvedValueOnce([{
       id: "attempt-group-1",
-      policyVersion: "standard-generation-cost-envelope-v10",
+      policyVersion: COST_ENVELOPE_POLICY_VERSION,
       sourceSnapshot: { version: 1, sources: [] },
       status: "exhausted",
       presentationJobId: "failed-presentation-job",

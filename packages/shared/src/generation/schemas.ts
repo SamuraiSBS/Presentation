@@ -87,6 +87,38 @@ export const deckStorySchema = z.object({
 });
 export type DeckStory = z.infer<typeof deckStorySchema>;
 
+export const slideTextCompositionSchema = z.enum([
+  "statement",
+  "enumeration",
+  "comparison",
+  "cause_effect",
+  "process",
+  "definition",
+  "example",
+  "timeline",
+  "summary",
+]);
+export type SlideTextComposition = z.infer<typeof slideTextCompositionSchema>;
+
+export const slideSupportPointRoleSchema = z.enum([
+  "factor",
+  "common",
+  "difference",
+  "cause",
+  "effect",
+  "step",
+  "example",
+  "evidence",
+  "takeaway",
+]);
+export type SlideSupportPointRole = z.infer<typeof slideSupportPointRoleSchema>;
+
+export const slideSupportPointSchema = z.object({
+  text: visibleSlideTextSchema("slide plan support point", 140),
+  role: slideSupportPointRoleSchema,
+});
+export type SlideSupportPoint = z.infer<typeof slideSupportPointSchema>;
+
 export const slideTextPlanSchema = z.object({
   slideOrder: z.number().int().positive(),
   slideQuestion: z.string().trim().min(1),
@@ -96,6 +128,11 @@ export const slideTextPlanSchema = z.object({
   title: visibleSlideTextSchema("slide plan title", 90),
   thesis: z.string().trim().min(1).max(360),
   bullets: z.array(visibleSlideTextSchema("slide plan bullet", 140)).max(3),
+  // Optional defaults keep persisted pipeline artifacts and older tests
+  // readable while new generations receive an explicit semantic contract.
+  composition: slideTextCompositionSchema.default("statement"),
+  supportPoints: z.array(slideSupportPointSchema).max(5).default([]),
+  supportPointMode: z.enum(["sentences", "labels"]).default("sentences"),
   speakerNotes: speakerNotesTextSchema,
   supportedFactSourceIds: z.array(z.string().trim().min(1)).optional(),
   entityAssertions: z.array(entityAssertionSchema).optional(),

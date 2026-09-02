@@ -1,6 +1,6 @@
 import { getRussianStudentSpeechTimingBudget, type SpeechTimingProject } from "./speech-timing.js";
 
-/** The portable server-side portion of the v6 ten-slide narration contract. */
+/** The portable server-side portion of the v6 narration contract. */
 export type FullSpeechContractIssue =
   | "section_count"
   | "section_order"
@@ -25,12 +25,12 @@ type CanonicalSection = { order: number; title: string; text: string };
 
 /**
  * Tests the canonical manual-acceptance rules without returning raw text or
- * numeric diagnostics to callers. It applies only to the new ten-slide
+ * numeric diagnostics to callers. It applies to every new preset-backed
  * university format; historical project shapes retain their saved behaviour.
  */
 export function assessFullSpeechContract(value: string, project: SpeechTimingProject): FullSpeechContractAssessment {
   const budget = getRussianStudentSpeechTimingBudget(project);
-  if (!budget || project.slideCount !== 10) {
+  if (!budget) {
     return { applicable: false, isAccepted: true, totalWords: 0, issueCodes: [] };
   }
 
@@ -38,13 +38,13 @@ export function assessFullSpeechContract(value: string, project: SpeechTimingPro
   const sections = parseCanonicalSections(source);
   const issueCodes = new Set<FullSpeechContractIssue>();
   const headers = source.split("\n").filter((line) => /^\s*\u0421\u043b\u0430\u0439\u0434\s*\d{1,2}\s*:/iu.test(line));
-  const expectedOrders = Array.from({ length: 10 }, (_, index) => index + 1);
+  const expectedOrders = Array.from({ length: project.slideCount }, (_, index) => index + 1);
 
-  if (sections.length !== 10) issueCodes.add("section_count");
+  if (sections.length !== project.slideCount) issueCodes.add("section_count");
   if (headers.length !== sections.length || headers.some((line) => !/^\s*\u0421\u043b\u0430\u0439\u0434\s*\d{1,2}\s*:/iu.test(line))) issueCodes.add("noncanonical_header");
   if (sections.some((section, index) => section.order !== expectedOrders[index])) issueCodes.add("section_order");
 
-  const sectionTargets = expectedOrders.map((order) => order === 1 ? budget.titleWordTarget : order === 10 ? budget.conclusionWordTarget : budget.contentWordTarget);
+  const sectionTargets = expectedOrders.map((order) => order === 1 ? budget.titleWordTarget : order === project.slideCount ? budget.conclusionWordTarget : budget.contentWordTarget);
   for (const [index, section] of sections.entries()) {
     const words = countWords(section.text);
     const sentences = splitSentences(section.text);

@@ -3,6 +3,7 @@ import { CanActivate, ExecutionContext, HttpException, HttpStatus, Injectable, O
 import { ConfigService } from "@nestjs/config";
 import type { Request, Response } from "express";
 import { Redis } from "ioredis";
+import { isLocalGenerationUnlimited } from "../runtime/local-generation.js";
 
 type RateLimitProfile = "general" | "upload" | "generation" | "export" | "invite" | "billing";
 
@@ -68,6 +69,7 @@ export class ApiRateLimitGuard implements CanActivate, OnModuleDestroy {
     if (request.method === "OPTIONS" || pathname.startsWith("/v1/health")) return true;
 
     const profile = rateLimitProfileFor(pathname, request.method);
+    if (profile === "generation" && isLocalGenerationUnlimited(this.config)) return true;
     const windowMs = positiveInteger(this.config.get<string>("API_RATE_LIMIT_WINDOW_MS"), 60_000);
     const userLimit = positiveInteger(this.config.get<string>(profileConfiguration[profile].env), profileConfiguration[profile].fallback);
     const ipMultiplier = positiveInteger(this.config.get<string>("API_RATE_LIMIT_IP_MULTIPLIER"), 3);

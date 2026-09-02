@@ -58,9 +58,9 @@
       <feDropShadow dx="0" dy="0" stdDeviation="18" flood-color="#9d37ff" flood-opacity="0.5"/>
     </filter>
     <style>
-      .title { font-family: Inter, Arial, sans-serif; font-size: 116px; font-weight: 800; letter-spacing: 0; }
-      .tagline { font-family: Inter, Arial, sans-serif; font-size: 34px; font-weight: 700; letter-spacing: 0; }
-      .feature { font-family: Inter, Arial, sans-serif; font-size: 29px; font-weight: 650; letter-spacing: 0; }
+      .title { font-family: Nunito, "Nunito Variable", sans-serif; font-size: 116px; font-weight: 800; letter-spacing: 0; }
+      .tagline { font-family: Nunito, "Nunito Variable", sans-serif; font-size: 34px; font-weight: 700; letter-spacing: 0; }
+      .feature { font-family: Nunito, "Nunito Variable", sans-serif; font-size: 29px; font-weight: 650; letter-spacing: 0; }
       .thin { fill: none; stroke-linecap: round; stroke-linejoin: round; }
       .dot { opacity: 0.95; }
     </style>

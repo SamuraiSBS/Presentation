@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
-import { adminListQuerySchema, adminPlanOverrideSchema, adminReasonSchema } from "@studydeck/shared";
+import { adminListQuerySchema, adminPlanOverrideSchema, adminPresentationRecoverySchema, adminReasonSchema } from "@studydeck/shared";
 import { AdminAccessGuard } from "../auth/admin-access.guard.js";
 import { InternalAuthGuard, type InternalRequest } from "../auth/internal-auth.guard.js";
 import { parseInput } from "../errors/api-error.js";
@@ -27,6 +27,7 @@ export class AdminController {
   @Put("users/:id/plan-override") setPlan(@Req() request: InternalRequest, @Param("id") id: string, @Body() body: unknown) { return this.admin.setPlanOverride(request.userId, id, parseInput(adminPlanOverrideSchema, body)); }
   @Delete("users/:id/plan-override") clearPlan(@Req() request: InternalRequest, @Param("id") id: string) { return this.admin.clearPlanOverride(request.userId, id); }
   @Post("generations/:id/retry") retryGeneration(@Req() request: InternalRequest, @Param("id") id: string) { return this.admin.retryGeneration(request.userId, id); }
+  @Post("presentation-recovery") recoverPresentation(@Req() request: InternalRequest, @Body() body: unknown) { return this.admin.recoverPresentation(request.userId, parseInput(adminPresentationRecoverySchema, body)); }
   @Post("generations/:id/cancel") cancelGeneration(@Req() request: InternalRequest, @Param("id") id: string, @Body() body: unknown) { return this.admin.cancelGeneration(request.userId, id, parseInput(adminReasonSchema, body).reason); }
   @Post("exports/:id/retry") retryExport(@Req() request: InternalRequest, @Param("id") id: string) { return this.admin.retryExport(request.userId, id); }
   @Delete("projects/:id") deleteProject(@Req() request: InternalRequest, @Param("id") id: string, @Body() body: unknown) { return this.admin.deleteProject(request.userId, id, parseInput(adminReasonSchema, body).reason); }

@@ -192,9 +192,10 @@ export const slideVisualRowSchema = z.object({
 export type SlideVisualRow = z.infer<typeof slideVisualRowSchema>;
 
 export const slideVisualImageSchema = z.object({
-  // Stored images may not have a public provider URL. In that case the
-  // persisted objectKey is the canonical asset reference and url is empty.
-  url: z.string().url().or(z.literal("")),
+  // Persisted worker-generated assets are addressed through the same signed
+  // API route used by the editor. External URLs remain valid for Tavily and
+  // legacy assets.
+  url: z.string().refine((value) => isSlideImageUrl(value), "Image URL must be an HTTP(S) URL or a slide asset route"),
   sourceId: z.string().trim().min(1).max(128).optional(),
   objectKey: z.string().optional(),
   alt: z.string().default(""),
@@ -209,6 +210,16 @@ export const slideVisualImageSchema = z.object({
   warnings: z.array(z.string().trim().min(1).max(180)).max(6).default([]),
 });
 export type SlideVisualImage = z.infer<typeof slideVisualImageSchema>;
+
+function isSlideImageUrl(value: string) {
+  if (/^\/api\/projects\/[^/]+\/slides\/[^/]+\/assets\/[^/]+$/.test(value)) return true;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 export const mermaidDiagramSourceSchema = z
   .string()

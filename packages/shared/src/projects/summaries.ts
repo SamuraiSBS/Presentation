@@ -73,6 +73,7 @@ export const usageSummarySchema = z.object({
   remaining: z.number().int().nonnegative(),
   resetsAt: isoDateTimeSchema,
   exhausted: z.boolean(),
+  unlimited: z.boolean().optional(),
   subscriptionExpiresAt: isoDateTimeSchema.nullable(),
 });
 export type UsageSummary = z.infer<typeof usageSummarySchema>;

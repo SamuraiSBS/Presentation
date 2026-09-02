@@ -725,6 +725,7 @@ model AiUsageEvent {
   inputTokens              Int?
   outputTokens             Int?
   cachedInputTokens        Int?
+  cacheWriteTokens         Int?
   reasoningTokens          Int?
   totalTokens              Int?
   durationMs               Int?

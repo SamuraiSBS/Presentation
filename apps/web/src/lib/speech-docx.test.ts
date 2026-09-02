@@ -15,7 +15,11 @@ describe("speech DOCX export", () => {
   it("builds a DOCX package with slide headings", async () => {
     const zip = await JSZip.loadAsync(await (await buildSpeechDocx("Тема & контекст", speech)).arrayBuffer());
     const document = await zip.file("word/document.xml")?.async("string");
+    const styles = await zip.file("word/styles.xml")?.async("string");
     expect(zip.file("[Content_Types].xml")).toBeTruthy();
+    expect(document).toContain('w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"');
+    expect(styles).toContain('w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"');
+    expect(styles).not.toContain("Nunito");
     expect(document).toContain("Тема &amp; контекст");
     expect(document).toContain("Слайд 2. Вывод");
   });

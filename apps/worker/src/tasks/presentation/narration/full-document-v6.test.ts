@@ -71,7 +71,7 @@ function fullSpeech(wordsBySlide: readonly number[]) {
 describe("Plan 18 v6 full-document narration foundation", () => {
   it("uses exactly the three future narration stages, models, and output caps", () => {
     expect(aitunnelModelForStage("narration_full_candidate")).toBe("gpt-5.6-luna");
-    expect(aitunnelModelForStage("narration_full_rewrite")).toBe("gpt-5.6-terra");
+    expect(aitunnelModelForStage("narration_full_rewrite")).toBe("gpt-5.6-luna");
     expect(aitunnelModelForStage("narration_targeted_repair")).toBe("gpt-5.6-luna");
     expect(aitunnelStagePolicy("narration_full_candidate").maxOutputTokens).toBe(AITUNNEL_NARRATION_FULL_CANDIDATE_MAX_OUTPUT_TOKENS);
     expect(aitunnelStagePolicy("narration_full_rewrite").maxOutputTokens).toBe(AITUNNEL_NARRATION_FULL_REWRITE_MAX_OUTPUT_TOKENS);
@@ -115,8 +115,8 @@ describe("Plan 18 v6 full-document narration foundation", () => {
     const rewriteReservation = reserveAitunnelStageCall("narration_full_rewrite", productionRequestFor("narration_full_rewrite", rewrite))!;
     const repairReservation = reserveAitunnelStageCall("narration_targeted_repair", productionRequestFor("narration_targeted_repair", repair))!;
 
-    expect(candidateReservation).toMatchObject({ inputTokens: 2941, outputTokens: 4500, costRub: "0.59882000" });
-    expect(rewriteReservation).toMatchObject({ inputTokens: 8455, outputTokens: 4500, costRub: "7.09100000" });
+    expect(candidateReservation).toMatchObject({ inputTokens: 2939, outputTokens: 4500, costRub: "0.59878000" });
+    expect(rewriteReservation).toMatchObject({ inputTokens: 8463, outputTokens: 4500, costRub: "0.70926000" });
     expect(repairReservation).toMatchObject({ inputTokens: 3134, outputTokens: 1400, costRub: "0.23068000" });
     expect(Number(candidateReservation.costRub)).toBeLessThanOrEqual(Number(buckets.narration_full_candidate));
     expect(Number(rewriteReservation.costRub)).toBeLessThanOrEqual(Number(buckets.narration_full_rewrite));
@@ -128,23 +128,8 @@ describe("Plan 18 v6 full-document narration foundation", () => {
     expect(repair).not.toContain("Слайд 4:");
   });
 
-  it("accepts a complete narration with the project's allowed six-slide count", () => {
-    const sixSlideProject = { ...project, slideCount: 6 };
-    const sixSlidePlan = plan.slice(0, 6);
-
-    const diagnostics = assessFullNarrationDocument(fullSpeech(Array(6).fill(117)), sixSlideProject, sixSlidePlan);
-
-    expect(diagnostics).toMatchObject({
-      issueCodes: [],
-      affectedSlideOrders: [],
-      hasCanonicalSectionCoverage: true,
-      isStructurallyUsable: true,
-      isAccepted: true,
-    });
-  });
-
   it("accounts for the original Flash overflow without retaining prompt text", () => {
-    const candidateDraft = fullSpeech(Array(10).fill(117));
+    const candidateDraft = fullSpeech(Array(10).fill(70));
     const diagnostics = assessFullNarrationDocument(candidateDraft, project, plan);
     const original = legacyRewritePrompt(candidateDraft, diagnostics);
     const compact = buildAitunnelFullNarrationRewriteWithDraftPrompt(project, sources, plan, candidateDraft, diagnostics);
@@ -163,7 +148,7 @@ describe("Plan 18 v6 full-document narration foundation", () => {
     const originalInstructions = [
       "Rewrite the complete Russian university speech below. Return a fresh complete speech, not commentary about the rewrite.",
       "Exact slide count: 10. Return all ten sections in order, each headed `Слайд N: semantic title`.",
-      "Hard whole-speech contract: 1170-1560 words; target 1300. Soft opening/content/conclusion guidance: 80/140/100.",
+      "Hard whole-speech contract: 600-800 words; target 700. Soft opening/content/conclusion guidance: 60/70/80.",
       "Preserve strong supported content where useful, expand thin reasoning, remove repetition, and redistribute detail across the whole argument. Do not expose validation language, source labels, or provider commentary to the user.",
       "Cautious general educational explanation is permitted when sources lack precise anchors. Do not invent precise names, dates, statistics, quotations, or citations.",
     ].join("\n\n");
@@ -183,19 +168,19 @@ describe("Plan 18 v6 full-document narration foundation", () => {
       compactEstimatedInputTokens: compactReservation.inputTokens,
       compactWorstCaseCostRub: compactReservation.costRub,
     }).toEqual({
-      estimatedInputTokens: 10376,
+      estimatedInputTokens: 7803,
       maxOutputTokens: 4500,
-      worstCaseCostRub: "14.95858000",
+      worstCaseCostRub: "13.78786500",
       bucketRub: "13.50000000",
-      excessRub: "1.45858000",
-      draftTokens: 6355,
+      excessRub: "0.28786500",
+      draftTokens: 3793,
       planTokens: 1854,
       sourceTokens: 400,
-      diagnosticsTokens: 104,
+      diagnosticsTokens: 98,
       systemInstructionsTokens: 1192,
-      instructionsTokens: 422,
-      compactEstimatedInputTokens: 4390,
-      compactWorstCaseCostRub: "6.27800000",
+      instructionsTokens: 420,
+      compactEstimatedInputTokens: 3104,
+      compactWorstCaseCostRub: "0.60208000",
     });
   });
 
@@ -206,15 +191,15 @@ describe("Plan 18 v6 full-document narration foundation", () => {
   });
 
   it("builds safe candidate/rewrite/repair prompt content without a per-slide sentence floor", () => {
-    const acceptedDraft = fullSpeech(Array(10).fill(117));
+    const acceptedDraft = fullSpeech(Array(10).fill(70));
     const diagnostics = assessFullNarrationDocument(acceptedDraft, project, plan);
     const candidate = buildAitunnelFullNarrationCandidatePrompt(project, sources, plan);
     const rewrite = buildAitunnelFullNarrationRewriteWithDraftPrompt(project, sources, plan, acceptedDraft, diagnostics);
-    const repair = buildAitunnelTargetedNarrationRepairPrompt(project, sources, plan, fullSpeech([140, 20, 140, 140, 140, 140, 140, 140, 140, 140]), assessFullNarrationDocument(fullSpeech([140, 20, 140, 140, 140, 140, 140, 140, 140, 140]), project, plan));
+    const repair = buildAitunnelTargetedNarrationRepairPrompt(project, sources, plan, fullSpeech([70, 20, 70, 70, 70, 70, 70, 70, 70, 70]), assessFullNarrationDocument(fullSpeech([70, 20, 70, 70, 70, 70, 70, 70, 70, 70]), project, plan));
 
     expect(candidate).toContain("Fixed compact narrative plan");
     expect(candidate).toContain("cautious general educational explanation");
-    expect(candidate).toContain("1170-1560 words");
+    expect(candidate).toContain("600-800 words");
     expect(candidate).not.toContain("2-7 complete sentences");
     expect(candidate).not.toContain("FIFTH_SOURCE_SENTINEL");
     expect(rewrite).toContain(acceptedDraft);
@@ -228,31 +213,46 @@ describe("Plan 18 v6 full-document narration foundation", () => {
     expect(aitunnelTargetedNarrationRepairResponseSchema.safeParse({ replacements: { "11": "out of range" } }).success).toBe(false);
   });
 
-  it("accepts only the full 10-section 1170-1560-word contract and retains safe salvage diagnostics", () => {
-    const accepted = assessFullNarrationDocument(fullSpeech(Array(10).fill(117)), project, plan);
-    const short = assessFullNarrationDocument(fullSpeech(Array(10).fill(110)), project, plan);
-    const localDefect = assessFullNarrationDocument(fullSpeech([140, 20, 140, 140, 140, 140, 140, 140, 140, 140]), project, plan);
+  it("accepts only the full 10-section 600-800-word contract and retains safe salvage diagnostics", () => {
+    const accepted = assessFullNarrationDocument(fullSpeech(Array(10).fill(70)), project, plan);
+    const short = assessFullNarrationDocument(fullSpeech(Array(10).fill(59)), project, plan);
+    const localDefect = assessFullNarrationDocument(fullSpeech([70, 20, 70, 70, 70, 70, 70, 70, 70, 70]), project, plan);
 
-    expect(accepted).toMatchObject({ isAccepted: true, isStructurallyUsable: true, totalWords: 1170, issueCodes: [] });
-    expect(short).toMatchObject({ isAccepted: false, isStructurallyUsable: true, totalWords: 1100 });
+    expect(accepted).toMatchObject({ isAccepted: true, isStructurallyUsable: true, totalWords: 700, issueCodes: [] });
+    expect(short).toMatchObject({ isAccepted: false, isStructurallyUsable: true, totalWords: 590 });
     expect(short.issueCodes).toContain("whole_speech_below_minimum");
     expect(isFullNarrationTargetedRepairEligible(short)).toBe(false);
     expect(localDefect.issueCodes).toEqual(["fragmentary_section"]);
     expect(isFullNarrationTargetedRepairEligible(localDefect)).toBe(true);
   });
 
+  it.each([
+    [6, 117],
+    [8, 88],
+    [12, 58],
+  ])("accepts a %i-slide full narration inside the shared word range", (slideCount, wordsPerSlide) => {
+    const variableProject = { ...project, slideCount };
+    const variablePlan = Array.from({ length: slideCount }, (_, index) => ({
+      ...plan[0]!,
+      slideOrder: index + 1,
+      slideTitle: `Topic ${index + 1}`,
+    }));
+    const assessment = assessFullNarrationDocument(fullSpeech(Array(slideCount).fill(wordsPerSlide)), variableProject, variablePlan);
+    expect(assessment).toMatchObject({ isAccepted: true, isStructurallyUsable: true, totalWords: slideCount * wordsPerSlide, issueCodes: [] });
+  });
+
   it("selects accepted output first and otherwise ranks editable drafts deterministically", () => {
-    const acceptedText = fullSpeech(Array(10).fill(117));
+    const acceptedText = fullSpeech(Array(10).fill(70));
     const accepted = assessFullNarrationDocument(acceptedText, project, plan);
     const candidateText = fullSpeech(Array(10).fill(116));
-    const rewriteText = fullSpeech(Array(10).fill(110));
+    const rewriteText = fullSpeech(Array(10).fill(59));
     const candidate = assessFullNarrationDocument(candidateText, project, plan);
     const rewrite = assessFullNarrationDocument(rewriteText, project, plan);
 
     expect(selectBestFullNarrationAttempt([
       { stage: "narration_full_candidate", text: candidateText, diagnostics: candidate },
       { stage: "narration_full_rewrite", text: rewriteText, diagnostics: rewrite },
-    ])).toEqual({ kind: "editable_draft", text: candidateText, stage: "narration_full_candidate" });
+    ])).toEqual({ kind: "editable_draft", text: rewriteText, stage: "narration_full_rewrite" });
     expect(selectBestFullNarrationAttempt([
       { stage: "narration_full_candidate", text: candidateText, diagnostics: candidate },
       { stage: "narration_full_rewrite", text: acceptedText, diagnostics: accepted },
@@ -260,16 +260,16 @@ describe("Plan 18 v6 full-document narration foundation", () => {
   });
 
   it("rewrites a complete candidate rejected for the observed short and template-quality defects", async () => {
-    const candidate = fullSpeech([91, 98, 85, 84, 90, 89, 86, 90, 89, 87])
+    const candidate = fullSpeech([58, 60, 57, 56, 59, 58, 57, 59, 58, 56])
       .replace("fact1_1 fact1_2 fact1_3", "задают логику объяснения");
-    const accepted = fullSpeech(Array(10).fill(117));
+    const accepted = fullSpeech(Array(10).fill(70));
     const diagnostics = assessFullNarrationDocument(candidate, project, plan);
     const client = { responses: { create: vi.fn()
       .mockResolvedValueOnce({ output_text: candidate, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" })
       .mockResolvedValueOnce({ output_text: accepted, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" }) } };
 
     expect(diagnostics).toMatchObject({
-      totalWords: 889,
+      totalWords: 578,
       hasCanonicalSectionCoverage: true,
       isStructurallyUsable: true,
       isAccepted: false,
@@ -281,8 +281,8 @@ describe("Plan 18 v6 full-document narration foundation", () => {
   });
 
   it("runs at most the bounded candidate, rewrite, and batch-repair sequence", async () => {
-    const valid = fullSpeech(Array(10).fill(117));
-    const short = fullSpeech([20, ...Array(9).fill(117)]);
+    const valid = fullSpeech(Array(10).fill(70));
+    const short = fullSpeech([20, ...Array(9).fill(70)]);
     const repairedFirstSection = fullSpeech([117]);
 
     const candidateClient = { responses: { create: vi.fn().mockResolvedValue({ output_text: valid, usage: { input_tokens: 1, output_tokens: 1 } }) } };
@@ -313,7 +313,7 @@ describe("Plan 18 v6 full-document narration foundation", () => {
   });
 
   it("returns the best editable draft after exhausted recovery or a later provider failure", async () => {
-    const short = fullSpeech([20, ...Array(9).fill(117)]);
+    const short = fullSpeech([20, ...Array(9).fill(70)]);
     const stillShortRepair = fullSpeech([20]);
     const exhaustedClient = { responses: { create: vi.fn()
       .mockResolvedValueOnce({ output_text: short, usage: { input_tokens: 1, output_tokens: 1 } })
@@ -339,7 +339,7 @@ describe("Plan 18 v6 full-document narration foundation", () => {
 describe("Prompt 19.6B v6 text-free narration telemetry", () => {
   it("records one safe candidate assessment and accepted-candidate decision", async () => {
     const telemetry = captureV6Telemetry();
-    const accepted = fullSpeech(Array(10).fill(117));
+    const accepted = fullSpeech(Array(10).fill(70));
     const client = { responses: { create: vi.fn().mockResolvedValue({ output_text: accepted, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" }) } };
 
     try {
@@ -354,7 +354,7 @@ describe("Prompt 19.6B v6 text-free narration telemetry", () => {
         narrationStage: "narration_full_candidate",
         narrationTextCall: 1,
         sectionCount: 10,
-        totalWords: 1170,
+        totalWords: 700,
         isStructurallyUsable: true,
         isAccepted: true,
       });
@@ -373,8 +373,8 @@ describe("Prompt 19.6B v6 text-free narration telemetry", () => {
 
   it("records candidate and rewrite assessments before accepted rewrite", async () => {
     const telemetry = captureV6Telemetry();
-    const short = fullSpeech(Array(10).fill(110));
-    const accepted = fullSpeech(Array(10).fill(117));
+    const short = fullSpeech(Array(10).fill(59));
+    const accepted = fullSpeech(Array(10).fill(70));
     const client = { responses: { create: vi.fn()
       .mockResolvedValueOnce({ output_text: short, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" })
       .mockResolvedValueOnce({ output_text: accepted, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" }) } };
@@ -395,7 +395,7 @@ describe("Prompt 19.6B v6 text-free narration telemetry", () => {
 
   it("records repair_not_eligible with the selected editable draft and no repair call", async () => {
     const telemetry = captureV6Telemetry();
-    const short = fullSpeech(Array(10).fill(110));
+    const short = fullSpeech(Array(10).fill(59));
     const client = { responses: { create: vi.fn()
       .mockResolvedValueOnce({ output_text: short, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" })
       .mockResolvedValueOnce({ output_text: short, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" }) } };
@@ -420,7 +420,7 @@ describe("Prompt 19.6B v6 text-free narration telemetry", () => {
 
   it("records repair eligibility, the third assessment, and terminal accepted repair without exceeding three calls", async () => {
     const telemetry = captureV6Telemetry();
-    const short = fullSpeech([20, ...Array(9).fill(117)]);
+    const short = fullSpeech([20, ...Array(9).fill(70)]);
     const repairedFirstSection = fullSpeech([117]);
     const client = { responses: { create: vi.fn()
       .mockResolvedValueOnce({ output_text: short, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" })
@@ -472,7 +472,7 @@ describe("Prompt 19.6B v6 text-free narration telemetry", () => {
     };
     const sensitiveProject = { ...project, title: sentinels.title, prompt: sentinels.prompt };
     const sensitiveSources = [{ ...sources[0]!, label: sentinels.source }, ...sources.slice(1)];
-    const usableDraft = fullSpeech(Array(10).fill(110)).replace("Topic 1", `Topic 1 ${sentinels.draft}`);
+    const usableDraft = fullSpeech(Array(10).fill(59)).replace("Topic 1", `Topic 1 ${sentinels.draft}`);
     const client = { responses: { create: vi.fn()
       .mockResolvedValueOnce({ output_text: usableDraft, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" })
       .mockRejectedValueOnce(new Error(sentinels.providerError)) } };
@@ -509,7 +509,7 @@ describe("Prompt 19.6B v6 text-free narration telemetry", () => {
       .toEqual({ hasOutputText: false, hasUsage: false, providerResponseStatus: "unknown", providerTerminationReason: "unknown" });
 
     const telemetry = captureV6Telemetry();
-    const accepted = fullSpeech(Array(10).fill(117));
+    const accepted = fullSpeech(Array(10).fill(70));
     const client = { responses: { create: vi.fn().mockResolvedValue({
       output_text: accepted,
       usage: { input_tokens: 1, output_tokens: 1 },
@@ -560,7 +560,7 @@ describe("Prompt 19.6B v6 text-free narration telemetry", () => {
   });
 
   it("continues the existing bounded path when private telemetry logging throws", async () => {
-    const accepted = fullSpeech(Array(10).fill(117));
+    const accepted = fullSpeech(Array(10).fill(70));
     const client = { responses: { create: vi.fn().mockResolvedValue({ output_text: accepted, usage: { input_tokens: 1, output_tokens: 1 }, status: "completed" }) } };
     const info = vi.spyOn(logger, "info").mockImplementation(() => {
       throw new Error("telemetry sink unavailable");
@@ -637,7 +637,7 @@ function legacyRewritePrompt(previousDraft: string, diagnostics: ReturnType<type
   return [
     "Rewrite the complete Russian university speech below. Return a fresh complete speech, not commentary about the rewrite.",
     "Exact slide count: 10. Return all ten sections in order, each headed `Слайд N: semantic title`.",
-    "Hard whole-speech contract: 1170-1560 words; target 1300. Soft opening/content/conclusion guidance: 80/140/100.",
+    "Hard whole-speech contract: 600-800 words; target 700. Soft opening/content/conclusion guidance: 60/70/80.",
     "Preserve strong supported content where useful, expand thin reasoning, remove repetition, and redistribute detail across the whole argument. Do not expose validation language, source labels, or provider commentary to the user.",
     "Cautious general educational explanation is permitted when sources lack precise anchors. Do not invent precise names, dates, statistics, quotations, or citations.",
     `Private local diagnostics for this rewrite only:\n${JSON.stringify({ totalWords: diagnostics.totalWords, sectionWordCounts: diagnostics.sectionWordCounts, issueCodes: diagnostics.issueCodes, affectedSlideOrders: diagnostics.affectedSlideOrders })}`,

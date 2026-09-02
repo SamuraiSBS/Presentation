@@ -135,6 +135,9 @@ export class ProjectsService {
           },
           include: { sources: true, presentation: true },
         });
+      }, {
+        maxWait: 10_000,
+        timeout: 15_000,
       }));
       void this.productAnalytics?.capture(userId, "project_created", {
         scenario: input.scenario,

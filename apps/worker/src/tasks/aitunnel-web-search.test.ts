@@ -60,7 +60,7 @@ describe("AITUNNEL web search adapter", () => {
     expect(recordCostEvent).toHaveBeenCalledWith(expect.objectContaining({ category: "web_search", provider: "aitunnel", unit: "request" }));
   });
 
-  it("extracts only provider annotations and preserves nested citation excerpts", () => {
+  it("extracts only provider annotations and uses message text as their excerpt", () => {
     const parsed = parseAitunnelWebSearchResponse({
       output_text: "Ignore this invented https://not-provider.example URL.",
       output: [{
@@ -68,25 +68,14 @@ describe("AITUNNEL web search adapter", () => {
         content: [{
           type: "output_text",
           text: "Saturn has a ring system.",
-          annotations: [{
-            type: "url_citation",
-            url_citation: {
-              title: "NASA Saturn",
-              url: "https://science.nasa.gov/saturn/",
-              content: "Saturn is a gas giant with a prominent ring system.",
-            },
-          }],
+          annotations: [{ type: "url_citation", title: "NASA Saturn", url: "https://science.nasa.gov/saturn/" }],
         }],
       }],
     });
 
     expect(parsed.toolUsed).toBe(true);
     expect(parsed.results).toEqual([
-      expect.objectContaining({
-        url: "https://science.nasa.gov/saturn/",
-        title: "NASA Saturn",
-        excerpt: "Saturn is a gas giant with a prominent ring system.",
-      }),
+      expect.objectContaining({ url: "https://science.nasa.gov/saturn/", title: "NASA Saturn", excerpt: "Saturn has a ring system." }),
     ]);
     expect(parsed.results.some((result) => result.url?.includes("not-provider"))).toBe(false);
   });

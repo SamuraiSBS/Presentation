@@ -121,6 +121,25 @@ starts Next.js with hot reload at `http://localhost:3020`, loads the root
 within seconds without rebuilding a Docker image. Restart the command after
 changing `packages/shared`.
 
+## Execution Speed Defaults
+
+- Choose the narrowest workflow that matches the changed files.
+- For frontend-only tasks, use `npm run dev:web:fast` and verify at
+  `http://localhost:3020`.
+- For small frontend changes, default to these targeted checks:
+  `npm run typecheck -w @studydeck/web`, `npm run test -w @studydeck/web`,
+  and one focused browser smoke.
+- Do not run Docker builds, the full production build, release-gates, commit,
+  push, or deploy unless the user explicitly requests them or the change is
+  substantial enough to require them.
+- Do not inspect or modify the legacy MVP, API, worker, or unrelated packages
+  for an `apps/web`-only task.
+- When an environment command fails or hangs, report the exact cause and stop
+  that path; do not repeat the same attempt blindly.
+- For production deployment, keep all required release-gates and immutable
+  release checks. Do not cancel CI jobs based only on approximate elapsed time;
+  use the job start time and configured timeout.
+
 Run the full production-like compose stack on a free web port:
 
 ```powershell

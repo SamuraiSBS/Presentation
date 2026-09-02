@@ -97,5 +97,6 @@ export type InvitationPreview = {
 };
 
 export function canCreateProject(usage: UsageSummary) {
+  if (usage.unlimited) return true;
   return usage.canCreate ?? (!usage.exhausted && usage.used < usage.limit);
 }

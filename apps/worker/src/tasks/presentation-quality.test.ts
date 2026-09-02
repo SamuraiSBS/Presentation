@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { auditSlideCanvas, ensureEditableCanvas, presentationSchema, type PresentationDocument } from "@studydeck/shared";
+import { auditSlideCanvas, ensureEditableCanvas, presentationSchema, PREMIUM_PRESENTATION_THEMES, type PresentationDocument } from "@studydeck/shared";
 import {
   applyQualityRepairs,
   applyConclusionFallbacks,
@@ -229,16 +229,16 @@ describe("presentation quality checks", () => {
     }) as PresentationDocument;
     const project = (slideCount: number) => ({ id: `timing-${slideCount}`, title: "Тема", prompt: "Тема", scenario: "university_report", level: "university_student", mode: "with_sources", slideCount });
 
-    expect(findSpeechTimingIssues(presentation(1169), project(10))).toHaveLength(1); // below 9 min
-    expect(findSpeechTimingIssues(presentation(1170), project(10))).toHaveLength(0); // 9 min
-    expect(findSpeechTimingIssues(presentation(1300), project(10))).toHaveLength(0);
-    expect(findSpeechTimingIssues(presentation(1560), project(10))).toHaveLength(0);
-    expect(findSpeechTimingIssues(presentation(1573), project(10))).toHaveLength(1); // 12.1 min
-    expect(findSpeechTimingIssues(presentation(1300), project(12))).toHaveLength(1);
-    expect(findSpeechTimingIssues(presentation(1560), project(12))).toHaveLength(0);
-    expect(findSpeechTimingIssues(presentation(1950), project(14))).toHaveLength(0);
-    expect(findSpeechTimingIssues(presentation(2600), project(14))).toHaveLength(0);
-    expect(findSpeechTimingIssues(presentation(900), project(6))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(599), project(10))).toHaveLength(1);
+    expect(findSpeechTimingIssues(presentation(600), project(10))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(700), project(10))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(800), project(10))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(801), project(10))).toHaveLength(1);
+    expect(findSpeechTimingIssues(presentation(599), project(12))).toHaveLength(1);
+    expect(findSpeechTimingIssues(presentation(800), project(12))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(599), project(14))).toHaveLength(1);
+    expect(findSpeechTimingIssues(presentation(800), project(14))).toHaveLength(0);
+    expect(findSpeechTimingIssues(presentation(600), project(6))).toHaveLength(0);
     expect(findSpeechTimingIssues(presentation(900), project(7))).toHaveLength(0);
     expect(findSpeechTimingIssues(presentation(900), { ...project(10), mode: "export" })).toHaveLength(0);
   });
@@ -855,7 +855,7 @@ describe("presentation quality checks", () => {
 
     const repaired = applyVisualPlanFallbacks(presentation, findVisualPlanIssues(presentation, project));
     const contentDirections = repaired.designBrief!.slideDirections.slice(0, 5);
-    expect(contentDirections.filter((direction) => direction.imageStrategy === "diagram" || direction.imageStrategy === "real_photo")).toHaveLength(3);
+    expect(contentDirections.filter((direction) => direction.imageStrategy === "diagram" || direction.imageStrategy === "real_photo")).toHaveLength(4);
     expect(repaired.designBrief!.slideDirections.at(-1)).toMatchObject({ imageStrategy: "none", layoutIntent: "summary" });
     expect(findVisualPlanIssues(repaired, project)).toHaveLength(0);
   });
@@ -888,6 +888,74 @@ describe("presentation quality checks", () => {
     expect(materialized.slides[2].visual.type).toBe("none");
   });
 
+  it("turns a missing content image into a grounded local diagram and materializes recovery cards", () => {
+    const slides = Array.from({ length: 6 }, (_, index) => {
+      const order = index + 1;
+      const isTitle = order === 1;
+      const isSummary = order === 6;
+      const isImage = order === 2 || order === 4;
+      const isDiagram = order === 3 || order === 5;
+      return {
+        ...makeSlide(order, `Recovery point ${order}`, `Recovery point ${order} explains a distinct grounded idea.`, [
+          `Evidence for recovery point ${order}`,
+          `Implication of recovery point ${order}`,
+        ]),
+        slideKind: isTitle ? "title" as const : isSummary ? "summary" as const : "content" as const,
+        layout: isTitle ? "hero" as const : isSummary ? "summary" as const : isImage ? "image-focus" as const : isDiagram ? "process" as const : "statement" as const,
+        visual: isImage
+          ? {
+            type: "image" as const,
+            title: "",
+            description: "A grounded recovery image",
+            leftLabel: "",
+            rightLabel: "",
+            items: [],
+            rows: [],
+            ...(order === 2 ? { image: { url: "https://example.com/recovery.jpg", alt: "Recovery evidence", query: "recovery", provider: "archive" as const, warnings: [] } } : {}),
+          }
+          : isDiagram
+            ? {
+              type: "process_diagram" as const,
+              title: "",
+              description: "A grounded recovery diagram",
+              leftLabel: "",
+              rightLabel: "",
+              items: [{ label: "Cause", text: "Grounded cause" }, { label: "Effect", text: "Grounded effect" }],
+              rows: [],
+            }
+            : {
+              type: "none" as const,
+              title: "",
+              description: "A text-led recovery slide",
+              leftLabel: "",
+              rightLabel: "",
+              items: [],
+              rows: [],
+            },
+      };
+    });
+    const presentation = makePresentation({ title: "Recovery deck", slides: slides as any, designBrief: undefined });
+    const materialized = materializePlannedVisuals(presentation, { fallbackMissingPhotos: true });
+    const recovered = ensureEditableCanvas({
+      ...materialized,
+      presentationTheme: PREMIUM_PRESENTATION_THEMES.studydeckEditorial,
+      slides: materialized.slides.map((slide) => ({ ...slide, canvas: undefined })),
+    }, { recovery: true });
+
+    expect(materialized.slides[3].visual).toMatchObject({ type: "process_diagram", diagram: { safety: "safe" } });
+    expect(materialized.slides[3].visual.image).toBeUndefined();
+    expect(materialized.slides[3].visual.diagram?.source).toContain("Recovery point 4");
+    expect(recovered.presentationTheme?.themeId).toBe("studydeckEditorial");
+    expect(recovered.slides[0].visual.type).toBe("none");
+    expect(recovered.slides[5].visual.type).toBe("none");
+    expect(recovered.slides.filter((slide) => slide.visual.image).length).toBe(1);
+    expect(recovered.slides.filter((slide) => slide.visual.type === "process_diagram").length).toBe(3);
+    expect(recovered.slides.filter((slide) => slide.visual.type === "none").length).toBe(2);
+    expect(recovered.slides.slice(0, 5).every((slide) => slide.canvas?.elements.some((element) => element.type === "shape" || element.type === "image"))).toBe(true);
+    expect(recovered.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!))).toEqual([]);
+    expect(() => presentationSchema.parse(recovered)).not.toThrow();
+  });
+
   it("keeps generated diagram metadata inside the shared schema limits", () => {
     const longTitle = "Graceful shutdown ".repeat(8).trim();
     const longThesis = "A controlled worker stop preserves active work, queue ownership, and a deterministic retry path. ".repeat(3).trim();
@@ -918,6 +986,40 @@ describe("presentation quality checks", () => {
     expect(diagram.title.length).toBeLessThanOrEqual(90);
     expect(diagram.caption.length).toBeLessThanOrEqual(160);
     expect(diagram.fallback.length).toBeLessThanOrEqual(1200);
+    expect(() => presentationSchema.parse(materialized)).not.toThrow();
+  });
+
+  it("uses distinct accepted narration sentences for a recovery diagram when visible bullets are empty", () => {
+    const title = "System readiness";
+    const thesis = "The basic smoke path confirms that the service can accept a request and return a usable response.";
+    const slide = {
+      ...makeSlide(1, title, thesis, []),
+      slideKind: "content" as const,
+      speakerNotes: `${thesis} The configuration is checked before the request leaves the application. The response is then inspected for usable content.`,
+      visual: { type: "none" as const, title: "", description: "Text-led placeholder", leftLabel: "", rightLabel: "", items: [], rows: [] },
+    };
+    const presentation = makePresentation({
+      slides: [slide] as any,
+      designBrief: {
+        ...makePresentation().designBrief!,
+        slideDirections: [{
+          slideOrder: 1,
+          visualRole: "explain" as const,
+          layoutIntent: "diagram" as const,
+          imageStrategy: "diagram" as const,
+          sceneTextMode: "visual_labels" as const,
+          visualPrompt: "System readiness process",
+        }],
+      },
+    });
+
+    const materialized = materializePlannedVisuals(presentation);
+    const source = materialized.slides[0].visual.diagram?.source || "";
+
+    expect(source).not.toContain("The basic smoke path confirms");
+    expect(source).toContain("The configuration is checked");
+    expect(source).toContain("The response is then inspected");
+    expect(source).not.toContain("N2[System readiness]");
     expect(() => presentationSchema.parse(materialized)).not.toThrow();
   });
 
@@ -1338,6 +1440,40 @@ describe("presentation quality checks", () => {
       ] as any,
     });
     expect(findDeckWideDuplicateIssues(timeline)).toHaveLength(0);
+  });
+
+  it("detects paraphrased repeats between thesis, support points, and visual text", () => {
+    const base = makePresentation();
+    const repeatedThesis = "Feedback changes a student's study strategy after mistakes.";
+    const presentation = makePresentation({
+      slides: [
+        {
+          ...base.slides[0],
+          slideKind: "content",
+          layout: "statement",
+          title: "Feedback loop",
+          thesis: repeatedThesis,
+          bullets: ["After mistakes, feedback changes the student's study strategy.", "The control group keeps its original plan."],
+          visual: {
+            ...base.slides[0].visual,
+            type: "schema",
+            items: [{ label: "Loop", text: "Feedback changes the study strategy after mistakes." }],
+          },
+        },
+        {
+          ...base.slides[1],
+          title: "Feedback result",
+          thesis: "After mistakes, feedback changes the student's study strategy.",
+        },
+      ] as any,
+    });
+
+    const intra = findIntraSlideDuplicateIssues(presentation);
+    expect(intra).toEqual(expect.arrayContaining([
+      expect.objectContaining({ slideId: "slide-1", field: "bullets.0", category: "duplicate" }),
+      expect.objectContaining({ slideId: "slide-1", field: "visual.items.0.text", category: "duplicate" }),
+    ]));
+    expect(findDeckWideDuplicateIssues(presentation)).toContainEqual(expect.objectContaining({ slideId: "slide-2", category: "duplicate" }));
   });
 
   it("flags and safely repairs BMW 328 as a BMW M model without inventing a source", () => {

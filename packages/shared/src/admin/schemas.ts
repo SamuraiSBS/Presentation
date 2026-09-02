@@ -124,5 +124,12 @@ export const adminPlanOverrideSchema = adminReasonSchema.extend({
 });
 export type AdminPlanOverrideInput = z.infer<typeof adminPlanOverrideSchema>;
 
+export const adminPresentationRecoverySchema = z.object({
+  projectId: z.string().trim().min(1).max(80),
+  expectedPresentationRevision: z.coerce.number().int().positive(),
+  confirmCost: z.literal(true),
+});
+export type AdminPresentationRecoveryInput = z.infer<typeof adminPresentationRecoverySchema>;
+
 export const adminActionResultSchema = z.object({ ok: z.literal(true), message: z.string(), auditId: z.string().optional() });
 export type AdminActionResult = z.infer<typeof adminActionResultSchema>;

@@ -23,8 +23,10 @@ Dockerfile*
 # Local agent, audit, and acceptance artifacts are not part of any image.
 .agents
 .codex
+.codex-artifacts
 .codex-remote-attachments
 .codex-worktrees
+.ci-verify
 .impeccable
 .p1-3*
 .audit-*

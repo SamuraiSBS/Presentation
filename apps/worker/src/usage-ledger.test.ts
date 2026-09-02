@@ -56,6 +56,11 @@ describe("usage ledger pricing", () => {
   it("normalizes AI SDK and Responses usage classes", () => {
     expect(normalizeOpenAIUsage({ inputTokens: 20, outputTokens: 9, totalTokens: 29, inputTokenDetails: { cacheReadTokens: 4 }, outputTokenDetails: { reasoningTokens: 2 } })).toEqual({ inputTokens: 20, outputTokens: 9, cachedInputTokens: 4, reasoningTokens: 2, totalTokens: 29 });
     expect(normalizeOpenAIUsage({ input_tokens: 11, output_tokens: 5, total_tokens: 16, input_tokens_details: { cached_tokens: 3 } })?.cachedInputTokens).toBe(3);
+    expect(normalizeOpenAIUsage({ input_tokens: 20, output_tokens: 9, input_tokens_details: { cache_read_input_tokens: 4, cache_creation_input_tokens: 7 } })).toMatchObject({ cachedInputTokens: 4, cacheWriteTokens: 7 });
+  });
+
+  it("exposes cache-write tokens as a diagnostic without applying an unverified tariff", () => {
+    expect(calculateProviderCost("aitunnel", "gpt-5.6-luna", new Date("2026-08-04T12:00:00Z"), { inputTokens: 1_000, outputTokens: 2_000, cacheWriteTokens: 300 })).toMatchObject({ sourceCost: "0.26000000", unpricedCacheWriteTokens: 300 });
   });
 
   it("persists nullable CostEvent fields as null for strict Prisma validation", async () => {

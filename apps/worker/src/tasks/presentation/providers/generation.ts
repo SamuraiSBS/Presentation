@@ -29,7 +29,7 @@ import {
 } from "../../../aitunnel-narration-budget.js";
 import { failCostEnvelope, releaseCostEnvelope, reserveCostEnvelope, reserveCostEnvelopeBatch, settleCostEnvelope } from "../../../cost-envelope.js";
 import { errorLogFields, logger } from "../../../observability.js";
-import { aitunnelConfig, createAitunnelClient, createOpenAIClient, createOpenAIProvider } from "../../../openai-client.js";
+import { AITUNNEL_DEFAULT_NARRATION_MODEL, aitunnelConfig, createAitunnelClient, createOpenAIClient, createOpenAIProvider } from "../../../openai-client.js";
 import { getPrisma } from "../../../prisma.js";
 import { calculateProviderCost, currentUsageContext, normalizeOpenAIUsage, recordAiUsage } from "../../../usage-ledger.js";
 
@@ -144,7 +144,7 @@ export async function generateWithOpenAI(project: ProjectInput, sources: Source[
 
 export async function generateWithAitunnel(project: ProjectInput, sources: Source[]) {
   const config = aitunnelConfig();
-  if (!config) throw new Error("AITUNNEL_API_KEY and an explicit AITUNNEL_NARRATION_MODEL are required");
+  if (!config) throw new Error(`AITUNNEL_API_KEY and AITUNNEL_NARRATION_MODEL=${AITUNNEL_DEFAULT_NARRATION_MODEL} are required`);
   const client = createAitunnelClient();
   return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), async () => {
   const researchBrief = buildResearchBrief(project, sources);
@@ -202,7 +202,7 @@ export async function generateOpenAIPresentationFromNarration(project: ProjectIn
 
 export async function generateAitunnelPresentationFromNarration(project: ProjectInput, sources: Source[], narrationText: string) {
   const config = aitunnelConfig();
-  if (!config) throw new Error("AITUNNEL_API_KEY and an explicit AITUNNEL_NARRATION_MODEL are required");
+  if (!config) throw new Error(`AITUNNEL_API_KEY and AITUNNEL_NARRATION_MODEL=${AITUNNEL_DEFAULT_NARRATION_MODEL} are required`);
   const client = createAitunnelClient();
   return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), async () => {
   const researchBrief = buildResearchBrief(project, sources);
@@ -318,7 +318,7 @@ export async function generateAitunnelFullNarrationOutcome(client: OpenAI, proje
     logV6NarrationRecoveryDecision(project.id, "repair_eligible", selected, attempts, calledStages, true);
     try {
       const repairRaw = await requestV6NarrationStage(client, project, "narration_targeted_repair", buildAitunnelTargetedNarrationRepairPrompt(project, sources, narrativePlan, rewritten, rewriteAttempt.diagnostics), reservations, calledStages, true);
-      const repaired = mergeV6TargetedRepair(rewritten, repairRaw, rewriteAttempt.diagnostics.affectedSlideOrders, project);
+      const repaired = mergeV6TargetedRepair(rewritten, repairRaw, rewriteAttempt.diagnostics.affectedSlideOrders, project.slideCount);
       const repairAttempt = { stage: "narration_targeted_repair" as const, text: repaired, diagnostics: assessFullNarrationDocument(repaired, project, narrativePlan) };
       attempts.push(repairAttempt);
       logV6NarrationAttemptAssessment(project.id, repairAttempt);
@@ -365,7 +365,7 @@ type V6ProviderTerminationMetadata = {
 };
 
 function isFullNarrationCostEnvelopePolicy(version: string | undefined) {
-  return version === "standard-generation-cost-envelope-v6" || version === "standard-generation-cost-envelope-v7" || version === "standard-generation-cost-envelope-v8" || version === "standard-generation-cost-envelope-v9" || version === "standard-generation-cost-envelope-v10";
+  return version === "standard-generation-cost-envelope-v6" || version === "standard-generation-cost-envelope-v7" || version === "standard-generation-cost-envelope-v8" || version === "standard-generation-cost-envelope-v9" || version === "standard-generation-cost-envelope-v10" || version === "standard-generation-cost-envelope-v11" || version === "standard-generation-cost-envelope-v12";
 }
 
 async function generateLegacyAitunnelNarration(client: OpenAI, model: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief): Promise<string> {
@@ -423,10 +423,12 @@ async function generateLegacyAitunnelNarration(client: OpenAI, model: string, pr
 }
 
 function maximumFullNarrationDraft(project: ProjectInput) {
+  const baseWords = Math.floor(800 / project.slideCount);
+  const extraWords = 800 % project.slideCount;
   return Array.from({ length: project.slideCount }, (_, index) => {
     // `слово` is a representative Russian spoken-word fixture, not user text.
     // The envelope additionally budgets a 15% token safety margin.
-    const words = Array.from({ length: 156 }, (_unused, word) => `слово${index + 1}_${word + 1}`).join(" ");
+    const words = Array.from({ length: baseWords + (index < extraWords ? 1 : 0) }, (_unused, word) => `слово${index + 1}_${word + 1}`).join(" ");
     return `Слайд ${index + 1}: Раздел ${index + 1}\n${words}.`;
   }).join("\n\n");
 }
@@ -529,14 +531,14 @@ function buildV6NarrationRequest(stage: V6NarrationStage, prompt: string, json: 
   };
 }
 
-function mergeV6TargetedRepair(currentDraft: string, raw: string, requestedOrders: readonly number[], project: ProjectInput) {
+function mergeV6TargetedRepair(currentDraft: string, raw: string, requestedOrders: readonly number[], slideCount: number) {
   const parsed = aitunnelTargetedNarrationRepairResponseSchema.safeParse(parseJsonText(raw));
   if (!parsed.success) throw narrationFailure("quality");
   const received = Object.keys(parsed.data.replacements).map(Number).sort((left, right) => left - right);
   const expected = [...new Set(requestedOrders)].sort((left, right) => left - right);
   if (received.length !== expected.length || received.some((order, index) => order !== expected[index])) throw narrationFailure("quality");
   const sections = parseNarrationSections(currentDraft);
-  if (sections.length !== project.slideCount || sections.some((section, index) => section.order !== index + 1)) throw narrationFailure("quality");
+  if (sections.length !== slideCount || sections.some((section, index) => section.order !== index + 1)) throw narrationFailure("quality");
   const replacements = new Map<number, string>();
   for (const [orderText, replacement] of Object.entries(parsed.data.replacements)) {
     const replacementSections = parseNarrationSections(replacement);
@@ -868,7 +870,7 @@ async function reservePersistedBatchedNarrationEnvelope(projectId: string, parts
 
 function buildAitunnelNarrationSections(project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[]): AitunnelNarrationSection[] {
   const timing = getRussianStudentSpeechTimingBudget(project);
-  if (!timing || project.slideCount !== 10 || narrativePlan.length !== 10) throw narrationFailure("quality");
+  if (!timing || narrativePlan.length !== project.slideCount) throw narrationFailure("quality");
   return narrativePlan.map((narrative, index) => {
     const slideOrder = index + 1;
     if (narrative.slideOrder !== slideOrder) throw narrationFailure("quality");
@@ -1288,7 +1290,12 @@ export async function generateDesignBriefWithProvider(
       prompt: buildDesignBriefPrompt(project, sources, researchBrief, narrativePlan, deckStory, slideTextPlans),
       schema: designBriefSchema as z.ZodType<DesignBrief>,
       schemaName: "studydeck_design_brief",
-      parse: (value): DesignBrief => ensureDesignBriefDirections(designBriefSchema.parse(parseJsonOutput(value)), project, narrativePlan),
+      parse: (value): DesignBrief => ensureDesignBriefDirections(
+        designBriefSchema.parse(parseJsonOutput(value)),
+        project,
+        narrativePlan,
+        sources.some((source) => Boolean(source.excerpt || source.url)),
+      ),
       jsonSchema: designBriefJsonSchema,
       maxAttempts: 1,
       yandexModelTier: "economy",

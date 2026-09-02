@@ -2,14 +2,15 @@ import type { Job } from "bullmq";
 import type { Prisma } from "@prisma/client";
 import {
   auditSlideCanvas,
+  designBriefSchema,
   ensureEditableCanvas,
-  PRESENTATION_FONT_FAMILY,
   PREMIUM_PRESENTATION_THEMES,
   publicNarrationFailureMessage,
   type PresentationDocument,
   type Source,
 } from "@studydeck/shared";
-import { hasMetaSlideLanguage, isGenericTitle, materializePlannedVisuals, productionQualityReleaseResult } from "./presentation-quality.js";
+import { materializePlannedVisuals, productionQualityReleaseResult } from "./presentation-quality.js";
+import { preparePresentationForExport } from "./export-preflight.js";
 import { captureGenerationError, errorLogFields, logger, type TraceCarrier, withTraceSpan } from "../observability.js";
 import { getPrisma } from "../prisma.js";
 import { readObjectBuffer } from "../storage.js";
@@ -24,7 +25,7 @@ import {
   type GenerationProgressStage,
 } from "./job-progress.js";
 import { buildLocalPresentationFromAcceptedNarration, generateNarrationDraft, generatePresentationFromNarration } from "./presentation.js";
-import { repairReleaseCandidate } from "./presentation/quality/orchestration.js";
+import { isManagedSlideCount } from "./presentation/visual-policy.js";
 import { assessFullNarrationDocument } from "./presentation/narration/processing.js";
 import { searchWebSources } from "./web-search.js";
 import { enrichPresentationImages } from "./image-search.js";
@@ -55,6 +56,8 @@ type GenerationJobData = {
   userId: string;
   generationJobId?: string;
   costEnvelopeId?: string;
+  presentationOnlyRecovery?: boolean;
+  expectedPresentationRevision?: number;
   traceContext?: TraceCarrier;
 };
 
@@ -100,6 +103,29 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
   const { projectId } = job.data;
   const startedAt = Date.now();
   const jobWhere = regularGenerationJobWhere(projectId, job.id, kind, job.data.generationJobId);
+
+  // Keep a blocked operator recovery from briefly changing a ready project to
+  // `generating`. This check is deliberately before any state transition; a
+  // stale revision or active job is an operational rejection, not a generation
+  // failure that should replace the existing presentation.
+  if (kind === "presentation" && job.data.presentationOnlyRecovery) {
+    try {
+      await assertPresentationOnlyRecoveryPreconditions(job);
+    } catch (error) {
+      job.discard();
+      await prisma.generationJob.updateMany({
+        where: jobWhere,
+        data: {
+          status: "failed",
+          progressStage: "failed",
+          progressLabel: "Восстановление заблокировано",
+          progressPercent: 100,
+          error: error instanceof Error ? error.message : "presentation_recovery_precondition_failed",
+        },
+      });
+      throw error;
+    }
+  }
 
   await prisma.project.update({
     where: { id: projectId },
@@ -227,7 +253,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       // call a provider or repeat source research after the accepted artifacts
       // have been persisted for this attempt group.
       logger.warn({ projectId, jobId: job.id, stage, fallback: "accepted_narration_local_projection", ...errorLogFields(error) }, "recovering presentation from accepted narration and source snapshot");
-      return buildLocalPresentationFromAcceptedNarration(generationProject, sources, speechDraft);
+      return buildLocalPresentationFromAcceptedNarration(generationProject, sources, speechDraft, { deferMissingPhotoFallback: true });
     };
     // A presentation retry inherits the original attempt envelope.  Once that
     // envelope is terminal (or cannot be read), it must never begin another
@@ -237,13 +263,41 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       ? await presentationRecoveryReason(job.data.costEnvelopeId)
       : null;
     let usedLocalPresentationRecovery = false;
+    let imageEnrichmentPassUsed = false;
+    let recoveryMetadata: RecoveryMetadata = {
+      recoveryApplied: false,
+      replacedImages: 0,
+      replacedDiagrams: 0,
+    };
+    const attemptedSlideOrders = new Set<number>();
+    const noteRecovery = (
+      stage: RecoveryStage,
+      reason: string,
+      before?: PresentationDocument,
+      after?: PresentationDocument,
+    ) => {
+      const replacements = before && after ? countRecoveryVisualReplacements(before, after) : { replacedImages: 0, replacedDiagrams: 0 };
+      recoveryMetadata = {
+        recoveryApplied: true,
+        recoveryStage: stage,
+        recoveryReason: reason,
+        replacedImages: recoveryMetadata.replacedImages + replacements.replacedImages,
+        replacedDiagrams: recoveryMetadata.replacedDiagrams + replacements.replacedDiagrams,
+      };
+    };
 
     let generatedPresentation: PresentationDocument;
-    if (recoveryReason) {
+    if (job.data.presentationOnlyRecovery) {
+      const error = new Error("presentation_only_recovery");
+      generatedPresentation = recoverAcceptedNarration("building_slides", error);
+      usedLocalPresentationRecovery = true;
+      noteRecovery("accepted_narration", "operator_presentation_only_recovery");
+    } else if (recoveryReason) {
       const error = new Error(recoveryReason);
       captureGenerationError(error, { projectId, stage: "building_slides", provider: process.env.AI_PROVIDER });
       generatedPresentation = recoverAcceptedNarration("building_slides", error);
       usedLocalPresentationRecovery = true;
+      noteRecovery("accepted_narration", recoveryReason);
     } else {
       try {
         generatedPresentation = await withTraceSpan("generation.slides", {
@@ -256,6 +310,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
         captureGenerationError(error, { projectId, stage: "building_slides", provider: process.env.AI_PROVIDER });
         generatedPresentation = recoverAcceptedNarration("building_slides", error);
         usedLocalPresentationRecovery = true;
+        noteRecovery("accepted_narration", "provider_presentation_failure");
       }
     }
     finishStage("building_slides");
@@ -266,15 +321,31 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     // real slide visual before the canvas is built, including local recovery
     // documents which do not pass through the provider quality orchestrator.
     const presentationWithPlannedVisuals = materializePlannedVisuals(groundedPresentation);
-    // A fresh presentation attempt may make its bounded, idempotent photo
-    // lookups once. Recovery and retry paths stay entirely local: they reuse
-    // only persisted narration/sources and diagram fallbacks, never Tavily.
+    // Image lookup is one bounded, idempotent pass per generation attempt.
+    // Recovery reuses its results and never starts a second paid/search pass.
     let presentationWithImages = presentationWithPlannedVisuals;
     if (!usedLocalPresentationRecovery) {
       await setStage("selecting_visuals");
-      presentationWithImages = await enrichPresentationImages(generationProject, presentationWithPlannedVisuals);
+      presentationWithImages = await enrichPresentationImages(generationProject, presentationWithPlannedVisuals, { attemptedSlideOrders });
       finishStage("selecting_visuals");
+      imageEnrichmentPassUsed = true;
+    } else if (canRunRecoveryImagePass(job.data.costEnvelopeId, recoveryReason)) {
+      await setStage("selecting_visuals");
+      presentationWithImages = await enrichPresentationImages(generationProject, presentationWithPlannedVisuals, {
+        recovery: true,
+        skipSlideOrders: attemptedSlideOrders,
+        attemptedSlideOrders,
+      });
+      finishStage("selecting_visuals");
+      imageEnrichmentPassUsed = true;
     }
+    const materializedPresentation = materializePlannedVisuals(presentationWithImages, {
+      fallbackMissingPhotos: usedLocalPresentationRecovery && isManagedSlideCount(generationProject.slideCount),
+    });
+    if (usedLocalPresentationRecovery) {
+      noteRecovery("accepted_narration", "local_visual_projection", groundedPresentation, materializedPresentation);
+    }
+    presentationWithImages = materializedPresentation;
     await setStage("polishing");
     // The model may return a schema-valid but geometrically unsafe canvas. A
     // generated presentation is not user-edited yet, so rebuild its canvas
@@ -282,34 +353,20 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     let presentation = ensureEditableCanvas({
       ...presentationWithImages,
       slides: presentationWithImages.slides.map((slide) => ({ ...slide, canvas: undefined })),
-    });
-    if (!usedLocalPresentationRecovery) {
-      // Image enrichment can replace a photo direction with a diagram or add
-      // Tavily metadata after the provider's first release gate. Re-run the
-      // existing deterministic release repair on that exact post-image
-      // document so its compact-copy and visual fallbacks are applied before
-      // the final gate. This does not suppress source, schema, or canvas
-      // blockers: the same gate below still evaluates the repaired document.
-      const repairedPostImagePresentation = repairReleaseCandidate(presentation, presentation.sources, generationProject);
-      // The release repair can replace canonical title/text fields and build
-      // a temporary generated canvas. Compose the final canvas once more from
-      // those repaired fields before auditing it; canvas safety remains a
-      // hard gate on the exact document that will be persisted.
-      presentation = ensureEditableCanvas({
-        ...repairedPostImagePresentation,
-        slides: repairedPostImagePresentation.slides.map((slide) => ({ ...slide, canvas: undefined })),
-      });
-    }
+    }, { recovery: usedLocalPresentationRecovery });
     let unsafeCanvases = canvasAuditIssues(presentation);
     if (unsafeCanvases.length) {
-      // A geometry-only repair can preserve provider-shaped visual directions
-      // which then fail the semantic quality gate after the canvas audit has
-      // passed. Use the same deterministic readable projection as the
-      // accepted-narration recovery: it removes optional visuals as well as
-      // cramped canvas geometry without spending on another provider call.
-      logger.warn({ projectId, jobId: job.id, fallback: "emergency_readable_layout", issueCount: unsafeCanvases.length }, "generated canvas is unsafe; applying deterministic readable recovery");
-      presentation = buildEmergencyReadablePresentation(presentation);
+      logger.warn({ projectId, jobId: job.id, fallback: "roomy_local_layout", issueCount: unsafeCanvases.length }, "generated canvas is unsafe; applying local layout recovery");
+      const beforeLayoutRecovery = presentation;
+      presentation = repairPresentationLayout(presentation);
+      noteRecovery("canvas_layout", "unsafe_generated_canvas", beforeLayoutRecovery, presentation);
       unsafeCanvases = canvasAuditIssues(presentation);
+      if (unsafeCanvases.length) {
+        const beforeEmergencyRecovery = presentation;
+        presentation = buildEmergencyReadablePresentation(presentation);
+        noteRecovery("emergency", "unsafe_recovery_canvas", beforeEmergencyRecovery, presentation);
+        unsafeCanvases = canvasAuditIssues(presentation);
+      }
       if (unsafeCanvases.length) throw new Error(`Production quality gate rejected canvas safety: ${unsafeCanvases.slice(0, 8).join("; ")}`);
     }
     if (defenseBundle) assertDefensePresentation(presentation, defenseBundle);
@@ -331,12 +388,26 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       // Re-project only the already accepted narration and snapshot sources;
       // then run the exact same gate again.  Do not use an emergency generic
       // deck here: it would weaken provenance and content integrity.
-      const recoveredPresentation = recoverAcceptedNarration("validating", new Error(`provider presentation rejected: ${release.issueCategories.join(", ") || "unspecified quality issue"}`));
+      const beforeQualityRecovery = presentation;
+      let recoveredPresentation = mergeRecoveredVisuals(
+        recoverAcceptedNarration("validating", new Error(`provider presentation rejected: ${release.issueCategories.join(", ") || "unspecified quality issue"}`)),
+        presentation,
+      );
       usedLocalPresentationRecovery = true;
+      noteRecovery("accepted_narration", "quality_gate_rejected", beforeQualityRecovery, recoveredPresentation);
+      if (canRunRecoveryImagePass(job.data.costEnvelopeId, recoveryReason) && !imageEnrichmentPassUsed) {
+        recoveredPresentation = await enrichPresentationImages(generationProject, recoveredPresentation, {
+          recovery: true,
+          skipSlideOrders: attemptedSlideOrders,
+          attemptedSlideOrders,
+        });
+        imageEnrichmentPassUsed = true;
+      }
+      recoveredPresentation = materializePlannedVisuals(recoveredPresentation, { fallbackMissingPhotos: true });
       presentation = ensureEditableCanvas({
         ...recoveredPresentation,
         slides: recoveredPresentation.slides.map((slide) => ({ ...slide, canvas: undefined })),
-      });
+      }, { recovery: true });
       release = productionQualityReleaseResult(presentation, presentation.sources, { ...generationProject, mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId), acceptedNarrationRecovery: true });
       if (release.finalDisposition !== "released") {
         // The first local projection keeps the usual editorial design.  If it
@@ -345,7 +416,9 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
         // plain, self-contained canvas. This is fully deterministic: no second
         // provider call, source search, or invented claim is allowed here.
         logger.warn({ projectId, jobId: job.id, fallback: "accepted_narration_emergency_readable", issueCategories: release.issueCategories }, "local presentation projection still failed quality gate; applying emergency readable recovery");
+        const beforeEmergencyRecovery = presentation;
         presentation = buildEmergencyReadablePresentation(presentation);
+        noteRecovery("emergency", "quality_gate_rejected_local_projection", beforeEmergencyRecovery, presentation);
         release = productionQualityReleaseResult(presentation, presentation.sources, { ...generationProject, mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId), acceptedNarrationRecovery: true });
       }
       if (release.finalDisposition !== "released") throw new Error(`Production quality gate rejected generated presentation: ${release.issueCategories.join(", ") || "unspecified quality issue"}`);
@@ -363,7 +436,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
           _count: { select: { costEvents: { where: { category: "image_search" } } } },
         },
       });
-      const economicGate = evaluateEconomicReleaseGate({
+      let economicGate = evaluateEconomicReleaseGate({
         presentation,
         sources,
         project: { ...generationProject, mandatorySourceSnapshot: true, acceptedNarrationRecovery: usedLocalPresentationRecovery },
@@ -377,25 +450,102 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
           imageSearchQueries: envelope._count.costEvents,
         },
       });
+      if (!economicGate.passed && economicGate.categories.includes("canvas_audit")) {
+        // The economic gate evaluates the exact persisted document. A local
+        // projection can still carry a provider-selected canvas family after
+        // the editorial gate has released it, so give it the same bounded
+        // roomier layout recovery used by the pre-save canvas audit.
+        const beforeEconomicLayoutRecovery = presentation;
+        presentation = repairPresentationLayout(presentation);
+        noteRecovery("canvas_layout", "economic_canvas_audit", beforeEconomicLayoutRecovery, presentation);
+        economicGate = evaluateEconomicReleaseGate({
+          presentation,
+          sources,
+          project: { ...generationProject, mandatorySourceSnapshot: true, acceptedNarrationRecovery: usedLocalPresentationRecovery },
+          envelope: {
+            limitRub: envelope.limitRub.toString(),
+            reservedRub: envelope.reservedRub.toString(),
+            settledRub: envelope.settledRub.toString(),
+            status: envelope.status,
+            sourceSnapshot: envelope.sourceSnapshot,
+            reservations: envelope.reservations,
+            imageSearchQueries: envelope._count.costEvents,
+          },
+        });
+        if (!economicGate.passed && economicGate.categories.includes("canvas_audit")) {
+          const beforeEconomicEmergencyRecovery = presentation;
+          presentation = buildEmergencyReadablePresentation(presentation);
+          noteRecovery("emergency", "economic_canvas_audit", beforeEconomicEmergencyRecovery, presentation);
+          economicGate = evaluateEconomicReleaseGate({
+            presentation,
+            sources,
+            project: { ...generationProject, mandatorySourceSnapshot: true, acceptedNarrationRecovery: usedLocalPresentationRecovery },
+            envelope: {
+              limitRub: envelope.limitRub.toString(),
+              reservedRub: envelope.reservedRub.toString(),
+              settledRub: envelope.settledRub.toString(),
+              status: envelope.status,
+              sourceSnapshot: envelope.sourceSnapshot,
+              reservations: envelope.reservations,
+              imageSearchQueries: envelope._count.costEvents,
+            },
+          });
+        }
+      }
       logger.info({ projectId, jobId: job.id, stage: "validating", releaseGate: "economic_standard", passed: economicGate.passed, categories: economicGate.categories }, "economic presentation release gate");
       if (!economicGate.passed) throw new EconomicReleaseGateError(economicGate.categories);
     }
     presentation = {
       ...presentation,
-      productionQualityGate: { version: 1, capability: "silent-production-quality-gate" },
+      productionQualityGate: {
+        version: 1,
+        capability: "silent-production-quality-gate",
+        ...(recoveryMetadata.recoveryApplied ? recoveryMetadata : {}),
+      },
     };
+    if (job.data.presentationOnlyRecovery) {
+      const exportPreflight = await preparePresentationForExport(presentation, {
+        format: "pptx",
+        project: generationProject,
+        readObject: readObjectBuffer,
+      });
+      if (!exportPreflight.report.passed) {
+        throw new Error(`Presentation export preflight rejected recovery: ${exportPreflight.report.slideIssues.flatMap((issue) => issue.categories).join(", ") || "unspecified issue"}`);
+      }
+      // Persist exactly the document that passed the release and export
+      // preflight checks. The old revision remains untouched until this
+      // transaction succeeds.
+      presentation = exportPreflight.document;
+    }
     finishStage("validating");
     await setStage("saving");
     // The release capability, persisted canvas and ready status describe one
     // revision. Do not expose ready if writing that canonical document fails.
-    await prisma.$transaction([
-      prisma.presentation.upsert({
-        where: { projectId },
-        create: { projectId, document: presentation },
-        update: { document: presentation, revision: { increment: 1 } },
-      }),
-      prisma.project.update({ where: { id: projectId }, data: { status: "ready" } }),
-    ]);
+    if (job.data.presentationOnlyRecovery) {
+      const expectedRevision = job.data.expectedPresentationRevision;
+      if (typeof expectedRevision !== "number" || !Number.isInteger(expectedRevision) || expectedRevision < 1) {
+        throw new Error("presentation_recovery_expected_revision_required");
+      }
+      await prisma.$transaction(async (tx) => {
+        const updated = await tx.presentation.updateMany({
+          where: { projectId, revision: expectedRevision },
+          data: { document: presentation, revision: { increment: 1 } },
+        });
+        if (updated.count !== 1) {
+          throw new Error("presentation_recovery_revision_changed_before_save");
+        }
+        await tx.project.update({ where: { id: projectId }, data: { status: "ready" } });
+      });
+    } else {
+      await prisma.$transaction([
+        prisma.presentation.upsert({
+          where: { projectId },
+          create: { projectId, document: presentation },
+          update: { document: presentation, revision: { increment: 1 } },
+        }),
+        prisma.project.update({ where: { id: projectId }, data: { status: "ready" } }),
+      ]);
+    }
     finishStage("saving");
     await setStage("completed");
     await prisma.generationJob.updateMany({
@@ -547,6 +697,74 @@ async function presentationRecoveryReason(costEnvelopeId: string) {
   }
 }
 
+async function assertPresentationOnlyRecoveryPreconditions(job: Job<GenerationJobData>) {
+  const expectedRevision = job.data.expectedPresentationRevision;
+  if (typeof expectedRevision !== "number" || !Number.isInteger(expectedRevision) || expectedRevision < 1) {
+    throw new Error("presentation_recovery_expected_revision_required");
+  }
+  const revision = expectedRevision;
+  if (!job.data.generationJobId) {
+    throw new Error("presentation_recovery_generation_job_id_required");
+  }
+
+  const prisma = getPrisma();
+  const project = await prisma.project.findUnique({
+    where: { id: job.data.projectId },
+    select: { speechDraft: true },
+  });
+  if (!project) throw new Error("presentation_recovery_project_not_found");
+  if (!project.speechDraft?.trim()) throw new Error("presentation_recovery_accepted_speech_required");
+
+  const presentation = await prisma.presentation.findUnique({
+    where: { projectId: job.data.projectId },
+    select: { revision: true },
+  });
+  if (!presentation) throw new Error("presentation_recovery_presentation_not_found");
+  if (presentation.revision !== revision) {
+    throw new Error(`presentation_recovery_revision_mismatch:${presentation.revision}`);
+  }
+
+  const activeJob = await prisma.generationJob.findFirst({
+    where: {
+      projectId: job.data.projectId,
+      kind: "presentation",
+      status: { in: ["queued", "active"] },
+      id: { not: job.data.generationJobId },
+    },
+    select: { id: true },
+  });
+  if (activeJob) throw new Error("presentation_recovery_generation_active");
+}
+
+function canRunRecoveryImagePass(costEnvelopeId: string | undefined, recoveryReason: string | null) {
+  // The worker checks the envelope status before entering this path. A new
+  // recovery image pass is therefore allowed only for an explicitly linked,
+  // still-active envelope; terminal retries remain fully local.
+  return Boolean(costEnvelopeId && !recoveryReason);
+}
+
+/**
+ * Copies only persisted images from the rejected presentation projection into
+ * the accepted-narration projection. Stable slide ids are the sole join key:
+ * order/title similarity must never move an asset to another slide.
+ */
+export function mergeRecoveredVisuals(
+  recovered: PresentationDocument,
+  rejected: PresentationDocument,
+): PresentationDocument {
+  const rejectedById = new Map(rejected.slides.map((slide) => [slide.id, slide]));
+  return {
+    ...recovered,
+    slides: recovered.slides.map((slide) => {
+      if (slide.visual.image) return slide;
+      const rejectedSlide = rejectedById.get(slide.id);
+      const image = rejectedSlide?.visual.image;
+      if (!image?.objectKey?.trim()) return slide;
+      return { ...slide, visual: { ...slide.visual, image } };
+    }),
+  };
+}
+
 export function repairPresentationLayout(presentation: PresentationDocument): PresentationDocument {
   const shortestCompleteSentence = (slide: PresentationDocument["slides"][number]) => {
     const candidates = [
@@ -562,27 +780,33 @@ export function repairPresentationLayout(presentation: PresentationDocument): Pr
     return candidates.find((value) => value.length <= 220) || candidates[0] || slide.title;
   };
 
+  const materialized = materializePlannedVisuals(presentation, { fallbackMissingPhotos: true });
   const repaired = ensureEditableCanvas({
-    ...presentation,
+    ...materialized,
     // The recovery path must not carry a cramped theme or an AI-selected
     // direction into its second layout pass.  Those directions can select an
     // editorial canvas with fixed text slots again, which turns a recoverable
     // overflow into a failed paid generation.  Preserve the slide content and
     // narration, but use the roomiest deterministic canvas family.
-    presentationTheme: PREMIUM_PRESENTATION_THEMES.academicClean,
-    designBrief: undefined,
-    slides: presentation.slides.map((slide) => ({
+    presentationTheme: PREMIUM_PRESENTATION_THEMES.studydeckEditorial,
+    designBrief: cleanRecoveryDesignBrief(materialized.designBrief, materialized.slides),
+    slides: materialized.slides.map((slide) => ({
       ...slide,
-      layout: "statement",
+      title: compactRecoveryTitle(slide.title),
+      layout: recoveryLayoutForSlide(slide),
       thesis: shortestCompleteSentence(slide),
-      bullets: [],
-      blocks: [],
+      bullets: slide.bullets.slice(0, 3),
+      blocks: slide.blocks.filter((block) => block.type === "bullets").slice(0, 1),
       // An image is optional decoration. A local safe deck must never retain
       // an unfulfilled image requirement after image search or download fails.
-      visual: { ...slide.visual, type: slide.visual.type === "image" ? "schema" : slide.visual.type, image: undefined },
+      visual: {
+        ...slide.visual,
+        type: slide.visual.type,
+        description: slide.visual.description,
+      },
       canvas: undefined,
     })),
-  });
+  }, { recovery: true });
 
   // `ensureEditableCanvas` has already calculated the smallest readable font
   // size.  A fallback slide must not advertise another automatic shrink at
@@ -606,23 +830,17 @@ export function repairPresentationLayout(presentation: PresentationDocument): Pr
 
 /**
  * Last-resort local canvas for a presentation whose narration is already
- * accepted.  It deliberately has two wide, fixed text slots and no optional
- * visuals, so a faulty provider response or a theme-specific geometry cannot
- * send the user back to the script-review failure state.
+ * accepted. It keeps text compact, preserves safe stored images, and turns
+ * missing image plans into grounded local diagrams so recovery stays visual
+ * without depending on another provider or network request.
  */
 export function buildEmergencyReadablePresentation(presentation: PresentationDocument): PresentationDocument {
   const compactVisibleText = (value: string, maximum: number, fallback: string) => {
     const text = String(value || "").replace(/\s+/g, " ").trim();
     if (!text) return fallback;
     if (text.length <= maximum) return text;
-    const sentences = text.split(/(?<=[.!?])\s+/u).map((part) => part.trim()).filter(Boolean);
-    const sentence = sentences.find((part) => part.length <= maximum);
-    if (sentence) return sentence;
-    // Preserve a slightly longer complete claim instead of cutting it at a
-    // character boundary. A word-level cut can leave a visible thesis ending
-    // in a dangling connector (for example, "... проверить полученный и").
-    const firstSentence = sentences[0];
-    if (firstSentence && firstSentence.length <= maximum * 1.5) return firstSentence;
+    const sentence = text.split(/(?<=[.!?])\s+/u).find((part) => part.length <= maximum && part.trim());
+    if (sentence) return sentence.trim();
     const words = text.split(/\s+/u);
     const compact = words.reduce<string[]>((result, word) => {
       const candidate = [...result, word].join(" ");
@@ -630,60 +848,191 @@ export function buildEmergencyReadablePresentation(presentation: PresentationDoc
     }, []).join(" ");
     return compact || fallback;
   };
-  const fallbackLayouts = ["statement", "two-column", "comparison", "process"] as const;
-  const narrationClaim = (value: string, fallback: string) => {
-    const normalized = String(value || "").replace(/\s+/g, " ").trim();
-    const startsWithDependentFragment = (sentence: string) => /^(?:continuing|including|based\s+on|which|that|because|while|although|продолжая|включая|основываясь|котор(?:ый|ая|ое|ые)|поскольку|так\s+как|если|чтобы)(?:\s|,)/iu.test(sentence);
-    const safeSentence = normalized
-      .split(/(?<=[.!?])\s+/u)
-      .map((sentence) => sentence.trim())
-      .find((sentence) => sentence && !isGenericTitle(sentence) && !hasMetaSlideLanguage(sentence) && !startsWithDependentFragment(sentence));
-    return compactVisibleText(safeSentence || normalized, 180, fallback);
+  const compactEmergencyBullet = (value: string) => {
+    const text = String(value || "").replace(/\s+/g, " ").trim();
+    if (!text) return "";
+    const sentences = text.match(/[^.!?]+[.!?]+(?=\s|$)/gu) || [];
+    const readable = sentences.find((sentence) => {
+      const candidate = sentence.trim();
+      return candidate.length <= 130 && candidate.split(/\s+/u).filter(Boolean).length <= 18;
+    });
+    if (readable) return readable.trim();
+
+    // A reviewed support point can still be just over the renderer limit.
+    // Keep a complete, bounded sentence-shaped claim rather than returning a
+    // word fragment or moving the same content into a second block.
+    const source = (sentences[0] || text).trim();
+    const selected: string[] = [];
+    for (const word of source.split(/\s+/u).filter(Boolean).slice(0, 18)) {
+      const candidate = [...selected, word].join(" ");
+      if (candidate.length > 129) break;
+      selected.push(word);
+    }
+    const compact = selected.join(" ").replace(/[.!?]+$/u, "").trim();
+    return compact.split(/\s+/u).filter(Boolean).length >= 4 ? `${compact}.` : "";
   };
-  return {
-    ...presentation,
-    presentationTheme: PREMIUM_PRESENTATION_THEMES.academicClean,
-    designBrief: undefined,
+  const fallbackLayouts = ["statement", "two-column", "comparison", "process"] as const;
+  // Keep the last safe visual projection before simplifying the text. Missing
+  // photos are converted into grounded local diagrams here, so the emergency
+  // path remains visual even when the paid image lookup is unavailable.
+  const materialized = materializePlannedVisuals(presentation, { fallbackMissingPhotos: true });
+  const emergency = {
+    ...materialized,
+    presentationTheme: PREMIUM_PRESENTATION_THEMES.studydeckEditorial,
+    designBrief: cleanRecoveryDesignBrief(materialized.designBrief, materialized.slides),
     // Keep the canonical document, notes and script in lockstep after the
     // emergency canvas is assembled from accepted narration.
-    generatedText: presentation.slides.map((slide) => `\u0421\u043b\u0430\u0439\u0434 ${slide.order}: ${slide.title}\n${slide.speakerNotes}`).join("\n\n"),
-    speechScript: presentation.slides.map((slide) => ({ slideOrder: slide.order, slideTitle: slide.title, text: slide.speakerNotes })),
-    slides: presentation.slides.map((slide) => {
-      const candidateTitle = compactVisibleText(slide.title, 90, "");
-      const title = candidateTitle && !isGenericTitle(candidateTitle) && !hasMetaSlideLanguage(candidateTitle)
-        ? candidateTitle
-        : compactVisibleText(`${presentation.title} — раздел ${slide.order}`, 90, `Тема ${slide.order}`);
+    // The accepted narration is canonical. Emergency layout recovery may
+    // shorten the screen title, but it must never rewrite generatedText.
+    generatedText: materialized.generatedText,
+    speechScript: materialized.slides.map((slide) => ({ slideOrder: slide.order, slideTitle: slide.title, text: slide.speakerNotes })),
+    slides: materialized.slides.map((slide) => {
+      const title = compactVisibleText(slide.title, 90, `Слайд ${slide.order}`);
       // The provider/local projection may contain a weak thesis even when the
       // accepted narration is sound. Always derive this visible claim from the
       // canonical narration, not from the rejected presentation text.
-      const thesis = narrationClaim(slide.speakerNotes || slide.thesis, title);
-      const background = "#F8FAFC";
+      const thesis = compactVisibleText(slide.speakerNotes || slide.thesis, 180, title);
+      const bullets = [...new Set(slide.bullets
+        .map(compactEmergencyBullet)
+        .filter((value) => value && value.split(/\s+/u).length >= 4 && /[.!?]$/u.test(value))
+        .filter((value) => value !== title && value !== thesis))]
+        .slice(0, 3);
       return {
         ...slide,
         title,
         layout: fallbackLayouts[(slide.order - 1) % fallbackLayouts.length],
         thesis,
-        // The emergency canvas renders one complete claim per slide. Optional
-        // bullets are more likely to become fragments when projected from a
-        // long narration; the full evidence remains in speaker notes.
-        bullets: [],
+        // Keep the reviewed support-point projection in the canonical Slide
+        // fields. The recovery canvas renders it once; blocks stay empty so
+        // the same sentence is not painted a second time.
+        bullets,
         blocks: [],
-        visual: { type: "schema", title: "", description: compactVisibleText(thesis, 220, title), leftLabel: "", rightLabel: "", items: [], rows: [] },
-        canvas: {
-          version: 2,
-          width: 1280,
-          height: 720,
-          background,
-          elements: [
-            { id: `${slide.id}-background`, type: "shape", shape: "rect", x: 0, y: 0, w: 1280, h: 720, rotation: 0, zIndex: 0, opacity: 1, locked: true, fill: background, stroke: background, strokeWidth: 0 },
-            { id: `${slide.id}-title`, type: "text", role: "title", typographyRole: "slideTitle", x: 96, y: 84, w: 1088, h: 88, rotation: 0, zIndex: 2, opacity: 1, locked: false, text: title, runs: [{ text: title }], fontSize: 40, autoFit: false, fontFamily: PRESENTATION_FONT_FAMILY, color: "#111827", bold: true, italic: false, underline: false, align: "center", valign: "middle" },
-            { id: `${slide.id}-body`, type: "text", role: "body", typographyRole: "body", x: 130, y: 230, w: 1020, h: 250, rotation: 0, zIndex: 2, opacity: 1, locked: false, text: thesis, runs: [{ text: thesis }], fontSize: 28, autoFit: false, fontFamily: PRESENTATION_FONT_FAMILY, color: "#334155", bold: false, italic: false, underline: false, align: "center", valign: "middle" },
-            { id: `${slide.id}-custom-canvas-marker`, type: "shape", shape: "rect", x: 0, y: 0, w: 1, h: 1, rotation: 0, zIndex: 0, opacity: 0, locked: true, fill: background, stroke: background, strokeWidth: 0 },
-          ],
-        },
+        // Preserve fulfilled images and grounded diagrams. The recovery canvas
+        // knows how to render both without depending on a provider response.
+        visual: slide.visual.type === "none"
+          ? { ...slide.visual, title: "", description: "Text-only emergency recovery surface.", items: [], rows: [] }
+          : slide.visual,
+        canvas: undefined,
       };
     }),
   };
+  const recovered = ensureEditableCanvas({
+    ...emergency,
+    slides: emergency.slides.map((slide) => ({ ...slide, canvas: undefined })),
+  }, { recovery: true });
+
+  return {
+    ...recovered,
+    productionQualityGate: {
+      version: 1,
+      capability: "silent-production-quality-gate",
+      recoveryApplied: true,
+      recoveryStage: "emergency",
+      recoveryReason: "unsafe_recovery_canvas",
+    },
+  };
+}
+
+type RecoveryStage = "accepted_narration" | "canvas_layout" | "emergency";
+type RecoveryMetadata = {
+  recoveryApplied: boolean;
+  recoveryStage?: RecoveryStage;
+  recoveryReason?: string;
+  replacedImages: number;
+  replacedDiagrams: number;
+};
+
+function recoveryLayoutForSlide(slide: PresentationDocument["slides"][number]) {
+  if (slide.slideKind === "title" || slide.slideKind === "section" || slide.slideKind === "summary") return "statement" as const;
+  if (slide.visual.image) return "image-focus" as const;
+  if (["comparison_diagram", "before_after_table", "pros_cons_table"].includes(slide.visual.type)) return "comparison" as const;
+  if (slide.visual.type === "timeline") return "timeline" as const;
+  if (["process_diagram", "cause_effect_diagram", "mind_map", "schema"].includes(slide.visual.type)) return "process" as const;
+  return "statement" as const;
+}
+
+function compactRecoveryTitle(value: string) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= 48) return text;
+  const words = text.split(/\s+/u);
+  let result = "";
+  for (const word of words) {
+    const candidate = result ? `${result} ${word}` : word;
+    if (candidate.length > 48) break;
+    result = candidate;
+  }
+  return result || text.slice(0, 48).trim();
+}
+
+function cleanRecoveryDesignBrief(
+  designBrief: PresentationDocument["designBrief"],
+  slides: PresentationDocument["slides"],
+  emergency = false,
+) {
+  if (!designBrief) return undefined;
+  return designBriefSchema.parse({
+    ...designBrief,
+    themeId: "studydeckEditorial",
+    themePreset: "minimal",
+    mood: "serious",
+    slideDirections: designBrief.slideDirections.map((direction) => {
+      const slide = slides.find((candidate) => candidate.order === direction.slideOrder);
+      if (!slide || slide.slideKind === "summary" || emergency) {
+        return {
+          ...direction,
+          layoutIntent: slide?.slideKind === "summary" ? "summary" : "statement",
+          imageStrategy: "none",
+          visualPurpose: "text_only",
+          sceneTextMode: slide?.slideKind === "summary" ? "takeaway" : "talk_sentences",
+        };
+      }
+      if (slide.visual.image) {
+        return {
+          ...direction,
+          layoutIntent: "split_image_text",
+          imageStrategy: "real_photo",
+          visualPurpose: "photo",
+          sceneTextMode: "visual_labels",
+        };
+      }
+      if (isRecoveryDiagramType(slide.visual.type)) {
+        const comparison = ["comparison_diagram", "before_after_table", "pros_cons_table"].includes(slide.visual.type);
+        return {
+          ...direction,
+          layoutIntent: slide.visual.type === "timeline" ? "timeline" : comparison ? "comparison" : "diagram",
+          imageStrategy: "diagram",
+          visualPurpose: slide.visual.type === "timeline" ? "timeline" : comparison ? "comparison" : "diagram",
+          sceneTextMode: "visual_labels",
+        };
+      }
+      return {
+        ...direction,
+        layoutIntent: "statement",
+        imageStrategy: "none",
+        visualPurpose: "text_only",
+        sceneTextMode: "talk_sentences",
+      };
+    }),
+  });
+}
+
+function isRecoveryDiagramType(type: string) {
+  return ["process_diagram", "comparison_diagram", "cause_effect_diagram", "before_after_table", "pros_cons_table", "timeline", "mind_map", "schema"].includes(type);
+}
+
+function countRecoveryVisualReplacements(before: PresentationDocument, after: PresentationDocument) {
+  let replacedImages = 0;
+  let replacedDiagrams = 0;
+  const beforeByOrder = new Map(before.slides.map((slide) => [slide.order, slide]));
+  after.slides.forEach((slide) => {
+    const previous = beforeByOrder.get(slide.order);
+    if (!previous) return;
+    const becameDiagram = isRecoveryDiagramType(slide.visual.type)
+      && Boolean(slide.visual.diagram || slide.visual.graph || slide.visual.items.length >= 2 || slide.visual.rows.length >= 2);
+    if (becameDiagram && (previous.visual.image || ["image", "illustration"].includes(previous.visual.type))) replacedImages += 1;
+    if (becameDiagram && !isRecoveryDiagramType(previous.visual.type)) replacedDiagrams += 1;
+  });
+  return { replacedImages, replacedDiagrams };
 }
 
 function regularGenerationJobWhere(

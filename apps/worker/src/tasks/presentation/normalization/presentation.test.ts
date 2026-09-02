@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizePresentation } from "./presentation.js";
+import { normalizePresentation, normalizeSlide } from "./presentation.js";
 
 const project = {
   id: "normalization-section-order",
@@ -77,5 +77,23 @@ describe("normalizePresentation narration section mapping", () => {
     expect(slide.bullets).toEqual([]);
     expect(visible).toContain("SparseAnchor");
     expect(visible).not.toContain("ProjectDonor");
+  });
+
+  it("removes thesis echoes from bullets and fallback blocks without changing accepted speech", () => {
+    const accepted = "Feedback changes the next study decision after a mistake.";
+    const slide = normalizeSlide({
+      id: "slide-1",
+      title: "Feedback loop",
+      thesis: accepted,
+      bullets: [accepted],
+      blocks: [{ type: "callout", content: accepted }],
+      visual: { type: "schema", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] },
+      speakerNotes: accepted,
+    }, 1, [], { ...project, slideCount: 1 }, { order: 1, title: "Feedback loop", text: accepted });
+
+    expect(slide.bullets).toEqual([]);
+    expect(slide.blocks).toEqual([]);
+    expect(slide.visual.description).toBe("");
+    expect(slide.speakerNotes).toBe(accepted);
   });
 });

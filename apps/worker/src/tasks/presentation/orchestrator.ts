@@ -7,7 +7,7 @@ import {
     type Source
 } from "@studydeck/shared";
 import { captureGenerationError, errorLogFields, logger } from "../../observability.js";
-import { aitunnelConfig, createAitunnelClient, createOpenAIClient } from "../../openai-client.js";
+import { AITUNNEL_DEFAULT_NARRATION_MODEL, aitunnelConfig, createAitunnelClient, createOpenAIClient } from "../../openai-client.js";
 import { currentUsageContext } from "../../usage-ledger.js";
 
 type ProjectInput = {
@@ -37,7 +37,9 @@ import { normalizePresentation } from "./normalization/presentation.js";
 import { buildDeckStory, buildDesignBrief, buildResearchBrief, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "./planning/builders.js";
 import { generateAitunnelFullNarrationOutcome, generateAitunnelNarration, generateAitunnelPresentationFromNarration, generateNarrativePlanWithProvider, generateOpenAINarration, generateOpenAIPresentationFromNarration, generateWithAitunnel, generateWithOpenAI, generateWithYandex, generateYandexNarration, generateYandexPresentationFromNarration } from "./providers/generation.js";
 import { selectAiProviders } from "./providers/provider-selection.js";
-import { assertPresentationQuality, isDemoGenerationAllowed } from "./quality/orchestration.js";
+import { materializePlannedVisuals } from "../presentation-quality.js";
+import { isManagedSlideCount } from "./visual-policy.js";
+import { assertPresentationQuality, isCompleteScreenSentence, isDemoGenerationAllowed, looksLikeSentenceFragment } from "./quality/orchestration.js";
 import { buildFallbackGeneratedText, demoPresentation } from "./utilities.js";
 
 export async function generatePresentation(project: ProjectInput, sources: Source[]): Promise<PresentationDocument> {
@@ -88,14 +90,14 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
 
       if (provider === "aitunnel") {
         const config = aitunnelConfig();
-        if (!config) throw new Error("AITUNNEL_API_KEY and an explicit AITUNNEL_NARRATION_MODEL are required");
+        if (!config) throw new Error(`AITUNNEL_API_KEY and AITUNNEL_NARRATION_MODEL=${AITUNNEL_DEFAULT_NARRATION_MODEL} are required`);
         const client = createAitunnelClient();
         return runWithAitunnelProjectBudget(new AitunnelProjectBudget(), async () => {
           const researchBrief = buildResearchBrief(project, sources);
           const narrativePlan = await generateNarrativePlanWithProvider(provider, project, sources, researchBrief, { openAIClient: client, openAIModel: config.narrationModel });
           const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
           const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
-          const narrationOutcome = ["standard-generation-cost-envelope-v6", "standard-generation-cost-envelope-v7", "standard-generation-cost-envelope-v8", "standard-generation-cost-envelope-v9", "standard-generation-cost-envelope-v10"].includes(currentUsageContext()?.costEnvelopePolicyVersion || "")
+          const narrationOutcome = ["standard-generation-cost-envelope-v6", "standard-generation-cost-envelope-v7", "standard-generation-cost-envelope-v8", "standard-generation-cost-envelope-v9", "standard-generation-cost-envelope-v10", "standard-generation-cost-envelope-v11", "standard-generation-cost-envelope-v12"].includes(currentUsageContext()?.costEnvelopePolicyVersion || "")
             ? await generateAitunnelFullNarrationOutcome(client, project, sources, narrativePlan)
             : undefined;
           // Every v6 outcome is narration-only. It must reach the persistence
@@ -150,8 +152,8 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
 }
 
 /**
- * AITunnel uses Terra for the final structured document after the narration
- * has been accepted. Other provider modes retain the local projection, which
+ * AITunnel uses the economy Luna model for the final structured document after
+ * the narration has been accepted. Other provider modes retain the local projection, which
  * keeps their established no-network post-acceptance behaviour unchanged.
  */
 export async function generatePresentationFromNarration(
@@ -169,6 +171,7 @@ export function buildLocalPresentationFromAcceptedNarration(
   project: ProjectInput,
   sources: Source[],
   narrationText: string,
+  options: { deferMissingPhotoFallback?: boolean } = {},
 ): PresentationDocument {
   // Full-document narration has its own accepted contract with soft
   // per-slide timing targets. A local presentation fallback must preserve an
@@ -217,7 +220,9 @@ export function buildLocalPresentationFromAcceptedNarration(
         slideKind: index === 0 ? "title" : index === project.slideCount - 1 ? "summary" : "content",
         title: textPlan.title,
         thesis: textPlan.thesis,
-        bullets: localSectionBullets(sections[index].text, textPlan.bullets),
+        bullets: acceptedFullNarration
+          ? acceptedSupportPointBullets(textPlan)
+          : localSectionBullets(sections[index].text, textPlan.bullets),
         speakerNotes: sections[index].text,
         sourceRefs: sourceIds
           .map((sourceId) => sources.find((source) => source.id === sourceId))
@@ -239,7 +244,16 @@ export function buildLocalPresentationFromAcceptedNarration(
     ? presentationSchema.parse({
       ...normalizedBase,
       generatedText: acceptedNarration,
-      slides: normalizedBase.slides.map((slide, index) => ({ ...slide, speakerNotes: sections[index]!.text })),
+      slides: normalizedBase.slides.map((slide, index) => ({
+        ...slide,
+        // normalizePresentation applies generic semantic de-duplication to
+        // provider fields. Accepted support points are already the reviewed
+        // semantic projection, so restore them as the canonical Slide.bullets
+        // before the recovery canvas is rebuilt.
+        bullets: acceptedSupportPointBullets(slideTextPlans[index] || slide)
+          .filter((bullet) => !sameDisplaySentence(bullet, slide.title) && !sameDisplaySentence(bullet, slide.thesis)),
+        speakerNotes: sections[index]!.text,
+      })),
       speechScript: normalizedBase.slides.map((slide, index) => ({ slideOrder: slide.order, slideTitle: slide.title, text: sections[index]!.text })),
     })
     : normalizedBase;
@@ -255,9 +269,11 @@ export function buildLocalPresentationFromAcceptedNarration(
       // its thesis and support points.  Provider-oriented callouts can carry
       // an overlong duplicate sentence, so omit optional blocks rather than
       // shortening or inventing narration after acceptance.
-      blocks: slide.blocks
-        .filter((block) => block.type === "bullets")
-        .map((block) => ({ ...block, items: acceptedFullNarration ? block.items.slice(0, 3) : block.items.slice(0, 3).map(shortLocalBullet) })),
+      blocks: acceptedFullNarration
+        ? []
+        : slide.blocks
+          .filter((block) => block.type === "bullets")
+          .map((block) => ({ ...block, items: block.items.slice(0, 3).map(shortLocalBullet) })),
     })),
   });
   // An accepted full-document narration has already passed its own semantic
@@ -265,25 +281,31 @@ export function buildLocalPresentationFromAcceptedNarration(
   // projection instead of failing here through the legacy visible-text gate
   // before the emergency readable canvas can run.
   if (!acceptedFullNarration) assertPresentationQuality(concise, project, "local");
+  const materialized = materializePlannedVisuals(concise, {
+    // The worker recovery pipeline may have one bounded image pass left. Keep
+    // real-photo directions unresolved until that pass has completed; direct
+    // callers retain the historical safe local fallback by default.
+    fallbackMissingPhotos: !options.deferMissingPhotoFallback && isManagedSlideCount(project.slideCount),
+  });
+  const finalSlides = materialized.slides.map((slide) => ({
+    ...slide,
+    // Bullets are the canonical visible support-point projection. Keep them
+    // in the saved Slide and let the recovery canvas render them once.
+    bullets: acceptedFullNarration ? slide.bullets.slice(0, 3) : slide.bullets,
+    // A second bullet block would render the same support points twice.
+    blocks: acceptedFullNarration ? [] : slide.blocks,
+    canvas: undefined,
+  }));
   return ensureEditableCanvas({
-    ...concise,
+    ...materialized,
     // Recovery is a content-safety operation, not a reason to replace the
     // product's presentation identity. The deterministic design brief and
     // editorial canvas already constrain their visible text independently of
     // the accepted long-form narration kept in speaker notes.
-    presentationTheme: concise.presentationTheme,
-    designBrief: concise.designBrief,
-    slides: concise.slides.map((slide) => ({
-      ...slide,
-      // The accepted narration remains the canonical speech. Secondary
-      // visible support points are compact projections and may otherwise
-      // repeat generic wording from the local extractor, so do not retain
-      // them merely to fill an editorial composition.
-      bullets: acceptedFullNarration ? [] : slide.bullets,
-      blocks: acceptedFullNarration ? [] : slide.blocks,
-      canvas: undefined,
-    })),
-  });
+    presentationTheme: materialized.presentationTheme,
+    designBrief: materialized.designBrief,
+    slides: finalSlides,
+  }, { recovery: true });
 }
 
 function localNarrativeFields(sectionText: string) {
@@ -346,7 +368,7 @@ export async function generatePresentationFromNarrationWithProviders(
     try {
       // Full-document AITunnel narration is accepted against its own contract,
       // whose per-slide targets are deliberately soft. Re-normalizing it here
-      // would reintroduce the retired legacy ceiling before Terra sees it.
+      // would reintroduce the retired legacy ceiling before the slide model sees it.
       const providerNarration = provider === "aitunnel"
         ? narrationText
         : normalizeNarrationText(narrationText, project);
@@ -392,7 +414,7 @@ export function buildSafePresentationFromNarration(
   );
   const sections = parseNarrationSections(acceptedNarration);
   if (sections.length !== project.slideCount || sections.some((section, index) => section.order !== index + 1 || !section.text)) {
-    return ensureEditableCanvas(normalized);
+    return ensureEditableCanvas(normalized, { recovery: true });
   }
 
   // `normalizePresentation` is intentionally allowed to replace malformed
@@ -411,5 +433,44 @@ export function buildSafePresentationFromNarration(
       slideTitle: slide.title,
       text: sections[index].text,
     })),
-  }));
+  }), { recovery: true });
+}
+
+function acceptedSupportPointBullets(textPlan: {
+  title: string;
+  thesis: string;
+  bullets: string[];
+  supportPoints?: Array<{ text: string }>;
+}) {
+  const candidates = Array.isArray(textPlan.supportPoints)
+    ? textPlan.supportPoints.map((point) => point.text)
+    : textPlan.bullets;
+  const result: string[] = [];
+  for (const candidate of candidates) {
+    const text = candidate.replace(/\s+/g, " ").trim();
+    if (!text
+      || !/[.!?]$/u.test(text)
+      || text.split(/\s+/).filter(Boolean).length < 4
+      || !isCompleteScreenSentence(text)
+      || looksLikeSentenceFragment(text)
+      || /^(?:а|и|но|или|также|однако|поэтому|затем|после)(?=\s|$)/iu.test(text)
+      || sameDisplaySentence(text, textPlan.title)
+      || sameDisplaySentence(text, textPlan.thesis)
+      || result.some((existing) => sameDisplaySentence(existing, text))) {
+      continue;
+    }
+    result.push(text);
+    if (result.length === 3) break;
+  }
+  return result;
+}
+
+function sameDisplaySentence(left: string, right: string) {
+  const normalize = (value: string) => value
+    .toLocaleLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalize(left) === normalize(right);
 }

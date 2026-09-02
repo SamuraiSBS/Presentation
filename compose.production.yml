@@ -255,9 +255,7 @@ volumes:
 
 networks:
   # Telegram OIDC is reachable from the VPS over IPv6. Keep the application
-  # bridge on a dedicated IPv6-enabled network so Auth.js can reach the
-  # provider from the web container as well as from the host. The explicit
-  # name avoids trying to mutate the already-running legacy bridge in place.
+  # bridge on an IPv6-enabled network so Auth.js can reach the provider from
+  # the web container as well as from the host.
   default:
-    name: studydeck_production
     enable_ipv6: true

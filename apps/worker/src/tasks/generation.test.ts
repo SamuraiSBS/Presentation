@@ -106,6 +106,8 @@ describe("prepareGenerationSources", () => {
     enrichPresentationImages.mockReset();
     materializePlannedVisuals.mockReset();
     materializePlannedVisuals.mockImplementation((presentation) => presentation);
+    enrichPresentationImages.mockImplementation(async (_project, presentation) => presentation);
+    process.env.WEB_SEARCH_PROVIDER = "tavily";
     costEnvelope.findUnique.mockReset();
     costEnvelope.findUniqueOrThrow.mockReset();
     costEnvelope.update.mockReset();
@@ -552,11 +554,12 @@ describe("prepareGenerationSources", () => {
 
     const repaired = repairPresentationLayout(presentation);
 
-    expect(repaired.slides[0].layout).toBe("statement");
-    expect(repaired.slides[0].visual.image).toBeUndefined();
-    expect(repaired.slides[0].visual.type).not.toBe("image");
-    expect(repaired.presentationTheme?.themeId).toBe("academicClean");
-    expect(repaired.designBrief).toBeUndefined();
+    expect(repaired.slides[0].layout).toBe("image-focus");
+    expect(repaired.slides[0].visual.image?.url).toBe("https://example.com/image.jpg");
+    expect(repaired.slides[0].visual.type).toBe("illustration");
+    expect(repaired.presentationTheme?.themeId).toBe("studydeckEditorial");
+    expect(repaired.designBrief?.themeId).toBe("studydeckEditorial");
+    expect(repaired.slides[0].canvas?.elements.some((element) => element.type === "image")).toBe(true);
     expect(repaired.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!))).toEqual([]);
   });
 });
@@ -564,7 +567,7 @@ describe("prepareGenerationSources", () => {
 describe("accepted narration local recovery eligibility", () => {
   const acceptedNarration = Array.from({ length: 10 }, (_, index) => {
     const order = index + 1;
-    const words = Array.from({ length: order === 1 ? 118 : order === 10 ? 124 : 132 }, (_, word) => `evidence${order}_${word + 1}`);
+    const words = Array.from({ length: order === 1 ? 60 : order === 10 ? 80 : 70 }, (_, word) => `evidence${order}_${word + 1}`);
     const split = Math.floor(words.length / 2);
     return `Слайд ${order}: Saturn evidence ${order}\n${words.slice(0, split).join(" ")}. ${words.slice(split).join(" ")}.`;
   }).join("\n\n");
@@ -805,6 +808,7 @@ describe("handleGenerationJob failed narration envelope finalization", () => {
     enrichPresentationImages.mockReset();
     materializePlannedVisuals.mockReset();
     materializePlannedVisuals.mockImplementation((presentation) => presentation);
+    enrichPresentationImages.mockImplementation(async (_project, presentation) => presentation);
     prismaMock.project.update.mockResolvedValue({});
     prismaMock.project.findUnique.mockResolvedValue({ speechDraft: null });
     prismaMock.project.findUniqueOrThrow.mockResolvedValue(narrationProject());
@@ -890,7 +894,7 @@ describe("handleGenerationJob failed narration envelope finalization", () => {
   it("marks the presentation ready after a structured provider failure using only accepted narration and its saved source snapshot", async () => {
     const acceptedNarration = Array.from({ length: 10 }, (_, index) => {
       const order = index + 1;
-      const words = Array.from({ length: order === 1 ? 118 : order === 10 ? 124 : 132 }, (_, word) => `evidence${order}_${word + 1}`);
+      const words = Array.from({ length: order === 1 ? 60 : order === 10 ? 80 : 70 }, (_, word) => `evidence${order}_${word + 1}`);
       const split = Math.floor(words.length / 2);
       return `Слайд ${order}: Saturn evidence ${order}\n${words.slice(0, split).join(" ")}. ${words.slice(split).join(" ")}.`;
     }).join("\n\n");

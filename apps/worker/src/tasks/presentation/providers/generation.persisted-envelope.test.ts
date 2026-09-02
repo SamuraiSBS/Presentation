@@ -127,18 +127,19 @@ it("accepts the bounded maximal v6 reservation batch before its first provider c
   expect(inputs.map((input: { stage: string }) => input.stage)).toEqual(["narration_full_candidate", "narration_full_rewrite", "narration_targeted_repair"]);
 });
 
-it("measures the persisted maximum rewrite payload without emitting its text", () => {
+it("measures the persisted maximum Luna rewrite payload without emitting its text", () => {
   const draft = fullV6Speech(156);
   const prompt = buildAitunnelFullNarrationRewriteWithDraftPrompt(project, groundedSources, plan, draft, assessFullNarrationDocument(draft, project, plan));
-  expect(reserveAitunnelStageCall("narration_full_rewrite", { input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: prompt }] })!).toMatchObject({ inputTokens: 8398, outputTokens: 4500, costRub: "7.07960000" });
+  expect(reserveAitunnelStageCall("narration_full_rewrite", { input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: prompt }] })!).toMatchObject({ inputTokens: 8406, outputTokens: 4500, costRub: "0.70812000" });
 });
 
 it("still fail-closes v6 before a provider call when a maximum rewrite no longer fits its bucket", async () => {
   const create = vi.fn();
   const client = { responses: { create } } as never;
   const policy = standardGenerationCostPolicy();
-  policy.buckets.narration_full_rewrite = "7.07959999";
+  policy.buckets.narration_full_rewrite = "0.70811999";
   mocks.findUniqueOrThrow.mockResolvedValue({ policySnapshot: policy });
+  mocks.reserveCostEnvelopeBatch.mockResolvedValue({ status: "blocked", reason: "policy_bucket_exceeded" });
 
   await expect(runWithUsageContext(
     { userId: "user-1", projectId: project.id, costEnvelopeId: "envelope-1", costEnvelopePolicyVersion: COST_ENVELOPE_POLICY_VERSION },
@@ -146,7 +147,7 @@ it("still fail-closes v6 before a provider call when a maximum rewrite no longer
   )).rejects.toThrow("narration_budget_exhausted_failure");
 
   expect(create).not.toHaveBeenCalled();
-  expect(mocks.reserveCostEnvelopeBatch).not.toHaveBeenCalled();
+  expect(mocks.reserveCostEnvelopeBatch).toHaveBeenCalledTimes(1);
 });
 
 it("keeps every grounded runtime section prompt within its persisted candidate and fallback buckets", () => {
@@ -334,7 +335,7 @@ it("logs no quality reason and makes no fallback call when every Lite section is
   });
   const create = vi.fn().mockImplementation(async (_request) => {
     const call = create.mock.calls.length;
-    const words = call === 1 ? 72 : call === 10 ? 90 : 126;
+    const words = call === 1 ? 60 : call === 10 ? 80 : 70;
     const firstSentenceWords = Math.floor(words / 2);
     return { output_text: `${call}. Verified section\n${Array.from({ length: firstSentenceWords }, (_, index) => `topic${call}_${index}`).join(" ")}. ${Array.from({ length: words - firstSentenceWords }, (_, index) => `detail${call}_${index}`).join(" ")}.`, usage: { input_tokens: 1, output_tokens: 1 } };
   });
@@ -353,12 +354,12 @@ it("logs no quality reason and makes no fallback call when every Lite section is
   }
 });
 
-it("rejects the observed 1034-word shape locally and uses only the existing fallback/global path", async () => {
+it("rejects an overlong section locally and uses only the existing fallback/global path", async () => {
   const statuses = setPersistedReservationMocks();
   const create = vi.fn().mockImplementation(async () => {
     const call = create.mock.calls.length;
     const order = call === 1 ? 1 : call === 2 || call === 3 || call === 4 ? 2 : call - 2;
-    const words = order === 1 ? 72 : order === 2 && call < 4 ? 118 : order === 2 ? 126 : order === 10 ? 90 : 126;
+    const words = order === 1 ? 60 : order === 2 && call < 4 ? 40 : order === 2 ? 70 : order === 10 ? 80 : 70;
     return { output_text: sectionText(order, words), usage: { input_tokens: 1, output_tokens: 1 } };
   });
   const client = { responses: { create } } as never;
@@ -389,7 +390,7 @@ function addRub(left: string, right: string) {
   return `${units / 100_000_000n}.${(units % 100_000_000n).toString().padStart(8, "0")}`;
 }
 
-function fullV6Speech(wordsPerSection = 117) {
+function fullV6Speech(wordsPerSection = 70) {
   return Array.from({ length: 10 }, (_, index) => {
     const words = Array.from({ length: wordsPerSection }, (_unused, word) => `слово${index + 1}_${word + 1}`).join(" ");
     return `Слайд ${index + 1}: Раздел ${index + 1}\n${words}.`;
@@ -420,7 +421,7 @@ it("uses a normal per-slide Flash fallback and releases the one global slot when
     const call = create.mock.calls.length;
     if (call === 1) return { output_text: "1. Too short\nNo.", usage: { input_tokens: 1, output_tokens: 1 } };
     const order = call === 2 ? 1 : call - 1;
-    return { output_text: sectionText(order, order === 1 ? 80 : order === 10 ? 100 : 140), usage: { input_tokens: 1, output_tokens: 1 } };
+    return { output_text: sectionText(order, order === 1 ? 60 : order === 10 ? 80 : 70), usage: { input_tokens: 1, output_tokens: 1 } };
   });
   const client = { responses: { create } } as never;
 
@@ -442,7 +443,7 @@ it("uses the global Flash replacement once, then stops after a later dual qualit
     const call = create.mock.calls.length;
     if ([1, 2, 5, 6].includes(call)) return { output_text: `${call <= 2 ? 1 : 3}. Too short\nNo.`, usage: { input_tokens: 1, output_tokens: 1 } };
     const order = call === 3 ? 1 : call === 4 ? 2 : 3;
-    return { output_text: sectionText(order, order === 1 ? 80 : 140), usage: { input_tokens: 1, output_tokens: 1 } };
+    return { output_text: sectionText(order, order === 1 ? 60 : 70), usage: { input_tokens: 1, output_tokens: 1 } };
   });
   const client = { responses: { create } } as never;
 
@@ -476,7 +477,7 @@ it("logs floor-aware word bounds and does not request a second global rewrite af
       return { output_text: `${slideOrder}. Too short\nNo.`, usage: { input_tokens: 1, output_tokens: 1 } };
     }
     const slideOrder = call === 5 ? 3 : call < 3 ? call : call - 2;
-    const words = slideOrder === 1 ? 72 : slideOrder === 10 ? 90 : 126;
+    const words = slideOrder === 1 ? 60 : slideOrder === 10 ? 80 : 70;
     return { output_text: sectionText(slideOrder, words), usage: { input_tokens: 1, output_tokens: 1 } };
   });
   const client = { responses: { create } } as never;
@@ -495,8 +496,8 @@ it("logs floor-aware word bounds and does not request a second global rewrite af
       narrationStage: "narration_section_6_candidate",
       qualityReason: "word_range",
       wordCount: 1,
-      effectiveMinWords: 126,
-      effectiveMaxWords: 182,
+      effectiveMinWords: 60,
+      effectiveMaxWords: 91,
     }));
     expect(JSON.stringify(logged)).not.toContain("Too short");
     expect(JSON.stringify(logged)).not.toContain(project.prompt);
@@ -509,7 +510,7 @@ it("does not add a twenty-second call after ten sections meet the new floors", a
   const statuses = setPersistedReservationMocks();
   const create = vi.fn().mockImplementation(async () => {
     const order = create.mock.calls.length;
-    const words = order === 1 ? 72 : order === 10 ? 90 : 126;
+    const words = order === 1 ? 60 : order === 10 ? 80 : 70;
     return { output_text: sectionText(order, words), usage: { input_tokens: 1, output_tokens: 1 } };
   });
   const client = { responses: { create } } as never;

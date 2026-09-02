@@ -3,13 +3,13 @@ import sharp from "sharp";
 import type { PresentationDocument } from "@studydeck/shared";
 import {
   buildSlideImageQuery,
+  buildAitunnelImagePrompt,
   buildRefinedImageQueries,
   chooseImageCandidate,
   economicPhotoLimit,
   enrichPresentationImages,
   processPresentationImage,
   shouldSearchForSlideImage,
-  shouldGenerateForSlideImage,
   tavilyResponseToImageCandidates,
 } from "./image-search.js";
 
@@ -84,14 +84,18 @@ describe("image search helpers", () => {
     expect(buildRefinedImageQueries({ id: "bmw", title: "BMW M3 history", prompt: "Explain the model" }, slide, direction)).toHaveLength(1);
   });
 
-  it("caps economic runs at one photo per five slides and two photos overall", () => {
+  it("uses the managed visual-policy photo quota and keeps the legacy fallback for other sizes", () => {
+    expect(economicPhotoLimit(6)).toBe(3);
+    expect(economicPhotoLimit(8)).toBe(4);
+    expect(economicPhotoLimit(10)).toBe(5);
+    expect(economicPhotoLimit(12)).toBe(6);
+    expect(economicPhotoLimit(14)).toBe(7);
     expect(economicPhotoLimit(1)).toBe(1);
     expect(economicPhotoLimit(5)).toBe(1);
-    expect(economicPhotoLimit(10)).toBe(2);
     expect(economicPhotoLimit(25)).toBe(2);
   });
 
-  it("keeps a ten-slide concrete deck to two searches and two stored web images", async () => {
+  it("keeps a ten-slide concrete deck to five searches and five stored web images", async () => {
     process.env.PRESENTATION_IMAGES_ENABLED = "true";
     const presentation = fixturePresentation();
     const slides = Array.from({ length: 10 }, (_, index) => ({
@@ -123,9 +127,9 @@ describe("image search helpers", () => {
       },
     );
 
-    expect(queries).toHaveLength(2);
-    expect(enriched.slides.filter((slide) => slide.visual.image?.provider === "tavily")).toHaveLength(2);
-    expect(enriched.designBrief?.slideDirections.filter((direction) => direction.imageStrategy === "real_photo")).toHaveLength(2);
+    expect(queries).toHaveLength(5);
+    expect(enriched.slides.filter((slide) => slide.visual.image?.provider === "tavily")).toHaveLength(5);
+    expect(enriched.designBrief?.slideDirections.filter((direction) => direction.imageStrategy === "real_photo")).toHaveLength(5);
   });
 
   it("uses a local fallback when the image bucket cannot be reserved", async () => {
@@ -147,6 +151,150 @@ describe("image search helpers", () => {
     expect(searchCalls).toBe(0);
     expect(enriched.slides[0].visual.image).toBeUndefined();
     expect(enriched.designBrief?.slideDirections[0]).toMatchObject({ imageStrategy: "diagram", layoutIntent: "diagram" });
+  });
+
+  it("skips attempted recovery slides and leaves failed photo directions for the final diagram materialization", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    const slides = [1, 2].map((order) => ({
+      ...presentation.slides[0],
+      id: `slide-${order}`,
+      order,
+      title: `BMW M3 generation ${order}`,
+      slideKind: "content" as const,
+      visual: { ...presentation.slides[0].visual, image: undefined },
+    }));
+    const directions = slides.map((slide) => ({
+      slideOrder: slide.order,
+      visualRole: "context" as const,
+      layoutIntent: "split_image_text" as const,
+      imageStrategy: "real_photo" as const,
+      visualPrompt: `${slide.title} documentary automobile photograph`,
+    }));
+    const attemptedSlideOrders = new Set([1]);
+    const queries: string[] = [];
+    const enriched = await enrichPresentationImages(
+      { id: "recovery", title: "BMW M3 history", prompt: "Explain the model generations" },
+      { ...presentation, slideCount: 10, slides, designBrief: { ...presentation.designBrief!, slideDirections: directions } },
+      {
+        recovery: true,
+        skipSlideOrders: attemptedSlideOrders,
+        attemptedSlideOrders,
+        searchImages: async (query) => {
+          queries.push(query);
+          return [];
+        },
+        reserveImageBucket: async () => ({ envelopeId: "recovery-envelope", idempotencyKey: "image", amountRub: "1" }),
+      },
+    );
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain("BMW M3 generation 2");
+    expect(enriched.slides.map((slide) => slide.visual.type)).toEqual(slides.map((slide) => slide.visual.type));
+    expect(enriched.slides.every((slide) => !slide.visual.image)).toBe(true);
+    expect([...attemptedSlideOrders]).toEqual([1, 2]);
+  });
+
+  it("uses one AITunnel image generation, stores the result, and settles provider cost", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    process.env.AI_PROVIDER = "aitunnel";
+    const presentation = fixturePresentation();
+    const generatedBuffer = await sharp({
+      create: { width: 640, height: 420, channels: 3, background: { r: 70, g: 40, b: 130 } },
+    }).png().toBuffer();
+    let generatedPrompt = "";
+    let settledCost: string | undefined;
+    const enriched = await enrichPresentationImages(
+      { id: "aitunnel-recovery", title: "AI in education", prompt: "Explain practical AI in school" },
+      { ...presentation, slideCount: 6, slides: [presentation.slides[0]] },
+      {
+        generateImage: async (prompt) => {
+          generatedPrompt = prompt;
+          return { buffer: generatedBuffer, contentType: "image/png", model: "gpt-image-1-mini", costRub: "0.40800000" };
+        },
+        reserveImageBucket: async () => ({ envelopeId: "aitunnel-envelope", idempotencyKey: "aitunnel-image", amountRub: "0.50000000" }),
+        settleImageBucket: async (_reservation, actualRub) => {
+          settledCost = actualRub;
+        },
+        putObject: async () => undefined,
+      },
+    );
+
+    expect(generatedPrompt).toContain("Create a realistic horizontal editorial image");
+    expect(buildAitunnelImagePrompt({ id: "p", title: "AI", prompt: "AI" }, presentation.slides[0], presentation.designBrief?.slideDirections[0])).toContain("Do not include text");
+    expect(enriched.slides[0].visual.image).toMatchObject({
+      provider: "aitunnel",
+      sourceTitle: "AITunnel",
+      url: "/api/projects/aitunnel-recovery/slides/slide-1/assets/visual-image",
+    });
+    expect(enriched.slides[0].visual.image?.objectKey).toMatch(/slide-1-aitunnel-[a-f0-9]{12}\.jpg$/);
+    expect(settledCost).toBe("0.40800000");
+  });
+
+  it("uses the full managed photo quota for several AITunnel raster images", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    const slides = Array.from({ length: 6 }, (_, index) => ({
+      ...presentation.slides[0],
+      id: `aitunnel-slide-${index + 1}`,
+      order: index + 1,
+      title: `AI in education example ${index + 1}`,
+      visual: { ...presentation.slides[0].visual, image: undefined },
+    }));
+    const directions = slides.map((slide) => ({
+      slideOrder: slide.order,
+      visualRole: "context" as const,
+      layoutIntent: "split_image_text" as const,
+      imageStrategy: "real_photo" as const,
+      visualPrompt: `${slide.title} documentary classroom photograph`,
+    }));
+    const generatedBuffer = await sharp({
+      create: { width: 640, height: 420, channels: 3, background: { r: 70, g: 40, b: 130 } },
+    }).png().toBuffer();
+    let generated = 0;
+    let reservations = 0;
+    const enriched = await enrichPresentationImages(
+      { id: "aitunnel-quota", title: "AI in education", prompt: "Explain practical AI in school" },
+      { ...presentation, slideCount: 6, slides, designBrief: { ...presentation.designBrief!, slideDirections: directions } },
+      {
+        generateImage: async () => {
+          generated += 1;
+          return { buffer: generatedBuffer, contentType: "image/png", model: "gpt-image-1-mini", costRub: "0.60000000" };
+        },
+        reserveImageBucket: async () => {
+          reservations += 1;
+          return { envelopeId: "aitunnel-quota-envelope", idempotencyKey: `image-${reservations}`, amountRub: "0.66666666" };
+        },
+        putObject: async () => undefined,
+      },
+    );
+
+    expect(generated).toBe(3);
+    expect(reservations).toBe(3);
+    expect(enriched.slides.filter((slide) => slide.visual.image?.provider === "aitunnel")).toHaveLength(3);
+  });
+
+  it("does not search in recovery without an active cost-envelope context", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    const deck = { ...presentation, slides: [presentation.slides[0]] };
+    let searchCalls = 0;
+
+    const recovered = await enrichPresentationImages(
+      { id: "recovery-no-envelope", title: "AI in education", prompt: "Explain practical AI in school" },
+      deck,
+      {
+        recovery: true,
+        searchImages: async () => {
+          searchCalls += 1;
+          return [];
+        },
+      },
+    );
+
+    expect(searchCalls).toBe(0);
+    expect(recovered).toBe(deck);
+    expect(recovered.slides[0].visual.image).toBeUndefined();
   });
   it("prefers the design brief visual prompt in a short concrete query", () => {
     const presentation = fixturePresentation();
@@ -416,106 +564,6 @@ describe("image search helpers", () => {
     })).toBe(false);
   });
 
-  it("uses AITUNNEL only for an explicitly enabled generated illustration and keeps synthetic attribution", async () => {
-    process.env.PRESENTATION_IMAGES_ENABLED = "true";
-    process.env.PRESENTATION_IMAGE_PROVIDER = "aitunnel";
-    const presentation = fixturePresentation();
-    const slide = { ...presentation.slides[0], visual: { ...presentation.slides[0].visual, image: undefined } };
-    const direction = {
-      slideOrder: 1,
-      visualRole: "context" as const,
-      layoutIntent: "split_image_text" as const,
-      imageStrategy: "generated_illustration" as const,
-      visualPrompt: "Students collaborating around a glowing AI tutor in a lecture hall",
-    };
-    const generated = await sharp({ create: { width: 800, height: 500, channels: 3, background: "#4d8fba" } }).png().toBuffer();
-    let searchCalls = 0;
-    const generatedCalls: string[] = [];
-    const settled: Array<string | undefined> = [];
-    const uploaded: Array<{ key: string; contentType: string }> = [];
-
-    const enriched = await enrichPresentationImages(
-      { id: "project-aitunnel", title: "AI in education", prompt: "Explain practical AI in school" },
-      { ...presentation, slides: [slide], designBrief: { ...presentation.designBrief!, slideDirections: [direction] } },
-      {
-        searchImages: async () => { searchCalls += 1; return []; },
-        generateImage: async (prompt) => {
-          generatedCalls.push(prompt);
-          return { buffer: generated, contentType: "image/png", model: "seedream-4.5", endpoint: "https://api.aitunnel.ru/v1/images/generations", actualCostRub: "3.4" };
-        },
-        settleImageBucket: async (_reservation, actualRub) => { settled.push(actualRub); },
-        failImageBucket: async () => { throw new Error("unexpected provider failure"); },
-        putObject: async (key, _buffer, contentType) => { uploaded.push({ key, contentType }); },
-      },
-    );
-
-    expect(shouldGenerateForSlideImage(slide, direction)).toBe(true);
-    expect(generatedCalls).toHaveLength(1);
-    expect(searchCalls).toBe(0);
-    expect(settled).toEqual(["3.4"]);
-    expect(uploaded[0]).toMatchObject({ contentType: "image/jpeg" });
-    expect(enriched.slides[0].visual.image).toMatchObject({
-      provider: "aitunnel",
-      sourceTitle: "AI-generated by AITUNNEL",
-      url: "",
-    });
-    expect(enriched.slides[0].visual.image?.sourceUrl).toBeUndefined();
-    expect(enriched.slides[0].visual.image?.objectKey).toContain("slide-1-aitunnel-");
-  });
-
-  it("does not call Tavily after an AITUNNEL generated-image failure", async () => {
-    process.env.PRESENTATION_IMAGES_ENABLED = "true";
-    process.env.PRESENTATION_IMAGE_PROVIDER = "aitunnel";
-    const presentation = fixturePresentation();
-    const direction = {
-      slideOrder: 1,
-      visualRole: "context" as const,
-      layoutIntent: "split_image_text" as const,
-      imageStrategy: "generated_illustration" as const,
-      visualPrompt: "Editorial illustration of students using an AI tutor",
-    };
-    let generatedCalls = 0;
-    let searchCalls = 0;
-    let failed = 0;
-    const enriched = await enrichPresentationImages(
-      { id: "project-aitunnel-failure", title: "AI in education", prompt: "Explain practical AI in school" },
-      { ...presentation, slides: [presentation.slides[0]], designBrief: { ...presentation.designBrief!, slideDirections: [direction] } },
-      {
-        generateImage: async () => { generatedCalls += 1; throw new Error("provider unavailable"); },
-        searchImages: async () => { searchCalls += 1; return []; },
-        failImageBucket: async () => { failed += 1; },
-      },
-    );
-
-    expect(generatedCalls).toBe(1);
-    expect(searchCalls).toBe(0);
-    expect(failed).toBe(1);
-    expect(enriched.slides[0].visual.image).toBeUndefined();
-    expect(enriched.designBrief?.slideDirections[0]).toMatchObject({ imageStrategy: "diagram" });
-  });
-
-  it("keeps real_photo on the Tavily path when the AITUNNEL image switch is enabled", async () => {
-    process.env.PRESENTATION_IMAGES_ENABLED = "true";
-    process.env.PRESENTATION_IMAGE_PROVIDER = "aitunnel";
-    const presentation = fixturePresentation();
-    let searchCalls = 0;
-    let generatedCalls = 0;
-    const enriched = await enrichPresentationImages(
-      { id: "project-real-photo", title: "AI in education", prompt: "Explain practical AI in school" },
-      { ...presentation, slides: [presentation.slides[0]] },
-      {
-        searchImages: async () => { searchCalls += 1; return [{ url: "https://cdn.example.com/classroom.jpg", description: "Students classroom", sourceTitle: "Archive", sourceUrl: "https://archive.example.com/classroom" }]; },
-        generateImage: async () => { generatedCalls += 1; throw new Error("must not be called"); },
-        downloadImage: async () => ({ buffer: Buffer.from("image"), contentType: "image/jpeg", extension: "jpg" }),
-        putObject: async () => undefined,
-      },
-    );
-
-    expect(searchCalls).toBe(1);
-    expect(generatedCalls).toBe(0);
-    expect(enriched.slides[0].visual.image?.provider).toBe("tavily");
-  });
-
   it("tries another Tavily candidate when the first image cannot be downloaded", async () => {
     process.env.PRESENTATION_IMAGES_ENABLED = "true";
     const presentation = fixturePresentation();
@@ -570,6 +618,31 @@ describe("image search helpers", () => {
       layout: "process",
       visual: { type: "process_diagram", items: [{ text: "Collect the source material" }, { text: "Compare the key evidence" }, { text: "Explain the conclusion" }] },
     });
+  });
+
+  it("turns a Tavily search error into a visible local diagram", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    const slide = {
+      ...presentation.slides[0],
+      bullets: ["Identify the concrete subject", "Connect the evidence to the claim"],
+    };
+
+    const enriched = await enrichPresentationImages(
+      { id: "project-1", title: "AI in education", prompt: "Explain practical AI in school" },
+      { ...presentation, slides: [slide] },
+      {
+        searchImages: async () => { throw new Error("Tavily unavailable"); },
+        putObject: async () => undefined,
+      },
+    );
+
+    expect(enriched.slides[0]).toMatchObject({ layout: "process", visual: { type: "process_diagram" } });
+    expect(enriched.slides[0].visual.items.slice(0, 2)).toEqual([
+      { label: "1", text: "Identify the concrete subject" },
+      { label: "2", text: "Connect the evidence to the claim" },
+    ]);
+    expect(enriched.slides[0].visual.diagram?.source).toContain("-->");
   });
 
   it("resizes and normalizes oversized presentation images before upload", async () => {
@@ -635,6 +708,21 @@ describe("image search helpers", () => {
     expect(image?.byteSize).toBe(uploaded[0].size);
     expect(uploaded[0].key).toMatch(/\.jpg$/);
     expect(uploaded[0].contentType).toBe("image/jpeg");
+  });
+
+  it("always rasterizes a small SVG instead of storing it under a raster MIME type", async () => {
+    const source = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675"><rect width="1200" height="675" fill="#24104f"/><circle cx="600" cy="337" r="120" fill="#f4b942"/></svg>');
+    const processed = await processPresentationImage(source, {
+      contentType: "image/svg+xml",
+      maxBytes: 100_000,
+      maxWidth: 960,
+      maxHeight: 540,
+    });
+
+    expect(processed.contentType).not.toBe("image/svg+xml");
+    expect(["image/jpeg", "image/png"]).toContain(processed.contentType);
+    expect(processed.extension).not.toBe("");
+    expect(processed.buffer.subarray(0, 4).toString("hex")).not.toBe("3c737667");
   });
 
   it("keeps a small original image when processing fails safely", async () => {

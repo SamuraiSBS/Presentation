@@ -428,7 +428,7 @@ export function validateNarrationSections(sections: NarrationSection[], project:
 
 /**
  * v6 full-document gate. It deliberately does not reuse the independent
- * section floors: the project's requested slide total is authoritative and role targets are
+ * section floors: the whole-speech total is authoritative and role targets are
  * soft guidance. Diagnostics are typed so raw validator prose never has to
  * leave this module.
  */
@@ -504,7 +504,7 @@ export function assessFullNarrationDocument(value: unknown, project: ProjectInpu
   const severeIssueCount = [...issueCodes].filter((code) => severeCodes.includes(code)).length;
   const hasCanonicalSectionCoverage = structuralIssueCount === 0;
   // Template, repetition and commentary defects are semantic repair work;
-  // they do not make a complete draft structurally unusable.
+  // they do not make a complete deck-sized draft structurally unusable.
   // Keeping this distinction lets the bounded targeted repair run and, if it
   // still cannot pass, preserves the best real-AI draft for review.
   const isStructurallyUsable = hasCanonicalSectionCoverage;
@@ -556,7 +556,7 @@ export function selectBestFullNarrationAttempt(attempts: readonly FullNarrationA
     narration_full_rewrite: 1,
     narration_targeted_repair: 2,
   };
-  const targetWords = 1300;
+  const targetWords = 700;
   const best = [...eligible].sort((left, right) => {
     const leftIssues = left.diagnostics.severeIssueCount + left.diagnostics.structuralIssueCount;
     const rightIssues = right.diagnostics.severeIssueCount + right.diagnostics.structuralIssueCount;

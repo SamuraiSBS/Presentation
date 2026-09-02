@@ -44,7 +44,7 @@ export function ProjectActionDialogs({ kind, onOpenChange, project, folders, usa
     }
   }
 
-  const copyBlocked = kind === "duplicate" && usage.used >= usage.limit;
+  const copyBlocked = kind === "duplicate" && !usage.unlimited && usage.used >= usage.limit;
   return (
     <Dialog open={Boolean(kind)} onOpenChange={onOpenChange}>
       <DialogContent>

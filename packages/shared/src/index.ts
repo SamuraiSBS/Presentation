@@ -1,5 +1,5 @@
-export { adminPeriodSchema, adminTimeRangeSchema, adminListQuerySchema, adminMoneySchema, adminMetricSchema, adminOverviewSchema, adminUserRowSchema, adminUsersResponseSchema, adminUserDetailSchema, adminReasonSchema, adminPlanOverrideSchema, adminActionResultSchema } from "./admin/schemas.js";
-export type { AdminPeriod, AdminTimeRange, AdminListQuery, AdminMoney, AdminOverview, AdminUserRow, AdminUsersResponse, AdminUserDetail, AdminPlanOverrideInput, AdminActionResult } from "./admin/schemas.js";
+export { adminPeriodSchema, adminTimeRangeSchema, adminListQuerySchema, adminMoneySchema, adminMetricSchema, adminOverviewSchema, adminUserRowSchema, adminUsersResponseSchema, adminUserDetailSchema, adminReasonSchema, adminPlanOverrideSchema, adminPresentationRecoverySchema, adminActionResultSchema } from "./admin/schemas.js";
+export type { AdminPeriod, AdminTimeRange, AdminListQuery, AdminMoney, AdminOverview, AdminUserRow, AdminUsersResponse, AdminUserDetail, AdminPlanOverrideInput, AdminPresentationRecoveryInput, AdminActionResult } from "./admin/schemas.js";
 export { paidPlanCodes, planCodeSchema, planLimits, planPricesRub, planRank } from "./billing/limits.js";
 export type { PaidPlanCode, PlanCode } from "./billing/limits.js";
 export { scenarioSchema, projectStatusSchema, projectAccessRoleSchema, projectMemberRoleSchema, folderColorSchema, jobStatusSchema, sourceSchema, updateSourceReviewInputSchema, sourceRefSchema } from "./projects/schemas.js";
@@ -18,7 +18,7 @@ export type { SlideBlock, SlideKind, SlideLayout, SlideLayoutRequirement, SlideL
 export { SLIDE_LAYOUT_DEFINITIONS, PRESENTATION_LAYOUT_CAPACITY, slideLayoutDefinition, slideLayoutOptions, presentationLayoutCapacity } from "./presentation/layouts.js";
 export type { LayoutCapacity } from "./presentation/layouts.js";
 export { generationProgressStageSchema, generationJobKindSchema, entityAssertionSchema, factualTopicProfileSchema, slideNarrativeSchema, deckStorySchema, slideTextPlanSchema, researchBriefSchema, sceneTextModeSchema, designBriefSlideDirectionSchema, designBriefSchema, slideBlueprintSchema, visualStrategySchema, diagramSpecSchema, qualityIssueSchema, qualityDimensionScoreSchema, qualityDimensionsSchema, qualityCritiqueSchema, generationPipelineArtifactsSchema, generationBriefSchema } from "./generation/schemas.js";
-export type { GenerationProgressStage, GenerationJobKind, EntityAssertion, FactualTopicProfile, SlideNarrative, DeckStory, SlideTextPlan, ResearchBrief, SceneTextMode, DesignBriefSlideDirection, DesignBrief, SlideBlueprint, VisualStrategy, DiagramSpec, QualityIssue, QualityDimensionScore, QualityDimensions, QualityCritique, GenerationPipelineArtifacts, GenerationBrief } from "./generation/schemas.js";
+export type { GenerationProgressStage, GenerationJobKind, EntityAssertion, FactualTopicProfile, SlideNarrative, DeckStory, SlideTextComposition, SlideSupportPointRole, SlideSupportPoint, SlideTextPlan, ResearchBrief, SceneTextMode, DesignBriefSlideDirection, DesignBrief, SlideBlueprint, VisualStrategy, DiagramSpec, QualityIssue, QualityDimensionScore, QualityDimensions, QualityCritique, GenerationPipelineArtifacts, GenerationBrief } from "./generation/schemas.js";
 export { generationFailureCategoryValues, safeGenerationRecovery } from "./generation/recovery.js";
 export {
   publicNarrationStateValues,
@@ -27,7 +27,7 @@ export {
   type PublicNarrationState,
 } from "./generation/public-narration-state.js";
 export type { GenerationFailureCategory, SafeGenerationRecovery } from "./generation/recovery.js";
-export { RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE, RUSSIAN_STUDENT_SPEECH_TIMING_PRESETS, getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechTimingBudget, getRussianStudentSpeechSectionBounds, russianSpeechMinutesFromWords } from "./generation/speech-timing.js";
+export { RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE, RUSSIAN_STUDENT_SPEECH_WORD_RANGE, RUSSIAN_STUDENT_SPEECH_TIMING_PRESETS, getFloorAwareSpeechTimingSectionBounds, getRussianStudentSpeechTimingBudget, getRussianStudentSpeechSectionBounds, russianSpeechMinutesFromWords } from "./generation/speech-timing.js";
 export type { SpeechTimingBudget, SpeechTimingProject, SpeechTimingSectionBounds } from "./generation/speech-timing.js";
 export { assessFullSpeechContract } from "./generation/narration-contract.js";
 export type { FullSpeechContractAssessment, FullSpeechContractIssue } from "./generation/narration-contract.js";
