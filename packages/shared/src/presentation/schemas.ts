@@ -192,14 +192,17 @@ export const slideVisualRowSchema = z.object({
 export type SlideVisualRow = z.infer<typeof slideVisualRowSchema>;
 
 export const slideVisualImageSchema = z.object({
-  url: z.string().url(),
+  // Persisted worker-generated assets are addressed through the same signed
+  // API route used by the editor. External URLs remain valid for Tavily and
+  // legacy assets.
+  url: z.string().refine((value) => isSlideImageUrl(value), "Image URL must be an HTTP(S) URL or a slide asset route"),
   sourceId: z.string().trim().min(1).max(128).optional(),
   objectKey: z.string().optional(),
   alt: z.string().default(""),
   query: z.string().default(""),
   sourceUrl: z.string().url().optional(),
   sourceTitle: z.string().default(""),
-  provider: z.enum(["tavily", "user", "repository", "archive"]).default("tavily"),
+  provider: z.enum(["tavily", "aitunnel", "user", "repository", "archive"]).default("tavily"),
   contentType: z.string().default(""),
   width: z.number().int().positive().optional(),
   height: z.number().int().positive().optional(),
@@ -207,6 +210,16 @@ export const slideVisualImageSchema = z.object({
   warnings: z.array(z.string().trim().min(1).max(180)).max(6).default([]),
 });
 export type SlideVisualImage = z.infer<typeof slideVisualImageSchema>;
+
+function isSlideImageUrl(value: string) {
+  if (/^\/api\/projects\/[^/]+\/slides\/[^/]+\/assets\/[^/]+$/.test(value)) return true;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 export const mermaidDiagramSourceSchema = z
   .string()

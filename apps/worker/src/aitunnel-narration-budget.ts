@@ -9,7 +9,7 @@ export const AITUNNEL_PRIMARY_PRICE = AITUNNEL_PROVIDER_CATALOG["gpt-5.6-terra"]
 // Kept for compatibility with the Lite-only section route.
 export const AITUNNEL_NARRATION_PRICE = AITUNNEL_ECONOMY_PRICE;
 export const AITUNNEL_NARRATION_DEFAULT_BUDGET_RUB = 10;
-export const AITUNNEL_PROJECT_DEFAULT_BUDGET_RUB = 12;
+export const AITUNNEL_PROJECT_DEFAULT_BUDGET_RUB = 13.5;
 // 384 tokens covers the largest shared 140-word role target with room for
 // Russian punctuation and the required slide heading; it is not the old
 // 1350-token Flash ceiling.

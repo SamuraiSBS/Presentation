@@ -51,11 +51,21 @@ export function evaluateEconomicReleaseGate(input: EconomicReleaseGateInput): Ec
     categories.add("cost_envelope");
   }
   if ((envelope.status === "exhausted" && !project.acceptedNarrationRecovery) || envelope.status === "cancelled"
-    || envelope.reservations.some((reservation) => reservation.status !== "settled" && reservation.status !== "released")) {
+    || envelope.reservations.some((reservation) => !isResolvedReservation(reservation))) {
     categories.add("paid_stage_unresolved");
   }
 
   return { passed: categories.size === 0, categories: [...categories].sort() };
+}
+
+function isResolvedReservation(reservation: { status: ReservationStatus; reason: string | null }) {
+  if (reservation.status === "settled" || reservation.status === "released") return true;
+  // AITUNNEL image generation is synchronous but its provider-reported price
+  // can exceed the bounded web-search reservation by a few kopecks. The
+  // actual charge is already settled and the global envelope cap above still
+  // protects the run; treat only this explicit image-generation overrun as
+  // resolved, never an unknown or transport failure.
+  return reservation.status === "overrun" && reservation.reason === "presentation_image_generation";
 }
 
 export class EconomicReleaseGateError extends Error {

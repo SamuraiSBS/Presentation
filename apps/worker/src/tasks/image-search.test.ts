@@ -3,6 +3,7 @@ import sharp from "sharp";
 import type { PresentationDocument } from "@studydeck/shared";
 import {
   buildSlideImageQuery,
+  buildAitunnelImagePrompt,
   buildRefinedImageQueries,
   chooseImageCandidate,
   economicPhotoLimit,
@@ -150,6 +151,150 @@ describe("image search helpers", () => {
     expect(searchCalls).toBe(0);
     expect(enriched.slides[0].visual.image).toBeUndefined();
     expect(enriched.designBrief?.slideDirections[0]).toMatchObject({ imageStrategy: "diagram", layoutIntent: "diagram" });
+  });
+
+  it("skips attempted recovery slides and leaves failed photo directions for the final diagram materialization", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    const slides = [1, 2].map((order) => ({
+      ...presentation.slides[0],
+      id: `slide-${order}`,
+      order,
+      title: `BMW M3 generation ${order}`,
+      slideKind: "content" as const,
+      visual: { ...presentation.slides[0].visual, image: undefined },
+    }));
+    const directions = slides.map((slide) => ({
+      slideOrder: slide.order,
+      visualRole: "context" as const,
+      layoutIntent: "split_image_text" as const,
+      imageStrategy: "real_photo" as const,
+      visualPrompt: `${slide.title} documentary automobile photograph`,
+    }));
+    const attemptedSlideOrders = new Set([1]);
+    const queries: string[] = [];
+    const enriched = await enrichPresentationImages(
+      { id: "recovery", title: "BMW M3 history", prompt: "Explain the model generations" },
+      { ...presentation, slideCount: 10, slides, designBrief: { ...presentation.designBrief!, slideDirections: directions } },
+      {
+        recovery: true,
+        skipSlideOrders: attemptedSlideOrders,
+        attemptedSlideOrders,
+        searchImages: async (query) => {
+          queries.push(query);
+          return [];
+        },
+        reserveImageBucket: async () => ({ envelopeId: "recovery-envelope", idempotencyKey: "image", amountRub: "1" }),
+      },
+    );
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain("BMW M3 generation 2");
+    expect(enriched.slides.map((slide) => slide.visual.type)).toEqual(slides.map((slide) => slide.visual.type));
+    expect(enriched.slides.every((slide) => !slide.visual.image)).toBe(true);
+    expect([...attemptedSlideOrders]).toEqual([1, 2]);
+  });
+
+  it("uses one AITunnel image generation, stores the result, and settles provider cost", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    process.env.AI_PROVIDER = "aitunnel";
+    const presentation = fixturePresentation();
+    const generatedBuffer = await sharp({
+      create: { width: 640, height: 420, channels: 3, background: { r: 70, g: 40, b: 130 } },
+    }).png().toBuffer();
+    let generatedPrompt = "";
+    let settledCost: string | undefined;
+    const enriched = await enrichPresentationImages(
+      { id: "aitunnel-recovery", title: "AI in education", prompt: "Explain practical AI in school" },
+      { ...presentation, slideCount: 6, slides: [presentation.slides[0]] },
+      {
+        generateImage: async (prompt) => {
+          generatedPrompt = prompt;
+          return { buffer: generatedBuffer, contentType: "image/png", model: "gpt-image-1-mini", costRub: "0.40800000" };
+        },
+        reserveImageBucket: async () => ({ envelopeId: "aitunnel-envelope", idempotencyKey: "aitunnel-image", amountRub: "0.50000000" }),
+        settleImageBucket: async (_reservation, actualRub) => {
+          settledCost = actualRub;
+        },
+        putObject: async () => undefined,
+      },
+    );
+
+    expect(generatedPrompt).toContain("Create a realistic horizontal editorial image");
+    expect(buildAitunnelImagePrompt({ id: "p", title: "AI", prompt: "AI" }, presentation.slides[0], presentation.designBrief?.slideDirections[0])).toContain("Do not include text");
+    expect(enriched.slides[0].visual.image).toMatchObject({
+      provider: "aitunnel",
+      sourceTitle: "AITunnel",
+      url: "/api/projects/aitunnel-recovery/slides/slide-1/assets/visual-image",
+    });
+    expect(enriched.slides[0].visual.image?.objectKey).toMatch(/slide-1-aitunnel-[a-f0-9]{12}\.jpg$/);
+    expect(settledCost).toBe("0.40800000");
+  });
+
+  it("uses the full managed photo quota for several AITunnel raster images", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    const slides = Array.from({ length: 6 }, (_, index) => ({
+      ...presentation.slides[0],
+      id: `aitunnel-slide-${index + 1}`,
+      order: index + 1,
+      title: `AI in education example ${index + 1}`,
+      visual: { ...presentation.slides[0].visual, image: undefined },
+    }));
+    const directions = slides.map((slide) => ({
+      slideOrder: slide.order,
+      visualRole: "context" as const,
+      layoutIntent: "split_image_text" as const,
+      imageStrategy: "real_photo" as const,
+      visualPrompt: `${slide.title} documentary classroom photograph`,
+    }));
+    const generatedBuffer = await sharp({
+      create: { width: 640, height: 420, channels: 3, background: { r: 70, g: 40, b: 130 } },
+    }).png().toBuffer();
+    let generated = 0;
+    let reservations = 0;
+    const enriched = await enrichPresentationImages(
+      { id: "aitunnel-quota", title: "AI in education", prompt: "Explain practical AI in school" },
+      { ...presentation, slideCount: 6, slides, designBrief: { ...presentation.designBrief!, slideDirections: directions } },
+      {
+        generateImage: async () => {
+          generated += 1;
+          return { buffer: generatedBuffer, contentType: "image/png", model: "gpt-image-1-mini", costRub: "0.60000000" };
+        },
+        reserveImageBucket: async () => {
+          reservations += 1;
+          return { envelopeId: "aitunnel-quota-envelope", idempotencyKey: `image-${reservations}`, amountRub: "0.66666666" };
+        },
+        putObject: async () => undefined,
+      },
+    );
+
+    expect(generated).toBe(3);
+    expect(reservations).toBe(3);
+    expect(enriched.slides.filter((slide) => slide.visual.image?.provider === "aitunnel")).toHaveLength(3);
+  });
+
+  it("does not search in recovery without an active cost-envelope context", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    const deck = { ...presentation, slides: [presentation.slides[0]] };
+    let searchCalls = 0;
+
+    const recovered = await enrichPresentationImages(
+      { id: "recovery-no-envelope", title: "AI in education", prompt: "Explain practical AI in school" },
+      deck,
+      {
+        recovery: true,
+        searchImages: async () => {
+          searchCalls += 1;
+          return [];
+        },
+      },
+    );
+
+    expect(searchCalls).toBe(0);
+    expect(recovered).toBe(deck);
+    expect(recovered.slides[0].visual.image).toBeUndefined();
   });
   it("prefers the design brief visual prompt in a short concrete query", () => {
     const presentation = fixturePresentation();
@@ -563,6 +708,21 @@ describe("image search helpers", () => {
     expect(image?.byteSize).toBe(uploaded[0].size);
     expect(uploaded[0].key).toMatch(/\.jpg$/);
     expect(uploaded[0].contentType).toBe("image/jpeg");
+  });
+
+  it("always rasterizes a small SVG instead of storing it under a raster MIME type", async () => {
+    const source = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675"><rect width="1200" height="675" fill="#24104f"/><circle cx="600" cy="337" r="120" fill="#f4b942"/></svg>');
+    const processed = await processPresentationImage(source, {
+      contentType: "image/svg+xml",
+      maxBytes: 100_000,
+      maxWidth: 960,
+      maxHeight: 540,
+    });
+
+    expect(processed.contentType).not.toBe("image/svg+xml");
+    expect(["image/jpeg", "image/png"]).toContain(processed.contentType);
+    expect(processed.extension).not.toBe("");
+    expect(processed.buffer.subarray(0, 4).toString("hex")).not.toBe("3c737667");
   });
 
   it("keeps a small original image when processing fails safely", async () => {

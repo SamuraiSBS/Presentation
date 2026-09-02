@@ -1,5 +1,7 @@
-export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v11";
-export const COST_ENVELOPE_LIMIT_RUB = "12.00000000";
+export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v12";
+// v12 keeps the existing narration and presentation reservations intact while
+// making room for up to three AITunnel raster images in a six-slide deck.
+export const COST_ENVELOPE_LIMIT_RUB = "13.50000000";
 export const COST_ENVELOPE_BUCKETS = {
   // A source snapshot is valid only when at least three sources pass the
   // relevance gate. Reserve three bounded Tavily attempts so a weak first
@@ -20,7 +22,7 @@ export const COST_ENVELOPE_BUCKETS = {
   quality_critique: "0.30000000",
   quality_repair: "1.00000000",
   slide_text_repair: "0.60000000",
-  images: "0.50000000",
+  images: "2.00000000",
   export_infra: "0.75000000",
 } as const;
 

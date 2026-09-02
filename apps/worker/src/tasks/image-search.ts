@@ -5,6 +5,7 @@ import { captureGenerationError, errorLogFields, logger } from "../observability
 import { putObjectBuffer } from "../storage.js";
 import { currentUsageContext, recordCostEvent } from "../usage-ledger.js";
 import { reserveCostEnvelope, settleCostEnvelope } from "../cost-envelope.js";
+import { aitunnelImageConfig, generateAitunnelImage, type GeneratedAitunnelImage } from "../aitunnel-image.js";
 import { isManagedSlideCount, visualQuotaForSlideCount } from "./presentation/visual-policy.js";
 
 type ProjectInput = {
@@ -73,10 +74,14 @@ export type ProcessedPresentationImage = {
 
 type ImageSearchDependencies = {
   searchImages?: (query: string) => Promise<ImageCandidate[]>;
+  generateImage?: (prompt: string) => Promise<GeneratedAitunnelImage>;
   downloadImage?: (url: string) => Promise<DownloadedImage>;
   putObject?: (key: string, buffer: Buffer, contentType: string) => Promise<void>;
   reserveImageBucket?: (slideOrder: number) => Promise<ImageReservationResult>;
-  settleImageBucket?: (reservation: ImageReservationResult) => Promise<void>;
+  settleImageBucket?: (reservation: ImageReservationResult, actualRub?: string) => Promise<void>;
+  skipSlideOrders?: ReadonlySet<number> | readonly number[];
+  attemptedSlideOrders?: Set<number>;
+  recovery?: boolean;
   warn?: (message: string, error: unknown) => void;
 };
 
@@ -89,20 +94,33 @@ export async function enrichPresentationImages(
   presentation: PresentationDocument,
   dependencies: ImageSearchDependencies = {},
 ): Promise<PresentationDocument> {
-  if (project.workflow === "requirements_driven" && project.allowWebImages !== true) {
-    return fallbackUnavailableManagedPhotos(presentation);
+  const recovery = dependencies.recovery === true;
+  // Injected search/generation dependencies are deterministic test seams and
+  // must win over the process-wide provider configuration.
+  const useAitunnelImages = !dependencies.searchImages && Boolean(dependencies.generateImage || isAitunnelImageProvider());
+  if (project.workflow === "requirements_driven" && project.allowWebImages !== true && !useAitunnelImages) {
+    return recovery ? presentation : fallbackUnavailableManagedPhotos(presentation);
   }
   if (!isPresentationImagesEnabled(dependencies)) {
-    return fallbackUnavailableManagedPhotos(presentation);
+    return recovery ? presentation : fallbackUnavailableManagedPhotos(presentation);
+  }
+  // Recovery may spend on images only inside the linked active envelope. A
+  // custom reservation dependency is kept as the unit-test seam; production
+  // calls always have the usage context populated by the worker boundary.
+  if (recovery && !currentUsageContext()?.costEnvelopeId && !dependencies.reserveImageBucket) {
+    return presentation;
   }
 
   const usedUrls = new Set<string>();
   const usedDomains = new Set<string>();
+  const generateImage = dependencies.generateImage || generateAitunnelImage;
   const searchImages = dependencies.searchImages || searchTavilyImages;
   const downloadImage = dependencies.downloadImage || downloadRemoteImage;
   const putObject = dependencies.putObject || putObjectBuffer;
   const settleImage = dependencies.settleImageBucket || settleImageBucket;
   const warn = dependencies.warn || ((message, error) => logger.warn({ ...errorLogFields(error) }, message));
+  const skipSlideOrders = new Set(dependencies.skipSlideOrders || []);
+  const attemptedSlideOrders = dependencies.attemptedSlideOrders;
 
   const slides = [];
   const fallbackDirections = new Map<number, DesignBriefSlideDirection>();
@@ -111,7 +129,15 @@ export async function enrichPresentationImages(
     || ((slideOrder: number) => reserveImageBucket(slideOrder, presentation.slideCount || presentation.slides.length));
   for (const slide of presentation.slides) {
     const direction = presentation.designBrief?.slideDirections.find((item) => item.slideOrder === slide.order);
+    if (skipSlideOrders.has(slide.order)) {
+      slides.push(slide);
+      continue;
+    }
     if (!permittedPhotoOrders.has(slide.order)) {
+      if (recovery) {
+        slides.push(slide);
+        continue;
+      }
       const fallback = safeVisualFallback(direction, slide);
       if (fallback) fallbackDirections.set(fallback.slideOrder, fallback);
       slides.push(fallback ? fallbackSlideForMissingPhoto(slide, direction) : slide);
@@ -123,70 +149,108 @@ export async function enrichPresentationImages(
     }
 
     try {
+      attemptedSlideOrders?.add(slide.order);
       let image: SlideVisualImage | undefined;
       const query = buildSlideImageQuery(project, slide, direction);
       const reservation = await reservePermittedImage(slide.order);
       if (reservation === "blocked") {
+        if (recovery) {
+          slides.push(slide);
+          continue;
+        }
         const fallback = safeVisualFallback(direction, slide);
         if (fallback) fallbackDirections.set(fallback.slideOrder, fallback);
         slides.push(fallbackSlideForMissingPhoto(slide, direction));
         continue;
       }
 
-      let candidates: ImageCandidate[] = [];
-      try {
-        candidates = await searchImages(query);
-      } catch {
-        // The request budget is consumed even when Tavily fails, so do not
-        // retry it with a refined prompt or a second provider call.
-      }
-
-      while (!image) {
-        const candidate = chooseImageCandidate(candidates, usedUrls, usedDomains, {
-          query,
-          slideTitle: slide.title,
-          projectTitle: project.title,
-        });
-        if (!candidate) break;
-
+      let actualImageCost: string | undefined;
+      if (useAitunnelImages) {
         try {
-          const downloaded = await downloadImage(candidate.url);
-          const hash = crypto.createHash("sha1").update(candidate.url).digest("hex").slice(0, 12);
-          const objectKey = `projects/${project.id}/images/slide-${slide.order}-${hash}.${downloaded.extension}`;
-          await putObject(objectKey, downloaded.buffer, downloaded.contentType);
-          const usage = currentUsageContext();
+          const generated = await generateImage(buildAitunnelImagePrompt(project, slide, direction));
+          actualImageCost = generated.costRub;
           await recordCostEvent({
-            idempotencyKey: crypto.createHash("sha256").update(`${usage?.generationJobId || usage?.queueJobId || project.id}:storage:${objectKey}`).digest("hex"),
-            category: "storage",
-            provider: process.env.S3_ENDPOINT?.includes("localhost") || process.env.S3_ENDPOINT?.includes("minio") ? "minio" : "object_storage",
-            quantity: String(downloaded.byteSize ?? downloaded.buffer.length),
-            unit: "stored_byte_month",
-            unitPrice: process.env.STORAGE_PRICE_USD_PER_BYTE_MONTH,
-            currency: "USD",
-            measurement: "calculated",
+            idempotencyKey: crypto.createHash("sha256").update(`${currentUsageContext()?.generationJobId || currentUsageContext()?.queueJobId || project.id}:aitunnel:image:${slide.id}`).digest("hex"),
+            category: "image_search",
+            provider: "aitunnel",
+            quantity: "1",
+            unit: "generated_image",
+            ...(generated.costRub ? { unitPrice: generated.costRub, rubCostAtEvent: generated.costRub } : {}),
+            currency: "RUB",
+            measurement: "provider_reported",
           });
-
+          const downloaded = await processPresentationImage(generated.buffer, { contentType: generated.contentType });
+          const hash = crypto.createHash("sha1").update(`${project.id}:${slide.id}:${query}:${generated.model}`).digest("hex").slice(0, 12);
+          const objectKey = `projects/${project.id}/images/slide-${slide.order}-aitunnel-${hash}.${downloaded.extension}`;
+          await putObject(objectKey, downloaded.buffer, downloaded.contentType);
+          await recordStorageCost(project.id, objectKey, downloaded);
           image = {
-            url: candidate.url,
+            url: visualImageAssetUrl(project.id, slide.id),
             objectKey,
-            alt: buildImageAlt(slide.title, candidate.description),
+            alt: buildImageAlt(slide.title, query),
             query,
-            sourceUrl: candidate.sourceUrl || candidate.url,
-            sourceTitle: candidate.sourceTitle,
-            provider: "tavily",
+            sourceUrl: "https://aitunnel.ru/docs/images",
+            // The compact source-credit canvas is intentionally one line. The
+            // provider/model remain observable in the cost event and worker
+            // logs; the persisted visual attribution stays short enough to
+            // pass the same canvas/export audit as other image sources.
+            sourceTitle: "AITunnel",
+            provider: "aitunnel",
             contentType: downloaded.contentType,
             width: downloaded.width,
             height: downloaded.height,
-            byteSize: downloaded.byteSize ?? downloaded.buffer.length,
+            byteSize: downloaded.byteSize,
             warnings: downloaded.warnings || [],
           };
-        } catch {}
+        } catch (error) {
+          warn(`slide image generation failed for slide ${slide.order}`, error);
+        }
+      } else {
+        let candidates: ImageCandidate[] = [];
+        try {
+          candidates = await searchImages(query);
+        } catch {
+          // The request budget is consumed even when Tavily fails, so do not
+          // retry it with a refined prompt or a second provider call.
+        }
+
+        while (!image) {
+          const candidate = chooseImageCandidate(candidates, usedUrls, usedDomains, {
+            query,
+            slideTitle: slide.title,
+            projectTitle: project.title,
+          });
+          if (!candidate) break;
+
+          try {
+            const downloaded = await downloadImage(candidate.url);
+            const hash = crypto.createHash("sha1").update(candidate.url).digest("hex").slice(0, 12);
+            const objectKey = `projects/${project.id}/images/slide-${slide.order}-${hash}.${downloaded.extension}`;
+            await putObject(objectKey, downloaded.buffer, downloaded.contentType);
+            await recordStorageCost(project.id, objectKey, downloaded);
+
+            image = {
+              url: candidate.url,
+              objectKey,
+              alt: buildImageAlt(slide.title, candidate.description),
+              query,
+              sourceUrl: candidate.sourceUrl || candidate.url,
+              sourceTitle: candidate.sourceTitle,
+              provider: "tavily",
+              contentType: downloaded.contentType,
+              width: downloaded.width,
+              height: downloaded.height,
+              byteSize: downloaded.byteSize ?? downloaded.buffer.length,
+              warnings: downloaded.warnings || [],
+            };
+          } catch {}
+        }
       }
-      await settleImage(reservation);
+      await settleImage(reservation, actualImageCost);
 
       if (!image) {
         const fallback = safeVisualFallback(direction, slide);
-        if (fallback) fallbackDirections.set(fallback.slideOrder, fallback);
+        if (fallback && !recovery) fallbackDirections.set(fallback.slideOrder, fallback);
       }
       slides.push(image
         ? {
@@ -196,14 +260,18 @@ export async function enrichPresentationImages(
               image,
             },
           }
-        : fallbackSlideForMissingPhoto(slide, direction));
+        : recovery ? slide : fallbackSlideForMissingPhoto(slide, direction));
     } catch (error) {
       captureGenerationError(error, {
         projectId: project.id,
         stage: "selecting_visuals",
-        provider: "tavily",
+        provider: useAitunnelImages ? "aitunnel" : "tavily",
       });
-      warn(`slide image lookup failed for slide ${slide.order}`, error);
+      warn(`slide image ${useAitunnelImages ? "generation" : "lookup"} failed for slide ${slide.order}`, error);
+      if (recovery) {
+        slides.push(slide);
+        continue;
+      }
       const fallback = safeVisualFallback(direction, slide);
       if (fallback) fallbackDirections.set(fallback.slideOrder, fallback);
       slides.push(fallbackSlideForMissingPhoto(slide, direction));
@@ -264,7 +332,19 @@ export function buildSlideImageQuery(
   ].join(" "));
 }
 
-/** A slide gets exactly one anchored Tavily request in an economic run. */
+export function buildAitunnelImagePrompt(
+  project: ProjectInput,
+  slide: PresentationDocument["slides"][number],
+  direction?: DesignBriefSlideDirection,
+) {
+  const query = buildSlideImageQuery(project, slide, direction);
+  return shorten(
+    `Create a realistic horizontal editorial image for an educational presentation. Subject: ${query}. Preserve the slide-specific entity, place, people, and era when present. Use a clear documentary composition with the main subject readable at presentation size. Do not include text, labels, logos, watermarks, borders, or UI screenshots.`,
+    900,
+  );
+}
+
+/** A slide gets exactly one anchored image request in an economic run. */
 export function buildRefinedImageQueries(
   project: ProjectInput,
   slide: PresentationDocument["slides"][number],
@@ -298,7 +378,11 @@ async function reserveImageBucket(slideOrder: number, slideCount: number): Promi
   const envelopeId = currentUsageContext()?.costEnvelopeId;
   if (!envelopeId) return undefined;
   const idempotencyKey = `${envelopeId}:presentation-image:${slideOrder}`;
-  const amountRub = String(Number(COST_ENVELOPE_BUCKETS.images) / Math.max(1, economicPhotoLimit(slideCount)));
+  // Split the image bucket across the exact visual-policy photo quota. The v12
+  // bucket is large enough for several provider-reported AITunnel raster
+  // charges while the global envelope still bounds the whole generation run.
+  const imageLimit = economicPhotoLimit(slideCount);
+  const amountRub = String(Number(COST_ENVELOPE_BUCKETS.images) / Math.max(1, imageLimit));
   const reservation = await reserveCostEnvelope({
     envelopeId,
     idempotencyKey,
@@ -309,9 +393,27 @@ async function reserveImageBucket(slideOrder: number, slideCount: number): Promi
   return reservation.status === "reserved" ? { envelopeId, idempotencyKey, amountRub } : "blocked" as const;
 }
 
-async function settleImageBucket(reservation: ImageReservationResult) {
+async function settleImageBucket(reservation: ImageReservationResult, actualRub?: string) {
   if (!reservation || reservation === "blocked") return;
-  await settleCostEnvelope({ ...reservation, actualRub: reservation.amountRub, reason: "presentation_image_search" }).catch(() => undefined);
+  await settleCostEnvelope({
+    ...reservation,
+    actualRub: actualRub || reservation.amountRub,
+    reason: actualRub ? "presentation_image_generation" : "presentation_image_search",
+  }).catch(() => undefined);
+}
+
+async function recordStorageCost(projectId: string, objectKey: string, downloaded: DownloadedImage) {
+  const usage = currentUsageContext();
+  await recordCostEvent({
+    idempotencyKey: crypto.createHash("sha256").update(`${usage?.generationJobId || usage?.queueJobId || projectId}:storage:${objectKey}`).digest("hex"),
+    category: "storage",
+    provider: process.env.S3_ENDPOINT?.includes("localhost") || process.env.S3_ENDPOINT?.includes("minio") ? "minio" : "object_storage",
+    quantity: String(downloaded.byteSize ?? downloaded.buffer.length),
+    unit: "stored_byte_month",
+    unitPrice: process.env.STORAGE_PRICE_USD_PER_BYTE_MONTH,
+    currency: "USD",
+    measurement: "calculated",
+  });
 }
 
 export function shouldSearchForSlideImage(
@@ -654,7 +756,7 @@ export async function processPresentationImage(
       throw new Error(`Processed image is too large: ${best.length} bytes`);
     }
 
-    if (best.length > buffer.length && buffer.length <= maxBytes && inputContentType) {
+    if (best.length > buffer.length && buffer.length <= maxBytes && isRasterImageContentType(inputContentType)) {
       warnings.push("processed image was larger; kept original");
       return originalImageResult(buffer, inputContentType, warnings);
     }
@@ -669,12 +771,16 @@ export async function processPresentationImage(
       warnings,
     };
   } catch (error) {
-    if (buffer.length <= maxBytes) {
+    if (buffer.length <= maxBytes && isRasterImageContentType(inputContentType)) {
       warnings.push(`processing failed; kept original: ${error instanceof Error ? error.message : "unknown error"}`);
       return originalImageResult(buffer, inputContentType, warnings);
     }
     throw error;
   }
+}
+
+function isRasterImageContentType(contentType: string) {
+  return contentType === "image/jpeg" || contentType === "image/jpg" || contentType === "image/png" || contentType === "image/webp";
 }
 
 function originalImageResult(buffer: Buffer, contentType: string, warnings: string[]): ProcessedPresentationImage {
@@ -798,12 +904,20 @@ function presentationImageMaxDimension(envName: string, fallback: number) {
   return clampNumber(Number(process.env[envName] || fallback), 320, 4096);
 }
 
+function isAitunnelImageProvider() {
+  return process.env.AI_PROVIDER?.trim().toLowerCase() === "aitunnel" && Boolean(aitunnelImageConfig());
+}
+
 function isPresentationImagesEnabled(dependencies: ImageSearchDependencies) {
   if (process.env.PRESENTATION_IMAGES_ENABLED === "false") {
     return false;
   }
 
-  return Boolean(dependencies.searchImages || process.env.TAVILY_API_KEY?.trim());
+  return Boolean(dependencies.searchImages || dependencies.generateImage || isAitunnelImageProvider() || process.env.TAVILY_API_KEY?.trim());
+}
+
+function visualImageAssetUrl(projectId: string, slideId: string) {
+  return `/api/projects/${encodeURIComponent(projectId)}/slides/${encodeURIComponent(slideId)}/assets/visual-image`;
 }
 
 function normalizeUrl(value: string) {

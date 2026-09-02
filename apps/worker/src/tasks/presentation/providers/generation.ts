@@ -365,7 +365,7 @@ type V6ProviderTerminationMetadata = {
 };
 
 function isFullNarrationCostEnvelopePolicy(version: string | undefined) {
-  return version === "standard-generation-cost-envelope-v6" || version === "standard-generation-cost-envelope-v7" || version === "standard-generation-cost-envelope-v8" || version === "standard-generation-cost-envelope-v9" || version === "standard-generation-cost-envelope-v10" || version === "standard-generation-cost-envelope-v11";
+  return version === "standard-generation-cost-envelope-v6" || version === "standard-generation-cost-envelope-v7" || version === "standard-generation-cost-envelope-v8" || version === "standard-generation-cost-envelope-v9" || version === "standard-generation-cost-envelope-v10" || version === "standard-generation-cost-envelope-v11" || version === "standard-generation-cost-envelope-v12";
 }
 
 async function generateLegacyAitunnelNarration(client: OpenAI, model: string, project: ProjectInput, sources: Source[], narrativePlan: SlideNarrative[], researchBrief?: ResearchBrief): Promise<string> {
