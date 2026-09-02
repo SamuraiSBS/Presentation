@@ -1,8 +1,10 @@
 import { HttpStatus, Injectable } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import type { PlanCode, Prisma } from "@prisma/client";
 import { planLimits } from "@studydeck/shared";
 import { ApiError } from "../errors/api-error.js";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { isLocalGenerationUnlimited } from "../runtime/local-generation.js";
 
 const DEFAULT_TIME_ZONE = "Europe/Moscow";
 
@@ -24,7 +26,7 @@ export type PlanEntitlement = {
 
 @Injectable()
 export class UsageService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly config: ConfigService) {}
 
   currentPeriod(reset: "month" | "week", now = new Date(), timeZone = DEFAULT_TIME_ZONE) {
     const parts = zonedParts(now, timeZone);
@@ -57,12 +59,13 @@ export class UsageService {
     const entitlement = await this.getPlan(userId, now);
     const limits = planLimits[entitlement.planCode];
     const period = this.currentPeriod(limits.reset, now);
-    const counter = await this.prisma.generationQuotaCounter.findUnique({
+    const unlimited = isLocalGenerationUnlimited(this.config);
+    const counter = unlimited ? null : await this.prisma.generationQuotaCounter.findUnique({
       where: { userId_period_quotaEpoch: { userId, period, quotaEpoch: entitlement.quotaEpoch } },
       select: { used: true },
     });
     const used = counter?.used ?? 0;
-    const limit = limits.generationLimit;
+    const limit = unlimited ? Number.MAX_SAFE_INTEGER : limits.generationLimit;
     const exhausted = used >= limit;
     return {
       planCode: entitlement.planCode,
@@ -74,7 +77,8 @@ export class UsageService {
       remaining: Math.max(0, limit - used),
       resetsAt: this.nextResetAt(limits.reset, now),
       exhausted,
-      canCreate: !exhausted,
+      canCreate: unlimited || !exhausted,
+      ...(unlimited ? { unlimited: true } : {}),
       subscriptionExpiresAt: entitlement.subscriptionExpiresAt?.toISOString() ?? null,
     };
   }
@@ -125,6 +129,7 @@ export class UsageService {
       select: { id: true },
     });
     if (existing) return { ...entitlement, period, idempotent: true };
+    if (isLocalGenerationUnlimited(this.config)) return { ...entitlement, period, idempotent: false };
 
     await tx.generationQuotaCounter.upsert({
       where: { userId_period_quotaEpoch: { userId: ownerId, period, quotaEpoch: entitlement.quotaEpoch } },

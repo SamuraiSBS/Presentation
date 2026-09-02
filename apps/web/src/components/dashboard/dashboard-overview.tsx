@@ -25,11 +25,11 @@ export function DashboardOverview({ initialDashboard }: { initialDashboard: Dash
 
       <section className="usage-panel" aria-labelledby="usage-title">
         <div className="usage-copy">
-          <div><p className="account-kicker">{planLabel(data.usage.planCode)} тариф</p><h2 id="usage-title">{data.usage.used} из {data.usage.limit} презентаций</h2></div>
-          <strong>{Math.max(0, data.usage.remaining)} осталось</strong>
+          <div><p className="account-kicker">{planLabel(data.usage.planCode)} тариф</p><h2 id="usage-title">{data.usage.unlimited ? "Безлимитная генерация" : `${data.usage.used} из ${data.usage.limit} презентаций`}</h2></div>
+          <strong>{data.usage.unlimited ? "Без ограничений" : `${Math.max(0, data.usage.remaining)} осталось`}</strong>
         </div>
-        <Progress value={usagePercent(data.usage)} aria-label={`Использовано ${data.usage.used} из ${data.usage.limit}`} />
-        <p>Лимит обновится {formatResetDate(data.usage)} по московскому времени.</p>
+        <Progress value={usagePercent(data.usage)} aria-label={data.usage.unlimited ? "Безлимитная генерация" : `Использовано ${data.usage.used} из ${data.usage.limit}`} />
+        <p>{data.usage.unlimited ? "Локальный режим: презентации можно генерировать без квоты." : `Лимит обновится ${formatResetDate(data.usage)} по московскому времени.`}</p>
       </section>
 
       <dl className="stats-strip">

@@ -41,7 +41,7 @@ export function ProjectsToolbar({ folders, usage, initialQuery }: { folders: Fol
         <Select ariaLabel="Папка" value={initial.get("folderId") || ""} onValueChange={(value) => update("folderId", value)} options={[{ value: "", label: "Все папки" }, { value: "none", label: "Без папки" }, ...folders.map((folder) => ({ value: folder.id, label: folder.name }))]} />
         <Select ariaLabel="Сортировка" value={initial.get("sort") || "updated_desc"} onValueChange={(value) => update("sort", value)} options={[{ value: "updated_desc", label: "Недавно изменённые" }, { value: "created_desc", label: "Сначала новые" }, { value: "title_asc", label: "По названию" }]} />
       </div>
-      <span className="toolbar-usage">{usage.used}/{usage.limit} в этом месяце</span>
+      <span className="toolbar-usage">{usage.unlimited ? "Безлимитная генерация" : `${usage.used}/${usage.limit} в этом месяце`}</span>
     </section>
   );
 }

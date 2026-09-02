@@ -29,7 +29,7 @@ export default async function PricingPage() {
       <section className="billing-panel panel" aria-label="Статус лимита">
         <div className="billing-heading">
           <span className="status billing-status">{planLabel(activePlan)}</span>
-          <h2>Осталось {usage.remaining} из {usage.limit} генераций</h2>
+          <h2>{usage.unlimited ? "Генерации без ограничений" : `Осталось ${usage.remaining} из ${usage.limit} генераций`}</h2>
         </div>
         <div className="billing-progress-group">
           <div
@@ -39,21 +39,21 @@ export default async function PricingPage() {
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={progressValue}
-            aria-valuetext={`${usage.remaining} из ${usage.limit} генераций доступно`}
+            aria-valuetext={usage.unlimited ? "Генерации без ограничений" : `${usage.remaining} из ${usage.limit} генераций доступно`}
           >
             <span style={{ width: `${progressValue}%` }} />
           </div>
           <div className="billing-progress-caption">
-            <span>{usage.limit - usage.remaining} использовано</span>
-            <strong>{progressValue}% доступно</strong>
+            <span>{usage.unlimited ? "Ограничений нет" : `${usage.limit - usage.remaining} использовано`}</span>
+            <strong>{usage.unlimited ? "Без лимита" : `${progressValue}% доступно`}</strong>
           </div>
         </div>
         <div className="billing-meta">
           <p className="billing-meta-item">
             <CalendarDays size={19} aria-hidden="true" />
             <span>
-              <small>{usage.reset === "week" ? "Недельный лимит" : "Месячный лимит"}</small>
-              <strong>Лимит обновится {resetAt}</strong>
+              <small>{usage.unlimited ? "Локальный режим" : usage.reset === "week" ? "Недельный лимит" : "Месячный лимит"}</small>
+              <strong>{usage.unlimited ? "Квота генераций не применяется" : `Лимит обновится ${resetAt}`}</strong>
             </span>
           </p>
           <p className="billing-meta-item">
