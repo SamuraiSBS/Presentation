@@ -1,5 +1,5 @@
-export { adminPeriodSchema, adminTimeRangeSchema, adminListQuerySchema, adminMoneySchema, adminMetricSchema, adminOverviewSchema, adminUserRowSchema, adminUsersResponseSchema, adminUserDetailSchema, adminReasonSchema, adminPlanOverrideSchema, adminActionResultSchema } from "./admin/schemas.js";
-export type { AdminPeriod, AdminTimeRange, AdminListQuery, AdminMoney, AdminOverview, AdminUserRow, AdminUsersResponse, AdminUserDetail, AdminPlanOverrideInput, AdminActionResult } from "./admin/schemas.js";
+export { adminPeriodSchema, adminTimeRangeSchema, adminListQuerySchema, adminMoneySchema, adminMetricSchema, adminOverviewSchema, adminUserRowSchema, adminUsersResponseSchema, adminUserDetailSchema, adminReasonSchema, adminPlanOverrideSchema, adminPresentationRecoverySchema, adminActionResultSchema } from "./admin/schemas.js";
+export type { AdminPeriod, AdminTimeRange, AdminListQuery, AdminMoney, AdminOverview, AdminUserRow, AdminUsersResponse, AdminUserDetail, AdminPlanOverrideInput, AdminPresentationRecoveryInput, AdminActionResult } from "./admin/schemas.js";
 export { paidPlanCodes, planCodeSchema, planLimits, planPricesRub, planRank } from "./billing/limits.js";
 export type { PaidPlanCode, PlanCode } from "./billing/limits.js";
 export { scenarioSchema, projectStatusSchema, projectAccessRoleSchema, projectMemberRoleSchema, folderColorSchema, jobStatusSchema, sourceSchema, updateSourceReviewInputSchema, sourceRefSchema } from "./projects/schemas.js";

@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
-import type { AdminListQuery, AdminPlanOverrideInput } from "@studydeck/shared";
+import { aitunnelCatalogSnapshot, standardGenerationCostPolicy, type AdminListQuery, type AdminPlanOverrideInput, type AdminPresentationRecoveryInput } from "@studydeck/shared";
 import { Prisma } from "@prisma/client";
 import type { Queue } from "bullmq";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -281,6 +281,113 @@ export class AdminService {
     return { ok: true as const, message: "Генерация поставлена в очередь повторно" };
   }
 
+  async recoverPresentation(actorUserId: string, input: AdminPresentationRecoveryInput) {
+    await this.ensureActor(actorUserId);
+    const prepared = await this.prisma.$transaction(async (tx) => {
+      const project = await tx.project.findUnique({
+        where: { id: input.projectId },
+        select: {
+          id: true,
+          userId: true,
+          status: true,
+          speechDraft: true,
+          presentation: { select: { revision: true } },
+          sources: {
+            where: { included: true },
+            orderBy: { createdAt: "asc" },
+            take: 4,
+            select: { id: true, label: true, type: true, url: true, excerpt: true },
+          },
+        },
+      });
+      if (!project) throw new NotFoundException("Проект не найден");
+      if (!project.presentation) throw new NotFoundException("Готовая презентация не найдена");
+      if (project.presentation.revision !== input.expectedPresentationRevision) {
+        throw new ConflictException(`Ревизия презентации изменилась: актуальная ${project.presentation.revision}`);
+      }
+      if (!project.speechDraft?.trim()) throw new BadRequestException("Для recovery нужна принятая речь");
+
+      const activeJob = await tx.generationJob.findFirst({
+        where: { projectId: project.id, kind: "presentation", status: { in: ["queued", "active"] } },
+        select: { id: true },
+      });
+      if (activeJob) throw new ConflictException("Для проекта уже выполняется генерация презентации");
+
+      const priorEnvelopes = await tx.costEnvelope.findMany({
+        where: { projectId: project.id },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+        select: { sourceSnapshot: true },
+      });
+      const sourceSnapshot = priorEnvelopes
+        .map((item) => parseRecoverySourceSnapshot(item.sourceSnapshot))
+        .find((item): item is RecoverySourceSnapshot => Boolean(item))
+        || buildRecoverySourceSnapshot(project.sources);
+      if (!sourceSnapshot) {
+        throw new BadRequestException("Для recovery нужен сохранённый source snapshot минимум из трёх WEB-источников");
+      }
+
+      const job = await tx.generationJob.create({ data: { projectId: project.id, kind: "presentation", status: "queued" } });
+      const policy = standardGenerationCostPolicy();
+      const envelope = await tx.costEnvelope.create({
+        data: {
+          projectId: project.id,
+          policyVersion: policy.version,
+          limitRub: policy.limitRub,
+          policySnapshot: policy,
+          catalogSnapshot: aitunnelCatalogSnapshot(),
+          sourceSnapshot,
+          presentationJobId: job.id,
+        },
+      });
+      await tx.adminAuditLog.create({
+        data: {
+          actorUserId,
+          action: "presentation.recovery.queue",
+          targetType: "project",
+          targetId: project.id,
+          reason: "operator_confirmed_cost",
+          metadata: { expectedPresentationRevision: input.expectedPresentationRevision, confirmCost: input.confirmCost, generationJobId: job.id, costEnvelopeId: envelope.id },
+        },
+      });
+      return { project, jobId: job.id, envelopeId: envelope.id };
+    });
+
+    try {
+      const queueJob = await this.generationQueue.add(
+        "generate-presentation",
+        {
+          projectId: input.projectId,
+          userId: prepared.project.userId,
+          generationJobId: prepared.jobId,
+          costEnvelopeId: prepared.envelopeId,
+          presentationOnlyRecovery: true,
+          expectedPresentationRevision: input.expectedPresentationRevision,
+        },
+        { ...generationJobOptions(), attempts: 1 },
+      );
+      await this.prisma.$transaction([
+        this.prisma.generationJob.update({ where: { id: prepared.jobId }, data: { queueJobId: queueJob.id } }),
+        this.prisma.project.update({ where: { id: input.projectId }, data: { status: "queued", error: null } }),
+      ]);
+      return {
+        ok: true as const,
+        message: "Presentation-only recovery поставлен в очередь",
+        projectId: input.projectId,
+        generationJobId: prepared.jobId,
+        queueJobId: queueJob.id,
+        expectedPresentationRevision: input.expectedPresentationRevision,
+      };
+    } catch (error) {
+      await this.prisma.$transaction([
+        this.prisma.generationJob.update({ where: { id: prepared.jobId }, data: { status: "failed", error: "queue_unavailable", progressStage: "failed", progressLabel: "Очередь недоступна" } }),
+        this.prisma.costEnvelope.update({ where: { id: prepared.envelopeId }, data: { status: "cancelled" } }),
+        this.prisma.project.update({ where: { id: input.projectId }, data: { status: prepared.project.status, error: null } }),
+      ]).catch(() => undefined);
+      throw error;
+    }
+  }
+
   async cancelGeneration(actorUserId: string, id: string, reason: string) {
     await this.ensureActor(actorUserId);
     const item = await this.prisma.generationJob.findUnique({ where: { id } });
@@ -371,6 +478,51 @@ export class AdminService {
     `);
     return decimal(rows[0]?.total);
   }
+}
+
+type RecoverySourceSnapshot = {
+  version: 1;
+  capturedAt: string;
+  provenance: { provider: "tavily"; queryAt: string };
+  sources: Array<{ sourceId: string; title: string; url: string; evidenceExcerpt: string }>;
+};
+
+function parseRecoverySourceSnapshot(value: unknown): RecoverySourceSnapshot | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<RecoverySourceSnapshot>;
+  if (candidate.version !== 1 || !Array.isArray(candidate.sources) || candidate.sources.length < 3) return null;
+  const sources = candidate.sources.slice(0, 4).flatMap((source) => {
+    if (!source || typeof source !== "object") return [];
+    const item = source as RecoverySourceSnapshot["sources"][number];
+    return item.sourceId && item.title && item.url && item.evidenceExcerpt
+      ? [{ sourceId: String(item.sourceId), title: String(item.title), url: String(item.url), evidenceExcerpt: String(item.evidenceExcerpt) }]
+      : [];
+  });
+  return sources.length >= 3
+    ? {
+      version: 1,
+      capturedAt: String(candidate.capturedAt || new Date(0).toISOString()),
+      provenance: { provider: "tavily", queryAt: String(candidate.provenance?.queryAt || candidate.capturedAt || new Date(0).toISOString()) },
+      sources,
+    }
+    : null;
+}
+
+function buildRecoverySourceSnapshot(sources: Array<{ id: string; label: string; type: string; url: string | null; excerpt: string }>): RecoverySourceSnapshot | null {
+  const capturedAt = new Date().toISOString();
+  const selected = sources
+    .filter((source) => source.type === "WEB" && source.url && source.label.trim() && source.excerpt.trim())
+    .slice(0, 4)
+    .map((source) => ({
+      sourceId: source.id,
+      title: source.label.trim().slice(0, 180),
+      url: source.url!.trim(),
+      evidenceExcerpt: source.excerpt.replace(/\s+/g, " ").trim().slice(0, 320),
+    }))
+    .filter((source) => source.title && source.evidenceExcerpt);
+  return selected.length >= 3
+    ? { version: 1, capturedAt, provenance: { provider: "tavily", queryAt: capturedAt }, sources: selected }
+    : null;
 }
 
 function dateFilter(from: Date | null, to: Date) { return { ...(from ? { gte: from } : {}), lte: to }; }
