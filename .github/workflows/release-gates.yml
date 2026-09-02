@@ -44,6 +44,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install --yes poppler-utils
       - run: CHROMIUM_PATH="$(node -e "console.log(require('@playwright/test').chromium.executablePath())")" npm test
       - run: npm audit --omit=dev --audit-level=high
+      - run: node --test scripts/release-policy.test.mjs
       - name: Validate staging deployment contract
         run: |
           bash -n scripts/deploy-staging-release.sh
@@ -99,6 +100,11 @@ jobs:
       api_digest: ${{ steps.api.outputs.digest }}
       worker_digest: ${{ steps.worker.outputs.digest }}
       web_digest: ${{ steps.web.outputs.digest }}
+      migration_compatibility: ${{ steps.migration_policy.outputs.migration_compatibility }}
+      migration_policy_version: ${{ steps.migration_policy.outputs.migration_policy_version }}
+      migration_id: ${{ steps.migration_policy.outputs.migration_id }}
+      migration_rollback: ${{ steps.migration_policy.outputs.migration_rollback }}
+      migration_database_rollback: ${{ steps.migration_policy.outputs.migration_database_rollback }}
     env:
       REGISTRY: ghcr.io
     steps:
@@ -109,7 +115,8 @@ jobs:
       - name: Keep the required PR check while deferring release-only work
         if: github.event_name == 'pull_request'
         run: echo "PR quality, secret, and browser gates passed; immutable release build runs after merge."
-      - name: Refuse unclassified Prisma migration changes
+      - id: migration_policy
+        name: Verify Prisma migration compatibility policy
         if: github.event_name == 'push'
         run: |
           before='${{ github.event.before }}'
@@ -117,10 +124,11 @@ jobs:
             echo "First push has no safe migration comparison base; publish a release from a reviewed follow-up commit."
             exit 1
           fi
-          if git diff --name-only "$before" "$GITHUB_SHA" -- prisma/migrations | grep -q .; then
-            echo "Prisma migration changes require an explicit forward-fix/rollback compatibility policy before publication."
-            exit 1
-          fi
+          node scripts/verify-migration-compatibility.mjs \
+            --before "$before" \
+            --after "$GITHUB_SHA" \
+            --policy ops/release/migration-policy.json \
+            --github-output "$GITHUB_OUTPUT"
       - id: registry
         name: Normalize the GHCR namespace
         if: github.event_name == 'push'
@@ -184,6 +192,11 @@ jobs:
       STUDYDECK_API_IMAGE: ghcr.io/${{ needs.immutable-image-smoke.outputs.image_namespace }}/studydeck-api@${{ needs.immutable-image-smoke.outputs.api_digest }}
       STUDYDECK_WORKER_IMAGE: ghcr.io/${{ needs.immutable-image-smoke.outputs.image_namespace }}/studydeck-worker@${{ needs.immutable-image-smoke.outputs.worker_digest }}
       STUDYDECK_WEB_IMAGE: ghcr.io/${{ needs.immutable-image-smoke.outputs.image_namespace }}/studydeck-web@${{ needs.immutable-image-smoke.outputs.web_digest }}
+      MIGRATION_COMPATIBILITY: ${{ needs.immutable-image-smoke.outputs.migration_compatibility }}
+      MIGRATION_POLICY_VERSION: ${{ needs.immutable-image-smoke.outputs.migration_policy_version }}
+      MIGRATION_ID: ${{ needs.immutable-image-smoke.outputs.migration_id }}
+      MIGRATION_ROLLBACK: ${{ needs.immutable-image-smoke.outputs.migration_rollback }}
+      MIGRATION_DATABASE_ROLLBACK: ${{ needs.immutable-image-smoke.outputs.migration_database_rollback }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -277,11 +290,18 @@ jobs:
           done
       - name: Write deployable release manifest
         run: |
-          printf '{\n  "gitSha": "%s",\n  "releaseGate": "passed",\n  "migrationCompatibility": "no-schema-change",\n  "images": {\n' "$GITHUB_SHA" > release-manifest.json
+          printf '{\n  "gitSha": "%s",\n  "releaseGate": "passed",\n  "migrationCompatibility": "%s"' "$GITHUB_SHA" "$MIGRATION_COMPATIBILITY" > release-manifest.json
+          if [ "$MIGRATION_COMPATIBILITY" != "no-schema-change" ]; then
+            printf ',\n  "migrationPolicyVersion": "%s",\n  "migrationId": "%s",\n  "migrationRollback": "%s",\n  "migrationDatabaseRollback": "%s"' \
+              "$MIGRATION_POLICY_VERSION" "$MIGRATION_ID" "$MIGRATION_ROLLBACK" "$MIGRATION_DATABASE_ROLLBACK" >> release-manifest.json
+          fi
+          printf ',\n  "images": {\n' >> release-manifest.json
           printf '    "api": "%s",\n' "$STUDYDECK_API_IMAGE" >> release-manifest.json
           printf '    "worker": "%s",\n' "$STUDYDECK_WORKER_IMAGE" >> release-manifest.json
           printf '    "web": "%s"\n' "$STUDYDECK_WEB_IMAGE" >> release-manifest.json
           printf '  }\n}\n' >> release-manifest.json
+      - name: Validate deployable release manifest
+        run: node scripts/validate-release-manifest.mjs --manifest release-manifest.json --repository .
       - uses: actions/upload-artifact@v4
         with:
           name: release-manifest-${{ github.sha }}
