@@ -48,7 +48,28 @@ fi
 
 validate_manifest() {
   local manifest="$1"
-  node "$directory/scripts/validate-release-manifest.mjs" --manifest "$manifest" --repository "$directory"
+  local validator_repository="${release_dir:-${directory:-}}"
+  local validator="$validator_repository/scripts/validate-release-manifest.mjs"
+  if [[ -f "$validator" ]]; then
+    node "$validator" --manifest "$manifest" --repository "$validator_repository"
+    return
+  fi
+
+  # A rollback may target a release created before the migration-policy
+  # validator was introduced. Keep rollback validation strict, but do not
+  # require a file that cannot exist in that older immutable source archive.
+  node - "$manifest" <<'NODE'
+const fs = require('fs');
+const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const imagePattern = /^[a-z0-9][a-z0-9._/-]*(?::[0-9]+)?\/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$/;
+if (!/^[0-9a-f]{40}$/i.test(manifest.gitSha || '')) throw new Error('legacy manifest gitSha must be a commit SHA');
+if (manifest.releaseGate !== 'passed') throw new Error('legacy manifest does not prove a passed release gate');
+if (manifest.migrationCompatibility !== 'no-schema-change') throw new Error('legacy rollback manifest must prove no-schema-change');
+for (const service of ['api', 'worker', 'web']) {
+  if (!imagePattern.test(manifest.images?.[service] || '')) throw new Error(`legacy manifest image ${service} is not immutable`);
+}
+console.log(`Legacy release manifest accepted: ${manifest.gitSha}`);
+NODE
 }
 
 manifest_value() {
