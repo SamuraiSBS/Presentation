@@ -129,6 +129,25 @@ wait_for_healthy() {
   return 1
 }
 
+wait_for_api_worker_healthy() {
+  local directory="$1"
+  local deadline=$((SECONDS + 180))
+  while (( SECONDS < deadline )); do
+    local api worker
+    api="$(compose_for "$directory" ps -q api)"
+    worker="$(compose_for "$directory" ps -q worker)"
+    if [[ -n "$api" && -n "$worker" ]] && \
+      [[ "$(docker inspect --format '{{.State.Health.Status}}' "$api" 2>/dev/null || true)" == "healthy" ]] && \
+      [[ "$(docker inspect --format '{{.State.Health.Status}}' "$worker" 2>/dev/null || true)" == "healthy" ]] && \
+      compose_for "$directory" exec -T api node -e 'fetch("http://127.0.0.1:4000/v1/health/ready").then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'; then
+      return 0
+    fi
+    sleep 5
+  done
+  echo "Timed out waiting for API, worker, and API readiness after 180 seconds." >&2
+  return 1
+}
+
 smoke_release() {
   local directory="$1"
   local site_domain
@@ -167,7 +186,11 @@ activate_release() {
   # Rollback is application-only: the previous Prisma schema ignores the extra
   # nullable column, so attempting a destructive database rollback is unsafe.
   compose_for "$directory" run --rm --no-deps --entrypoint ./node_modules/.bin/prisma api migrate deploy || return
-  compose_for "$directory" up -d --no-build || return
+  # API readiness includes the worker check. Start those services first so
+  # Compose does not mark the web dependency unhealthy while the worker boots.
+  compose_for "$directory" up -d --no-build worker api || return
+  wait_for_api_worker_healthy "$directory" || return
+  compose_for "$directory" up -d --no-build web || return
   wait_for_healthy "$directory" || return
   smoke_release "$directory" || return
 }
@@ -177,7 +200,9 @@ rollback_to() {
   echo "Rolling back application services to $(basename "$directory")"
   compose_for "$directory" config --quiet || return
   compose_for "$directory" pull api worker web || return
-  compose_for "$directory" up -d --no-build || return
+  compose_for "$directory" up -d --no-build worker api || return
+  wait_for_api_worker_healthy "$directory" || return
+  compose_for "$directory" up -d --no-build web || return
   wait_for_healthy "$directory" || return
   smoke_release "$directory" || return
 }
