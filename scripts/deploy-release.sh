@@ -51,14 +51,14 @@ validate_manifest() {
   local validator_repository="${release_dir:-${directory:-}}"
   local validator="$validator_repository/scripts/validate-release-manifest.mjs"
   if [[ -f "$validator" ]]; then
-    node "$validator" --manifest "$manifest" --repository "$validator_repository"
+    node "$validator" --manifest "$manifest" --repository "$validator_repository" >&2
     return
   fi
 
   # A rollback may target a release created before the migration-policy
   # validator was introduced. Keep rollback validation strict, but do not
   # require a file that cannot exist in that older immutable source archive.
-  node - "$manifest" <<'NODE'
+  node - "$manifest" >&2 <<'NODE'
 const fs = require('fs');
 const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const imagePattern = /^[a-z0-9][a-z0-9._/-]*(?::[0-9]+)?\/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$/;
@@ -166,7 +166,7 @@ activate_release() {
   # command applies an expand-only nullable migration before the new app starts.
   # Rollback is application-only: the previous Prisma schema ignores the extra
   # nullable column, so attempting a destructive database rollback is unsafe.
-  compose_for "$directory" run --rm --no-deps --no-build --entrypoint ./node_modules/.bin/prisma api migrate deploy || return
+  compose_for "$directory" run --rm --no-deps --entrypoint ./node_modules/.bin/prisma api migrate deploy || return
   compose_for "$directory" up -d --no-build || return
   wait_for_healthy "$directory" || return
   smoke_release "$directory" || return
