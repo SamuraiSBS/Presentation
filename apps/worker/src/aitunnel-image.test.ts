@@ -91,6 +91,39 @@ describe("AITunnel image generation", () => {
     expect(generated.buffer.toString("utf8")).not.toContain("```");
   });
 
+  it("preserves provider cost and request id when a response has no usable image", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ id: "gen-no-image", model: "gpt-image-1-mini", data: [], usage: { cost_rub: 0.77 } }),
+    }));
+
+    await expect(generateAitunnelImage("Solar system", {
+      AITUNNEL_API_KEY: "key",
+      AITUNNEL_IMAGE_MODEL: "gpt-image-1-mini",
+      AITUNNEL_IMAGE_MODE: "raster",
+    })).rejects.toMatchObject({
+      name: "AitunnelImageProviderError",
+      details: { reason: "no_base64_image", costRub: "0.77000000", providerRequestId: "gen-no-image" },
+    });
+  });
+
+  it("marks an aborted fetch as a provider abort with the configured timeout", async () => {
+    const error = new Error("The operation was aborted");
+    error.name = "AbortError";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(error));
+
+    await expect(generateAitunnelImage("Solar system", {
+      AITUNNEL_API_KEY: "key",
+      AITUNNEL_IMAGE_MODEL: "gpt-image-1-mini",
+      AITUNNEL_IMAGE_MODE: "raster",
+      AITUNNEL_IMAGE_TIMEOUT_MS: "5000",
+    })).rejects.toMatchObject({
+      name: "AitunnelImageProviderError",
+      details: { aborted: true, mode: "raster", timeoutMs: 5000, reason: "timeout_or_abort" },
+    });
+  });
+
   it("normalizes provider cost without accepting malformed values", () => {
     expect(normalizeAitunnelImageCost("3.4")).toBe("3.40000000");
     expect(normalizeAitunnelImageCost(0)).toBe("0.00000000");

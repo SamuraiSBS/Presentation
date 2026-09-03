@@ -2526,6 +2526,18 @@ function semanticOverlap(left: string, right: string) {
   return overlapCount(leftTokens, rightTokens) / Math.min(leftTokens.length, rightTokens.length);
 }
 
+/**
+ * Final persisted-canvas gate. This is intentionally independent from the
+ * provider/content quality critique: every recovery variant must pass it
+ * immediately before the document is allowed to become ready.
+ */
+export function finalCanvasSafetyIssues(presentation: PresentationDocument) {
+  return presentation.slides.flatMap((slide) =>
+    (slide.canvas ? auditSlideCanvas(slide.canvas) : ["canvas is missing"])
+      .map((issue) => `slide ${slide.order}: ${issue}`),
+  );
+}
+
 function uniqueRecoveryBullets(values: string[], title: string, thesis: string) {
   const result: string[] = [];
   for (const value of values) {

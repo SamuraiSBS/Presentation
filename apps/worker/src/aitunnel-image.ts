@@ -25,6 +25,27 @@ export type GeneratedAitunnelImage = {
   providerRequestId?: string;
 };
 
+export type AitunnelImageFailureDetails = {
+  provider: "aitunnel";
+  model: string;
+  mode: AitunnelImageConfig["mode"];
+  timeoutMs: number;
+  aborted: boolean;
+  reason: string;
+  providerRequestId?: string;
+  costRub?: string;
+};
+
+export class AitunnelImageProviderError extends Error {
+  readonly details: AitunnelImageFailureDetails;
+
+  constructor(message: string, details: AitunnelImageFailureDetails) {
+    super(message);
+    this.name = "AitunnelImageProviderError";
+    this.details = details;
+  }
+}
+
 type AitunnelImageResponse = {
   id?: unknown;
   model?: unknown;
@@ -90,14 +111,33 @@ export function normalizeAitunnelImageCost(value: unknown) {
   return Number(text).toFixed(8);
 }
 
+export function isAitunnelImageAbortError(error: unknown) {
+  return error instanceof Error && (error.name === "AbortError" || /\babort(?:ed|ing)?\b|timed?\s*out/i.test(error.message));
+}
+
+export function aitunnelImageFailureDetails(error: unknown, env: EnvLike = process.env): AitunnelImageFailureDetails {
+  if (error instanceof AitunnelImageProviderError) return error.details;
+  const config = aitunnelImageConfig(env);
+  const mode = config?.mode || "raster";
+  return {
+    provider: "aitunnel",
+    model: config?.imageModel || "unknown",
+    mode,
+    timeoutMs: imageTimeoutMs(env, mode),
+    aborted: isAitunnelImageAbortError(error),
+    reason: error instanceof Error ? error.message : String(error || "unknown provider error"),
+  };
+}
+
 export async function generateAitunnelImage(prompt: string, env: EnvLike = process.env): Promise<GeneratedAitunnelImage> {
   const config = aitunnelImageConfig(env);
   if (!config) throw new Error("AITUNNEL_API_KEY and a valid AITUNNEL_IMAGE_MODEL are required");
 
-  if (config.mode === "chat_svg") return generateAitunnelSvgImage(prompt, config);
+  if (config.mode === "chat_svg") return generateAitunnelSvgImage(prompt, config, env);
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), imageTimeoutMs(env, "raster"));
+  const timeoutMs = imageTimeoutMs(env, "raster");
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`${config.baseURL}/images/generations`, {
       method: "POST",
@@ -128,27 +168,46 @@ export async function generateAitunnelImage(prompt: string, env: EnvLike = proce
     }
 
     const item = payload.data?.[0];
+    const providerRequestId = typeof payload.id === "string" ? payload.id : undefined;
+    const costRub = normalizeAitunnelImageCost(payload.usage?.cost_rub);
     const base64 = typeof item?.b64_json === "string" ? item.b64_json.trim() : "";
-    if (!base64) throw new Error("AITunnel image generation returned no base64 image");
+    if (!base64) throw new AitunnelImageProviderError("AITunnel image generation returned no base64 image", {
+      provider: "aitunnel", model: typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : config.imageModel,
+      mode: "raster", timeoutMs, aborted: false, reason: "no_base64_image", providerRequestId, costRub,
+    });
     const buffer = Buffer.from(base64, "base64");
-    if (!buffer.length) throw new Error("AITunnel image generation returned an empty image");
+    if (!buffer.length) throw new AitunnelImageProviderError("AITunnel image generation returned an empty image", {
+      provider: "aitunnel", model: typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : config.imageModel,
+      mode: "raster", timeoutMs, aborted: false, reason: "empty_image", providerRequestId, costRub,
+    });
 
     const contentType = imageContentType(item?.media_type, config.outputFormat);
     return {
       buffer,
       contentType,
       model: typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : config.imageModel,
-      costRub: normalizeAitunnelImageCost(payload.usage?.cost_rub),
-      providerRequestId: typeof payload.id === "string" ? payload.id : undefined,
+      costRub,
+      providerRequestId,
     };
+  } catch (error) {
+    if (error instanceof AitunnelImageProviderError) throw error;
+    const details = {
+      ...aitunnelImageFailureDetails(error, env),
+      mode: "raster" as const,
+      model: config.imageModel,
+      timeoutMs,
+      reason: isAitunnelImageAbortError(error) ? "timeout_or_abort" : detailsReason(error),
+    };
+    throw new AitunnelImageProviderError(details.reason, details);
   } finally {
     clearTimeout(timeout);
   }
 }
 
-async function generateAitunnelSvgImage(prompt: string, config: AitunnelImageConfig): Promise<GeneratedAitunnelImage> {
+async function generateAitunnelSvgImage(prompt: string, config: AitunnelImageConfig, env: EnvLike): Promise<GeneratedAitunnelImage> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), imageTimeoutMs(process.env, "chat_svg"));
+  const timeoutMs = imageTimeoutMs(env, "chat_svg");
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`${config.baseURL}/chat/completions`, {
       method: "POST",
@@ -184,18 +243,37 @@ async function generateAitunnelSvgImage(prompt: string, config: AitunnelImageCon
     } catch {
       throw new Error("AITunnel GPT-5.6 image illustration returned invalid JSON");
     }
+    const providerRequestId = typeof payload.id === "string" ? payload.id : undefined;
+    const costRub = normalizeAitunnelImageCost(payload.usage?.cost_rub);
     const svg = extractSafeSvg(payload.choices?.[0]?.message?.content);
-    if (!svg) throw new Error("AITunnel GPT-5.6 image illustration returned no safe SVG");
+    if (!svg) throw new AitunnelImageProviderError("AITunnel GPT-5.6 image illustration returned no safe SVG", {
+      provider: "aitunnel", model: typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : config.imageModel,
+      mode: "chat_svg", timeoutMs, aborted: false, reason: "no_safe_svg", providerRequestId, costRub,
+    });
     return {
       buffer: Buffer.from(svg, "utf8"),
       contentType: "image/svg+xml",
       model: typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : config.imageModel,
-      costRub: normalizeAitunnelImageCost(payload.usage?.cost_rub),
-      providerRequestId: typeof payload.id === "string" ? payload.id : undefined,
+      costRub,
+      providerRequestId,
     };
+  } catch (error) {
+    if (error instanceof AitunnelImageProviderError) throw error;
+    const details = {
+      ...aitunnelImageFailureDetails(error, env),
+      mode: "chat_svg" as const,
+      model: config.imageModel,
+      timeoutMs,
+      reason: isAitunnelImageAbortError(error) ? "timeout_or_abort" : detailsReason(error),
+    };
+    throw new AitunnelImageProviderError(details.reason, details);
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function detailsReason(error: unknown) {
+  return error instanceof Error ? error.message : String(error || "unknown provider error");
 }
 
 function extractSafeSvg(value: unknown) {

@@ -11,6 +11,7 @@ import type {
   ProjectSummary,
   ProjectWorkflow,
   PublicNarrationState,
+  PublicGenerationErrorCategory,
   Source,
   UsageSummary as SharedUsageSummary,
   UserIdentitySummary,
@@ -46,6 +47,9 @@ export type ProjectDetail = {
   status: ProjectStatus;
   error?: string | null;
   narrationState?: PublicNarrationState | null;
+  generationErrorCategory?: PublicGenerationErrorCategory | null;
+  latestNarrationJob?: GenerationJobSummary | null;
+  latestPresentationJob?: GenerationJobSummary | null;
   speechDraft?: string | null;
   prompt?: string;
   mode?: string;
@@ -60,6 +64,19 @@ export type ProjectDetail = {
   presentationRevision: number;
   owner?: UserSummary;
   folder?: Pick<FolderSummary, "id" | "name" | "color"> | null;
+};
+
+export type GenerationJobSummary = {
+  id: string;
+  kind: string;
+  status: string;
+  progressStage?: string | null;
+  progressLabel?: string | null;
+  progressPercent?: number | null;
+  error?: string | null;
+  errorCategory?: PublicGenerationErrorCategory | null;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type DashboardSummary = Omit<SharedDashboardSummary, "usage"> & { usage: UsageSummary };

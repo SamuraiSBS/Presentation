@@ -1,7 +1,6 @@
 import type { Job } from "bullmq";
 import type { Prisma } from "@prisma/client";
 import {
-  auditSlideCanvas,
   designBriefSchema,
   ensureEditableCanvas,
   PREMIUM_PRESENTATION_THEMES,
@@ -9,7 +8,7 @@ import {
   type PresentationDocument,
   type Source,
 } from "@studydeck/shared";
-import { materializePlannedVisuals, productionQualityReleaseResult } from "./presentation-quality.js";
+import { finalCanvasSafetyIssues, materializePlannedVisuals, productionQualityReleaseResult } from "./presentation-quality.js";
 import { preparePresentationForExport } from "./export-preflight.js";
 import { captureGenerationError, errorLogFields, logger, type TraceCarrier, withTraceSpan } from "../observability.js";
 import { getPrisma } from "../prisma.js";
@@ -57,6 +56,7 @@ type GenerationJobData = {
   generationJobId?: string;
   costEnvelopeId?: string;
   presentationOnlyRecovery?: boolean;
+  presentationRetry?: boolean;
   expectedPresentationRevision?: number;
   traceContext?: TraceCarrier;
 };
@@ -255,13 +255,16 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       logger.warn({ projectId, jobId: job.id, stage, fallback: "accepted_narration_local_projection", ...errorLogFields(error) }, "recovering presentation from accepted narration and source snapshot");
       return buildLocalPresentationFromAcceptedNarration(generationProject, sources, speechDraft, { deferMissingPhotoFallback: true });
     };
-    // A presentation retry inherits the original attempt envelope.  Once that
-    // envelope is terminal (or cannot be read), it must never begin another
-    // paid provider stage.  The only permitted continuation is the local
-    // projection from the accepted narration and persisted source snapshot.
+    // A user-requested presentation retry gets its own active cost envelope
+    // and reruns the paid presentation/image stages. Only the operator-only
+    // recovery path and legacy non-retry jobs may use a local projection when
+    // their envelope is already terminal.
     const recoveryReason = job.data.costEnvelopeId
       ? await presentationRecoveryReason(job.data.costEnvelopeId)
       : null;
+    if (job.data.presentationRetry && recoveryReason) {
+      throw new Error(`presentation_retry_cost_envelope_unavailable:${recoveryReason}`);
+    }
     let usedLocalPresentationRecovery = false;
     let imageEnrichmentPassUsed = false;
     let recoveryMetadata: RecoveryMetadata = {
@@ -308,6 +311,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
         }, () => generatePresentationFromNarration(generationProject, sources, speechDraft), traceContext);
       } catch (error) {
         captureGenerationError(error, { projectId, stage: "building_slides", provider: process.env.AI_PROVIDER });
+        if (job.data.presentationRetry) throw error;
         generatedPresentation = recoverAcceptedNarration("building_slides", error);
         usedLocalPresentationRecovery = true;
         noteRecovery("accepted_narration", "provider_presentation_failure");
@@ -354,18 +358,18 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       ...presentationWithImages,
       slides: presentationWithImages.slides.map((slide) => ({ ...slide, canvas: undefined })),
     }, { recovery: usedLocalPresentationRecovery });
-    let unsafeCanvases = canvasAuditIssues(presentation);
+    let unsafeCanvases = finalCanvasSafetyIssues(presentation);
     if (unsafeCanvases.length) {
       logger.warn({ projectId, jobId: job.id, fallback: "roomy_local_layout", issueCount: unsafeCanvases.length }, "generated canvas is unsafe; applying local layout recovery");
       const beforeLayoutRecovery = presentation;
       presentation = repairPresentationLayout(presentation);
       noteRecovery("canvas_layout", "unsafe_generated_canvas", beforeLayoutRecovery, presentation);
-      unsafeCanvases = canvasAuditIssues(presentation);
+      unsafeCanvases = finalCanvasSafetyIssues(presentation);
       if (unsafeCanvases.length) {
         const beforeEmergencyRecovery = presentation;
         presentation = buildEmergencyReadablePresentation(presentation);
         noteRecovery("emergency", "unsafe_recovery_canvas", beforeEmergencyRecovery, presentation);
-        unsafeCanvases = canvasAuditIssues(presentation);
+        unsafeCanvases = finalCanvasSafetyIssues(presentation);
       }
       if (unsafeCanvases.length) throw new Error(`Production quality gate rejected canvas safety: ${unsafeCanvases.slice(0, 8).join("; ")}`);
     }
@@ -382,7 +386,8 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       issueCategories: release.issueCategories,
       attempts: release.attempts,
       finalAction: release.finalDisposition,
-    }, "presentation production quality gate");
+      gate: "provider_quality",
+    }, "provider_quality_released");
     if (release.finalDisposition !== "released") {
       // A schema-valid provider response can still fail the production gate.
       // Re-project only the already accepted narration and snapshot sources;
@@ -495,6 +500,17 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       logger.info({ projectId, jobId: job.id, stage: "validating", releaseGate: "economic_standard", passed: economicGate.passed, categories: economicGate.categories }, "economic presentation release gate");
       if (!economicGate.passed) throw new EconomicReleaseGateError(economicGate.categories);
     }
+    const finalCanvasIssues = finalCanvasSafetyIssues(presentation);
+    logger.info({
+      projectId,
+      jobId: job.id,
+      stage: "validating",
+      gate: "final_canvas",
+      finalAction: finalCanvasIssues.length ? "rejected" : "released",
+      issueCount: finalCanvasIssues.length,
+      issues: finalCanvasIssues.slice(0, 8),
+    }, "final_canvas_released");
+    if (finalCanvasIssues.length) throw new Error(`Final canvas gate rejected presentation: ${finalCanvasIssues.slice(0, 8).join("; ")}`);
     presentation = {
       ...presentation,
       productionQualityGate: {
@@ -656,13 +672,6 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     }
     throw error;
   }
-}
-
-function canvasAuditIssues(presentation: PresentationDocument) {
-  return presentation.slides.flatMap((slide) =>
-      (slide.canvas ? auditSlideCanvas(slide.canvas) : ["canvas is missing"])
-        .map((issue) => `slide ${slide.order}: ${issue}`),
-    );
 }
 
 /**

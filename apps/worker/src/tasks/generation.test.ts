@@ -16,7 +16,7 @@ const mandatorySourceSnapshot = {
   ],
 };
 
-const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, finalizeFailedCostEnvelope, captureGenerationError, generateNarrationDraft, generatePresentationFromNarration, buildLocalPresentationFromAcceptedNarration, enrichPresentationImages, materializePlannedVisuals, productionQualityReleaseResult, costEnvelope, prismaMock } = vi.hoisted(() => ({
+const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, finalizeFailedCostEnvelope, captureGenerationError, generateNarrationDraft, generatePresentationFromNarration, buildLocalPresentationFromAcceptedNarration, enrichPresentationImages, materializePlannedVisuals, productionQualityReleaseResult, finalCanvasSafetyIssues, costEnvelope, prismaMock } = vi.hoisted(() => ({
   reserveCostEnvelope: vi.fn(),
   settleCostEnvelope: vi.fn(),
   failCostEnvelope: vi.fn(),
@@ -28,6 +28,7 @@ const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, finalizeFaile
   enrichPresentationImages: vi.fn(),
   materializePlannedVisuals: vi.fn((presentation) => presentation),
   productionQualityReleaseResult: vi.fn(),
+  finalCanvasSafetyIssues: vi.fn(() => []),
   costEnvelope: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
   prismaMock: {
     source: { create: vi.fn(), deleteMany: vi.fn(), update: vi.fn() },
@@ -72,6 +73,7 @@ vi.mock("./presentation.js", () => ({
 vi.mock("./presentation-quality.js", () => ({
   materializePlannedVisuals,
   productionQualityReleaseResult,
+  finalCanvasSafetyIssues,
   findSpeechTimingIssues: () => [],
   findFactualRiskIssues: () => [],
 }));
