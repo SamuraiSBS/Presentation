@@ -16,6 +16,13 @@ describe("public narration failure UI", () => {
     expect(copy.message).not.toMatch(/качества|попыток|provider|\d+\s*(слов|words)/i);
   });
 
+  it("uses presentation recovery copy when narration is already saved", () => {
+    const copy = narrationFailureUi("accepted_speech", "presentation");
+
+    expect(copy.title).toBe("Не удалось собрать презентацию");
+    expect(copy.message).toContain("полную AI-пересборку презентации");
+  });
+
   it("opens the normal editor for an editable draft without treating it as accepted", () => {
     expect(narrationReviewMode({ status: "script_ready", speechDraft: "Слайд 1: Тема", narrationState: "editable_draft" })).toBe("editor");
     expect(narrationReviewMode({ status: "script_ready", speechDraft: "Слайд 1: Тема", narrationState: "accepted_speech" })).toBe("editor");

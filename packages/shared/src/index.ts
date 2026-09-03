@@ -35,6 +35,8 @@ export { COST_ENVELOPE_POLICY_VERSION, COST_ENVELOPE_LIMIT_RUB, COST_ENVELOPE_BU
 export type { CostEnvelopeBucket, CostEnvelopePolicy, AitunnelApprovedModel, AitunnelCatalogPrice } from "./generation/cost-envelope.js";
 export { presentationSchema } from "./presentation/document.js";
 export type { PresentationDocument } from "./presentation/document.js";
+export { publicGenerationErrorCategoryValues, publicGenerationFailureMessage } from "./generation/recovery.js";
+export type { PublicGenerationErrorCategory } from "./generation/recovery.js";
 export { PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS, resolvePremiumPresentationTheme, resolveThemeFromDesignBrief, resolvePresentationTheme } from "./presentation/themes.js";
 export type { PremiumPresentationThemeId } from "./presentation/themes.js";
 export { auditSlideCanvas, auditGeneratedCanvasText, auditCanonicalSlideCanvas } from "./presentation/canvas-audit.js";
@@ -44,7 +46,7 @@ export { presentationTypography, typographyForCanvasText, typographyRoleForCanva
 export type { PresentationTypographyRole } from "./presentation/typography.js";
 export { PRESENTATION_FONT_FAMILY, PRESENTATION_FONT_STACK } from "./presentation/fonts.js";
 export { normalizeSourceRefs, sourceRefFromSource, formatSourceReference, formatImageAttribution, formatSlideAttribution } from "./presentation/attribution.js";
-export { ensureEditableCanvas, buildSlideCanvas, hasCustomSlideCanvas, hasMeasurableValue, metricLead, fittedFontSize, compactSourceRefs, assertNever } from "./presentation/canvas-builder.js";
+export { ensureEditableCanvas, buildSlideCanvas, sanitizeRecoverySlideForCanvas, hasCustomSlideCanvas, hasMeasurableValue, metricLead, fittedFontSize, compactSourceRefs, assertNever } from "./presentation/canvas-builder.js";
 export * from "./defense/schemas.js";
 export * from "./defense/inputs.js";
 export * from "./defense/presets.js";

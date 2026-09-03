@@ -28,9 +28,10 @@ import {
   planLimits,
   presentationSchema,
   resolvePresentationTheme,
-  safeGenerationRecovery,
   isPublicNarrationState,
   publicNarrationFailureMessage,
+  publicGenerationFailureMessage,
+  type PublicGenerationErrorCategory,
   type PublicNarrationState,
   slideCanvasSchema,
 } from "@studydeck/shared";
@@ -161,10 +162,14 @@ export class ProjectsService {
     const access = await this.access.requireViewer(userId, id);
     const project = await this.getProjectDetail(id);
     const narrationState = publicNarrationState(project);
+    const jobs = project.jobs.map((job) => publicGenerationJob(job));
     return {
       ...project,
-      error: publicProjectError(project.error, project.status, narrationState),
-      jobs: project.jobs.map((job) => ({ ...job, error: publicJobError(job.error, job.status) })),
+      error: publicProjectError(project.error, project.status, narrationState, project.speechDraft, project.jobs),
+      jobs,
+      generationErrorCategory: publicGenerationErrorCategory(project.error, project.status, project.speechDraft, project.jobs),
+      latestNarrationJob: jobs.find((job) => job.kind === "narration") || null,
+      latestPresentationJob: jobs.find((job) => job.kind === "presentation") || null,
       narrationState,
       accessRole: access.role,
       presentationRevision: project.presentation?.revision ?? 0,
@@ -547,6 +552,7 @@ export class ProjectsService {
         );
       }
 
+      const presentationRetry = project.jobs.some((item) => item.kind === "presentation" && item.status === "failed");
       const envelope = await this.createAitunnelEnvelope(project.id, "presentation", access.project.userId);
       const job = envelope.job;
       if (envelope.existing) {
@@ -562,7 +568,7 @@ export class ProjectsService {
       try {
         const queueJob = await this.generationQueue.add(
           "generate-presentation",
-          { projectId: project.id, userId: access.project.userId, generationJobId: job.id, costEnvelopeId: envelope.id, traceContext: injectTraceContext() },
+          { projectId: project.id, userId: access.project.userId, generationJobId: job.id, costEnvelopeId: envelope.id, presentationRetry, traceContext: injectTraceContext() },
           generationJobOptions(),
         );
         queueAccepted = true;
@@ -613,9 +619,9 @@ export class ProjectsService {
       const priorAttemptEnvelopes = kind === "presentation"
         ? await tx.costEnvelope.findMany({
           // A failed presentation can exhaust its envelope after the source
-          // snapshot was successfully captured. Include that failed
-          // presentation envelope itself: it is the attempt group whose cap
-          // and immutable snapshot must govern the retry.
+          // snapshot was successfully captured. Include it so the next
+          // attempt can reuse the immutable source snapshot without rerunning
+          // narration or web research.
           where: {
             projectId,
             OR: [
@@ -628,19 +634,21 @@ export class ProjectsService {
           select: { id: true, policyVersion: true, sourceSnapshot: true, status: true, presentationJobId: true },
         })
         : [];
-      // The envelope is the attempt group. A recovery job must retain this
-      // identifier even after a prior presentation job exhausted it: creating
-      // a replacement envelope would grant the same user run a fresh cap.
-      const existing = priorAttemptEnvelopes.find((envelope) => envelope.policyVersion === policy.version) || null;
+      const hasFailedPresentationAttempt = priorAttemptEnvelopes.some((envelope) => Boolean(envelope.presentationJobId));
+      // Upgrade the narration envelope only for the first presentation
+      // attempt. A user retry after a failed presentation is a new paid
+      // attempt and therefore receives a fresh envelope with the same source
+      // snapshot.
+      const existing = hasFailedPresentationAttempt
+        ? null
+        : priorAttemptEnvelopes.find((envelope) => envelope.policyVersion === policy.version) || null;
       const preservedSourceSnapshot = priorAttemptEnvelopes.find((envelope) => envelope.sourceSnapshot && typeof envelope.sourceSnapshot === "object")?.sourceSnapshot;
       // A pre-v8 narration envelope does not reserve the final Terra request.
       // Do not silently reuse it for slides: its old cap cannot safely govern
       // the post-narration provider path.
       if (existing) {
-        // Keep the attempt-group envelope and its immutable snapshot, but
-        // move the one-to-one presentation-job relation to the retry. The
-        // worker's reservation keys include generationJobId, so this keeps
-        // retry spend under the same cap without replaying prior settlement.
+        // The first presentation attempt may be attached to the narration
+        // envelope; failed presentation attempts never rebind their envelope.
         const envelope = await tx.costEnvelope.update({ where: { id: existing.id }, data: { presentationJobId: job.id } });
         return { id: envelope.id, job, existing: false };
       }
@@ -841,7 +849,7 @@ export class ProjectsService {
         folder: { select: { id: true, name: true, color: true } },
         sources: true,
         presentation: true,
-        jobs: { orderBy: { createdAt: "desc" }, take: 1 },
+        jobs: { orderBy: { createdAt: "desc" }, take: 20 },
         exports: { orderBy: { createdAt: "desc" } },
       },
     });
@@ -871,18 +879,61 @@ export class ProjectsService {
   }
 }
 
-function publicProjectError(value: string | null, status: string, narrationState: PublicNarrationState | null) {
+function publicProjectError(
+  value: string | null,
+  status: string,
+  narrationState: PublicNarrationState | null,
+  speechDraft: string | null,
+  jobs: Array<{ kind: string; status: string; error: string | null }>,
+) {
   if (!value) return null;
   if (narrationState === "source_preparation_failed" || narrationState === "narration_failed") {
     return publicNarrationFailureMessage(narrationState);
   }
-  return safeGenerationRecovery(status === "failed" ? "unknown" : "transient").message;
+  const category = publicGenerationErrorCategory(value, status, speechDraft, jobs);
+  return category === "narration"
+    ? publicNarrationFailureMessage("narration_failed")
+    : publicGenerationFailureMessage(category || "presentation");
 }
 
-function publicJobError(value: string | null, status: string) {
+function publicJobError(value: string | null, status: string, kind: string) {
   if (!value) return null;
   if (isPublicNarrationState(value)) return null;
-  return safeGenerationRecovery(status === "failed" ? "unknown" : "transient").message;
+  return publicGenerationFailureMessage(categoryForGenerationError(value, kind === "narration" ? "narration" : "presentation"));
+}
+
+function publicGenerationJob(job: { kind: string; status: string; error: string | null } & Record<string, unknown>) {
+  const errorCategory = job.error
+    ? publicGenerationErrorCategory(job.error, job.status, null, [job])
+    : null;
+  return {
+    ...job,
+    error: publicJobError(job.error, job.status, job.kind),
+    errorCategory,
+  };
+}
+
+function publicGenerationErrorCategory(
+  value: string | null,
+  status: string,
+  speechDraft: string | null,
+  jobs: Array<{ kind: string; status: string; error: string | null }>,
+): PublicGenerationErrorCategory | null {
+  if (!value && status !== "failed") return null;
+  const failedPresentation = jobs.find((job) => job.kind === "presentation" && job.status === "failed");
+  if (failedPresentation) return categoryForGenerationError(failedPresentation.error, "presentation");
+  const failedNarration = jobs.find((job) => job.kind === "narration" && job.status === "failed");
+  if (failedNarration || !speechDraft?.trim()) return "narration";
+  return categoryForGenerationError(value, "presentation");
+}
+
+function categoryForGenerationError(value: string | null, kind: "narration" | "presentation"): PublicGenerationErrorCategory {
+  if (kind === "narration") return "narration";
+  const normalized = String(value || "").toLowerCase();
+  if (/image|visual|aitunnel.*(?:abort|timeout)|provider_aborted|tavily/i.test(normalized)) return "image";
+  if (/layout|canvas|overflow|safe.?place|export.?preflight/i.test(normalized)) return "layout";
+  if (/quality|gate|schema|release/i.test(normalized)) return "quality";
+  return "presentation";
 }
 
 function publicNarrationState(project: {

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { presentationSchema } from "@studydeck/shared";
 import { buildEmergencyReadablePresentation, handleGenerationJob, hasAcceptedNarrationRecoveryArtifacts, mergeRecoveredVisuals } from "./generation.js";
 import { buildLocalPresentationFromAcceptedNarration } from "./presentation.js";
-import { productionQualityReleaseResult } from "./presentation-quality.js";
+import { finalCanvasSafetyIssues, productionQualityReleaseResult } from "./presentation-quality.js";
 import { searchWebSources } from "./web-search.js";
 
 const { generatePresentationFromNarration, enrichPresentationImages, prismaMock, costEnvelope, reserveCostEnvelope, settleCostEnvelope, captureGenerationError } = vi.hoisted(() => {
@@ -114,6 +114,8 @@ describe("accepted narration local recovery with the actual production gate", ()
     expect(enrichPresentationImages).toHaveBeenCalledTimes(1);
     expect(enrichPresentationImages).toHaveBeenCalledWith(expect.objectContaining({ id: project.id }), expect.any(Object), expect.objectContaining({ attemptedSlideOrders: expect.any(Set) }));
     expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "ready" }) }));
+    const document = prismaMock.presentation.upsert.mock.calls[0]?.[0]?.create?.document;
+    expect(finalCanvasSafetyIssues(document as any)).toEqual([]);
   });
 
   it("keeps operator recovery presentation-only and advances the revision conditionally", async () => {
@@ -151,6 +153,20 @@ describe("accepted narration local recovery with the actual production gate", ()
     expect(enrichPresentationImages).toHaveBeenCalledWith(expect.objectContaining({ id: project.id }), expect.any(Object), expect.objectContaining({ recovery: true, skipSlideOrders: expect.any(Set) }));
     expect(searchWebSources).not.toHaveBeenCalled();
     expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "ready" }) }));
+  });
+
+  it("does not silently downgrade a user presentation retry to local recovery", async () => {
+    const providerError = new Error("structured presentation response was malformed");
+    generatePresentationFromNarration.mockRejectedValueOnce(providerError);
+
+    await expect(handleGenerationJob(job({ presentationRetry: true }))).rejects.toBe(providerError);
+
+    expect(generatePresentationFromNarration).toHaveBeenCalledTimes(1);
+    expect(enrichPresentationImages).not.toHaveBeenCalled();
+    expect(prismaMock.presentation.upsert).not.toHaveBeenCalled();
+    expect(prismaMock.generationJob.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "failed", error: providerError.message }),
+    }));
   });
 
   it("releases the emergency readable deck when the editorial local projection remains generic", () => {

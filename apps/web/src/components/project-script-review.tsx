@@ -197,7 +197,7 @@ export function ProjectScriptReview({ initialProject }: { initialProject: Projec
           <div className="actions">
             {draft ? (
               <button className="button" type="button" onClick={acceptAndGenerate} disabled={busy || !draftIsLongEnough}>
-                Попробовать собрать слайды ещё раз
+                Полная AI-пересборка презентации
               </button>
             ) : (
               <button className="button" type="button" onClick={startNarration} disabled={busy}>

@@ -1,4 +1,4 @@
-import type { PublicNarrationState } from "@studydeck/shared";
+import { publicGenerationFailureMessage, type PublicGenerationErrorCategory, type PublicNarrationState } from "@studydeck/shared";
 
 type NarrationFailureUi = {
   title: string;
@@ -18,7 +18,16 @@ export function narrationReviewMode(input: {
 }
 
 /** Public narration states are the sole input for terminal failure copy. */
-export function narrationFailureUi(state: PublicNarrationState | null | undefined): NarrationFailureUi {
+export function narrationFailureUi(
+  state: PublicNarrationState | null | undefined,
+  category?: PublicGenerationErrorCategory | null,
+): NarrationFailureUi {
+  if (category && category !== "narration") {
+    return {
+      title: "Не удалось собрать презентацию",
+      message: publicGenerationFailureMessage(category),
+    };
+  }
   if (state === "source_preparation_failed") {
     return {
       title: "Не удалось подготовить текст",

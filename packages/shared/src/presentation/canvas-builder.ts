@@ -1,7 +1,7 @@
 import type { DesignBriefSlideDirection, SceneTextMode } from "../generation/schemas.js";
 import type { SourceRef } from "../projects/schemas.js";
 import { formatSlideAttribution } from "./attribution.js";
-import { repairUnsafeGeneratedElements } from "./canvas-audit.js";
+import { auditSlideCanvas, repairUnsafeGeneratedElements } from "./canvas-audit.js";
 import { slideBackgroundStyle } from "./canvas-background.js";
 import {
     CANVAS_SAFE_BOTTOM,
@@ -184,6 +184,22 @@ export function buildSlideCanvas(slide: Slide, theme: PresentationTheme, options
 }
 
 function buildRecoveryCanvas(slide: Slide, theme: PresentationTheme): SlideCanvas {
+  const safeSlide = sanitizeRecoverySlideForCanvas(slide);
+  const primary = buildRecoveryCanvasVariant(safeSlide, theme);
+  if (!auditSlideCanvas(primary).length) return primary;
+
+  const textOnly = buildRecoveryCanvasVariant({
+    ...safeSlide,
+    visual: { ...safeSlide.visual, type: "none", image: undefined, graph: undefined, rows: [], items: [] },
+  }, theme);
+  if (!auditSlideCanvas(textOnly).length) return textOnly;
+
+  const minimal = buildMinimalRecoveryCanvas(safeSlide, theme);
+  auditSlideCanvas(minimal);
+  return minimal;
+}
+
+function buildRecoveryCanvasVariant(slide: Slide, theme: PresentationTheme): SlideCanvas {
   const isDark = slide.slideKind === "title" || slide.slideKind === "section" || slide.slideKind === "summary";
   const background = isDark ? theme.colors.text : theme.colors.background;
   const foreground = isDark ? theme.colors.background : theme.colors.text;
@@ -194,8 +210,6 @@ function buildRecoveryCanvas(slide: Slide, theme: PresentationTheme): SlideCanva
     addRecoveryImageCanvas(slide, theme, elements, foreground, muted);
   } else if (slide.slideKind === "title" || slide.slideKind === "section" || slide.slideKind === "summary") {
     addRecoveryStatementCanvas(slide, theme, elements, foreground, muted, isDark);
-  } else if (slide.visual.image) {
-    addRecoveryImageCanvas(slide, theme, elements);
   } else if (isRecoveryDiagram(slide.visual.type)) {
     addRecoveryDiagramCanvas(slide, theme, elements);
   } else {
@@ -203,6 +217,43 @@ function buildRecoveryCanvas(slide: Slide, theme: PresentationTheme): SlideCanva
   }
 
   addSlideAttributionCanvas(slide, theme, elements, muted);
+  return recoveryCanvasDocument(slide, background, elements, theme);
+}
+
+function buildMinimalRecoveryCanvas(slide: Slide, theme: PresentationTheme): SlideCanvas {
+  const isDark = slide.slideKind === "title" || slide.slideKind === "section" || slide.slideKind === "summary";
+  const background = isDark ? theme.colors.text : theme.colors.background;
+  const foreground = isDark ? theme.colors.background : theme.colors.text;
+  const muted = isDark ? theme.colors.line : theme.colors.muted;
+  const elements: CanvasElement[] = [];
+  const title = slide.title || "Тема";
+  const body = slide.thesis || "";
+
+  elements.push(
+    shapeElement(`${slide.id}-recovery-rule`, "rect", 72, 78, 112, 7, 2, theme.colors.accentAlt, theme.colors.accentAlt, 0, 1),
+    textElement(`${slide.id}-title`, title, 72, 112, 760, 112, 4, {
+      role: "title",
+      typographyRole: slide.slideKind === "title" ? "deckTitle" : "slideTitle",
+      fontSize: fittedFontSize(title, slide.slideKind === "title" ? 54 : 43, slide.slideKind === "title" ? presentationTypography.deckTitle.minPx : presentationTypography.slideTitle.minPx, 112, 760, slide.slideKind === "title" ? presentationTypography.deckTitle.lineHeight : presentationTypography.slideTitle.lineHeight),
+      fontFamily: theme.fonts.heading,
+      color: foreground,
+      bold: true,
+      valign: "middle",
+    }),
+    textElement(`${slide.id}-body`, body, 72, 264, 690, 176, 4, {
+      role: "body",
+      typographyRole: "body",
+      fontSize: fittedFontSize(body, 30, presentationTypography.body.minPx, 176, 690, presentationTypography.body.lineHeight),
+      fontFamily: theme.fonts.body,
+      color: muted,
+      valign: "middle",
+    }),
+  );
+  addSlideAttributionCanvas(slide, theme, elements, muted);
+  return recoveryCanvasDocument(slide, background, elements, theme);
+}
+
+function recoveryCanvasDocument(slide: Slide, background: string, elements: CanvasElement[], theme: PresentationTheme): SlideCanvas {
   return {
     version: 3,
     width: 1280,
@@ -213,6 +264,74 @@ function buildRecoveryCanvas(slide: Slide, theme: PresentationTheme): SlideCanva
   };
 }
 
+/**
+ * Creates the bounded projection used by recovery canvases. The source slide
+ * and accepted narration are never mutated; only this canvas projection is
+ * reduced to the real width and height of each recovery slot.
+ */
+export function sanitizeRecoverySlideForCanvas(slide: Slide): Slide {
+  const isDiagram = isRecoveryDiagram(slide.visual.type);
+  const hasImage = Boolean(slide.visual.image);
+  const titleWidth = hasImage ? 610 : isDiagram ? 1136 : 760;
+  const titleHeight = hasImage ? 92 : isDiagram ? 82 : 112;
+  const titleRole = slide.slideKind === "title" ? presentationTypography.deckTitle : presentationTypography.slideTitle;
+  const bodyBox = hasImage ? { width: 600, height: 210, preferred: 29 } : isDiagram ? { width: 1136, height: 125, preferred: 27 } : { width: 690, height: 176, preferred: 30 };
+  const body = recoveryTextThatFits(slide.thesis || slideBodyText(slide), bodyBox.width, bodyBox.height, bodyBox.preferred, presentationTypography.body.minPx, presentationTypography.body.lineHeight);
+  const supportWidth = Math.max(180, Math.floor((Math.min(690, bodyBox.width) - 16) / 2) - 36);
+  const bullets = (slide.bullets || [])
+    .map((item) => recoveryTextThatFits(item, supportWidth, 132, presentationTypography.supporting.preferredPx, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight))
+    .filter(Boolean);
+  const blocks = (slide.blocks || []).map((block) => block.type === "bullets"
+    ? { ...block, items: block.items.map((item) => recoveryTextThatFits(item, supportWidth, 132, presentationTypography.supporting.preferredPx, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight)).filter(Boolean) }
+    : { ...block, content: recoveryTextThatFits(block.content, supportWidth, 132, presentationTypography.supporting.preferredPx, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight) }
+  ).filter((block) => block.type === "bullets" ? block.items.length > 0 : Boolean(block.content));
+  const visual = {
+    ...slide.visual,
+    graph: slide.visual.graph ? {
+      ...slide.visual.graph,
+      nodes: slide.visual.graph.nodes.slice(0, 3).map((node) => ({
+        ...node,
+        label: recoveryTextThatFits(node.label, 317, 58, 25, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight) || "Точка",
+        detail: recoveryTextThatFits(node.detail, 317, 62, 24, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight),
+      })),
+    } : undefined,
+    rows: slide.visual.rows.slice(0, 3).map((row, index) => ({
+      ...row,
+      label: recoveryTextThatFits(row.label || `Точка ${index + 1}`, 317, 58, 25, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight) || `Точка ${index + 1}`,
+      left: recoveryTextThatFits(row.left, 317, 62, 24, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight),
+      right: recoveryTextThatFits(row.right, 317, 62, 24, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight),
+    })),
+    items: slide.visual.items.slice(0, 3).map((item) => ({
+      ...item,
+      label: recoveryTextThatFits(item.label || item.text, 317, 58, 25, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight) || "Точка",
+      text: recoveryTextThatFits(item.text, 317, 62, 24, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight),
+    })),
+  };
+  const title = recoveryTextThatFits(slide.title, titleWidth, titleHeight, slide.slideKind === "title" ? 54 : 43, titleRole.minPx, titleRole.lineHeight) || "Тема";
+  return { ...slide, title, thesis: body, bullets, blocks, visual };
+}
+
+function recoveryTextThatFits(value: string, width: number, height: number, preferred: number, minimum: number, lineHeight: number) {
+  const text = cleanCanvasText(value);
+  if (!text) return "";
+  const candidates = [
+    text,
+    ...text.split(/(?<=[.!?])\s+/u),
+    ...text.split(/[,;:–—]\s*/u),
+  ]
+    .map((candidate) => cleanCanvasText(candidate))
+    .filter(Boolean)
+    .filter((candidate, index, all) => all.indexOf(candidate) === index);
+  return candidates.find((candidate) => {
+    const fontSize = fittedFontSize(candidate, preferred, minimum, height, width, lineHeight);
+    const charactersPerLine = estimatedCharactersPerLine(fontSize, width);
+    const maxLines = Math.max(1, Math.floor(height / (fontSize * lineHeight)));
+    return !candidate.split(/\s+/u).some((word) => word.length > charactersPerLine)
+      && candidate.length <= maxLines * charactersPerLine * 1.15
+      && estimatedTextHeight(candidate, fontSize, width, lineHeight) <= height * 1.14;
+  }) || "";
+}
+
 function addRecoveryStatementCanvas(
   slide: Slide,
   theme: PresentationTheme,
@@ -221,13 +340,13 @@ function addRecoveryStatementCanvas(
   muted: string,
   isDark: boolean,
 ) {
-  const body = slide.thesis || slideBodyText(slide);
+  const body = slide.thesis;
   elements.push(
     shapeElement(`${slide.id}-recovery-rule`, "rect", 72, 78, 112, 7, 2, theme.colors.accentAlt, theme.colors.accentAlt, 0, 1),
     textElement(`${slide.id}-title`, slide.title, 72, 112, 760, 112, 4, {
       role: "title",
       typographyRole: slide.slideKind === "title" ? "deckTitle" : "slideTitle",
-      fontSize: fittedFontSize(slide.title, slide.slideKind === "title" ? 54 : 43, 30, 112),
+      fontSize: fittedFontSize(slide.title, slide.slideKind === "title" ? 54 : 43, slide.slideKind === "title" ? presentationTypography.deckTitle.minPx : presentationTypography.slideTitle.minPx, 112, 760, slide.slideKind === "title" ? presentationTypography.deckTitle.lineHeight : presentationTypography.slideTitle.lineHeight),
       fontFamily: theme.fonts.heading,
       color: foreground,
       bold: true,
@@ -236,7 +355,7 @@ function addRecoveryStatementCanvas(
     textElement(`${slide.id}-body`, body, 72, 264, 690, 176, 4, {
       role: "body",
       typographyRole: "body",
-      fontSize: fittedFontSize(body, 30, 21, 176),
+      fontSize: fittedFontSize(body, 30, presentationTypography.body.minPx, 176, 690, presentationTypography.body.lineHeight),
       fontFamily: theme.fonts.body,
       color: muted,
       valign: "middle",
@@ -254,13 +373,13 @@ function addRecoveryImageCanvas(
 ) {
   const image = slide.visual.image;
   if (!image) return addRecoveryStatementCanvas(slide, theme, elements, theme.colors.text, theme.colors.muted, false);
-  const body = slide.thesis || slideBodyText(slide);
+  const body = slide.thesis;
   elements.push(
     shapeElement(`${slide.id}-recovery-rule`, "rect", 72, 70, 112, 7, 2, theme.colors.accentAlt, theme.colors.accentAlt, 0, 1),
     textElement(`${slide.id}-title`, slide.title, 72, 104, 610, 92, 4, {
       role: "title",
       typographyRole: "slideTitle",
-      fontSize: fittedFontSize(slide.title, 42, 29, 92),
+      fontSize: fittedFontSize(slide.title, 42, presentationTypography.slideTitle.minPx, 92, 610, presentationTypography.slideTitle.lineHeight),
       fontFamily: theme.fonts.heading,
       color: foreground,
       bold: true,
@@ -269,7 +388,7 @@ function addRecoveryImageCanvas(
     textElement(`${slide.id}-body`, body, 72, 224, 600, 210, 4, {
       role: "body",
       typographyRole: "body",
-      fontSize: fittedFontSize(body, 29, 21, 210),
+      fontSize: fittedFontSize(body, 29, presentationTypography.body.minPx, 210, 600, presentationTypography.body.lineHeight),
       fontFamily: theme.fonts.body,
       color: muted,
       valign: "middle",
@@ -280,7 +399,7 @@ function addRecoveryImageCanvas(
 }
 
 function addRecoveryDiagramCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
-  const body = slide.thesis || slideBodyText(slide);
+  const body = slide.thesis;
   const nodes = recoveryDiagramNodes(slide).slice(0, 3);
   const cardGap = 22;
   const cardWidth = Math.floor((1136 - cardGap * (nodes.length - 1)) / nodes.length);
@@ -293,7 +412,7 @@ function addRecoveryDiagramCanvas(slide: Slide, theme: PresentationTheme, elemen
     textElement(`${slide.id}-title`, slide.title, 72, 104, 1136, 82, 4, {
       role: "title",
       typographyRole: "slideTitle",
-      fontSize: fittedFontSize(slide.title, 42, 29, 82),
+      fontSize: fittedFontSize(slide.title, 42, presentationTypography.slideTitle.minPx, 82, 1136, presentationTypography.slideTitle.lineHeight),
       fontFamily: theme.fonts.heading,
       color: theme.colors.text,
       bold: true,
@@ -302,7 +421,7 @@ function addRecoveryDiagramCanvas(slide: Slide, theme: PresentationTheme, elemen
     textElement(`${slide.id}-body`, body, 72, 206, 1136, 125, 4, {
       role: "body",
       typographyRole: "body",
-      fontSize: fittedFontSize(body, 27, 21, 292),
+      fontSize: fittedFontSize(body, 27, presentationTypography.body.minPx, 125, 1136, presentationTypography.body.lineHeight),
       fontFamily: theme.fonts.body,
       color: theme.colors.text,
       valign: "middle",
@@ -318,7 +437,7 @@ function addRecoveryDiagramCanvas(slide: Slide, theme: PresentationTheme, elemen
       textElement(`${slide.id}-recovery-card-${index}-label`, node.label, x + 20, cardY + 26, cardWidth - 40, detail ? 58 : 132, 4, {
         role: "body",
         typographyRole: "supporting",
-        fontSize: fittedFontSize(node.label, 25, 19, detail ? 58 : 132),
+        fontSize: fittedFontSize(node.label, 25, presentationTypography.supporting.minPx, detail ? 58 : 132, cardWidth - 40, presentationTypography.supporting.lineHeight),
         autoFit: false,
         fontFamily: theme.fonts.heading,
         color: theme.colors.background,
@@ -330,7 +449,7 @@ function addRecoveryDiagramCanvas(slide: Slide, theme: PresentationTheme, elemen
       ...(detail ? [textElement(`${slide.id}-recovery-card-${index}-detail`, detail, x + 20, cardY + 100, cardWidth - 40, 62, 4, {
         role: "caption",
         typographyRole: "supporting",
-        fontSize: fittedFontSize(detail, 19, 16, 62),
+        fontSize: fittedFontSize(detail, 24, presentationTypography.supporting.minPx, 62, cardWidth - 40, presentationTypography.supporting.lineHeight),
         autoFit: false,
         fontFamily: theme.fonts.body,
         color: theme.colors.background,
@@ -354,26 +473,27 @@ function addRecoverySupportBlocks(
   width: number,
   isDark: boolean,
 ) {
+  const blockWidth = Math.max(180, Math.floor((Math.min(690, width) - 16) / 2));
   const points = [...slide.bullets, ...slide.blocks.flatMap((block) => block.type === "bullets" ? block.items : [block.content])]
-    .map((item) => compactRecoveryText(item, 90))
+    .map((item) => recoveryTextThatFits(item, blockWidth - 36, 132, presentationTypography.supporting.preferredPx, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight))
     .filter(Boolean)
     .filter((item, index, all) => all.indexOf(item) === index)
     .slice(0, 2);
   if (!points.length) return;
   const gap = 16;
-  const blockWidth = points.length === 1 ? Math.min(520, width) : Math.floor((width - gap) / 2);
+  const resolvedBlockWidth = points.length === 1 ? Math.min(520, width) : Math.floor((width - gap) / 2);
   const blockHeight = 162;
   const textHeight = 132;
   const groupFill = isDark ? theme.colors.surfaceAlt : theme.colors.accentAlt;
   points.forEach((point, index) => {
-    const blockX = x + index * (blockWidth + gap);
+    const blockX = x + index * (resolvedBlockWidth + gap);
     const groupId = `group:${slide.id}-recovery-support-${index}`;
     elements.push(
-      { ...shapeElement(`${slide.id}-recovery-support-${index}`, "roundRect", blockX, y, blockWidth, blockHeight, 2, groupFill, groupFill, 1, 1), groupId },
-      textElement(`${slide.id}-recovery-support-${index}-text`, point, blockX + 18, y + 15, blockWidth - 36, textHeight, 3, {
+      { ...shapeElement(`${slide.id}-recovery-support-${index}`, "roundRect", blockX, y, resolvedBlockWidth, blockHeight, 2, groupFill, groupFill, 1, 1), groupId },
+      textElement(`${slide.id}-recovery-support-${index}-text`, point, blockX + 18, y + 15, resolvedBlockWidth - 36, textHeight, 3, {
         role: "caption",
         typographyRole: "supporting",
-        fontSize: fittedFontSize(point, 18, 16, textHeight),
+        fontSize: fittedFontSize(point, presentationTypography.supporting.preferredPx, presentationTypography.supporting.minPx, textHeight, resolvedBlockWidth - 36, presentationTypography.supporting.lineHeight),
         autoFit: false,
         fontFamily: theme.fonts.body,
         color: isDark ? theme.colors.text : theme.colors.background,
@@ -393,42 +513,27 @@ function isRecoveryDiagram(type: SlideVisual["type"]) {
 function recoveryDiagramNodes(slide: Slide) {
   if (slide.visual.graph?.nodes.length) {
     return slide.visual.graph.nodes.map((node) => ({
-      label: compactRecoveryText(node.label, 72),
-      detail: compactRecoveryText(node.detail, 96),
+      label: cleanCanvasText(node.label),
+      detail: cleanCanvasText(node.detail),
     }));
   }
   if (slide.visual.rows.length) {
     return slide.visual.rows.slice(0, 3).map((row, index) => ({
-      label: compactRecoveryText(row.label || `Point ${index + 1}`, 72),
-      detail: compactRecoveryText([row.left, row.right].filter(Boolean).join(" · "), 96),
+      label: cleanCanvasText(row.label || `Point ${index + 1}`),
+      detail: cleanCanvasText([row.left, row.right].filter(Boolean).join(" · ")),
     }));
   }
   if (slide.visual.items.length) {
     return slide.visual.items.map((item) => ({
-      label: compactRecoveryText(item.label || item.text, 72),
-      detail: compactRecoveryText(item.text && item.text !== item.label ? item.text : "", 96),
+      label: cleanCanvasText(item.label || item.text),
+      detail: cleanCanvasText(item.text && item.text !== item.label ? item.text : ""),
     }));
   }
   return [slide.thesis, ...slide.bullets, slide.title]
-    .map((value) => compactRecoveryText(value, 96))
+    .map((value) => cleanCanvasText(value))
     .filter(Boolean)
     .filter((value, index, all) => all.indexOf(value) === index)
     .map((value) => ({ label: value, detail: "" }));
-}
-
-function compactRecoveryText(value: string, maximum: number) {
-  const text = cleanCanvasText(value);
-  if (text.length <= maximum) return text;
-  const sentence = text.split(/(?<=[.!?])\s+/u).find((part) => part.length <= maximum && part.trim());
-  if (sentence) return sentence.trim();
-  const words = text.split(/\s+/u);
-  let result = "";
-  for (const word of words) {
-    const candidate = result ? `${result} ${word}` : word;
-    if (candidate.length > maximum) break;
-    result = candidate;
-  }
-  return result || text.slice(0, maximum).trim();
 }
 
 function buildStudyDeckEditorialCanvas(
@@ -2614,7 +2719,7 @@ function fitCanvasTextElement(element: CanvasTextElement): CanvasTextElement {
   const minimum = minimumReadableFontSize(element);
   const requestedFontSize = Math.max(element.fontSize, minimum);
   let fontSize = requestedFontSize;
-  while (element.autoFit !== false && fontSize > minimum && estimatedTextHeight(element.text, fontSize, element.w) > element.h) {
+  while (element.autoFit !== false && fontSize > minimum && estimatedTextHeight(element.text, fontSize, element.w, typography.lineHeight) > element.h) {
     fontSize -= 1;
   }
   const text = addCanvasWordBreaks(
@@ -2861,11 +2966,13 @@ export function metricLead(text: string) {
   return text.match(/(?:\d{1,4}(?:[.,]\d+)?\s*(?:%|°[CFСФ]?|км|м|см|мм|кг|г|мл|л|₽|\$|€|млн|млрд|тыс\.?|лет|год(?:а|ов)?|век(?:а|ов)?|мин(?:ут[аы]?)?|сек(?:унд[аы]?)?|ч(?:ас(?:а|ов)?)?)|\d{4}\s*(?:г\.?|год(?:а)?)?)/iu)?.[0] || "";
 }
 
-export function fittedFontSize(value: string, preferred: number, minimum: number, boxHeight: number) {
+export function fittedFontSize(value: string, preferred: number, minimum: number, boxHeight: number, boxWidth = 720, lineHeight = 1.14) {
   const text = cleanCanvasText(value);
   const pressure = Math.max(text.length / 54, text.split(/\s+/).length / 9, text.split("\n").length);
   const heightPressure = Math.max(1, 120 / Math.max(boxHeight, 1));
-  return Math.max(minimum, Math.round(preferred / Math.max(1, pressure * 0.72, heightPressure)));
+  let fontSize = Math.max(minimum, Math.round(preferred / Math.max(1, pressure * 0.72, heightPressure)));
+  while (fontSize > minimum && estimatedTextHeight(text, fontSize, boxWidth, lineHeight) > boxHeight * 1.14) fontSize -= 1;
+  return Math.max(minimum, fontSize);
 }
 
 export function compactSourceRefs(sourceRefs: SourceRef[], limit = 3) {

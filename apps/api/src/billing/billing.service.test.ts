@@ -21,7 +21,10 @@ function fixture() {
   return { service, prisma, tx };
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 describe("BillingService YooKassa purchases", () => {
   it("creates a one-time YooKassa payment with the client retry key", async () => {
@@ -58,6 +61,8 @@ describe("BillingService YooKassa purchases", () => {
   });
 
   it("extends the same active tariff without changing its quota epoch", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-01T10:00:00.000Z"));
     const { service, tx } = fixture();
     tx.yooKassaPayment.upsert.mockResolvedValue({ id: "purchase-1", activatedAt: null });
     const activeUntil = new Date(Date.now() + 60 * 60 * 1000);

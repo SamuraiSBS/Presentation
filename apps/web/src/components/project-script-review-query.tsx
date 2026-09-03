@@ -40,7 +40,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
   const totalWords = wordCount(draft);
   const totalMinutes = totalWords ? Math.max(1, Math.round(totalWords / RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE)) : 0;
   const busy = startNarration.isPending || saveSpeechDraft.isPending || acceptSpeech.isPending;
-  const terminalFailure = narrationFailureUi(project.narrationState);
+  const terminalFailure = narrationFailureUi(project.narrationState, project.generationErrorCategory);
 
   useEffect(() => {
     if (!dirty) setDraft(project.speechDraft || "");
@@ -217,7 +217,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
         {canEdit ? (project.workflow === "requirements_driven"
           ? <Button asChild><Link href={`/projects/${project.id}/defense/plan`}><ShieldCheck size={18} />Открыть подтверждённый план защиты</Link></Button>
           : hasSavedSpeechDraft
-            ? <Button type="button" onClick={acceptAndGenerate} disabled={busy || !draftIsLongEnough}>{acceptSpeech.isPending ? <LoaderCircle className="spin" size={18} /> : <Rocket size={18} />}Повторить сборку слайдов</Button>
+            ? <Button type="button" onClick={acceptAndGenerate} disabled={busy || !draftIsLongEnough}>{acceptSpeech.isPending ? <LoaderCircle className="spin" size={18} /> : <Rocket size={18} />}Полная AI-пересборка презентации</Button>
             : <Button type="button" onClick={startText} disabled={busy}>{startNarration.isPending ? <LoaderCircle className="spin" size={18} /> : <Rocket size={18} />}Повторить подготовку текста</Button>) : null}
       </section> : null}
       {quotaLimit && !isTextReady ? <QuotaLimitNotice limit={quotaLimit.limit} remaining={quotaLimit.remaining} resetsAt={quotaLimit.resetsAt} /> : null}

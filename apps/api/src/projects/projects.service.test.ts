@@ -302,7 +302,7 @@ describe("ProjectsService generation", () => {
       slideCount: 10,
       level: "university_student",
       mode: "with_sources",
-      speechDraft: acceptedTenSlideSpeech(),
+      speechDraft: acceptedTenSlideSpeech(70),
     }));
     prisma.generationJob.findFirst.mockResolvedValueOnce(null);
     prisma.generationJob.create.mockResolvedValueOnce({ id: "job-10" });
@@ -315,6 +315,33 @@ describe("ProjectsService generation", () => {
       expect.objectContaining({ projectId: "project-1" }),
       expect.any(Object),
     );
+  });
+
+  it("queues a failed presentation as a new AI retry without rerunning narration", async () => {
+    const { prisma, queue, service, tx } = createHarness();
+    const originalProvider = process.env.AI_PROVIDER;
+    process.env.AI_PROVIDER = "aitunnel";
+    prisma.project.findUnique.mockResolvedValue(project({
+      status: "failed",
+      jobs: [{ kind: "presentation", status: "failed", error: "provider presentation failure" }],
+    }));
+    tx.generationJob.create.mockResolvedValueOnce({ id: "presentation-retry" });
+    tx.costEnvelope.create.mockResolvedValueOnce({ id: "retry-envelope" });
+
+    try {
+      await service.enqueueGeneration("user-1", "project-1");
+    } finally {
+      if (originalProvider === undefined) delete process.env.AI_PROVIDER;
+      else process.env.AI_PROVIDER = originalProvider;
+    }
+
+    expect(queue.add).toHaveBeenCalledTimes(1);
+    expect(queue.add).toHaveBeenCalledWith(
+      "generate-presentation",
+      expect.objectContaining({ generationJobId: "presentation-retry", costEnvelopeId: "retry-envelope", presentationRetry: true }),
+      expect.any(Object),
+    );
+    expect(queue.add.mock.calls[0][0]).not.toBe("generate-narration");
   });
 
   it("reuses the active job from a concurrent launch without reserving another quota slot", async () => {
@@ -338,7 +365,7 @@ describe("ProjectsService generation", () => {
     expect(usage.releaseGenerationSlot).toHaveBeenCalledWith("job-1");
   });
 
-  it("reuses an exhausted presentation attempt group and rebinds it to the retry job without granting a new cap", async () => {
+  it("creates a fresh presentation envelope while preserving the failed attempt source snapshot", async () => {
     const { service, tx } = createHarness();
     const originalProvider = process.env.AI_PROVIDER;
     process.env.AI_PROVIDER = "aitunnel";
@@ -350,17 +377,22 @@ describe("ProjectsService generation", () => {
       status: "exhausted",
       presentationJobId: "failed-presentation-job",
     }]);
-    tx.costEnvelope.update.mockResolvedValueOnce({ id: "attempt-group-1" });
 
     try {
       await expect((service as any).createAitunnelEnvelope("project-1", "presentation"))
-        .resolves.toMatchObject({ id: "attempt-group-1", job: { id: "presentation-retry-job" } });
+        .resolves.toMatchObject({ id: "envelope-1", job: { id: "presentation-retry-job" } });
     } finally {
       if (originalProvider === undefined) delete process.env.AI_PROVIDER;
       else process.env.AI_PROVIDER = originalProvider;
     }
 
-    expect(tx.costEnvelope.create).not.toHaveBeenCalled();
+    expect(tx.costEnvelope.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        projectId: "project-1",
+        presentationJobId: "presentation-retry-job",
+        sourceSnapshot: { version: 1, sources: [] },
+      }),
+    }));
     expect(tx.costEnvelope.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: {
         projectId: "project-1",
@@ -370,10 +402,7 @@ describe("ProjectsService generation", () => {
         ],
       },
     }));
-    expect(tx.costEnvelope.update).toHaveBeenCalledWith({
-      where: { id: "attempt-group-1" },
-      data: { presentationJobId: "presentation-retry-job" },
-    });
+    expect(tx.costEnvelope.update).not.toHaveBeenCalled();
   });
 });
 
@@ -469,6 +498,26 @@ describe("ProjectsService public generation errors", () => {
     expect(result.narrationState).toBe("accepted_speech");
     expect(result.error).toBeNull();
     expect(result.jobs[0]?.error).toBeNull();
+  });
+
+  it("returns separate narration and presentation failure states", async () => {
+    const { service } = createHarness();
+    vi.spyOn(service as any, "getProjectDetail").mockResolvedValue(project({
+      status: "failed",
+      error: "Production quality gate rejected generated presentation",
+      jobs: [
+        { kind: "presentation", status: "failed", error: "Production quality gate rejected generated presentation" },
+        { kind: "narration", status: "completed", error: "accepted_speech" },
+      ],
+    }) as never);
+
+    const result = await service.getAccessible("user-1", "project-1");
+
+    expect(result.narrationState).toBe("accepted_speech");
+    expect(result.generationErrorCategory).toBe("quality");
+    expect(result.latestNarrationJob).toMatchObject({ kind: "narration", error: null });
+    expect(result.latestPresentationJob).toMatchObject({ kind: "presentation", errorCategory: "quality" });
+    expect(result.error).toContain("не прошла финальную проверку качества");
   });
 });
 
