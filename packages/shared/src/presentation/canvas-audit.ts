@@ -10,7 +10,7 @@ import {
   textSlotCapacity,
 } from "./canvas-helpers.js";
 import type { CanvasElement, CanvasShapeElement, CanvasTextElement, SlideCanvas } from "./schemas.js";
-import { typographyRoleForCanvasText } from "./typography.js";
+import { typographyForCanvasText, typographyRoleForCanvasText } from "./typography.js";
 
 export function auditSlideCanvas(canvas: SlideCanvas) {
   const issues: string[] = [];
@@ -33,7 +33,7 @@ export function auditSlideCanvas(canvas: SlideCanvas) {
     }
     if (element.fontSize < minFontSize) issues.push(`${element.id} uses ${element.fontSize}px text below the ${minFontSize}px readable minimum`);
     if (element.autoFit && element.fontSize <= minFontSize) issues.push(`${element.id} enables autoFit at the readable minimum`);
-    if (estimatedTextHeight(element.text, element.fontSize, element.w) > element.h * 1.14) {
+    if (estimatedTextHeight(element.text, element.fontSize, element.w, typographyForCanvasText(element).lineHeight) > element.h * 1.14) {
       issues.push(`${element.id} text does not fit its box`);
     }
     const capacity = textSlotCapacity(element);

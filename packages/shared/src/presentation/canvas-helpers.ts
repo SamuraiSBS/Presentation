@@ -16,8 +16,9 @@ export function minimumReadableFontSize(element: CanvasTextElement) {
   return typographyForCanvasText(element).minPx;
 }
 
-export function estimatedTextHeight(value: string, fontSize: number, width: number) {
-  return estimatedWrappedLineCount(cleanCanvasText(value), estimatedCharactersPerLine(fontSize, width)) * fontSize * typographyForCanvasText({ id: "", role: "body", text: value }).lineHeight;
+export function estimatedTextHeight(value: string, fontSize: number, width: number, lineHeight?: number) {
+  const typography = typographyForCanvasText({ id: "", role: "body", text: value });
+  return estimatedWrappedLineCount(cleanCanvasText(value), estimatedCharactersPerLine(fontSize, width)) * fontSize * (lineHeight || typography.lineHeight);
 }
 
 export function estimatedCharactersPerLine(fontSize: number, width: number) {

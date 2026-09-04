@@ -274,6 +274,31 @@ describe("image search helpers", () => {
     expect(enriched.slides.filter((slide) => slide.visual.image?.provider === "aitunnel")).toHaveLength(3);
   });
 
+  it("releases an image reservation after an aborted provider call and keeps the slide usable", async () => {
+    process.env.PRESENTATION_IMAGES_ENABLED = "true";
+    const presentation = fixturePresentation();
+    const released: string[] = [];
+    const warnings: Array<Record<string, unknown> | undefined> = [];
+    const enriched = await enrichPresentationImages(
+      { id: "aitunnel-abort", title: "AI in education", prompt: "Explain practical AI in school" },
+      { ...presentation, slideCount: 6, slides: [presentation.slides[0]] },
+      {
+        generateImage: async () => {
+          const error = new Error("The operation was aborted");
+          error.name = "AbortError";
+          throw error;
+        },
+        reserveImageBucket: async () => ({ envelopeId: "abort-envelope", idempotencyKey: "abort-image", amountRub: "0.5" }),
+        releaseImageBucket: async (_reservation, reason) => { released.push(reason || ""); },
+        warn: (_message, _error, context) => { warnings.push(context); },
+      },
+    );
+
+    expect(enriched.slides[0].visual.image).toBeUndefined();
+    expect(released).toEqual(["provider_aborted"]);
+    expect(warnings[0]).toMatchObject({ provider: "aitunnel", slideOrder: 1, aborted: true });
+  });
+
   it("does not search in recovery without an active cost-envelope context", async () => {
     process.env.PRESENTATION_IMAGES_ENABLED = "true";
     const presentation = fixturePresentation();
