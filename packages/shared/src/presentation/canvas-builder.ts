@@ -2966,12 +2966,14 @@ export function metricLead(text: string) {
   return text.match(/(?:\d{1,4}(?:[.,]\d+)?\s*(?:%|°[CFСФ]?|км|м|см|мм|кг|г|мл|л|₽|\$|€|млн|млрд|тыс\.?|лет|год(?:а|ов)?|век(?:а|ов)?|мин(?:ут[аы]?)?|сек(?:унд[аы]?)?|ч(?:ас(?:а|ов)?)?)|\d{4}\s*(?:г\.?|год(?:а)?)?)/iu)?.[0] || "";
 }
 
-export function fittedFontSize(value: string, preferred: number, minimum: number, boxHeight: number, boxWidth = 720, lineHeight = 1.14) {
+export function fittedFontSize(value: string, preferred: number, minimum: number, boxHeight: number, boxWidth?: number, lineHeight?: number) {
   const text = cleanCanvasText(value);
   const pressure = Math.max(text.length / 54, text.split(/\s+/).length / 9, text.split("\n").length);
   const heightPressure = Math.max(1, 120 / Math.max(boxHeight, 1));
   let fontSize = Math.max(minimum, Math.round(preferred / Math.max(1, pressure * 0.72, heightPressure)));
-  while (fontSize > minimum && estimatedTextHeight(text, fontSize, boxWidth, lineHeight) > boxHeight * 1.14) fontSize -= 1;
+  if (boxWidth !== undefined) {
+    while (fontSize > minimum && estimatedTextHeight(text, fontSize, boxWidth, lineHeight) > boxHeight * 1.14) fontSize -= 1;
+  }
   return Math.max(minimum, fontSize);
 }
 
