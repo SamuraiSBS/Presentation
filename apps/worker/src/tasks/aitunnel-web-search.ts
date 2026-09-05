@@ -18,14 +18,6 @@ export type AitunnelWebSearchResult = {
   description?: string;
 };
 
-type AitunnelResponse = {
-  id?: unknown;
-  output?: unknown;
-  output_text?: unknown;
-  usage?: unknown;
-  [key: string]: unknown;
-};
-
 type ResponsesClient = {
   responses: {
     create: (request: Record<string, unknown>) => Promise<unknown>;

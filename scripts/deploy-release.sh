@@ -48,17 +48,27 @@ fi
 
 validate_manifest() {
   local manifest="$1"
-  node - "$manifest" <<'NODE'
+  local validator_repository="${release_dir:-${directory:-}}"
+  local validator="$validator_repository/scripts/validate-release-manifest.mjs"
+  if [[ -f "$validator" ]]; then
+    node "$validator" --manifest "$manifest" --repository "$validator_repository" >&2
+    return
+  fi
+
+  # A rollback may target a release created before the migration-policy
+  # validator was introduced. Keep rollback validation strict, but do not
+  # require a file that cannot exist in that older immutable source archive.
+  node - "$manifest" >&2 <<'NODE'
 const fs = require('fs');
-const path = process.argv[2];
-const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
+const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const imagePattern = /^[a-z0-9][a-z0-9._/-]*(?::[0-9]+)?\/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$/;
-if (!/^[0-9a-f]{40}$/i.test(manifest.gitSha || '')) throw new Error('manifest gitSha must be a commit SHA');
-if (manifest.releaseGate !== 'passed') throw new Error('manifest does not prove a passed release gate');
-if (manifest.migrationCompatibility !== 'no-schema-change') throw new Error('manifest must prove the no-schema-change migration policy');
+if (!/^[0-9a-f]{40}$/i.test(manifest.gitSha || '')) throw new Error('legacy manifest gitSha must be a commit SHA');
+if (manifest.releaseGate !== 'passed') throw new Error('legacy manifest does not prove a passed release gate');
+if (manifest.migrationCompatibility !== 'no-schema-change') throw new Error('legacy rollback manifest must prove no-schema-change');
 for (const service of ['api', 'worker', 'web']) {
-  if (!imagePattern.test(manifest.images?.[service] || '')) throw new Error(`manifest image ${service} is not an immutable digest reference`);
+  if (!imagePattern.test(manifest.images?.[service] || '')) throw new Error(`legacy manifest image ${service} is not immutable`);
 }
+console.log(`Legacy release manifest accepted: ${manifest.gitSha}`);
 NODE
 }
 
@@ -119,6 +129,25 @@ wait_for_healthy() {
   return 1
 }
 
+wait_for_api_worker_healthy() {
+  local directory="$1"
+  local deadline=$((SECONDS + 180))
+  while (( SECONDS < deadline )); do
+    local api worker
+    api="$(compose_for "$directory" ps -q api)"
+    worker="$(compose_for "$directory" ps -q worker)"
+    if [[ -n "$api" && -n "$worker" ]] && \
+      [[ "$(docker inspect --format '{{.State.Health.Status}}' "$api" 2>/dev/null || true)" == "healthy" ]] && \
+      [[ "$(docker inspect --format '{{.State.Health.Status}}' "$worker" 2>/dev/null || true)" == "healthy" ]] && \
+      compose_for "$directory" exec -T api node -e 'fetch("http://127.0.0.1:4000/v1/health/ready").then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'; then
+      return 0
+    fi
+    sleep 5
+  done
+  echo "Timed out waiting for API, worker, and API readiness after 180 seconds." >&2
+  return 1
+}
+
 smoke_release() {
   local directory="$1"
   local site_domain
@@ -152,12 +181,16 @@ activate_release() {
   # the immutable images and database state have passed preflight.
   compose_for "$directory" up -d --no-build postgres redis minio create-bucket || return
   backup_database "$directory" || return
-  # CI refuses unclassified Prisma migration changes; the accepted policy for
-  # this deploy path is therefore forward-only application rollout with no
-  # schema change. Keep the deploy command explicit for the future migration
-  # policy extension and for Prisma's applied-migrations check.
-  compose_for "$directory" run --rm --no-deps --no-build --entrypoint ./node_modules/.bin/prisma api migrate deploy || return
-  compose_for "$directory" up -d --no-build || return
+  # CI has already proved the migration policy embedded in the manifest. This
+  # command applies an expand-only nullable migration before the new app starts.
+  # Rollback is application-only: the previous Prisma schema ignores the extra
+  # nullable column, so attempting a destructive database rollback is unsafe.
+  compose_for "$directory" run --rm --no-deps --entrypoint ./node_modules/.bin/prisma api migrate deploy || return
+  # API readiness includes the worker check. Start those services first so
+  # Compose does not mark the web dependency unhealthy while the worker boots.
+  compose_for "$directory" up -d --no-build worker api || return
+  wait_for_api_worker_healthy "$directory" || return
+  compose_for "$directory" up -d --no-build web || return
   wait_for_healthy "$directory" || return
   smoke_release "$directory" || return
 }
@@ -167,7 +200,9 @@ rollback_to() {
   echo "Rolling back application services to $(basename "$directory")"
   compose_for "$directory" config --quiet || return
   compose_for "$directory" pull api worker web || return
-  compose_for "$directory" up -d --no-build || return
+  compose_for "$directory" up -d --no-build worker api || return
+  wait_for_api_worker_healthy "$directory" || return
+  compose_for "$directory" up -d --no-build web || return
   wait_for_healthy "$directory" || return
   smoke_release "$directory" || return
 }

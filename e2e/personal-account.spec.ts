@@ -34,7 +34,7 @@ test.describe("personal account", () => {
     await expect(page.locator(".profile-plan")).toContainText("10 презентаций");
 
     await page.goto("/pricing");
-    await expect(page.getByRole("heading", { name: /Выбирайте объём/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Выберите тариф для своих презентаций" })).toBeVisible();
     await expect(page.locator(".pricing-card").filter({ has: page.getByRole("heading", { name: "Бесплатный" }) })).toContainText("PDF и PPTX");
   });
 

@@ -1282,6 +1282,8 @@ function compactDiagramText(value: string, maximum: number) {
   return /[.!?…]$/u.test(compact) ? compact : `${compact}.`;
 }
 
+// Kept as a named helper for the visual-quality rules that may consume it in a later gate.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function isConcreteVisualTopic(presentation: PresentationDocument, project?: QualityProjectInput) {
   const text = [presentation.title, project?.title, project?.prompt, ...presentation.slides.map((slide) => slide.title)].filter(Boolean).join(" ");
   return /\b(?:porsche|bmw|mercedes|ferrari|car|vehicle|aircraft|ship|museum|painting|building|factory|laboratory|battle|city|country|person|product|device|model)\b|(?:автомобил|машин|самолет|корабл|музе|картина|здани|завод|лаборатор|город|стран|модель|\b\d{3,4}\b)/iu.test(text);

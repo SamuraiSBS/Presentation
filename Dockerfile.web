@@ -1,5 +1,9 @@
 FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS base
-RUN npm install --global npm@12.0.2
+ARG ALPINE_SECURITY_REFRESH=20260902
+ARG NPM_REGISTRY=https://registry.npmjs.org/
+ENV NPM_CONFIG_REGISTRY=$NPM_REGISTRY
+ENV NPM_CONFIG_REPLACE_REGISTRY_HOST=always
+RUN apk upgrade --no-cache && printf '%s\n' "$ALPINE_SECURITY_REFRESH" >/dev/null
 WORKDIR /app
 COPY package*.json ./
 COPY apps/web/package.json apps/web/package.json
@@ -9,7 +13,17 @@ COPY packages/shared/package.json packages/shared/package.json
 COPY packages/authjs/package.json packages/authjs/package.json
 COPY packages/authjs-core/package.json packages/authjs-core/package.json
 COPY packages/pptxgenjs/package.json packages/pptxgenjs/package.json
-RUN --mount=type=cache,target=/root/.npm npm ci
+RUN --mount=type=cache,id=studydeck-npm,target=/root/.npm \
+    npm ci \
+      --fetch-retries=5 \
+      --fetch-retry-factor=2 \
+      --fetch-retry-mintimeout=20000 \
+      --fetch-retry-maxtimeout=120000 \
+      --fetch-timeout=120000 \
+      --maxsockets=16 \
+      --prefer-offline \
+      --no-audit \
+      --no-fund
 
 # Prisma generation only depends on the schema. Keeping it before application
 # sources prevents ordinary UI edits from invalidating this layer.
@@ -29,6 +43,8 @@ RUN --mount=type=cache,target=/app/apps/web/.next/cache \
 
 FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS runner
 # The standalone Next.js server runs directly with Node.js at runtime.
+ARG ALPINE_SECURITY_REFRESH=20260902
+RUN apk upgrade --no-cache && printf '%s\n' "$ALPINE_SECURITY_REFRESH" >/dev/null
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 WORKDIR /app
 ENV NODE_ENV=production

@@ -1,0 +1,10 @@
+{
+  "policyVersion": "expand-only-v1",
+  "migrationCompatibility": "expand-only-nullable-additive",
+  "migrationId": "20260831140000_ai_usage_cache_write_tokens",
+  "migrationPath": "prisma/migrations/20260831140000_ai_usage_cache_write_tokens/migration.sql",
+  "migrationRollback": "application-only",
+  "migrationDatabaseRollback": "not-required",
+  "oldCodeCompatible": true,
+  "newCodeRequiresMigrationBeforeStart": true
+}

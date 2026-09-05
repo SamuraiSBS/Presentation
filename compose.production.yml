@@ -258,4 +258,5 @@ networks:
   # bridge on an IPv6-enabled network so Auth.js can reach the provider from
   # the web container as well as from the host.
   default:
+    name: studydeck_production
     enable_ipv6: true

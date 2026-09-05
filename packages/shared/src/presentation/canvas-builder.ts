@@ -207,7 +207,7 @@ function buildRecoveryCanvasVariant(slide: Slide, theme: PresentationTheme): Sli
   const elements: CanvasElement[] = [];
 
   if (slide.visual.image) {
-    addRecoveryImageCanvas(slide, theme, elements, foreground, muted, isDark);
+    addRecoveryImageCanvas(slide, theme, elements, foreground, muted);
   } else if (slide.slideKind === "title" || slide.slideKind === "section" || slide.slideKind === "summary") {
     addRecoveryStatementCanvas(slide, theme, elements, foreground, muted, isDark);
   } else if (isRecoveryDiagram(slide.visual.type)) {
@@ -370,7 +370,6 @@ function addRecoveryImageCanvas(
   elements: CanvasElement[],
   foreground = theme.colors.text,
   muted = theme.colors.muted,
-  isDark = false,
 ) {
   const image = slide.visual.image;
   if (!image) return addRecoveryStatementCanvas(slide, theme, elements, theme.colors.text, theme.colors.muted, false);
