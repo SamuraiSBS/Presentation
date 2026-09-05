@@ -29,7 +29,8 @@ RUN apk upgrade --no-cache && printf '%s\n' "$ALPINE_SECURITY_REFRESH" >/dev/nul
 WORKDIR /app
 ENV NODE_ENV=production
 ENV CHROMIUM_PATH=/usr/bin/chromium-browser
-RUN apk add --no-cache chromium font-liberation font-noto ttf-dejavu poppler-utils
+RUN apk add --no-cache chromium font-liberation font-noto ttf-dejavu poppler-utils \
+    && apk upgrade --no-cache
 COPY --chown=node:node --from=base /app/package*.json ./
 COPY --from=base /app/apps/web/package.json apps/web/package.json
 COPY --from=base /app/apps/api/package.json apps/api/package.json
