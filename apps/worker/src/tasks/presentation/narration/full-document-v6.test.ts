@@ -115,9 +115,9 @@ describe("Plan 18 v6 full-document narration foundation", () => {
     const rewriteReservation = reserveAitunnelStageCall("narration_full_rewrite", productionRequestFor("narration_full_rewrite", rewrite))!;
     const repairReservation = reserveAitunnelStageCall("narration_targeted_repair", productionRequestFor("narration_targeted_repair", repair))!;
 
-    expect(candidateReservation).toMatchObject({ inputTokens: 2939, outputTokens: 4500, costRub: "0.59878000" });
-    expect(rewriteReservation).toMatchObject({ inputTokens: 8463, outputTokens: 4500, costRub: "0.70926000" });
-    expect(repairReservation).toMatchObject({ inputTokens: 3134, outputTokens: 1400, costRub: "0.23068000" });
+    expect(candidateReservation).toMatchObject({ inputTokens: 2939, outputTokens: 4500, costRub: "1.19756000" });
+    expect(rewriteReservation).toMatchObject({ inputTokens: 8463, outputTokens: 4500, costRub: "1.41852000" });
+    expect(repairReservation).toMatchObject({ inputTokens: 3134, outputTokens: 1400, costRub: "0.46136000" });
     expect(Number(candidateReservation.costRub)).toBeLessThanOrEqual(Number(buckets.narration_full_candidate));
     expect(Number(rewriteReservation.costRub)).toBeLessThanOrEqual(Number(buckets.narration_full_rewrite));
     expect(Number(repairReservation.costRub)).toBeLessThanOrEqual(Number(buckets.narration_targeted_repair));
@@ -180,7 +180,7 @@ describe("Plan 18 v6 full-document narration foundation", () => {
       systemInstructionsTokens: 1192,
       instructionsTokens: 420,
       compactEstimatedInputTokens: 3104,
-      compactWorstCaseCostRub: "0.60208000",
+      compactWorstCaseCostRub: "1.20416000",
     });
   });
 

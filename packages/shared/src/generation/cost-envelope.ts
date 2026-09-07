@@ -1,7 +1,8 @@
-export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v12";
-// v12 keeps the existing narration and presentation reservations intact while
-// making room for up to three AITunnel raster images in a six-slide deck.
-export const COST_ENVELOPE_LIMIT_RUB = "13.50000000";
+export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v13";
+// v13 applies the 2026-09-07 AITunnel Luna tariff to every Luna-token stage.
+// Source-search, raster-image and export reservations are operation-specific
+// amounts and remain unchanged.
+export const COST_ENVELOPE_LIMIT_RUB = "22.75000000";
 export const COST_ENVELOPE_BUCKETS = {
   // A source snapshot is valid only when at least three sources pass the
   // relevance gate. Reserve three bounded Tavily attempts so a weak first
@@ -9,19 +10,20 @@ export const COST_ENVELOPE_BUCKETS = {
   sources: "1.50000000",
   // The narrative plan is generated once for narration and again when the
   // accepted speech is turned into slides.
-  narrative_plan: "1.50000000",
-  narration_full_candidate: "1.00000000",
+  narrative_plan: "3.00000000",
+  narration_full_candidate: "2.00000000",
   // Luna recovery reservation after the measured prompt/output recalculation.
-  narration_full_rewrite: "1.50000000",
-  narration_targeted_repair: "0.75000000",
-  design_brief: "0.50000000",
+  narration_full_rewrite: "3.00000000",
+  narration_targeted_repair: "1.50000000",
+  design_brief: "1.00000000",
   // The CSV's 12,317 prompt / 6,000 completion sample recalculates to
-  // 2.03600000 RUB at Luna's catalog rate. Keep 2.10 RUB for variance after
-  // prompt compression and structured-output overhead; this is not a tariff.
-  presentation: "2.10000000",
-  quality_critique: "0.30000000",
-  quality_repair: "1.00000000",
-  slide_text_repair: "0.60000000",
+  // 4.07200000 RUB at the current Luna catalog rate. Keep 4.20 RUB for
+  // variance after prompt compression and structured-output overhead; this
+  // is not a tariff.
+  presentation: "4.20000000",
+  quality_critique: "0.60000000",
+  quality_repair: "2.00000000",
+  slide_text_repair: "1.20000000",
   images: "2.00000000",
   export_infra: "0.75000000",
 } as const;
@@ -64,9 +66,9 @@ export type CostEnvelopePolicy = { version: string; limitRub: string; buckets: R
 export const AITUNNEL_APPROVED_MODELS = ["gpt-5.6-luna", "gpt-5.6-terra"] as const;
 export type AitunnelApprovedModel = typeof AITUNNEL_APPROVED_MODELS[number];
 export type AitunnelCatalogPrice = { inputRubPerMillion: string; outputRubPerMillion: string; version: string; effectiveFrom: string };
-export const AITUNNEL_PROVIDER_CATALOG_VERSION = "aitunnel-approved-catalog-2026-08-04";
+export const AITUNNEL_PROVIDER_CATALOG_VERSION = "aitunnel-approved-catalog-2026-09-07";
 export const AITUNNEL_PROVIDER_CATALOG: Record<AitunnelApprovedModel, AitunnelCatalogPrice> = {
-  "gpt-5.6-luna": { inputRubPerMillion: "20", outputRubPerMillion: "120", version: "aitunnel-gpt-5.6-luna-pricing-2026-08-04", effectiveFrom: "2026-08-04T00:00:00.000Z" },
+  "gpt-5.6-luna": { inputRubPerMillion: "40", outputRubPerMillion: "240", version: "aitunnel-gpt-5.6-luna-pricing-2026-09-07", effectiveFrom: "2026-09-07T00:00:00.000Z" },
   "gpt-5.6-terra": { inputRubPerMillion: "200", outputRubPerMillion: "1200", version: "aitunnel-gpt-5.6-terra-pricing-2026-08-04", effectiveFrom: "2026-08-04T00:00:00.000Z" },
 };
 

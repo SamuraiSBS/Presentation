@@ -17,7 +17,7 @@ const { prismaMock, transactionMock } = vi.hoisted(() => {
 vi.mock("./prisma.js", () => ({ getPrisma: () => prismaMock }));
 
 describe("standard generation cost envelope policy", () => {
-  it("has the exact v12 13.50 RUB cap with Luna presentation and raster-image generation", () => {
+  it("has the exact v13 22.75 RUB cap with current Luna pricing and raster-image generation", () => {
     const policy = standardGenerationCostPolicy();
     expect(policy.limitRub).toBe(COST_ENVELOPE_LIMIT_RUB);
     expect(policy.buckets).toEqual(COST_ENVELOPE_BUCKETS);
@@ -25,7 +25,8 @@ describe("standard generation cost envelope policy", () => {
     expect(policy.buckets.narration_full_candidate).toBe("1.00000000");
     expect(policy.buckets.narration_full_rewrite).toBe("1.50000000");
     expect(policy.buckets.narration_targeted_repair).toBe("0.75000000");
-    expect(policy.buckets.presentation).toBe("2.10000000");
+    expect(policy.buckets.presentation).toBe("4.20000000");
+    expect(AITUNNEL_PROVIDER_CATALOG["gpt-5.6-luna"]).toMatchObject({ inputRubPerMillion: "40", outputRubPerMillion: "240", version: "aitunnel-gpt-5.6-luna-pricing-2026-09-07", effectiveFrom: "2026-09-07T00:00:00.000Z" });
     expect(policy.buckets.images).toBe("2.00000000");
     expect(costEnvelopePolicyIsValid(policy)).toBe(true);
   });
@@ -33,7 +34,7 @@ describe("standard generation cost envelope policy", () => {
   it("keeps narration reservations at exactly 3.25 RUB and includes all provider stages in the cap", () => {
     const policy = standardGenerationCostPolicy();
     expect(Number(policy.buckets.narration_full_candidate) + Number(policy.buckets.narration_full_rewrite) + Number(policy.buckets.narration_targeted_repair)).toBeCloseTo(3.25, 8);
-    expect(Object.values(policy.buckets).reduce((sum, amount) => sum + Number(amount), 0)).toBeCloseTo(13.5, 8);
+    expect(Object.values(policy.buckets).reduce((sum, amount) => sum + Number(amount), 0)).toBeCloseTo(22.75, 8);
   });
 
   it("continues to validate persisted v5 snapshots without treating them as v6", () => {

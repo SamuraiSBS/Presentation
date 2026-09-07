@@ -53,9 +53,9 @@ describe("AITUNNEL narration budget", () => {
     const estimate = estimateInputTokens({ input: "Пример запроса" });
     expect(estimate).toBeGreaterThan(0);
     const reservation = reserveNarrationCall({ estimatedInputTokens: 932, maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS });
-    expect(reservation.costRub).toBe("0.06472000");
+    expect(reservation.costRub).toBe("0.12944000");
     expect(canStartCall({ remainingBudgetRub: "0.75000000", reservation })).toBe(true);
-    expect(canStartCall({ remainingBudgetRub: "0.06471999", reservation })).toBe(false);
+    expect(canStartCall({ remainingBudgetRub: "0.12943999", reservation })).toBe(false);
   });
 
   it("keeps worst-case compact candidate and fallback requests inside their buckets", () => {
@@ -68,8 +68,8 @@ describe("AITUNNEL narration budget", () => {
   it("settles actual usage, returns unused reservation, and detects provider overruns", () => {
     const reservation = reserveNarrationCall({ estimatedInputTokens: 1_000, maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS });
     const settled = settleCall({ reservation, actualUsage: { inputTokens: 900, outputTokens: 350 } });
-    expect(settled).toMatchObject({ status: "settled", actualCostRub: "0.06000000", overrun: false });
-    if (settled.status === "settled") expect(remainingBudget("10", settled.actualCostRub)).toBe("9.94000000");
+    expect(settled).toMatchObject({ status: "settled", actualCostRub: "0.12000000", overrun: false });
+    if (settled.status === "settled") expect(remainingBudget("10", settled.actualCostRub)).toBe("9.88000000");
     expect(settleCall({ reservation, actualUsage: { inputTokens: 1_000, outputTokens: 385 } })).toMatchObject({ status: "settled", overrun: true });
   });
 

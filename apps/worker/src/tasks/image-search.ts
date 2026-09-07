@@ -423,7 +423,7 @@ async function reserveImageBucket(slideOrder: number, slideCount: number): Promi
   const envelopeId = currentUsageContext()?.costEnvelopeId;
   if (!envelopeId) return undefined;
   const idempotencyKey = `${envelopeId}:presentation-image:${slideOrder}`;
-  // Split the image bucket across the exact visual-policy photo quota. The v12
+  // Split the image bucket across the exact visual-policy photo quota. The v13
   // bucket is large enough for several provider-reported AITunnel raster
   // charges while the global envelope still bounds the whole generation run.
   const imageLimit = economicPhotoLimit(slideCount);

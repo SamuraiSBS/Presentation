@@ -198,6 +198,14 @@ export function normalizeOpenAIUsage(value: unknown): NormalizedUsage | undefine
 }
 
 type Price = { input: string; output: string; cached?: string; reasoning?: string; currency: string; version: string; effectiveFrom: Date };
+const AITUNNEL_LUNA_HISTORICAL_PRICE: Price = {
+  input: "20",
+  output: "120",
+  currency: "RUB",
+  version: "aitunnel-gpt-5.6-luna-pricing-2026-08-04",
+  effectiveFrom: new Date("2026-08-04T00:00:00Z"),
+};
+
 function priceFor(provider: string, model: string, at: Date): Price | null {
   const openAI: Record<string, Price> = {
     "gpt-5.5": { input: "5", cached: "0.5", output: "30", currency: "USD", version: "openai-model-page-2026-07-11", effectiveFrom: new Date("2026-07-11T00:00:00Z") },
@@ -225,7 +233,14 @@ function priceFor(provider: string, model: string, at: Date): Price | null {
     return { input: "60", output: "500", currency: "RUB", version: "aitunnel-gemini-3.5-flash-lite-model-page-2026-07-24", effectiveFrom: new Date("2026-07-24T00:00:00Z") };
   }
   if (provider === "aitunnel" && model.trim().toLowerCase() === "gpt-5.6-luna") {
-    return { input: AITUNNEL_ECONOMY_PRICE.inputRubPerMillion, output: AITUNNEL_ECONOMY_PRICE.outputRubPerMillion, currency: "RUB", version: AITUNNEL_ECONOMY_PRICE.version, effectiveFrom: new Date("2026-08-04T00:00:00Z") };
+    const currentPrice: Price = {
+      input: AITUNNEL_ECONOMY_PRICE.inputRubPerMillion,
+      output: AITUNNEL_ECONOMY_PRICE.outputRubPerMillion,
+      currency: "RUB",
+      version: AITUNNEL_ECONOMY_PRICE.version,
+      effectiveFrom: new Date(AITUNNEL_ECONOMY_PRICE.effectiveFrom),
+    };
+    return currentPrice.effectiveFrom <= at ? currentPrice : AITUNNEL_LUNA_HISTORICAL_PRICE;
   }
   if (provider === "aitunnel" && model.trim().toLowerCase() === "gpt-5.6-terra") {
     return { input: AITUNNEL_PRIMARY_PRICE.inputRubPerMillion, output: AITUNNEL_PRIMARY_PRICE.outputRubPerMillion, currency: "RUB", version: AITUNNEL_PRIMARY_PRICE.version, effectiveFrom: new Date("2026-08-04T00:00:00Z") };

@@ -45,11 +45,11 @@ describe("usage ledger pricing", () => {
   });
 
   it("prices historical Gemini and current GPT 5.6 AITUNNEL models in RUB", () => {
-    const at = new Date("2026-08-04T12:00:00Z");
+    const at = new Date("2026-09-07T12:00:00Z");
     expect(calculateProviderCost("aitunnel", "gemini-3.6-flash", at, { inputTokens: 1_000, outputTokens: 2_000 })).toMatchObject({ status: "priced", sourceCost: "5.00500000", currency: "RUB", version: "aitunnel-gemini-3.6-flash-pricing-2026-07-24" });
     expect(calculateProviderCost("aitunnel", "unknown", at, { inputTokens: 1_000 })).toMatchObject({ status: "unknown_price", sourceCost: null });
     expect(calculateProviderCost("aitunnel", "gemini-3.5-flash-lite", at, { inputTokens: 1_000, outputTokens: 2_000 })).toMatchObject({ status: "priced", sourceCost: "1.06000000", currency: "RUB", version: "aitunnel-gemini-3.5-flash-lite-model-page-2026-07-24" });
-    expect(calculateProviderCost("aitunnel", "gpt-5.6-luna", at, { inputTokens: 1_000, outputTokens: 2_000 })).toMatchObject({ status: "priced", sourceCost: "0.26000000", currency: "RUB", version: "aitunnel-gpt-5.6-luna-pricing-2026-08-04" });
+    expect(calculateProviderCost("aitunnel", "gpt-5.6-luna", at, { inputTokens: 1_000, outputTokens: 2_000 })).toMatchObject({ status: "priced", sourceCost: "0.52000000", currency: "RUB", version: "aitunnel-gpt-5.6-luna-pricing-2026-09-07" });
     expect(calculateProviderCost("aitunnel", "gpt-5.6-terra", at, { inputTokens: 1_000, outputTokens: 2_000 })).toMatchObject({ status: "priced", sourceCost: "2.60000000", currency: "RUB", version: "aitunnel-gpt-5.6-terra-pricing-2026-08-04" });
   });
 
@@ -60,7 +60,11 @@ describe("usage ledger pricing", () => {
   });
 
   it("exposes cache-write tokens as a diagnostic without applying an unverified tariff", () => {
-    expect(calculateProviderCost("aitunnel", "gpt-5.6-luna", new Date("2026-08-04T12:00:00Z"), { inputTokens: 1_000, outputTokens: 2_000, cacheWriteTokens: 300 })).toMatchObject({ sourceCost: "0.26000000", unpricedCacheWriteTokens: 300 });
+    expect(calculateProviderCost("aitunnel", "gpt-5.6-luna", new Date("2026-09-07T12:00:00Z"), { inputTokens: 1_000, outputTokens: 2_000, cacheWriteTokens: 300 })).toMatchObject({ sourceCost: "0.52000000", unpricedCacheWriteTokens: 300 });
+  });
+
+  it("keeps the pre-change Luna tariff for historical usage calculations", () => {
+    expect(calculateProviderCost("aitunnel", "gpt-5.6-luna", new Date("2026-08-04T12:00:00Z"), { inputTokens: 1_000, outputTokens: 2_000 })).toMatchObject({ status: "priced", sourceCost: "0.26000000", currency: "RUB", version: "aitunnel-gpt-5.6-luna-pricing-2026-08-04" });
   });
 
   it("persists nullable CostEvent fields as null for strict Prisma validation", async () => {

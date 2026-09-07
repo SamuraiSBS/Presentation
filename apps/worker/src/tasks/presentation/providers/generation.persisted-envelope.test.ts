@@ -130,14 +130,14 @@ it("accepts the bounded maximal v6 reservation batch before its first provider c
 it("measures the persisted maximum Luna rewrite payload without emitting its text", () => {
   const draft = fullV6Speech(156);
   const prompt = buildAitunnelFullNarrationRewriteWithDraftPrompt(project, groundedSources, plan, draft, assessFullNarrationDocument(draft, project, plan));
-  expect(reserveAitunnelStageCall("narration_full_rewrite", { input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: prompt }] })!).toMatchObject({ inputTokens: 8406, outputTokens: 4500, costRub: "0.70812000" });
+  expect(reserveAitunnelStageCall("narration_full_rewrite", { input: [{ role: "system", content: NARRATION_SYSTEM_PROMPT }, { role: "user", content: prompt }] })!).toMatchObject({ inputTokens: 8406, outputTokens: 4500, costRub: "1.41624000" });
 });
 
 it("still fail-closes v6 before a provider call when a maximum rewrite no longer fits its bucket", async () => {
   const create = vi.fn();
   const client = { responses: { create } } as never;
   const policy = standardGenerationCostPolicy();
-  policy.buckets.narration_full_rewrite = "0.70811999";
+  policy.buckets.narration_full_rewrite = "1.41623999";
   mocks.findUniqueOrThrow.mockResolvedValue({ policySnapshot: policy });
   mocks.reserveCostEnvelopeBatch.mockResolvedValue({ status: "blocked", reason: "policy_bucket_exceeded" });
 
