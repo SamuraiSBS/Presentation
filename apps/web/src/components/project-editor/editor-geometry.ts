@@ -6,6 +6,10 @@ export const CANVAS_WIDTH = 1280;
 export const CANVAS_HEIGHT = 720;
 export const CUSTOM_CANVAS_MARKER_SUFFIX = "custom-canvas-marker";
 export const MIN_READABLE_TEXT_SIZE = 12;
+const TEXT_LINE_HEIGHT = 1.14;
+const CANVAS_EDGE_MARGIN = 32;
+const BACKPLATE_PADDING_X = 18;
+const BACKPLATE_PADDING_Y = 12;
 
 
 export function markCanvasAsCustom(slideId: string, canvas: SlideCanvas): SlideCanvas {
@@ -158,6 +162,186 @@ export function textStyle(element: CanvasTextElement): CSSProperties {
     overflow: "hidden",
     overflowWrap: "anywhere",
     whiteSpace: "pre-wrap",
+  };
+}
+
+/**
+ * Grow an edited text element without shrinking its approved design.
+ *
+ * The editor intentionally grows width first, matching the slide behavior the
+ * user sees in the preview. Once the available horizontal space is exhausted,
+ * the measured wrapped height grows instead. Generated backplates and grouped
+ * containers follow the text so the background never clips the new copy.
+ */
+export function growCanvasTextElement(
+  canvas: SlideCanvas,
+  element: CanvasTextElement,
+  value: string,
+): SlideCanvas {
+  const text = value.replace(/\r\n?/g, "\n");
+  const relatedIds = new Set([
+    element.id,
+    `${element.id}-backplate`,
+    `${element.id}-shape`,
+  ]);
+  const rightBoundary = canvas.elements
+    .filter((candidate) => {
+      if (relatedIds.has(candidate.id) || candidate.x <= element.x) return false;
+      const overlapsVertically = candidate.y < element.y + element.h && candidate.y + candidate.h > element.y;
+      return overlapsVertically && candidate.opacity > 0;
+    })
+    .reduce(
+      (boundary, candidate) => Math.min(boundary, candidate.x - CANVAS_EDGE_MARGIN / 2),
+      canvas.width - CANVAS_EDGE_MARGIN,
+    );
+  const maxWidth = Math.max(element.w, rightBoundary - element.x);
+  const measurement = measureCanvasText(text, element, maxWidth);
+  const nextText: CanvasTextElement = {
+    ...element,
+    text,
+    runs: [{ text }],
+    w: Math.min(maxWidth, Math.max(element.w, Math.ceil(measurement.width))),
+    h: Math.min(
+      canvas.height - element.y,
+      Math.max(
+        element.h,
+        Math.ceil(measurement.lines * element.fontSize * TEXT_LINE_HEIGHT),
+      ),
+    ),
+  };
+
+  const nextElements = canvas.elements.map((candidate) => {
+    if (candidate.id === element.id) return nextText;
+    if (
+      candidate.type === "shape" &&
+      (candidate.id === `${element.id}-backplate` || candidate.id === `${element.id}-shape`)
+    ) {
+      return resizeBackplate(candidate, nextText, canvas);
+    }
+    if (element.groupId && candidate.type === "shape" && candidate.groupId === element.groupId) {
+      return resizeGroupContainer(candidate, canvas.elements, nextText, canvas);
+    }
+    return candidate;
+  });
+
+  return { ...canvas, elements: nextElements };
+}
+
+function measureCanvasText(
+  value: string,
+  element: CanvasTextElement,
+  maxWidth: number,
+) {
+  const context = typeof document === "undefined"
+    ? null
+    : document.createElement("canvas").getContext("2d");
+  if (context) {
+    context.font = `${element.bold ? 800 : 400} ${element.fontSize}px ${element.fontFamily || PRESENTATION_FONT_STACK}`;
+  }
+
+  const measure = (sample: string) => context
+    ? context.measureText(sample).width
+    : sample.length * element.fontSize * (element.bold ? 0.6 : 0.54);
+  const paragraphs = value.split("\n");
+  let lines = 0;
+  let widestLine = 0;
+
+  paragraphs.forEach((paragraph) => {
+    const wrapped = wrapCanvasLine(paragraph, maxWidth, measure);
+    lines += wrapped.lines;
+    widestLine = Math.max(widestLine, wrapped.widest);
+  });
+
+  return { lines: Math.max(1, lines), width: Math.min(maxWidth, widestLine) };
+}
+
+function wrapCanvasLine(
+  value: string,
+  maxWidth: number,
+  measure: (value: string) => number,
+) {
+  const normalized = value || " ";
+  const words = normalized.match(/\S+\s*/g) || [normalized];
+  let lines = 1;
+  let current = "";
+  let widest = 0;
+
+  words.forEach((word) => {
+    if (measure(word) > maxWidth) {
+      if (current) {
+        widest = Math.max(widest, measure(current));
+        lines += 1;
+        current = "";
+      }
+      for (const character of word) {
+        const characterLine = `${current}${character}`;
+        if (current && measure(characterLine) > maxWidth) {
+          widest = Math.max(widest, measure(current));
+          lines += 1;
+          current = character;
+        } else {
+          current = characterLine;
+        }
+      }
+      return;
+    }
+    const candidate = current ? `${current}${word}` : word;
+    if (measure(candidate) <= maxWidth) {
+      current = candidate;
+      return;
+    }
+    widest = Math.max(widest, measure(current));
+    lines += 1;
+    current = word;
+  });
+
+  widest = Math.max(widest, Math.min(maxWidth, measure(current)));
+  return { lines, widest };
+}
+
+function resizeBackplate(
+  shape: Extract<CanvasElement, { type: "shape" }>,
+  text: CanvasTextElement,
+  canvas: SlideCanvas,
+) {
+  const paddingX = text.role === "title" ? 26 : BACKPLATE_PADDING_X;
+  const paddingY = text.role === "title" ? 16 : BACKPLATE_PADDING_Y;
+  const x = Math.max(0, text.x - paddingX);
+  const y = Math.max(0, text.y - paddingY);
+  const right = Math.min(canvas.width, text.x + text.w + paddingX);
+  const bottom = Math.min(canvas.height, text.y + text.h + paddingY);
+  const left = Math.min(shape.x, x);
+  const top = Math.min(shape.y, y);
+  const safeRight = Math.max(shape.x + shape.w, right);
+  const safeBottom = Math.max(shape.y + shape.h, bottom);
+  return {
+    ...shape,
+    x: left,
+    y: top,
+    w: Math.max(1, Math.min(canvas.width, safeRight) - left),
+    h: Math.max(1, Math.min(canvas.height, safeBottom) - top),
+  };
+}
+
+function resizeGroupContainer(
+  shape: Extract<CanvasElement, { type: "shape" }>,
+  originalElements: CanvasElement[],
+  editedText: CanvasTextElement,
+  canvas: SlideCanvas,
+) {
+  const groupElements = originalElements
+    .filter((candidate) => candidate.groupId === editedText.groupId)
+    .map((candidate) => candidate.id === editedText.id ? editedText : candidate);
+  const left = Math.max(0, Math.min(...groupElements.map((candidate) => candidate.x)));
+  const top = Math.max(0, Math.min(...groupElements.map((candidate) => candidate.y)));
+  const right = Math.min(canvas.width, Math.max(...groupElements.map((candidate) => candidate.x + candidate.w)));
+  const bottom = Math.min(canvas.height, Math.max(...groupElements.map((candidate) => candidate.y + candidate.h)));
+  return {
+    ...shape,
+    x: left,
+    y: top,
+    w: Math.max(1, right - left),
+    h: Math.max(1, bottom - top),
   };
 }
 

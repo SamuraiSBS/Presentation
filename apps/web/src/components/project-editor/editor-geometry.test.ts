@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { CanvasElement, CanvasShapeElement, Slide, SlideCanvas } from "@studydeck/shared";
+import type { CanvasElement, CanvasShapeElement, CanvasTextElement, Slide, SlideCanvas } from "@studydeck/shared";
 import {
   CUSTOM_CANVAS_MARKER_SUFFIX,
   blocksFromSlideText,
   clamp,
   cloneCanvas,
+  growCanvasTextElement,
   markCanvasAsCustom,
   nextZIndex,
   titleFromCanvas,
@@ -99,5 +100,53 @@ describe("editor geometry invariants", () => {
     expect(blocksFromSlideText(slide({ bullets: [], thesis: "  Короткий тезис " }))).toEqual([
       { type: "callout", content: "Короткий тезис" },
     ]);
+  });
+
+  it("grows edited text horizontally and expands its shape container", () => {
+    const text: CanvasTextElement = {
+      id: "label",
+      type: "text",
+      role: "free",
+      x: 80,
+      y: 120,
+      w: 180,
+      h: 54,
+      rotation: 0,
+      zIndex: 2,
+      opacity: 1,
+      locked: false,
+      text: "Короткий текст",
+      runs: [{ text: "Короткий текст" }],
+      fontSize: 32,
+      fontFamily: "Nunito",
+      color: "#fff",
+      bold: false,
+      italic: false,
+      underline: false,
+      align: "center",
+      valign: "middle",
+    };
+    const background: CanvasShapeElement = {
+      ...shape,
+      id: "label-shape",
+      x: 62,
+      y: 108,
+      w: 216,
+      h: 78,
+      fill: "#5d9bd3",
+    };
+
+    const next = growCanvasTextElement(
+      canvas([background, text]),
+      text,
+      "Текст помещается в расширенный блок",
+    );
+    const nextText = next.elements.find((element) => element.id === "label") as CanvasTextElement;
+    const nextBackground = next.elements.find((element) => element.id === "label-shape") as CanvasShapeElement;
+
+    expect(nextText.text).toBe("Текст помещается в расширенный блок");
+    expect(nextText.w).toBeGreaterThan(text.w);
+    expect(nextBackground.w).toBeGreaterThan(background.w);
+    expect(nextBackground.h).toBeGreaterThanOrEqual(background.h);
   });
 });

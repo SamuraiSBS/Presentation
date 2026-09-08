@@ -9,7 +9,7 @@ import { sanitizeProjectForDisplay } from "@/lib/presentation-display";
 import { PropertiesPanel } from "./advanced-properties-panel";
 import { CanvasElementView, TemplatePreviewFrame } from "./editor-canvas";
 import { editorError, projectStatusLabel } from "./editor-errors";
-import { CANVAS_HEIGHT, CANVAS_WIDTH, clamp, cloneCanvas, eventPoint, fittedTextSize, isTypingTarget, markCanvasAsCustom, nextZIndex, blocksFromSlideText, titleFromCanvas } from "./editor-geometry";
+import { CANVAS_HEIGHT, CANVAS_WIDTH, blocksFromSlideText, clamp, cloneCanvas, eventPoint, fittedTextSize, growCanvasTextElement, isTypingTarget, markCanvasAsCustom, nextZIndex, titleFromCanvas } from "./editor-geometry";
 import { EditorTopToolbar } from "./editor-top-toolbar";
 import { MobileEditorNav, SaveIndicator } from "./editor-status";
 import type { DragState, ElementPatch, ProjectPayload, SimpleEditorTab, Tool, ViewMode, MobileEditorSection, SaveStatus } from "./editor-types";
@@ -963,17 +963,7 @@ export function ProjectEditor({
                           onStopEditText={() => setEditingTextId("")}
                           onTextChange={(text) => {
                             if (element.type !== "text" || !canvas) return;
-                            const next = {
-                              ...element,
-                              text,
-                              runs: [{ text }],
-                            };
-                            commitCanvas({
-                              ...canvas,
-                              elements: canvas.elements.map((item) =>
-                                item.id === element.id ? next : item,
-                              ),
-                            });
+                            commitCanvas(growCanvasTextElement(canvas, element, text));
                           }}
                         />
                       ))}
