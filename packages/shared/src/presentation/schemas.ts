@@ -415,8 +415,29 @@ export const slideSchema = z.object({
   speakerNotes: speakerNotesTextSchema,
   timingSeconds: z.number().int().min(20).max(240),
   sourceRefs: z.array(sourceRefSchema),
+  // New card-based decks keep provenance for regeneration, but renderers use
+  // this flag to keep sources out of the visible slide and export.
+  showSourceAttribution: z.boolean().optional(),
 });
 export type Slide = z.infer<typeof slideSchema>;
+
+export const slideCardSchema = z.object({
+  slideOrder: z.number().int().positive(),
+  speechSectionOrder: z.number().int().positive(),
+  title: visibleSlideTextSchema("slide card title", 180),
+  screenThought: visibleSlideTextSchema("slide card screen thought", 360),
+  // These are the only ordinary visible support points allowed to survive
+  // compilation. Visual labels remain reserved for diagrams.
+  allowedBullets: z.array(visibleSlideTextSchema("slide card bullet", 1000)).max(3).default([]),
+  visualLabels: z.array(z.string().trim().min(1).max(100)).max(8).default([]),
+  speakerNotes: speakerNotesTextSchema,
+  slideRole: z.enum(["title", "context", "explain", "compare", "sequence", "evidence", "quote", "problem", "visual_statement", "summary"]),
+  composition: z.enum(["full_screen_image", "image_text_column", "process", "comparison", "timeline", "relationship_map", "research_composition", "visual_conclusion"]),
+  visualStory: z.string().trim().min(1).max(260),
+  visualStrategy: z.enum(["real_photo", "generated_illustration", "diagram", "none"]),
+  validationCriteria: z.array(z.string().trim().min(1).max(180)).min(1).max(6),
+});
+export type SlideCard = z.infer<typeof slideCardSchema>;
 
 export const speechScriptItemSchema = z.object({
   slideOrder: z.number().int().positive(),

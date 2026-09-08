@@ -23,6 +23,7 @@ const { generatePresentationFromNarration, enrichPresentationImages, prismaMock,
       source: { create: vi.fn(), deleteMany: vi.fn(), update: vi.fn() },
       presentation: { findUnique: vi.fn(), updateMany: vi.fn(), upsert: vi.fn() },
       generationJob: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
+      generationFailureArtifact: { create: vi.fn() },
       userActivityEvent: { create: vi.fn() },
       operationalEvent: { create: vi.fn() },
       costEnvelope,
@@ -169,7 +170,7 @@ describe("accepted narration local recovery with the actual production gate", ()
     }));
   });
 
-  it("releases the emergency readable deck when the editorial local projection remains generic", () => {
+  it("does not release an emergency readable deck when the editorial projection remains generic", () => {
     const local = buildLocalPresentationFromAcceptedNarration(project, sources, acceptedNarration);
     const rejectedEditorialProjection = {
       ...local,
@@ -192,8 +193,10 @@ describe("accepted narration local recovery with the actual production gate", ()
       mandatorySourceSnapshot: true,
       acceptedNarrationRecovery: true,
     });
-    expect(emergencyRelease.issues).toEqual([]);
-    expect(emergencyRelease).toMatchObject({ finalDisposition: "released", issueCategories: [] });
+    expect(emergencyRelease.finalDisposition).toBe("rejected");
+    expect(emergencyRelease.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ slideId: "slide-1", category: "bad_visual", severity: "major" }),
+    ]));
   });
 
   it("keeps accepted generatedText and support bullets during emergency layout recovery", () => {

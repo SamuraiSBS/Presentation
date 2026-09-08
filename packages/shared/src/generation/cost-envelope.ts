@@ -1,13 +1,14 @@
-export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v13";
-// v13 applies the 2026-09-07 AITunnel Luna tariff to every Luna-token stage.
-// Source-search, raster-image and export reservations are operation-specific
-// amounts and remain unchanged.
-export const COST_ENVELOPE_LIMIT_RUB = "22.75000000";
+export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v14";
+// v14 applies the 2026-09-07 AITunnel Luna tariff to every Luna-token stage
+// and gives the single mandatory AITunnel web-search request a full
+// provider-reported source-search reservation. The previous fixed 0.50 RUB
+// slot could not reconcile the real search token event.
+export const COST_ENVELOPE_LIMIT_RUB = "23.75000000";
 export const COST_ENVELOPE_BUCKETS = {
   // A source snapshot is valid only when at least three sources pass the
   // relevance gate. Reserve three bounded Tavily attempts so a weak first
   // query can be refined automatically without exposing a failed project.
-  sources: "1.50000000",
+  sources: "2.50000000",
   // The narrative plan is generated once for narration and again when the
   // accepted speech is turned into slides.
   narrative_plan: "3.00000000",

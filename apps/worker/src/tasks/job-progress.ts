@@ -102,6 +102,25 @@ export async function updateGenerationProgress(
   return payload;
 }
 
+export async function updateGenerationRepairProgress(
+  job: Pick<Job, "id" | "updateProgress">,
+  slideOrder: number,
+  slideCount: number,
+  persist: (data: { progressStage: string; progressLabel: string; progressPercent: number; stageStartedAt?: Date }) => Promise<unknown>,
+) {
+  const total = Math.max(1, slideCount);
+  const percent = Math.min(93, Math.max(88, Math.round(88 + (slideOrder / total) * 5)));
+  const payload = {
+    stage: "polishing",
+    label: `Улучшаем слайд ${slideOrder} из ${total}`,
+    percent,
+    at: new Date().toISOString(),
+  };
+  await job.updateProgress(payload);
+  await persist({ progressStage: payload.stage, progressLabel: payload.label, progressPercent: payload.percent, stageStartedAt: new Date(payload.at) });
+  return payload;
+}
+
 export function classifyGenerationError(error: unknown): GenerationRetryClass {
   const name = error instanceof Error ? error.name : "";
   const message = error instanceof Error ? error.message : String(error || "");

@@ -179,11 +179,18 @@ export type SceneTextMode = z.infer<typeof sceneTextModeSchema>;
 export const visualPurposeSchema = z.enum(["photo", "illustration", "diagram", "timeline", "comparison", "metric", "text_only"]);
 export type VisualPurpose = z.infer<typeof visualPurposeSchema>;
 
+// The direction owns the deck-level composition choice.  It is optional for
+// historical documents, while managed decks always populate it before any
+// slide is materialized.
+export const canonicalCompositionSchema = z.enum(["full_screen_image", "image_text_column", "process", "comparison", "timeline", "relationship_map", "research_composition", "visual_conclusion"]);
+export type CanonicalComposition = z.infer<typeof canonicalCompositionSchema>;
+
 export const designBriefSlideDirectionSchema = z.object({
   slideOrder: z.number().int().positive(),
   visualRole: z.enum(["hero", "problem", "context", "explain", "compare", "sequence", "evidence", "quote", "visual_statement", "reflect", "summary"]),
   layoutIntent: z.enum(["full_bleed_image", "split_image_text", "statement", "cards", "timeline", "diagram", "comparison", "evidence_board", "quote_spread", "metric", "summary"]),
   imageStrategy: z.enum(["real_photo", "generated_illustration", "diagram", "none"]),
+  composition: canonicalCompositionSchema.optional(),
   // This is the slide-level contract used to audit a generated deck.  The
   // existing visualRole remains the narrative job; visualPurpose says what
   // the audience should actually see and why.

@@ -1,9 +1,11 @@
 import type { Job } from "bullmq";
 import type { Prisma } from "@prisma/client";
+import crypto from "node:crypto";
 import {
   designBriefSchema,
   ensureEditableCanvas,
   PREMIUM_PRESENTATION_THEMES,
+  presentationSchema,
   publicNarrationFailureMessage,
   type PresentationDocument,
   type Source,
@@ -20,10 +22,12 @@ import {
   safeGenerationError,
   shouldRetryGenerationJob,
   updateGenerationProgress,
+  updateGenerationRepairProgress,
   publicNarrationFailureState,
   type GenerationProgressStage,
 } from "./job-progress.js";
-import { buildLocalPresentationFromAcceptedNarration, generateNarrationDraft, generatePresentationFromNarration } from "./presentation.js";
+import { buildLocalPresentationFromAcceptedNarration, generateNarrationDraft, generatePresentationFromNarration, rebuildWeakSlidesLocally } from "./presentation.js";
+import { buildSlideCards, compileSlideCardsToSlides } from "./presentation/planning/builders.js";
 import { isManagedSlideCount } from "./presentation/visual-policy.js";
 import { assessFullNarrationDocument } from "./presentation/narration/processing.js";
 import { searchWebSources } from "./web-search.js";
@@ -57,6 +61,7 @@ type GenerationJobData = {
   costEnvelopeId?: string;
   presentationOnlyRecovery?: boolean;
   presentationRetry?: boolean;
+  rebuildSlideOrders?: number[];
   expectedPresentationRevision?: number;
   traceContext?: TraceCarrier;
 };
@@ -138,6 +143,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
 
   const stageStartedAt = new Map<GenerationProgressStage, number>();
   let currentStage: GenerationProgressStage = "queued";
+  let terminalCandidate: PresentationDocument | undefined;
   const setStage = async (stage: GenerationProgressStage) => {
     const cancellation = await prisma.generationJob.findFirst({ where: jobWhere, select: { cancelRequestedAt: true } });
     if (cancellation?.cancelRequestedAt) throw new Error("Generation cancelled by administrator");
@@ -273,6 +279,8 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       replacedDiagrams: 0,
     };
     const attemptedSlideOrders = new Set<number>();
+    let cardRebuildReasons: Array<{ slideOrder: number; reason: string }> = [];
+    let settledCostRub: string | undefined;
     const noteRecovery = (
       stage: RecoveryStage,
       reason: string,
@@ -324,7 +332,10 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     // Directions are not display data. Turn each planned local diagram into a
     // real slide visual before the canvas is built, including local recovery
     // documents which do not pass through the provider quality orchestrator.
-    const presentationWithPlannedVisuals = materializePlannedVisuals(groundedPresentation);
+    const presentationWithPlannedVisuals = recompileCardProjection(
+      materializePlannedVisuals(groundedPresentation),
+      generationProject,
+    );
     // Image lookup is one bounded, idempotent pass per generation attempt.
     // Recovery reuses its results and never starts a second paid/search pass.
     let presentationWithImages = presentationWithPlannedVisuals;
@@ -349,7 +360,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     if (usedLocalPresentationRecovery) {
       noteRecovery("accepted_narration", "local_visual_projection", groundedPresentation, materializedPresentation);
     }
-    presentationWithImages = materializedPresentation;
+    presentationWithImages = recompileCardProjection(materializedPresentation, generationProject);
     await setStage("polishing");
     // The model may return a schema-valid but geometrically unsafe canvas. A
     // generated presentation is not user-edited yet, so rebuild its canvas
@@ -357,15 +368,26 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     let presentation = ensureEditableCanvas({
       ...presentationWithImages,
       slides: presentationWithImages.slides.map((slide) => ({ ...slide, canvas: undefined })),
-    }, { recovery: usedLocalPresentationRecovery });
+    }, { recovery: usedLocalPresentationRecovery || Boolean(presentationWithImages.slideCards) });
+    terminalCandidate = presentation;
     let unsafeCanvases = finalCanvasSafetyIssues(presentation);
     if (unsafeCanvases.length) {
       logger.warn({ projectId, jobId: job.id, fallback: "roomy_local_layout", issueCount: unsafeCanvases.length }, "generated canvas is unsafe; applying local layout recovery");
       const beforeLayoutRecovery = presentation;
       presentation = repairPresentationLayout(presentation);
+      presentation = recompileCardProjection(presentation, generationProject);
+      if (presentation.slideCards) {
+        presentation = ensureEditableCanvas({
+          ...presentation,
+          slides: presentation.slides.map((slide) => ({ ...slide, canvas: undefined })),
+        }, { recovery: true });
+      }
       noteRecovery("canvas_layout", "unsafe_generated_canvas", beforeLayoutRecovery, presentation);
       unsafeCanvases = finalCanvasSafetyIssues(presentation);
       if (unsafeCanvases.length) {
+        if (presentation.slideCards) {
+          throw new Error("presentation quality not achieved, not released: unsafe generated canvas");
+        }
         const beforeEmergencyRecovery = presentation;
         presentation = buildEmergencyReadablePresentation(presentation);
         noteRecovery("emergency", "unsafe_recovery_canvas", beforeEmergencyRecovery, presentation);
@@ -378,7 +400,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
     // quality loop. Re-audit the exact document that will be persisted: a
     // rejected candidate must never increment a revision or become ready.
     await setStage("validating");
-    let release = productionQualityReleaseResult(presentation, presentation.sources, { ...generationProject, mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId), acceptedNarrationRecovery: hasAcceptedNarrationRecoveryArtifacts(generationProject, sources, speechDraft) });
+    let release = productionQualityReleaseResult(presentation, presentation.sources, { ...generationProject, mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId), acceptedNarrationRecovery: hasAcceptedNarrationRecoveryArtifacts(generationProject, sources, speechDraft) }, 0, { strictCardVisuals: Boolean(presentation.slideCards) });
     logger.info({
       projectId,
       jobId: job.id,
@@ -389,6 +411,42 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       gate: "provider_quality",
     }, "provider_quality_released");
     if (release.finalDisposition !== "released") {
+      const weakSlideOrders = [...new Set(release.issues
+        .filter((issue) => issue.severity === "major" || issue.severity === "blocker")
+        .map((issue) => presentation.slides.find((slide) => slide.id === issue.slideId)?.order)
+        .filter((order): order is number => typeof order === "number"))].sort((left, right) => left - right);
+      if (presentation.slideCards) {
+        cardRebuildReasons = release.issues
+          .filter((issue) => issue.severity === "major" || issue.severity === "blocker")
+          .map((issue) => ({
+            slideOrder: presentation.slides.find((slide) => slide.id === issue.slideId)?.order,
+            reason: `${issue.field}:${issue.severity}`,
+          }))
+          .filter((item): item is { slideOrder: number; reason: string } => typeof item.slideOrder === "number");
+        if (weakSlideOrders.length === 0 || weakSlideOrders.length > 2) {
+          throw new Error(`presentation quality not achieved, not released: ${weakSlideOrders.length >= 3 ? "three or more weak slides" : release.issueCategories.join(", ") || "unscoped quality issue"}; ${release.issues.slice(0, 8).map((issue) => `${issue.slideId || "deck"}:${issue.field}:${issue.severity}`).join("; ")}`);
+        }
+        job.data.rebuildSlideOrders = weakSlideOrders;
+        const updateData = (job as Job<GenerationJobData> & { updateData?: (data: GenerationJobData) => Promise<unknown> }).updateData;
+        if (updateData) await updateData.call(job, { ...job.data, rebuildSlideOrders: weakSlideOrders });
+        for (const slideOrder of weakSlideOrders) {
+          await updateGenerationRepairProgress(job, slideOrder, presentation.slideCount, (data) =>
+            prisma.generationJob.updateMany({ where: jobWhere, data }),
+          );
+          const beforeRebuild = presentation;
+          presentation = rebuildWeakSlidesLocally(presentation, generationProject, speechDraft, [slideOrder]);
+          noteRecovery("accepted_narration", `local_slide_card_rebuild:${slideOrder}`, beforeRebuild, presentation);
+        }
+        presentation = ensureEditableCanvas({
+          ...presentation,
+          slides: presentation.slides.map((slide) => weakSlideOrders.includes(slide.order) ? { ...slide, canvas: undefined } : slide),
+        }, { recovery: true });
+        release = productionQualityReleaseResult(presentation, presentation.sources, { ...generationProject, mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId), acceptedNarrationRecovery: true }, 1, { strictCardVisuals: true });
+        if (release.finalDisposition !== "released") {
+          throw new Error(`presentation quality not achieved, not released: ${release.issueCategories.join(", ") || "targeted slide rebuild was insufficient"}; ${release.issues.slice(0, 6).map((issue) => `${issue.slideId || "deck"}:${issue.field}:${issue.severity}`).join("; ")}`);
+        }
+        logger.info({ projectId, jobId: job.id, stage: "release_quality_gate", rebuildSlideOrders: weakSlideOrders, finalAction: "released" }, "local slide card rebuild released");
+      } else {
       // A schema-valid provider response can still fail the production gate.
       // Re-project only the already accepted narration and snapshot sources;
       // then run the exact same gate again.  Do not use an emergency generic
@@ -408,25 +466,30 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
         });
         imageEnrichmentPassUsed = true;
       }
-      recoveredPresentation = materializePlannedVisuals(recoveredPresentation, { fallbackMissingPhotos: true });
+      recoveredPresentation = recompileCardProjection(
+        materializePlannedVisuals(recoveredPresentation, { fallbackMissingPhotos: true }),
+        generationProject,
+      );
       presentation = ensureEditableCanvas({
         ...recoveredPresentation,
         slides: recoveredPresentation.slides.map((slide) => ({ ...slide, canvas: undefined })),
       }, { recovery: true });
-      release = productionQualityReleaseResult(presentation, presentation.sources, { ...generationProject, mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId), acceptedNarrationRecovery: true });
+      release = productionQualityReleaseResult(presentation, presentation.sources, { ...generationProject, mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId), acceptedNarrationRecovery: true }, 0, { strictCardVisuals: Boolean(presentation.slideCards) });
       if (release.finalDisposition !== "released") {
         // The first local projection keeps the usual editorial design.  If it
         // still contains provider-shaped generic text or an unfulfillable
         // visual, release the same accepted narration through the intentionally
         // plain, self-contained canvas. This is fully deterministic: no second
         // provider call, source search, or invented claim is allowed here.
+        if (presentation.slideCards) throw new Error(`presentation quality not achieved, not released: ${release.issueCategories.join(", ") || "unspecified quality issue"}`);
         logger.warn({ projectId, jobId: job.id, fallback: "accepted_narration_emergency_readable", issueCategories: release.issueCategories }, "local presentation projection still failed quality gate; applying emergency readable recovery");
         const beforeEmergencyRecovery = presentation;
         presentation = buildEmergencyReadablePresentation(presentation);
         noteRecovery("emergency", "quality_gate_rejected_local_projection", beforeEmergencyRecovery, presentation);
-        release = productionQualityReleaseResult(presentation, presentation.sources, { ...generationProject, mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId), acceptedNarrationRecovery: true });
+        release = productionQualityReleaseResult(presentation, presentation.sources, { ...generationProject, mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId), acceptedNarrationRecovery: true }, 0, { strictCardVisuals: Boolean(presentation.slideCards) });
       }
       if (release.finalDisposition !== "released") throw new Error(`Production quality gate rejected generated presentation: ${release.issueCategories.join(", ") || "unspecified quality issue"}`);
+      }
     }
     if (job.data.costEnvelopeId) {
       const envelope = await prisma.costEnvelope.findUniqueOrThrow({
@@ -455,6 +518,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
           imageSearchQueries: envelope._count.costEvents,
         },
       });
+      settledCostRub = envelope.settledRub.toString();
       if (!economicGate.passed && economicGate.categories.includes("canvas_audit")) {
         // The economic gate evaluates the exact persisted document. A local
         // projection can still carry a provider-selected canvas family after
@@ -462,6 +526,13 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
         // roomier layout recovery used by the pre-save canvas audit.
         const beforeEconomicLayoutRecovery = presentation;
         presentation = repairPresentationLayout(presentation);
+        presentation = recompileCardProjection(presentation, generationProject);
+        if (presentation.slideCards) {
+          presentation = ensureEditableCanvas({
+            ...presentation,
+            slides: presentation.slides.map((slide) => ({ ...slide, canvas: undefined })),
+          }, { recovery: true });
+        }
         noteRecovery("canvas_layout", "economic_canvas_audit", beforeEconomicLayoutRecovery, presentation);
         economicGate = evaluateEconomicReleaseGate({
           presentation,
@@ -478,6 +549,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
           },
         });
         if (!economicGate.passed && economicGate.categories.includes("canvas_audit")) {
+          if (presentation.slideCards) throw new Error("presentation quality not achieved, not released: economic canvas audit");
           const beforeEconomicEmergencyRecovery = presentation;
           presentation = buildEmergencyReadablePresentation(presentation);
           noteRecovery("emergency", "economic_canvas_audit", beforeEconomicEmergencyRecovery, presentation);
@@ -500,38 +572,35 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       logger.info({ projectId, jobId: job.id, stage: "validating", releaseGate: "economic_standard", passed: economicGate.passed, categories: economicGate.categories }, "economic presentation release gate");
       if (!economicGate.passed) throw new EconomicReleaseGateError(economicGate.categories);
     }
-    const finalCanvasIssues = finalCanvasSafetyIssues(presentation);
-    logger.info({
-      projectId,
-      jobId: job.id,
-      stage: "validating",
-      gate: "final_canvas",
-      finalAction: finalCanvasIssues.length ? "rejected" : "released",
-      issueCount: finalCanvasIssues.length,
-      issues: finalCanvasIssues.slice(0, 8),
-    }, "final_canvas_released");
-    if (finalCanvasIssues.length) throw new Error(`Final canvas gate rejected presentation: ${finalCanvasIssues.slice(0, 8).join("; ")}`);
-    presentation = {
-      ...presentation,
-      productionQualityGate: {
-        version: 1,
-        capability: "silent-production-quality-gate",
-        ...(recoveryMetadata.recoveryApplied ? recoveryMetadata : {}),
+    presentation = await finalizeCanonicalDeck(presentation, {
+      project: {
+        ...generationProject,
+        mandatorySourceSnapshot: Boolean(job.data.costEnvelopeId),
+        acceptedNarrationRecovery: hasAcceptedNarrationRecoveryArtifacts(generationProject, sources, speechDraft),
       },
-    };
-    if (job.data.presentationOnlyRecovery) {
-      const exportPreflight = await preparePresentationForExport(presentation, {
-        format: "pptx",
-        project: generationProject,
-        readObject: readObjectBuffer,
-      });
-      if (!exportPreflight.report.passed) {
-        throw new Error(`Presentation export preflight rejected recovery: ${exportPreflight.report.slideIssues.flatMap((issue) => issue.categories).join(", ") || "unspecified issue"}`);
-      }
-      // Persist exactly the document that passed the release and export
-      // preflight checks. The old revision remains untouched until this
-      // transaction succeeds.
-      presentation = exportPreflight.document;
+      recoveryMetadata: recoveryMetadata.recoveryApplied ? recoveryMetadata : undefined,
+      validateExport: Boolean(job.data.presentationOnlyRecovery || presentation.slideCards),
+    });
+    if (presentation.slideCards) {
+      logger.info({
+        projectId,
+        jobId: job.id,
+        stage: "release_quality_gate",
+        finalGate: "passed",
+        costRub: settledCostRub || null,
+        rebuildReasons: cardRebuildReasons,
+        cards: presentation.slideCards.map((card) => {
+          const slide = presentation.slides.find((candidate) => candidate.order === card.slideOrder);
+          return {
+            cardNumber: card.slideOrder,
+            composition: card.composition,
+            visualType: card.visualStrategy,
+            renderedVisualType: slide?.visual.type || "none",
+            visualSource: slide?.visual.image?.provider || (card.visualStrategy === "diagram" ? "local_diagram" : "none"),
+            rebuildReason: cardRebuildReasons.filter((item) => item.slideOrder === card.slideOrder).map((item) => item.reason),
+          };
+        }),
+      }, "presentation_slide_card_release_audit");
     }
     finishStage("validating");
     await setStage("saving");
@@ -560,6 +629,9 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
           update: { document: presentation, revision: { increment: 1 } },
         }),
         prisma.project.update({ where: { id: projectId }, data: { status: "ready" } }),
+        ...(job.data.costEnvelopeId
+          ? [prisma.costEnvelope.update({ where: { id: job.data.costEnvelopeId }, data: { status: "completed" } })]
+          : []),
       ]);
     }
     finishStage("saving");
@@ -617,9 +689,7 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
         },
       });
     }
-    await prisma.generationJob.updateMany({
-      where: jobWhere,
-        data: {
+    const terminalJobData: Prisma.GenerationJobUpdateManyMutationInput = {
           status: willRetry ? "active" : "failed",
           // Project responses are sanitized by the API.  GenerationJob keeps a
           // compact operational category for admins without persisting provider
@@ -632,8 +702,27 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
         progressLabel: willRetry ? "Временная ошибка, попробуем ещё раз" : "Не получилось",
         progressPercent: willRetry ? 5 : 100,
         stageStartedAt: new Date(),
-      },
-    });
+    };
+    if (!willRetry && kind === "presentation" && job.data.generationJobId) {
+      // The artifact and terminal job state have one transaction boundary:
+      // either both exist or neither does. It deliberately stores hashes and
+      // enums only, never the candidate's text-bearing fields.
+      await prisma.$transaction([
+        prisma.generationFailureArtifact.create({
+          data: buildGenerationFailureArtifact({
+            projectId,
+            generationJobId: job.data.generationJobId,
+            stage: currentStage,
+            queueJobId: job.id ? String(job.id) : undefined,
+            error,
+            candidate: terminalCandidate,
+          }),
+        }),
+        prisma.generationJob.updateMany({ where: jobWhere, data: terminalJobData }),
+      ]);
+    } else {
+      await prisma.generationJob.updateMany({ where: jobWhere, data: terminalJobData });
+    }
     if (kind === "presentation" && !willRetry && job.data.generationJobId) {
       // The customer was charged only for a queued launch. A terminal service
       // failure returns that launch exactly once; the conditional reservation
@@ -641,6 +730,12 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
       await releaseGenerationQuotaReservation(prisma, job.data.generationJobId).catch((releaseError) => {
         logger.error({ projectId, jobId: job.id, generationJobId: job.data.generationJobId, ...errorLogFields(releaseError) }, "generation quota refund failed");
       });
+      if (job.data.costEnvelopeId) {
+        await Promise.resolve(finalizeFailedCostEnvelope({ envelopeId: job.data.costEnvelopeId })).catch((finalizationError) => {
+          logger.error({ projectId, jobId: job.id, costEnvelopeId: job.data.costEnvelopeId, ...errorLogFields(finalizationError) }, "terminal failed presentation envelope finalization failed");
+          captureGenerationError(finalizationError, { projectId, jobId: job.id, stage: "failed_presentation_envelope_finalization", provider: process.env.AI_PROVIDER });
+        });
+      }
     }
     if (kind === "narration" && !willRetry && job.data.costEnvelopeId) {
       try {
@@ -704,6 +799,136 @@ async function presentationRecoveryReason(costEnvelopeId: string) {
     // diagnostic stable and let the existing terminal path preserve it.
     return "presentation_recovery_envelope_unavailable";
   }
+}
+
+/**
+ * Recompile card metadata after image fulfillment or a bounded layout repair.
+ * Materialization may change a photo direction into a diagram; keeping the
+ * old card in that case would make the saved layout and visual strategy lie
+ * about the exact Slide sent to editor and export.
+ */
+function recompileCardProjection(
+  presentation: PresentationDocument,
+  project: { id: string; title: string; prompt: string; scenario: string; level: string; mode: string; slideCount: number },
+) {
+  if (!presentation.slideCards || !presentation.designBrief || !isManagedSlideCount(project.slideCount)) return presentation;
+  const slideCards = buildSlideCards(project, presentation.generatedText, presentation, presentation.designBrief);
+  return presentationSchema.parse({
+    ...presentation,
+    slideCards,
+    outline: slideCards.map((card) => card.title),
+    slides: compileSlideCardsToSlides(slideCards, presentation.slides),
+    speechScript: slideCards.map((card) => ({ slideOrder: card.slideOrder, slideTitle: card.title, text: card.speakerNotes })),
+  });
+}
+
+/**
+ * The one release boundary for managed card decks. Every late asset/layout
+ * repair returns here, so the saved revision is the same document consumed by
+ * the editor, PPTX, and PDF serializers.
+ */
+export async function finalizeCanonicalDeck(
+  candidate: PresentationDocument,
+  options: {
+    project: { id: string; title: string; prompt: string; scenario: string; level: string; mode: string; slideCount: number; mandatorySourceSnapshot?: boolean; acceptedNarrationRecovery?: boolean };
+    recoveryMetadata?: Record<string, unknown>;
+    validateExport?: boolean;
+  },
+): Promise<PresentationDocument> {
+  // Legacy documents have already passed the preceding generation gate. The
+  // canonical card contract applies only to managed card decks; do not widen
+  // it by rebuilding historical/local recovery canvases here.
+  if (!candidate.slideCards) {
+    return presentationSchema.parse({
+      ...candidate,
+      productionQualityGate: {
+        version: 1,
+        capability: "silent-production-quality-gate",
+        ...(options.recoveryMetadata || {}),
+      },
+    });
+  }
+  // Asset/recovery branches have already rebuilt cards and canvas immediately
+  // before entering this boundary. Keep that exact candidate here: compiling
+  // it a second time after asset fulfillment could discard a valid stored
+  // image or user canvas and create an export-only variant.
+  let document = candidate;
+  const release = productionQualityReleaseResult(document, document.sources, options.project, 0, {
+    strictCardVisuals: Boolean(document.slideCards),
+  });
+  if (release.finalDisposition !== "released") {
+    throw new Error(`Canonical release gate rejected presentation: ${release.issueCategories.join(", ") || "unspecified issue"}`);
+  }
+  const canvasIssues = finalCanvasSafetyIssues(document);
+  if (canvasIssues.length) throw new Error(`Canonical canvas gate rejected presentation: ${canvasIssues.slice(0, 8).join("; ")}`);
+  if (options.validateExport) {
+    const preflight = await preparePresentationForExport(document, {
+      format: "pptx",
+      project: options.project,
+      readObject: readObjectBuffer,
+      canonicalRelease: Boolean(document.slideCards),
+    });
+    if (!preflight.report.passed) {
+      throw new Error(`Canonical export preflight rejected presentation: ${preflight.report.slideIssues.flatMap((issue) => issue.categories).join(", ") || "unspecified issue"}`);
+    }
+    document = preflight.document;
+  }
+  return presentationSchema.parse({
+    ...document,
+    productionQualityGate: {
+      version: 1,
+      capability: "silent-production-quality-gate",
+      ...(options.recoveryMetadata || {}),
+    },
+  });
+}
+
+function buildGenerationFailureArtifact(input: {
+  projectId: string;
+  generationJobId: string;
+  stage: string;
+  queueJobId?: string;
+  error: unknown;
+  candidate?: PresentationDocument;
+}) {
+  const hash = (value: string) => crypto.createHash("sha256").update(value).digest("hex");
+  const structuralDiff: Array<{ slideOrder: number; field: string; expectedHash: string; actualHash: string; expectedEnum: string | null; actualEnum: string | null }> = input.candidate?.slideCards?.flatMap((card) => {
+    const slide = input.candidate!.slides.find((candidate) => candidate.order === card.slideOrder);
+    if (!slide) return [{ slideOrder: card.slideOrder, field: "slide", expectedHash: hash("present"), actualHash: hash("missing"), expectedEnum: "present", actualEnum: "missing" }];
+    const fields = [
+      ["title", card.title, slide.title],
+      ["thesis", card.screenThought, slide.thesis],
+      ["speakerNotes", card.speakerNotes, slide.speakerNotes],
+      ["bullets", JSON.stringify(card.allowedBullets), JSON.stringify(slide.bullets)],
+    ] as const;
+    const content: Array<{ slideOrder: number; field: string; expectedHash: string; actualHash: string; expectedEnum: string | null; actualEnum: string | null }> = fields
+      .filter(([, expected, actual]) => expected !== actual)
+      .map(([field, expected, actual]) => ({ slideOrder: card.slideOrder, field, expectedHash: hash(expected), actualHash: hash(actual), expectedEnum: null, actualEnum: null }));
+    const direction = input.candidate!.designBrief?.slideDirections.find((item) => item.slideOrder === card.slideOrder);
+    if (direction?.composition && direction.composition !== card.composition) {
+      content.push({ slideOrder: card.slideOrder, field: "composition", expectedHash: hash(direction.composition), actualHash: hash(card.composition), expectedEnum: direction.composition, actualEnum: card.composition });
+    }
+    return content;
+  }) || [];
+  const candidateShape = input.candidate
+    ? JSON.stringify({
+      slideOrders: input.candidate.slides.map((slide) => slide.order),
+      cards: input.candidate.slideCards?.map((card) => ({ order: card.slideOrder, composition: card.composition, visualStrategy: card.visualStrategy })),
+      visuals: input.candidate.slides.map((slide) => ({ order: slide.order, type: slide.visual.type, layout: slide.layout, canvas: Boolean(slide.canvas) })),
+    })
+    : "";
+  const errorKind = input.error instanceof Error ? input.error.name : typeof input.error;
+  return {
+    projectId: input.projectId,
+    generationJobId: input.generationJobId,
+    stage: input.stage,
+    expiresAt: new Date(Date.now() + 30 * 86_400_000),
+    pipelineVersion: "canonical-slide-card-v1",
+    releaseIdentifier: input.queueJobId || null,
+    candidateHash: candidateShape ? hash(candidateShape) : null,
+    failureFingerprint: hash(`${input.stage}:${errorKind}:${structuralDiff.map((item) => `${item.slideOrder}:${item.field}`).join(",")}`),
+    structuralDiff: structuralDiff as Prisma.InputJsonValue,
+  };
 }
 
 async function assertPresentationOnlyRecoveryPreconditions(job: Job<GenerationJobData>) {
@@ -775,6 +1000,16 @@ export function mergeRecoveredVisuals(
 }
 
 export function repairPresentationLayout(presentation: PresentationDocument): PresentationDocument {
+  // Slide cards are the canonical semantic projection. A layout repair may
+  // rebuild their canvas, but it must not trim or replace title/thesis/bullets
+  // on its own; any semantic repair is routed through the card compiler.
+  if (presentation.slideCards) {
+    const materialized = materializePlannedVisuals(presentation, { fallbackMissingPhotos: true });
+    return ensureEditableCanvas({
+      ...materialized,
+      slides: materialized.slides.map((slide) => ({ ...slide, canvas: undefined })),
+    }, { recovery: true });
+  }
   const shortestCompleteSentence = (slide: PresentationDocument["slides"][number]) => {
     const candidates = [
       slide.thesis,
@@ -1181,8 +1416,10 @@ export async function prepareGenerationSources(project: {
     const prisma = getPrisma();
     const envelope = await prisma.costEnvelope.findUniqueOrThrow({ where: { id: options.costEnvelopeId }, select: { policySnapshot: true } });
     const sourceBudgetRub = String((envelope.policySnapshot as { buckets?: { sources?: string } }).buckets?.sources || "");
-    const perAttemptRub = "0.50000000";
     const webSearchProvider = (process.env.WEB_SEARCH_PROVIDER || "tavily").toLowerCase();
+    const perAttemptRub = webSearchProvider === "aitunnel"
+      ? sourceBudgetRub
+      : "0.50000000";
     const maxAttempts = webSearchProvider === "aitunnel"
       ? 1
       : Math.max(1, Math.min(3, Math.floor(Number(sourceBudgetRub) / Number(perAttemptRub))));
@@ -1202,12 +1439,14 @@ export async function prepareGenerationSources(project: {
       // A retained reservation belongs to another worker attempt. Never
       // issue the same paid query concurrently.
       if (reservation.idempotent) throw new Error("Mandatory source research is already in progress for this generation run");
+      let providerUsageRub: string | undefined;
       try {
         const result = await searchWebSources({
           prompt: project.prompt,
           title: project.title,
           researchAngle: refinements[attempt],
           costEnvelopeRub: perAttemptRub,
+          onProviderUsage: (rubCostAtEvent) => { providerUsageRub = rubCostAtEvent; },
         });
         result.forEach((source) => {
           if (source.url && !sourcesByUrl.has(source.url)) sourcesByUrl.set(source.url, source);
@@ -1216,7 +1455,7 @@ export async function prepareGenerationSources(project: {
         await settleCostEnvelope({
           envelopeId: options.costEnvelopeId,
           idempotencyKey: reservationKey,
-          actualRub: perAttemptRub,
+          actualRub: providerUsageRub || perAttemptRub,
           ...(sourcesByUrl.size < 3 && isLastAttempt
             ? { reason: "mandatory_source_search_insufficient", exhaustEnvelope: true }
             : sourcesByUrl.size < 3
@@ -1228,7 +1467,7 @@ export async function prepareGenerationSources(project: {
           await settleCostEnvelope({
             envelopeId: options.costEnvelopeId,
             idempotencyKey: reservationKey,
-            actualRub: perAttemptRub,
+            actualRub: providerUsageRub || perAttemptRub,
             reason: "mandatory_source_search_insufficient",
             exhaustEnvelope: true,
           });

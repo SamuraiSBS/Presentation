@@ -306,6 +306,7 @@ function renderPptxAttribution(
   item: ReturnType<typeof presentationSchema.parse>["slides"][number],
   theme: ExportTheme,
 ) {
+  if (item.showSourceAttribution === false) return;
   const attribution = formatSlideAttribution(item.sourceRefs, item.visual.image);
   if (!attribution) return;
   slide.addText(attribution, {
@@ -483,7 +484,7 @@ async function renderPdfTemplateSlide(slide: ReturnType<typeof presentationSchem
   const vars = pdfThemeVars(theme);
   const bg = slideBackgroundVariant(slide);
   const content = await pdfTemplateContent(slide, image);
-  const attribution = formatSlideAttribution(slide.sourceRefs, slide.visual.image);
+  const attribution = slide.showSourceAttribution === false ? "" : formatSlideAttribution(slide.sourceRefs, slide.visual.image);
   const footer = attribution ? `<p class="template-attribution">${escapeHtml(attribution)}</p>` : "";
   return `<section class="slide template-slide" data-bg="${escapeHtml(bg)}" style="${vars}">${content}${footer}${pdfPlaceholderWarnings(slide)}</section>`;
 }

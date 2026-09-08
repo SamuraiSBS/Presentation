@@ -74,7 +74,7 @@ vi.mock("./planning/builders.js", () => ({
 
 vi.mock("./narration/processing.js", () => ({
   normalizeNarrationText: vi.fn((value: string) => value),
-  parseNarrationSections: vi.fn(),
+  parseNarrationSections: vi.fn(() => []),
 }));
 
 vi.mock("./normalization/presentation.js", () => ({

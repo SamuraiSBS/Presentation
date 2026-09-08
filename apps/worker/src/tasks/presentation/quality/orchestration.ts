@@ -31,6 +31,7 @@ import {
     rebuildGeneratedCanvases,
     type QualityRepairResponse,
 } from "../../presentation-quality.js";
+import { isManagedSlideCount } from "../visual-policy.js";
 
 type ProjectInput = {
   id: string;
@@ -90,7 +91,7 @@ export class StructuredGenerationError extends Error {
 import { GENERIC_NARRATION_PHRASES, GENERIC_SCREEN_TEXT_PHRASES, GENERIC_TITLES, QUALITY_CRITIC_SYSTEM_PROMPT, QUALITY_REPAIR_SYSTEM_PROMPT, STOP_WORDS, TEMPLATE_TEXT_PATTERNS } from "../constants.js";
 import { assessFullNarrationDocument, formatNarrationSection, isUsableNarrationSentence, parseNarrationSections, requestYandexText, validateNarrationSections } from "../narration/processing.js";
 import { isDuplicateDisplayText, normalizePresentation, normalizeSlide, normalizeTitleKey, sentenceCount, speechSentences, splitIntoSentences, uniqueShortItems } from "../normalization/presentation.js";
-import { buildQualityCritique, shortenVisibleTitle } from "../planning/builders.js";
+import { buildQualityCritique, buildSlideCards, compileSlideCardsToSlides, shortenVisibleTitle } from "../planning/builders.js";
 import { recordOpenAIResponse } from "../providers/generation.js";
 import { qualityCritiqueJsonSchema, qualityRepairJsonSchema, slideTextRepairSchema } from "../schemas.js";
 import { cleanGeneratedText, cleanMultilineText, cleanText, parseJsonText, sanitizeSpeechText, shortenWords } from "../utilities.js";
@@ -209,12 +210,26 @@ export async function finalizeGeneratedPresentation(
     }, "polishing regressed a validated presentation; restoring the last valid candidate");
     return preserveAcceptedNarration(lastValidCandidate, generatedText, project);
   }
-  const released = repairReleaseCandidate(
-    rebuildGeneratedCanvases(preserveAcceptedNarration(finalPresentation, generatedText, project)),
+  const cardedFinalPresentation = attachAcceptedSpeechCards(
+    preserveAcceptedNarration(finalPresentation, generatedText, project),
+    project,
+  );
+  const releasedCandidate = repairReleaseCandidate(
+    rebuildGeneratedCanvases(cardedFinalPresentation),
     sources,
     project,
   );
-  const release = productionQualityReleaseResult(released, sources, project);
+  const releasedWithCards = releasedCandidate.designBrief
+    ? attachAcceptedSpeechCards(releasedCandidate, project)
+    : releasedCandidate;
+  const released = releasedWithCards.slideCards
+    ? rebuildGeneratedCanvases(releasedWithCards)
+    : releasedWithCards;
+  // Image fulfillment is a later, bounded generation stage. At this point the
+  // provider candidate has cards and visual directions, but may not yet have
+  // a downloaded image. The final generation gate re-runs the strict card
+  // visual checks after materialization.
+  const release = productionQualityReleaseResult(released, sources, project, 0, { strictCardVisuals: false });
   logger.info({
     projectId: project.id,
     stage: "release_quality_gate",
@@ -228,6 +243,25 @@ export async function finalizeGeneratedPresentation(
   return presentationSchema.parse({
     ...released,
     productionQualityGate: { version: 1, capability: "silent-production-quality-gate" },
+  });
+}
+
+function attachAcceptedSpeechCards(
+  presentation: PresentationDocument,
+  project: ProjectInput,
+) {
+  // The strict card/visual contract is for the managed presentation sizes.
+  // Keep legacy-sized decks on their established projection so the new
+  // release path does not change unrelated compatibility behavior.
+  if (!presentation.designBrief || !isManagedSlideCount(project.slideCount)) return presentation;
+  const slideCards = buildSlideCards(project, presentation.generatedText, presentation, presentation.designBrief);
+  const compiledSlides = compileSlideCardsToSlides(slideCards, presentation.slides);
+  return presentationSchema.parse({
+    ...presentation,
+    slideCards,
+    outline: slideCards.map((card) => card.title),
+    slides: compiledSlides,
+    speechScript: slideCards.map((card) => ({ slideOrder: card.slideOrder, slideTitle: card.title, text: card.speakerNotes })),
   });
 }
 

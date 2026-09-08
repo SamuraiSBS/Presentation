@@ -33,6 +33,8 @@ export type WebSearchRequest = {
    * corresponding CostEnvelopeReservation when provider pricing is unset.
    */
   costEnvelopeRub?: string;
+  /** Receives the actual provider-reported AI cost for envelope settlement. */
+  onProviderUsage?: (rubCostAtEvent?: string) => void;
 };
 
 const TAVILY_QUERY_SAFE_LENGTH = 380;
@@ -43,6 +45,7 @@ export async function searchWebSources(request: string | WebSearchRequest): Prom
   if (provider === "aitunnel") {
     const normalizedRequest = normalizeWebSearchRequestForProvider(request);
     const run = await searchAitunnelWebSearch(normalizedRequest);
+    if (typeof request !== "string") request.onProviderUsage?.(run.rubCostAtEvent);
     const sources = aitunnelResultsToSources(run.results, request);
     if (sources.length < 3) throw new Error("mandatory_source_search_insufficient");
     return sources;

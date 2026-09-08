@@ -13,6 +13,7 @@ export async function handleAdminMaintenance(job: Job) {
   const prisma = getPrisma();
   const now = new Date();
   await prisma.operationalEvent.deleteMany({ where: { expiresAt: { lt: now } } });
+  await prisma.generationFailureArtifact.deleteMany({ where: { expiresAt: { lt: now } } });
   await cleanupExpiredExports(now);
   await refreshCbrRates(now);
 

@@ -1,11 +1,13 @@
 import {
     PREMIUM_PRESENTATION_THEMES,
+    compileSlideCardToSlide,
     deckStorySchema,
     designBriefSchema,
     qualityCritiqueSchema,
     researchBriefSchema,
     slideBlueprintSchema,
     slideTextPlanSchema,
+    slideCardSchema,
     type DeckStory,
     type DesignBrief,
     type FactualTopicProfile,
@@ -17,6 +19,8 @@ import {
     type SlideSupportPoint,
     type SlideTextComposition,
     type SlideTextPlan,
+    type SlideCard,
+    type CanonicalComposition,
     type Source
 } from "@studydeck/shared";
 import { z } from "zod";
@@ -185,6 +189,7 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
     };
   }
   directions = balanceDeterministicVisualDirections(directions, project, narrativePlan, hasGroundedVisualContext);
+  directions = planDeckCompositions(project, directions, narrativePlan);
   const managedQuota = visualQuotaForSlideCount(project.slideCount);
   return designBriefSchema.parse({
     themePreset: theme.preset,
@@ -204,13 +209,13 @@ export function buildDesignBrief(project: ProjectInput, researchBrief: ResearchB
     layoutPrinciples: [
       "Use a title opener, varied content layouts, and a clear summary slide.",
       "Keep visible text short and reserve full explanation for speaker notes.",
-      "For new decks, use only traceable real documentary photos, evidence-driven diagrams, or text-led layouts; never request an AI illustration.",
+      "For new decks, use traceable documentary photos, concrete AITunnel illustrations, evidence-driven diagrams, or text-led layouts. An AI illustration must show a specific plot and must never be a generic decorative image.",
       "Keep every photo in its own 35-60 percent grid column and never put text over an image.",
       `Support ${Math.max(1, narrativePlan.length)} planned story beats with distinct visual rhythm.`,
     ],
     imageStrategy: managedQuota
       ? `New-generation visual policy for ${project.slideCount} slides: exactly ${managedQuota.photos} real_photo, ${managedQuota.diagrams} diagram, and ${managedQuota.text} text_only directions; the final slide is always text_only. Use photos only for concrete source-grounded people, places, objects, events, models, periods, or phenomena; turn unavailable photo slots into local diagrams.`
-      : "New-generation visual policy: real_photo, diagram, or none only. Use the compatible legacy photo budget for non-standard deck sizes and only for a concrete source-grounded person, place, object, event, model, or period; turn abstract claims into a diagram, comparison, timeline, or statement.",
+      : "New-generation visual policy: use real_photo first, generated_illustration for a concrete visual plot when a photo is unavailable, then a diagram for explanation; keep the final slide text-led.",
     slideDirections: directions,
   });
 }
@@ -220,6 +225,7 @@ function visualPurposeFor(
   imageStrategy: DesignBrief["slideDirections"][number]["imageStrategy"],
 ): DesignBrief["slideDirections"][number]["visualPurpose"] {
   if (imageStrategy === "real_photo") return "photo";
+  if (imageStrategy === "generated_illustration") return "illustration";
   if (layoutIntent === "timeline") return "timeline";
   if (layoutIntent === "comparison") return "comparison";
   if (layoutIntent === "metric") return "metric";
@@ -462,7 +468,14 @@ export function applyManagedVisualQuota(
       || buildFallbackDirection(project, narrativePlan[index], order);
   });
   const finalIndex = normalized.length - 1;
-  const candidateIndexes = normalized.map((_, index) => index).filter((index) => index !== finalIndex);
+  // Keep the exact historical quota matrix while preventing its text slot
+  // from landing on an arbitrary content slide. Six-slide decks need the
+  // opener to carry one of the visual slots; larger managed decks reserve the
+  // two text slots for the opener and conclusion and visualize every content
+  // slide.
+  const openerIsVisual = project.slideCount === 6;
+  const candidateIndexes = normalized.map((_, index) => index)
+    .filter((index) => index !== finalIndex && (index !== 0 || openerIsVisual));
   const canUsePhotos = hasGroundedVisualContext && hasConcreteVisualTopic(project, narrativePlan);
 
   const photoIndexes = canUsePhotos
@@ -473,10 +486,15 @@ export function applyManagedVisualQuota(
     : [];
   const photoSet = new Set(photoIndexes);
 
+  // When grounded photo context is unavailable, the photo quota is not
+  // permission to leave those slots text-only. Reassign every unfulfilled
+  // photo slot to a deterministic diagram so the new visual contract still
+  // reaches substantive coverage before the final gate.
+  const diagramQuota = quota.diagrams + (quota.photos - photoIndexes.length);
   const diagramIndexes = [...candidateIndexes]
     .filter((index) => !photoSet.has(index))
     .sort((left, right) => scoreDiagramCandidate(normalized[right], right, narrativePlan) - scoreDiagramCandidate(normalized[left], left, narrativePlan))
-    .slice(0, quota.diagrams);
+    .slice(0, diagramQuota);
   const diagramSet = new Set(diagramIndexes);
 
   return normalized.map((direction, index) => {
@@ -484,7 +502,8 @@ export function applyManagedVisualQuota(
     if (index === finalIndex) return withVisualMode(direction, plan, project, "none", "summary", "text_only");
     if (photoSet.has(index)) {
       const layout = index === 0 ? "full_bleed_image" as const : "split_image_text" as const;
-      return withVisualMode(direction, plan, project, "real_photo", layout, "photo");
+      const strategy = direction.imageStrategy === "generated_illustration" ? "generated_illustration" as const : "real_photo" as const;
+      return withVisualMode(direction, plan, project, strategy, layout, visualPurposeFor(layout, strategy));
     }
     if (diagramSet.has(index)) {
       const layout = diagramLayoutFor(direction);
@@ -778,6 +797,231 @@ export function buildSlideTextPlans(
 
 export function isSemanticSlideTextV2Enabled(value = process.env[SEMANTIC_SLIDE_TEXT_V2_ENV]) {
   return String(value ?? "true").trim().toLowerCase() !== "false";
+}
+
+/**
+ * Deterministically assign compositions for the complete deck before any
+ * card/slide materialization.  This is deliberately semantic-first: a
+ * comparison or timeline is only selected when the direction calls for it.
+ */
+export function planDeckCompositions(
+  project: Pick<ProjectInput, "slideCount">,
+  directions: DesignBrief["slideDirections"],
+  narrativePlan: SlideNarrative[] = [],
+): DesignBrief["slideDirections"] {
+  const result: DesignBrief["slideDirections"] = [];
+  const used = new Set<CanonicalComposition>();
+  const variety = ["relationship_map", "process", "research_composition", "image_text_column"] as const;
+  for (let index = 0; index < directions.length; index += 1) {
+    const direction = directions[index]!;
+    const plan = narrativePlan[index];
+    const eligible = eligibleCompositions(direction, plan);
+    let composition = eligible[0]!;
+    // Six-plus slide decks need four meaningful visual arrangements.  Select
+    // an unused compatible composition while one is available, but never use
+    // comparison/timeline simply to satisfy a quota.
+    if (project.slideCount >= 6 && used.size < 4) {
+      composition = eligible.find((candidate) => !used.has(candidate))
+        || variety.find((candidate) => eligible.includes(candidate) && !used.has(candidate))
+        || composition;
+    }
+    const previous = result[index - 1]?.composition;
+    const beforePrevious = result[index - 2]?.composition;
+    if (composition === previous && composition === beforePrevious) {
+      composition = eligible.find((candidate) => candidate !== composition)
+        || variety.find((candidate) => candidate !== composition && eligible.includes(candidate))
+        || composition;
+    }
+    used.add(composition);
+    result.push({ ...direction, composition });
+  }
+  return result;
+}
+
+function eligibleCompositions(
+  direction: DesignBrief["slideDirections"][number],
+  plan?: SlideNarrative,
+): CanonicalComposition[] {
+  const narrativeText = `${plan?.slideTitle || ""} ${plan?.keyMessage || ""} ${plan?.slidePurpose || ""}`;
+  if (direction.visualRole === "summary" || direction.layoutIntent === "summary") return ["visual_conclusion"];
+  if (direction.layoutIntent === "comparison" || direction.visualRole === "compare") return ["comparison", "research_composition"];
+  if (direction.layoutIntent === "timeline" || direction.visualRole === "sequence") return ["timeline", "process"];
+  if (direction.imageStrategy === "real_photo" || direction.imageStrategy === "generated_illustration") {
+    return direction.layoutIntent === "full_bleed_image" ? ["full_screen_image", "image_text_column"] : ["image_text_column", "research_composition"];
+  }
+  // An evidence role does not by itself imply a static board. When the
+  // accepted narration asks the reader to follow a mechanism, system, or
+  // causal chain, a process diagram is the truthful arrangement and gives
+  // the deck a distinct explanatory rhythm without inventing a comparison or
+  // timeline.
+  const explanationDriven = /(?:причин|следств|механизм|систем|процесс|structure|system|process|cause|effect|mechanism|workflow)/iu.test(narrativeText);
+  if (direction.layoutIntent === "evidence_board" || direction.visualRole === "evidence") {
+    return explanationDriven && direction.layoutIntent === "diagram"
+      ? ["process", "research_composition", "relationship_map"]
+      : ["research_composition", "relationship_map"];
+  }
+  if (direction.imageStrategy === "diagram" || direction.layoutIntent === "diagram") return ["relationship_map", "process", "research_composition"];
+  return /(?:причин|следств|механизм|process|cause|effect)/iu.test(narrativeText)
+    ? ["process", "relationship_map"]
+    : ["relationship_map", "process", "research_composition"];
+}
+
+/**
+ * Build the semantic slide contract only after speech has been accepted.
+ * Cards bind screen text and notes to the same numbered narration section for
+ * both provider output and the deterministic local recovery projection.
+ */
+export function buildSlideCards(
+  project: ProjectInput,
+  narrationText: string,
+  presentation: Pick<PresentationDocument, "slides">,
+  designBrief: DesignBrief,
+): SlideCard[] {
+  const sections = parseNarrationSections(narrationText);
+  if (sections.length !== project.slideCount || sections.some((section, index) => section.order !== index + 1 || !section.text.trim())) {
+    throw new Error("Accepted narration does not contain one complete section per slide card");
+  }
+  return presentation.slides.map((slide, index) => {
+    const section = sections[index]!;
+    const direction = designBrief.slideDirections.find((item) => item.slideOrder === slide.order);
+    const requestedVisualStrategy = direction?.imageStrategy || (slide.visual.image ? "real_photo" : slide.visual.type !== "none" ? "diagram" : "none");
+    // A planned photo is not fulfilled coverage. When image lookup returns no
+    // asset, keep the card visual and canvas truthful by projecting the
+    // accepted narration into a bounded diagram instead of releasing an empty
+    // photo slot or provider placeholder. Managed decks require a real visual
+    // on every slide, including title and conclusion cards.
+    const visualStrategy = requestedVisualStrategy === "real_photo" && !slide.visual.image
+      || requestedVisualStrategy === "generated_illustration" && !slide.visual.image
+      || requestedVisualStrategy === "none"
+      ? "diagram"
+      : requestedVisualStrategy;
+    const composition = visualStrategy !== requestedVisualStrategy
+      ? cardComposition(direction?.layoutIntent, visualStrategy, slide.slideKind)
+      : direction?.composition || cardComposition(direction?.layoutIntent, visualStrategy, slide.slideKind);
+    // A provider slide is only a visual payload donor at this point. The card
+    // itself must be derived from the accepted speech section so a provider
+    // repair cannot smuggle a competing thesis or bullet list into the deck.
+    const speechClaims = extractSpeechClaims(section.text);
+    const speechComposition = inferSlideTextComposition(section.text, slide.order, project.slideCount, speechClaims);
+    const screenThought = completeCardThought(
+      buildCompositionThesis(section.text, speechClaims, speechComposition),
+      section.text,
+    );
+    const acceptedBullets = buildSemanticSupportPoints(speechClaims, screenThought, speechComposition)
+      .map((point) => point.text)
+      .filter((bullet) => isCompleteScreenSentence(bullet) && !looksLikeSentenceFragment(bullet));
+    const title = cleanText(section.title || slide.title || firstSentence(screenThought)).slice(0, 180);
+    const visualLabels = visualStrategy === "diagram"
+      ? buildCanonicalVisualLabels(section.text, speechClaims, acceptedBullets, title, screenThought)
+      : [];
+    const visualStory = cleanText(direction?.visualRationale || direction?.visualPrompt || slide.visual.description || `${slide.title}: визуальная опора для ключевой мысли.`).slice(0, 260);
+    return slideCardSchema.parse({
+      slideOrder: slide.order,
+      speechSectionOrder: section.order,
+      title,
+      screenThought,
+      allowedBullets: acceptedBullets
+        .filter((bullet, bulletIndex, all) => all.findIndex((candidate) => semanticDuplicateText(candidate, bullet)) === bulletIndex)
+        .filter((bullet) => !semanticDuplicateText(bullet, section.title) && !semanticDuplicateText(bullet, screenThought))
+        .slice(0, 3),
+      visualLabels,
+      speakerNotes: section.text.trim(),
+      slideRole: cardRole(direction?.visualRole, slide.slideKind),
+      composition,
+      visualStory: visualStory || "Визуальная опора уточняет смысл этого фрагмента выступления.",
+      visualStrategy,
+      validationCriteria: [
+        "Мысль на экране выражена одним законченным предложением.",
+        "Заметки дословно связаны с разделом выступления того же номера.",
+        "Визуал объясняет или делает наблюдаемой мысль слайда.",
+      ],
+    });
+  });
+}
+
+/** Compile all cards in slide order while preserving non-card slide payload. */
+export function compileSlideCardsToSlides(
+  cards: SlideCard[],
+  slides: PresentationDocument["slides"],
+) {
+  const cardsByOrder = new Map(cards.map((card) => [card.slideOrder, card]));
+  return slides.map((slide) => {
+    const card = cardsByOrder.get(slide.order);
+    return card ? compileSlideCardToSlide(card, slide) : slide;
+  });
+}
+
+function completeCardThought(value: string, fallback: string) {
+  const text = cleanText(value || firstSentence(fallback));
+  if (!text) return "Содержание этого раздела раскрывает ключевую идею темы.";
+  // The card is the source for the visible thesis and the recovery canvas.
+  // Keep it within the same compact sentence budget used by the ordinary
+  // slide-quality gate; never carry a 300+ character narration sentence into
+  // a fixed-size canvas slot.
+  return ensureSentence(shortenSentence(text, 220));
+}
+
+/**
+ * Diagram labels are still a projection of the accepted speech, never of a
+ * provider visual payload. Prefer explicit list labels, then accepted support
+ * sentences, and finally the remaining section sentences for sparse but valid
+ * narration. The visible diagram compiler shortens these labels further while
+ * keeping at least two distinct nodes when the section supports them.
+ */
+function buildCanonicalVisualLabels(
+  sectionText: string,
+  claims: SpeechClaim[],
+  allowedBullets: string[],
+  title: string,
+  screenThought: string,
+) {
+  const sentenceCandidates = cleanText(sectionText)
+    .split(/(?<=[.!?])\s+/u)
+    .map((sentence) => cleanText(sentence))
+    .filter(Boolean)
+    .slice(1);
+  const candidates = [
+    ...claims.filter((claim) => claim.listItem).map((claim) => claim.text),
+    ...allowedBullets,
+    ...sentenceCandidates,
+  ];
+  const labels: string[] = [];
+  for (const candidate of candidates) {
+    const label = cleanText(candidate)
+      .replace(/[.!?]+$/u, "")
+      .split(/\s+/u)
+      .filter(Boolean)
+      .slice(0, 4)
+      .join(" ");
+    if (!label || semanticDuplicateText(label, title) || semanticDuplicateText(label, screenThought)) continue;
+    if (labels.some((existing) => semanticDuplicateText(existing, label))) continue;
+    labels.push(label);
+    if (labels.length >= 8) break;
+  }
+  return labels;
+}
+
+function cardRole(role: DesignBrief["slideDirections"][number]["visualRole"] | undefined, kind: PresentationDocument["slides"][number]["slideKind"]): SlideCard["slideRole"] {
+  if (kind === "title") return "title";
+  if (kind === "summary") return "summary";
+  if (role === "reflect" || role === "hero") return "visual_statement";
+  return role || "explain";
+}
+
+function cardComposition(
+  layout: DesignBrief["slideDirections"][number]["layoutIntent"] | undefined,
+  strategy: SlideCard["visualStrategy"],
+  kind: PresentationDocument["slides"][number]["slideKind"],
+): SlideCard["composition"] {
+  if (kind === "summary") return "visual_conclusion";
+  if (strategy === "real_photo" || strategy === "generated_illustration") {
+    return layout === "full_bleed_image" ? "full_screen_image" : "image_text_column";
+  }
+  if (layout === "timeline") return "timeline";
+  if (layout === "comparison") return "comparison";
+  if (layout === "evidence_board") return "research_composition";
+  if (layout === "diagram" || layout === "cards") return "relationship_map";
+  return "process";
 }
 
 function buildLegacySlideTextPlans(

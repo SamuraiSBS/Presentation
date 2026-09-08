@@ -235,13 +235,14 @@ export function ensureDesignBriefDirections(
       };
     }
     if (direction.imageStrategy === "generated_illustration") {
+      const layoutIntent = direction.visualRole === "hero" ? "full_bleed_image" as const : direction.layoutIntent === "summary" ? "statement" as const : "split_image_text" as const;
       return {
         ...direction,
-        layoutIntent: direction.visualRole === "hero" ? "statement" as const : "cards" as const,
-        imageStrategy: "none" as const,
-        visualPurpose: "text_only" as const,
-        sceneTextMode: direction.visualRole === "hero" ? "hero_phrase" as const : "talk_sentences" as const,
-        visualPrompt: completeVisualPrompt(project, plan, "none", direction.visualRole === "hero" ? "statement" : "cards", direction.visualPrompt),
+        layoutIntent,
+        imageStrategy: "generated_illustration" as const,
+        visualPurpose: "illustration" as const,
+        sceneTextMode: direction.visualRole === "hero" ? "hero_phrase" as const : "visual_labels" as const,
+        visualPrompt: completeVisualPrompt(project, plan, "generated_illustration", layoutIntent, direction.visualPrompt),
       };
     }
     if (direction.imageStrategy !== "real_photo") {

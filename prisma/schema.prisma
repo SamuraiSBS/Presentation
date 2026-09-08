@@ -365,6 +365,7 @@ model Project {
   costEvents           CostEvent[]
   costEnvelopes        CostEnvelope[]
   operationalEvents    OperationalEvent[]
+  generationFailureArtifacts GenerationFailureArtifact[]
   activityEvents       UserActivityEvent[]
   defenseWorkspace     DefenseWorkspace?
 
@@ -616,10 +617,35 @@ model GenerationJob {
   narrationEnvelope CostEnvelope? @relation("CostEnvelopeNarrationJob")
   presentationEnvelope CostEnvelope? @relation("CostEnvelopePresentationJob")
   quotaReservation    GenerationQuotaReservation?
+  failureArtifacts    GenerationFailureArtifact[]
 
   @@unique([projectId, kind, requestKey])
   @@index([projectId, createdAt])
   @@index([projectId, kind, createdAt])
+}
+
+// Private, redacted terminal-generation diagnostics. The JSON payload is a
+// structural hash diff only; it must never contain narration, source text,
+// URLs, provider payloads, or media metadata.
+model GenerationFailureArtifact {
+  id                 String        @id @default(cuid())
+  projectId          String
+  generationJobId    String
+  stage              String
+  expiresAt          DateTime
+  pipelineVersion    String
+  releaseIdentifier  String?
+  candidateHash      String?
+  failureFingerprint String
+  structuralDiff     Json          @default("[]")
+  createdAt          DateTime      @default(now())
+  project            Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  generationJob      GenerationJob @relation(fields: [generationJobId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@index([projectId, createdAt])
+  @@index([generationJobId])
+  @@index([failureFingerprint, createdAt])
 }
 
 model GenerationQuotaCounter {

@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 
 export const UTF8_JSON_CONTENT_TYPE = "application/json; charset=utf-8";
 export const NARRATION_SMOKE_FLOW = ["create_project", "enqueue_narration", "poll_terminal"] as const;
+export const LIVE_SMOKE_SLIDE_COUNT = 6;
 
 type NarrationSmokeStep = (typeof NARRATION_SMOKE_FLOW)[number];
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -106,7 +107,7 @@ function projectRequest(input: NarrationSmokeInput) {
     scenario: "university_report",
     level: "university_student",
     mode: "with_sources",
-    slideCount: 10,
+    slideCount: LIVE_SMOKE_SLIDE_COUNT,
   };
 }
 
@@ -203,7 +204,7 @@ export async function runNarrationSmoke(
   const pollIntervalMs = input.pollIntervalMs ?? 3000;
   const apiUrl = normaliseApiUrl(input.apiUrl);
   const headers = { "x-user-id": input.userId, "x-internal-token": input.internalApiToken };
-  const body = serializeUtf8Json({ title, prompt, scenario: "university_report", level: "university_student", mode: "with_sources", slideCount: 10 });
+  const body = serializeUtf8Json({ title, prompt, scenario: "university_report", level: "university_student", mode: "with_sources", slideCount: LIVE_SMOKE_SLIDE_COUNT });
   let snapshot: NarrationSmokeSnapshot = {
     projectId: null,
     generationJobId: null,

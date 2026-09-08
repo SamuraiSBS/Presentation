@@ -3,6 +3,7 @@ export {
   generatePresentation,
   generatePresentationFromNarration,
   buildLocalPresentationFromAcceptedNarration,
+  rebuildWeakSlidesLocally,
   buildSafePresentationFromNarration,
 } from "./presentation/orchestrator.js";
 export { selectAiProviders } from "./presentation/providers/provider-selection.js";

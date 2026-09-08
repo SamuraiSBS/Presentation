@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { sourceSchema } from "../projects/schemas.js";
 import { designBriefSchema, slideNarrativeSchema } from "../generation/schemas.js";
-import { presentationThemeSchema, slideSchema, speechScriptItemSchema } from "./schemas.js";
+import { presentationThemeSchema, slideCardSchema, slideSchema, speechScriptItemSchema } from "./schemas.js";
 export const productionQualityGateSchema = z.object({
   version: z.literal(1),
   capability: z.literal("silent-production-quality-gate"),
@@ -28,6 +28,9 @@ export const presentationSchema = z.object({
   // only after the worker's final release audit has accepted their canonical
   // content, so consumers never have to guess from generationMode alone.
   productionQualityGate: productionQualityGateSchema.optional(),
+  // Optional for legacy saved decks. New generation writes one card for each
+  // accepted speech section and uses it as the canonical slide projection.
+  slideCards: z.array(slideCardSchema).optional(),
   speechScript: z.array(speechScriptItemSchema),
   slides: z.array(slideSchema),
 });

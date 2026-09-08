@@ -236,7 +236,11 @@ function buildMinimalRecoveryCanvas(slide: Slide, theme: PresentationTheme): Sli
       typographyRole: slide.slideKind === "title" ? "deckTitle" : "slideTitle",
       fontSize: fittedFontSize(title, slide.slideKind === "title" ? 54 : 43, slide.slideKind === "title" ? presentationTypography.deckTitle.minPx : presentationTypography.slideTitle.minPx, 112, 760, slide.slideKind === "title" ? presentationTypography.deckTitle.lineHeight : presentationTypography.slideTitle.lineHeight),
       fontFamily: theme.fonts.heading,
-      color: foreground,
+      // Finalization adds a light text backplate around standalone title and
+      // body text. Keep dark-kind recovery text dark as well; otherwise a
+      // light foreground intended for the raw dark background becomes
+      // unreadable on the generated white plaque.
+      color: theme.colors.text,
       bold: true,
       valign: "middle",
     }),
@@ -245,7 +249,7 @@ function buildMinimalRecoveryCanvas(slide: Slide, theme: PresentationTheme): Sli
       typographyRole: "body",
       fontSize: fittedFontSize(body, 30, presentationTypography.body.minPx, 176, 690, presentationTypography.body.lineHeight),
       fontFamily: theme.fonts.body,
-      color: muted,
+      color: theme.colors.muted,
       valign: "middle",
     }),
   );
@@ -291,24 +295,43 @@ export function sanitizeRecoverySlideForCanvas(slide: Slide): Slide {
       ...slide.visual.graph,
       nodes: slide.visual.graph.nodes.slice(0, 3).map((node) => ({
         ...node,
-        label: recoveryTextThatFits(node.label, 317, 58, 25, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight) || "Точка",
+        // Diagram labels are allowed to be compact phrases. If the source
+        // label is a full narration sentence, reduce it to a readable label
+        // instead of dropping the node and silently collapsing the diagram.
+        label: recoveryLabelThatFits(node.label, 317, 58, 25),
         detail: recoveryTextThatFits(node.detail, 317, 62, 24, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight),
       })),
     } : undefined,
-    rows: slide.visual.rows.slice(0, 3).map((row, index) => ({
+    rows: slide.visual.rows.slice(0, 3).map((row) => ({
       ...row,
-      label: recoveryTextThatFits(row.label || `Точка ${index + 1}`, 317, 58, 25, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight) || `Точка ${index + 1}`,
+      label: recoveryLabelThatFits(row.label, 317, 58, 25),
       left: recoveryTextThatFits(row.left, 317, 62, 24, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight),
       right: recoveryTextThatFits(row.right, 317, 62, 24, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight),
     })),
     items: slide.visual.items.slice(0, 3).map((item) => ({
       ...item,
-      label: recoveryTextThatFits(item.label || item.text, 317, 58, 25, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight) || "Точка",
+      label: recoveryLabelThatFits(item.label || item.text, 317, 58, 25),
       text: recoveryTextThatFits(item.text, 317, 62, 24, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight),
     })),
   };
   const title = recoveryTextThatFits(slide.title, titleWidth, titleHeight, slide.slideKind === "title" ? 54 : 43, titleRole.minPx, titleRole.lineHeight) || "Тема";
   return { ...slide, title, thesis: body, bullets, blocks, visual };
+}
+
+function recoveryLabelThatFits(value: string, width: number, height: number, preferred: number) {
+  return recoveryTextThatFits(value, width, height, preferred, presentationTypography.supporting.minPx, presentationTypography.supporting.lineHeight)
+    || compactRecoveryLabel(value);
+}
+
+function compactRecoveryLabel(value: string) {
+  return cleanCanvasText(value)
+    .replace(/[.!?]+$/u, "")
+    .split(/\s+/u)
+    .filter(Boolean)
+    .slice(0, 6)
+    .join(" ")
+    .slice(0, 56)
+    .trim();
 }
 
 function recoveryTextThatFits(value: string, width: number, height: number, preferred: number, minimum: number, lineHeight: number) {
@@ -348,7 +371,11 @@ function addRecoveryStatementCanvas(
       typographyRole: slide.slideKind === "title" ? "deckTitle" : "slideTitle",
       fontSize: fittedFontSize(slide.title, slide.slideKind === "title" ? 54 : 43, slide.slideKind === "title" ? presentationTypography.deckTitle.minPx : presentationTypography.slideTitle.minPx, 112, 760, slide.slideKind === "title" ? presentationTypography.deckTitle.lineHeight : presentationTypography.slideTitle.lineHeight),
       fontFamily: theme.fonts.heading,
-      color: foreground,
+      // Finalization adds a light text backplate around standalone title and
+      // body text. Keep dark-kind recovery text dark as well; otherwise a
+      // light foreground intended for the raw dark background becomes
+      // unreadable on the generated white plaque.
+      color: theme.colors.text,
       bold: true,
       valign: "middle",
     }),
@@ -357,7 +384,7 @@ function addRecoveryStatementCanvas(
       typographyRole: "body",
       fontSize: fittedFontSize(body, 30, presentationTypography.body.minPx, 176, 690, presentationTypography.body.lineHeight),
       fontFamily: theme.fonts.body,
-      color: muted,
+      color: theme.colors.muted,
       valign: "middle",
     }),
   );
@@ -401,6 +428,10 @@ function addRecoveryImageCanvas(
 function addRecoveryDiagramCanvas(slide: Slide, theme: PresentationTheme, elements: CanvasElement[]) {
   const body = slide.thesis;
   const nodes = recoveryDiagramNodes(slide).slice(0, 3);
+  if (nodes.length < 2) {
+    addRecoveryStatementCanvas(slide, theme, elements, theme.colors.text, theme.colors.muted, false);
+    return;
+  }
   const cardGap = 22;
   const cardWidth = Math.floor((1136 - cardGap * (nodes.length - 1)) / nodes.length);
   const cardHeight = 188;
@@ -515,25 +546,30 @@ function recoveryDiagramNodes(slide: Slide) {
     return slide.visual.graph.nodes.map((node) => ({
       label: cleanCanvasText(node.label),
       detail: cleanCanvasText(node.detail),
-    }));
+    })).filter((node) => node.label && !isPlaceholderRecoveryLabel(node.label));
   }
   if (slide.visual.rows.length) {
     return slide.visual.rows.slice(0, 3).map((row, index) => ({
-      label: cleanCanvasText(row.label || `Point ${index + 1}`),
+      label: cleanCanvasText(row.label),
       detail: cleanCanvasText([row.left, row.right].filter(Boolean).join(" · ")),
-    }));
+    })).filter((node) => node.label && !isPlaceholderRecoveryLabel(node.label));
   }
   if (slide.visual.items.length) {
     return slide.visual.items.map((item) => ({
       label: cleanCanvasText(item.label || item.text),
       detail: cleanCanvasText(item.text && item.text !== item.label ? item.text : ""),
-    }));
+    })).filter((node) => node.label && !isPlaceholderRecoveryLabel(node.label));
   }
   return [slide.thesis, ...slide.bullets, slide.title]
     .map((value) => cleanCanvasText(value))
     .filter(Boolean)
+    .filter((value) => !isPlaceholderRecoveryLabel(value))
     .filter((value, index, all) => all.indexOf(value) === index)
     .map((value) => ({ label: value, detail: "" }));
+}
+
+function isPlaceholderRecoveryLabel(value: string) {
+  return /^(?:точка|элемент|узел|point|item|node)(?:\s*\d+)?$/iu.test(value.trim());
 }
 
 function buildStudyDeckEditorialCanvas(
@@ -545,14 +581,19 @@ function buildStudyDeckEditorialCanvas(
   const background = dark ? theme.colors.text : theme.colors.background;
   const foreground = dark ? theme.colors.background : theme.colors.text;
   const muted = dark ? theme.colors.line : theme.colors.muted;
+  // Cover and summary slides receive light text plaques in the export path.
+  // Keep their editorial text dark when there is no image behind it; a light
+  // foreground intended for the raw dark canvas becomes unreadable there.
+  const plaqueForeground = dark && !slide.visual?.image ? theme.colors.text : foreground;
+  const plaqueMuted = dark && !slide.visual?.image ? theme.colors.muted : muted;
   const elements: CanvasElement[] = [];
 
   if (slide.slideKind === "title") {
-    addEditorialCoverCanvas(slide, theme, elements, foreground, muted);
+    addEditorialCoverCanvas(slide, theme, elements, plaqueForeground, plaqueMuted);
   } else if (slide.slideKind === "section") {
     addEditorialSectionCanvas(slide, theme, elements, foreground, muted);
   } else if (slide.slideKind === "summary" || direction?.layoutIntent === "summary") {
-    addEditorialSummaryCanvas(slide, theme, elements, foreground, muted);
+    addEditorialSummaryCanvas(slide, theme, elements, plaqueForeground, plaqueMuted);
   } else if (slide.visual?.image) {
     addEditorialImageCanvas(slide, theme, elements);
   } else if (direction?.layoutIntent === "comparison" || slide.layout === "comparison" || slide.layout === "two-column") {
@@ -2471,6 +2512,7 @@ function addSlideAttributionCanvas(
   elements: CanvasElement[],
   color = theme.colors.muted,
 ) {
+  if (slide.showSourceAttribution === false) return;
   if (elements.some((element) => element.type === "text" && element.typographyRole === "sourceCredit")) return;
   const attribution = formatSlideAttribution(slide.sourceRefs, slide.visual.image);
   if (!attribution) return;

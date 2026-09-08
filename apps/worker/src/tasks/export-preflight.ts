@@ -12,6 +12,7 @@ import {
 } from "@studydeck/shared";
 import {
   critiquePresentationDeterministically,
+  findSlideCardVisualIssues,
   improvePresentationQuality,
   type QualityProjectInput,
 } from "./presentation-quality.js";
@@ -28,6 +29,9 @@ type ExportPreflightOptions = {
   format: ExportPreflightFormat;
   project: QualityProjectInput;
   readObject: (objectKey: string) => Promise<Buffer>;
+  /** Generation uses this before a revision is released; it may validate but
+   * must never make export-only repairs to a card document. */
+  canonicalRelease?: boolean;
 };
 
 type Issue = {
@@ -53,7 +57,7 @@ export async function preparePresentationForExport(
   // A released document is already a persisted canonical revision. Export may
   // validate it, but may not silently manufacture a different in-memory
   // revision for one of the serializers.
-  if (parsed.productionQualityGate) {
+  if (parsed.productionQualityGate || (options.canonicalRelease && parsed.slideCards)) {
     return { document: parsed, report: initialReport, initialReport };
   }
 
@@ -111,7 +115,7 @@ async function collectIssues(document: PresentationDocument, options: ExportPref
       slideId: slide.id,
       category: "canonical_content",
       repairable: !customById.get(slide.id),
-      blocking: Boolean(document.productionQualityGate),
+      blocking: Boolean(document.productionQualityGate) || Boolean(options.canonicalRelease && document.slideCards),
     });
   }
 
@@ -137,18 +141,38 @@ async function collectIssues(document: PresentationDocument, options: ExportPref
       // production gate deliberately permits minor issues and major issues
       // above the calibrated quality threshold. Only a blocker or an export
       // schema risk should prevent serializing that already accepted revision.
-      blocking: Boolean(document.productionQualityGate)
-        && (qualityIssue.severity === "blocker" || qualityIssue.category === "schema_risk"),
+      blocking: (Boolean(document.productionQualityGate) && (qualityIssue.severity === "blocker" || qualityIssue.category === "schema_risk"))
+        || Boolean(options.canonicalRelease && document.slideCards && (
+          (qualityIssue.field || "").startsWith("slideCards")
+          || qualityIssue.field === "slide.layout"
+          || qualityIssue.category === "schema_risk"
+        )),
+    });
+  }
+
+  // Card visual fulfillment is intentionally omitted from the pre-image
+  // provider critique, but a released card document must be export-safe too.
+  // Keep this check here so PPTX and PDF share the same final contract as the
+  // persisted generation gate.
+  for (const cardVisualIssue of findSlideCardVisualIssues(document)) {
+    if (!cardVisualIssue.slideId) continue;
+    const slide = document.slides.find((candidate) => candidate.id === cardVisualIssue.slideId);
+    if (!slide) continue;
+    issues.push({
+      slideId: slide.id,
+      category: cardVisualIssue.category,
+      repairable: !customById.get(slide.id),
+      blocking: Boolean(document.productionQualityGate) || Boolean(options.canonicalRelease && document.slideCards),
     });
   }
 
   for (const slide of document.slides) {
     const custom = customById.get(slide.id) || false;
     if (!slide.canvas) {
-      if (!isLegacyNoCanvas) issues.push({ slideId: slide.id, category: "missing_canvas", repairable: !custom });
+      if (!isLegacyNoCanvas) issues.push({ slideId: slide.id, category: "missing_canvas", repairable: !custom, blocking: Boolean(options.canonicalRelease && document.slideCards) });
     } else {
       for (const canvasIssue of auditSlideCanvas(slide.canvas)) {
-        issues.push({ slideId: slide.id, category: canvasCategory(canvasIssue), repairable: !custom });
+        issues.push({ slideId: slide.id, category: canvasCategory(canvasIssue), repairable: !custom, blocking: Boolean(options.canonicalRelease && document.slideCards) });
       }
     }
 
@@ -157,7 +181,7 @@ async function collectIssues(document: PresentationDocument, options: ExportPref
         slideId: slide.id,
         category: "canonical_content",
         repairable: !custom,
-        blocking: Boolean(document.productionQualityGate),
+        blocking: Boolean(document.productionQualityGate) || Boolean(options.canonicalRelease && document.slideCards),
       });
       // The report is category-oriented; one canonicality entry per slide is
       // enough to route the document back through the persisted repair path.

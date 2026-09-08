@@ -7,6 +7,7 @@ import {
   hasCustomSlideCanvas,
   presentationSchema,
   resolvePresentationTheme,
+  slideLayoutForCard,
   getRussianStudentSpeechTimingBudget,
   russianSpeechMinutesFromWords,
   type PresentationDocument,
@@ -20,7 +21,7 @@ import {
 } from "@studydeck/shared";
 import { errorLogFields, logger } from "../observability.js";
 import { STOP_WORDS } from "./presentation/constants.js";
-import { hasGenericOrMetaScreenText } from "./presentation/quality/orchestration.js";
+import { hasGenericOrMetaScreenText, looksLikeSentenceFragment } from "./presentation/quality/orchestration.js";
 import {
   findLongSlideTextIssues,
   isVisibleTextTooLong,
@@ -30,6 +31,7 @@ import { collectSemanticQualityIssues } from "./presentation/quality/semantic-ru
 import { collectSourceGroundingIssues } from "./presentation/quality/source-grounding.js";
 import { applyInitialQualityRepairs } from "./presentation/quality/repair-orchestration.js";
 import { hasSubstantiveVisual, isManagedSlideCount } from "./presentation/visual-policy.js";
+import { planDeckCompositions } from "./presentation/planning/builders.js";
 
 export { findLongSlideTextIssues, isVisibleTextTooLong } from "./presentation/quality/visible-text-rules.js";
 export { hasSubstantiveVisual } from "./presentation/visual-policy.js";
@@ -912,6 +914,100 @@ export function findLayoutRhythmIssues(presentation: PresentationDocument): Qual
   return issues;
 }
 
+export function findSlideCardIssues(presentation: PresentationDocument): QualityIssue[] {
+  const cards = presentation.slideCards;
+  if (!cards) return [];
+  const issues: QualityIssue[] = [];
+  if (cards.length !== presentation.slides.length || cards.length !== presentation.slideCount) {
+    issues.push({
+      severity: "blocker",
+      category: "schema_risk",
+      field: "slideCards",
+      message: "New presentation must contain exactly one slide card per slide.",
+      repairInstruction: "Rebuild the card collection from the accepted narration without changing the speech text.",
+    });
+  }
+  const speechByOrder = new Map(presentation.speechScript.map((item) => [item.slideOrder, item]));
+  const orders = new Set<number>();
+  for (const [index, card] of cards.entries()) {
+    const slide = presentation.slides.find((candidate) => candidate.order === card.slideOrder);
+    const speech = speechByOrder.get(card.slideOrder);
+    if (orders.has(card.slideOrder) || !slide || card.slideOrder !== index + 1 || card.speechSectionOrder !== card.slideOrder) {
+      issues.push({ slideId: slide?.id, severity: "blocker", category: "schema_risk", field: "slideCards.slideOrder", message: "Slide card numbering is not a one-to-one binding to the slide and speech section.", repairInstruction: "Use the same sequential slideOrder and speechSectionOrder for each card." });
+    }
+    orders.add(card.slideOrder);
+    if (!slide || !speech) continue;
+    if (slide.title !== card.title) {
+      issues.push({ slideId: slide.id, severity: "major", category: "generic_text", field: "title", message: "Slide title differs from its canonical slide card.", repairInstruction: "Compile the slide from the matching card without changing accepted narration." });
+    }
+    if (slide.thesis !== card.screenThought) {
+      issues.push({ slideId: slide.id, severity: "major", category: "generic_text", field: "thesis", message: "Slide screen thought differs from its canonical slide card.", repairInstruction: "Use the card screenThought as the only visible thesis." });
+    }
+    if (slide.layout !== slideLayoutForCard(card, slide)) {
+      issues.push({ slideId: slide.id, severity: "blocker", category: "schema_risk", field: "slide.layout", message: "Slide layout does not implement the card composition.", repairInstruction: "Compile the card composition to its shared slide layout before building the canvas." });
+    }
+    if (slide.showSourceAttribution !== false) {
+      issues.push({ slideId: slide.id, severity: "blocker", category: "schema_risk", field: "showSourceAttribution", message: "Canonical card slides must keep source attribution out of the user-facing presentation.", repairInstruction: "Keep source refs in internal data but set showSourceAttribution to false." });
+    }
+    const expectedBullets = card.allowedBullets
+      .filter((bullet) => !sameQualityText(bullet, card.title) && !sameQualityText(bullet, card.screenThought))
+      .filter((bullet, bulletIndex, all) => all.findIndex((candidate) => sameQualityText(candidate, bullet)) === bulletIndex)
+      .slice(0, 5);
+    if (slide.bullets.length !== expectedBullets.length || slide.bullets.some((bullet, bulletIndex) => !sameQualityText(bullet, expectedBullets[bulletIndex] || ""))) {
+      issues.push({ slideId: slide.id, severity: "major", category: "generic_text", field: "bullets", message: "Slide bullets are not the allowed support points from its canonical card.", repairInstruction: "Compile only the card allowedBullets and omit duplicated or fragmentary points." });
+    }
+    if (card.visualStrategy !== "none" && slide.visual.description !== card.visualStory) {
+      issues.push({ slideId: slide.id, severity: "major", category: "bad_visual", field: "visual.description", message: "Slide visual story differs from its canonical card.", repairInstruction: "Use the card visualStory as the visual description while preserving the actual image or diagram payload." });
+    }
+    if (card.speakerNotes.trim() !== slide.speakerNotes.trim() || card.speakerNotes.trim() !== speech.text.trim()) {
+      issues.push({ slideId: slide.id, severity: "major", category: "bad_narration", field: "slideCards.speakerNotes", message: "Slide card notes do not match the accepted speech section for the same slide.", repairInstruction: "Copy the full accepted narration section into the card, speakerNotes, and speechScript." });
+    }
+    if (!/[.!?]$/u.test(card.screenThought.trim()) || card.screenThought.split(/\s+/).filter(Boolean).length < 4 || looksLikeSentenceFragment(card.screenThought)) {
+      issues.push({ slideId: slide.id, severity: "major", category: "generic_text", field: "slideCards.screenThought", message: "Slide card screen thought is fragmentary or incomplete.", repairInstruction: "Use one complete, topic-specific sentence supported by the matching speech section." });
+    }
+    if (card.visualLabels.some((label) => label.split(/\s+/).filter(Boolean).length > 4)) {
+      issues.push({ slideId: slide.id, severity: "major", category: "bad_visual", field: "slideCards.visualLabels", message: "Visual labels must be short labels for real visual elements, not compressed prose.", repairInstruction: "Keep labels to at most four words and use full sentences for the screen thought." });
+    }
+  }
+
+  if (cards.length >= 6) {
+    const compositions = new Set(cards.map((card) => card.composition));
+    if (compositions.size < 4) {
+      issues.push({ severity: "major", category: "bad_visual", field: "slideCards.composition", message: "A six-slide-or-longer deck must use at least four composition types.", repairInstruction: "Rebuild weak cards with distinct image, process, comparison, timeline, relationship, research, or conclusion compositions." });
+    }
+    for (let index = 2; index < cards.length; index += 1) {
+      if (cards[index - 2]!.composition === cards[index - 1]!.composition && cards[index - 1]!.composition === cards[index]!.composition) {
+        issues.push({ slideId: presentation.slides[index]!.id, severity: "major", category: "bad_visual", field: "slideCards.composition", message: "The same composition repeats on three adjacent slides.", repairInstruction: "Change the middle or last card to a semantically suitable composition." });
+      }
+    }
+  }
+  return issues;
+}
+
+function sameQualityText(left: string, right: string) {
+  return normalizeQualityText(left) === normalizeQualityText(right);
+}
+
+export function findSlideCardVisualIssues(presentation: PresentationDocument): QualityIssue[] {
+  if (!presentation.slideCards) return [];
+  const cardsByOrder = new Map(presentation.slideCards.map((card) => [card.slideOrder, card]));
+  return presentation.slides.flatMap((slide) => {
+    const card = cardsByOrder.get(slide.order);
+    if (!card) return [];
+    const textOnlyAllowed = card.slideRole === "title" || card.slideRole === "summary" || card.slideRole === "visual_statement" || card.slideRole === "quote";
+    if (card.visualStrategy === "none") {
+      return textOnlyAllowed ? [] : [{ slideId: slide.id, severity: "blocker" as const, category: "bad_visual" as const, field: "slideCards.visualStrategy", message: "This generated slide has no substantive visual although its role requires one.", repairInstruction: "Build a concrete image, illustration, or explanatory diagram for the slide card." }];
+    }
+    if ((card.visualStrategy === "real_photo" || card.visualStrategy === "generated_illustration") && !slide.visual.image) {
+      return [{ slideId: slide.id, severity: "blocker" as const, category: "bad_visual" as const, field: "visual.image", message: "The slide card requests an image visual, but no real image object was fulfilled.", repairInstruction: "Use the grounded photo, the concrete AITunnel illustration fallback, or a substantive diagram before release." }];
+    }
+    if (card.visualStrategy === "diagram" && !hasSubstantiveVisual(slide)) {
+      return [{ slideId: slide.id, severity: "blocker" as const, category: "bad_visual" as const, field: "visual", message: "The slide card requests a diagram, but the diagram has no substantive payload.", repairInstruction: "Build a diagram with at least two meaningful labeled nodes and a connection." }];
+    }
+    return [];
+  });
+}
+
 export function findVisualDescriptionIssues(presentation: PresentationDocument): QualityIssue[] {
   const slideIssues = presentation.slides.flatMap((slide) => {
     const description = normalizeQualityText(slide.visual.description);
@@ -1134,9 +1230,9 @@ export function materializePlannedVisuals(
   let changed = false;
   const slides = presentation.slides.map((slide) => {
     const direction = directions.get(slide.order);
-    const missingPlannedPhoto = slide.slideKind === "content"
+    const missingPlannedPhoto = slide.slideKind !== "summary"
       && options.fallbackMissingPhotos
-      && direction?.imageStrategy === "real_photo"
+      && (direction?.imageStrategy === "real_photo" || direction?.imageStrategy === "generated_illustration")
       && !slide.visual.image;
     const missingImageVisual = options.fallbackMissingPhotos
       && slide.slideKind === "content"
@@ -1165,7 +1261,28 @@ export function materializePlannedVisuals(
       }),
     }
     : undefined;
-  return presentationSchema.parse({ ...presentation, slides, ...(designBrief ? { designBrief } : {}) });
+  const plannedDirections = designBrief
+    ? planDeckCompositions(
+      { slideCount: presentation.slideCount || presentation.slides.length },
+      designBrief.slideDirections,
+      presentation.narrativePlan || [],
+    )
+    : undefined;
+  return presentationSchema.parse({
+    ...presentation,
+    slides,
+    ...(designBrief && plannedDirections ? { designBrief: { ...designBrief, slideDirections: plannedDirections } } : {}),
+    ...(presentation.slideCards ? {
+      slideCards: presentation.slideCards.map((card) => {
+        if (!fallbackOrders.has(card.slideOrder) || card.slideRole === "summary") return card;
+        return {
+          ...card,
+          visualStrategy: "diagram" as const,
+          composition: plannedDirections?.find((direction) => direction.slideOrder === card.slideOrder)?.composition || "relationship_map",
+        };
+      }),
+    } : {}),
+  });
 }
 
 function isSemanticDiagram(slide: Slide | undefined) {
@@ -1631,8 +1748,10 @@ export function productionQualityReleaseResult(
   sources: Source[],
   project: QualityProjectInput,
   attempts = 0,
+  options: { strictCardVisuals?: boolean } = {},
 ): ProductionQualityReleaseResult {
   const baseCritique = critiquePresentationDeterministically(presentation, sources, project);
+  const strictCardVisuals = options.strictCardVisuals ?? Boolean(presentation.slideCards);
   const hasCanonicalAcceptedNarration = parseAcceptedNarrationSections(presentation.generatedText).length === presentation.slides.length
     && !findSlideSpeechAlignmentIssues(presentation).some((issue) => issue.field === "speechScript");
   const critique = project.acceptedNarrationRecovery || hasCanonicalAcceptedNarration
@@ -1651,8 +1770,28 @@ export function productionQualityReleaseResult(
   const allowedGenerationModes = project.mandatorySourceSnapshot
     ? ["local", "aitunnel"]
     : ["yandex", "aitunnel"];
-  const candidateIssues = allowedGenerationModes.includes(presentation.generationMode)
-    ? critique.issues
+  const emergencyCardIssues = presentation.slideCards && presentation.productionQualityGate?.recoveryStage === "emergency"
+      ? [
+        {
+          slideId: presentation.slides[0]?.id,
+          severity: "major" as const,
+          category: "bad_visual" as const,
+          field: "productionQualityGate.recoveryStage",
+          message: "Emergency-readable presentation contains a non-release visual projection for the new slide-card generation path.",
+          repairInstruction: "Rebuild the affected slide cards and visuals within the active cost envelope; keep the accepted speech saved if release still fails.",
+        },
+        {
+          slideId: undefined,
+          severity: "blocker" as const,
+          category: "bad_visual" as const,
+          field: "productionQualityGate.recoveryStage",
+          message: "Emergency-readable presentation is not releasable for the new slide-card generation path.",
+          repairInstruction: "Rebuild the affected slide cards and visuals within the active cost envelope; keep the accepted speech saved if release still fails.",
+        },
+      ]
+    : [];
+  const candidateIssues = dedupeIssues(allowedGenerationModes.includes(presentation.generationMode)
+    ? [...critique.issues, ...emergencyCardIssues, ...(strictCardVisuals ? findSlideCardVisualIssues(presentation) : [])]
     : [...critique.issues, {
         severity: "blocker" as const,
         category: "schema_risk" as const,
@@ -1663,7 +1802,7 @@ export function productionQualityReleaseResult(
         repairInstruction: project.mandatorySourceSnapshot
           ? "Resume the linked presentation job from accepted narration using AITunnel or the local projection; do not use a demo or provider fallback document."
           : "Run a new generation with Yandex or AITunnel configured; do not substitute a local fallback document.",
-      }];
+      }]);
   // Accepted-narration recovery may intentionally concentrate deterministic
   // diagram layouts after failed photo enrichment. Keep those advisory rhythm
   // diagnostics out of the release result; substantive visual blockers and
@@ -1677,10 +1816,10 @@ export function productionQualityReleaseResult(
     issueCategories: [...new Set(issues.map((issue) => issue.category))],
     attempts,
     // Minor findings remain in diagnostics for a later polish pass. Blockers
-    // always stop release; major findings retain the calibrated score threshold
-    // so one repairable concern does not outweigh an otherwise sound deck.
+    // and major findings always stop release; the new card contract is a
+    // release invariant rather than a score trade-off.
     finalDisposition: issues.some((issue) => issue.severity === "blocker")
-      || (issues.some((issue) => issue.severity === "major") && critique.score < QUALITY_SCORE_THRESHOLD)
+      || issues.some((issue) => issue.severity === "major")
       ? "rejected"
       : "released",
     issues: issues.map((issue) => ({
@@ -1725,7 +1864,7 @@ export function critiquePresentationDeterministically(
     findIntraSlideDuplicateIssues, findRepeatedTitleIssues, findLongSlideTextIssues,
     findNarrationMetaIssues, findLayoutRhythmIssues, findVisualDescriptionIssues,
     findDuplicateSlideIssues, findDeckWideDuplicateIssues, findRepeatedSentenceStartIssues,
-    findSlideSpeechAlignmentIssues, (document) => findUniversityToneIssues(document, project),
+    findSlideSpeechAlignmentIssues, findSlideCardIssues, (document) => findUniversityToneIssues(document, project),
     findShortNarrationIssues, (document) => findSpeechTimingIssues(document, project),
     findExportReadinessIssues, findVisualFulfillmentIssues, findCanvasCanonicalContentIssues,
     ...(project ? [(document: PresentationDocument) => findWeakConclusionIssues(document, project), (document: PresentationDocument) => findTopicRelevanceIssues(document, project), (document: PresentationDocument) => findOffTopicVisualIssues(document, project), (document: PresentationDocument) => findVisualPlanIssues(document, project)] : [(document: PresentationDocument) => findVisualPlanIssues(document)]),

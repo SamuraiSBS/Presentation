@@ -53,9 +53,17 @@ export function hasSubstantiveVisual(slide: Slide | undefined): boolean {
   const visual = slide.visual;
   if (visual.image) return true;
 
-  const hasItems = visual.items.filter((item) => Boolean(cleanVisualText(item.label) || cleanVisualText(item.text))).length >= 2;
-  const hasRows = visual.rows.filter((row) => Boolean(cleanVisualText(row.label) || cleanVisualText(row.left) || cleanVisualText(row.right))).length >= 2;
-  const hasGraph = Boolean(visual.graph && visual.graph.nodes.length >= 2 && visual.graph.edges.length >= 1);
+  const hasItems = visual.items.filter((item) => Boolean(
+    (cleanVisualText(item.label) && !isPlaceholderVisualText(item.label)) || cleanVisualText(item.text),
+  )).length >= 2;
+  const hasRows = visual.rows.filter((row) => Boolean(
+    (cleanVisualText(row.label) && !isPlaceholderVisualText(row.label)) || cleanVisualText(row.left) || cleanVisualText(row.right),
+  )).length >= 2;
+  const hasGraph = Boolean(
+    visual.graph
+    && visual.graph.nodes.filter((node) => !isPlaceholderVisualText(node.label)).length >= 2
+    && visual.graph.edges.length >= 1,
+  );
   const hasMermaid = Boolean(visual.diagram && hasSubstantiveMermaid(visual.diagram.source, visual.diagram.kind));
 
   if (hasGraph || hasMermaid) return true;
@@ -68,7 +76,7 @@ function hasSubstantiveMermaid(source: string, kind: string) {
   const labeledNodes = new Set<string>();
   for (const match of normalized.matchAll(/\b([A-Za-z][\w-]*)\s*(?:\[([^\]]+)\]|\(\(([^)]+)\)\)|\(([^)]+)\))/g)) {
     const label = cleanVisualText(match[2] || match[3] || match[4]);
-    if (label) labeledNodes.add(`${match[1]}:${label}`.toLowerCase());
+    if (label && !isPlaceholderVisualText(label)) labeledNodes.add(`${match[1]}:${label}`.toLowerCase());
   }
   const timelineEntries = [...normalized.matchAll(/^\s*[^\n:]{2,}\s*:\s*[^\n]+$/gm)]
     .map((match) => cleanVisualText(match[0]))
@@ -76,6 +84,10 @@ function hasSubstantiveMermaid(source: string, kind: string) {
   const nodeCount = Math.max(labeledNodes.size, kind === "timeline" ? timelineEntries.length : 0);
   const hasConnection = /(?:-->|==>|-.->|---|->)/.test(normalized) || (kind === "timeline" && timelineEntries.length >= 2);
   return nodeCount >= 2 && hasConnection;
+}
+
+export function isPlaceholderVisualText(value: string) {
+  return /^(?:точка|элемент|узел|point|item|node)(?:\s*\d+)?$/iu.test(cleanVisualText(value));
 }
 
 function cleanVisualText(value: unknown) {

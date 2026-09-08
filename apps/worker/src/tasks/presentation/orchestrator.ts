@@ -34,7 +34,7 @@ export class StructuredGenerationError extends Error {
 import { AitunnelProjectBudget, runWithAitunnelProjectBudget } from "../../aitunnel-narration-budget.js";
 import { assessFullNarrationDocument, normalizeNarrationText, parseNarrationSections } from "./narration/processing.js";
 import { normalizePresentation } from "./normalization/presentation.js";
-import { buildDeckStory, buildDesignBrief, buildResearchBrief, buildSlideBlueprints, buildSlideTextPlans, normalizeNarrativePlan } from "./planning/builders.js";
+import { buildDeckStory, buildDesignBrief, buildResearchBrief, buildSlideBlueprints, buildSlideCards, compileSlideCardsToSlides, buildSlideTextPlans, normalizeNarrativePlan } from "./planning/builders.js";
 import { generateAitunnelFullNarrationOutcome, generateAitunnelNarration, generateAitunnelPresentationFromNarration, generateNarrativePlanWithProvider, generateOpenAINarration, generateOpenAIPresentationFromNarration, generateWithAitunnel, generateWithOpenAI, generateWithYandex, generateYandexNarration, generateYandexPresentationFromNarration } from "./providers/generation.js";
 import { selectAiProviders } from "./providers/provider-selection.js";
 import { materializePlannedVisuals } from "../presentation-quality.js";
@@ -97,7 +97,7 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
           const narrativePlan = await generateNarrativePlanWithProvider(provider, project, sources, researchBrief, { openAIClient: client, openAIModel: config.narrationModel });
           const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
           const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
-          const narrationOutcome = ["standard-generation-cost-envelope-v6", "standard-generation-cost-envelope-v7", "standard-generation-cost-envelope-v8", "standard-generation-cost-envelope-v9", "standard-generation-cost-envelope-v10", "standard-generation-cost-envelope-v11", "standard-generation-cost-envelope-v12", "standard-generation-cost-envelope-v13"].includes(currentUsageContext()?.costEnvelopePolicyVersion || "")
+          const narrationOutcome = ["standard-generation-cost-envelope-v6", "standard-generation-cost-envelope-v7", "standard-generation-cost-envelope-v8", "standard-generation-cost-envelope-v9", "standard-generation-cost-envelope-v10", "standard-generation-cost-envelope-v11", "standard-generation-cost-envelope-v12", "standard-generation-cost-envelope-v13", "standard-generation-cost-envelope-v14"].includes(currentUsageContext()?.costEnvelopePolicyVersion || "")
             ? await generateAitunnelFullNarrationOutcome(client, project, sources, narrativePlan)
             : undefined;
           // Every v6 outcome is narration-only. It must reach the persistence
@@ -161,6 +161,14 @@ export async function generatePresentationFromNarration(
   sources: Source[],
   narrationText: string,
 ): Promise<PresentationDocument> {
+  // Once the full narration contract is accepted, it is the canonical source
+  // for the semantic slide cards. Building that projection locally avoids
+  // asking a provider to echo the same long speech into generatedText,
+  // speakerNotes, and speechScript, which can truncate a valid JSON envelope.
+  // Keep the provider-backed path for legacy or incomplete narration callers.
+  if (parseNarrationSections(narrationText).length === project.slideCount) {
+    return buildLocalPresentationFromAcceptedNarration(project, sources, narrationText);
+  }
   if (selectAiProviders().includes("aitunnel")) {
     return generatePresentationFromNarrationWithProviders(project, sources, narrationText);
   }
@@ -257,14 +265,24 @@ export function buildLocalPresentationFromAcceptedNarration(
       speechScript: normalizedBase.slides.map((slide, index) => ({ slideOrder: slide.order, slideTitle: slide.title, text: sections[index]!.text })),
     })
     : normalizedBase;
-  const concise = presentationSchema.parse({
+  const slideCards = buildSlideCards(project, acceptedNarration, normalized, designBrief);
+  const carded = presentationSchema.parse({
     ...normalized,
-    slides: normalized.slides.map((slide) => ({
+    slideCards,
+    slides: compileSlideCardsToSlides(slideCards, normalized.slides),
+    speechScript: normalized.speechScript.map((item) => ({
+      ...item,
+      slideTitle: slideCards.find((card) => card.slideOrder === item.slideOrder)?.title || item.slideTitle,
+    })),
+  });
+  const concise = presentationSchema.parse({
+    ...carded,
+    slides: carded.slides.map((slide) => ({
       ...slide,
       // Full accepted narration is already quality-checked upstream.  Keep
       // complete, distinct local support sentences; the legacy four-word
       // compactor turns valid evidence into generic fragments.
-      bullets: acceptedFullNarration ? slide.bullets.slice(0, 3) : slide.bullets.slice(0, 3).map(shortLocalBullet),
+      bullets: slide.bullets.slice(0, 3),
       // The local projection already exposes the accepted narration through
       // its thesis and support points.  Provider-oriented callouts can carry
       // an overlong duplicate sentence, so omit optional blocks rather than
@@ -273,7 +291,7 @@ export function buildLocalPresentationFromAcceptedNarration(
         ? []
         : slide.blocks
           .filter((block) => block.type === "bullets")
-          .map((block) => ({ ...block, items: block.items.slice(0, 3).map(shortLocalBullet) })),
+          .map((block) => ({ ...block, items: block.items.slice(0, 3) })),
     })),
   });
   // An accepted full-document narration has already passed its own semantic
@@ -287,7 +305,13 @@ export function buildLocalPresentationFromAcceptedNarration(
     // callers retain the historical safe local fallback by default.
     fallbackMissingPhotos: !options.deferMissingPhotoFallback && isManagedSlideCount(project.slideCount),
   });
-  const finalSlides = materialized.slides.map((slide) => ({
+  const materializedCards = buildSlideCards(project, acceptedNarration, materialized, materialized.designBrief || designBrief);
+  const materializedWithCards = presentationSchema.parse({
+    ...materialized,
+    slideCards: materializedCards,
+    slides: compileSlideCardsToSlides(materializedCards, materialized.slides),
+  });
+  const finalSlides = materializedWithCards.slides.map((slide) => ({
     ...slide,
     // Bullets are the canonical visible support-point projection. Keep them
     // in the saved Slide and let the recovery canvas render them once.
@@ -297,26 +321,52 @@ export function buildLocalPresentationFromAcceptedNarration(
     canvas: undefined,
   }));
   return ensureEditableCanvas({
-    ...materialized,
+    ...materializedWithCards,
     // Recovery is a content-safety operation, not a reason to replace the
     // product's presentation identity. The deterministic design brief and
     // editorial canvas already constrain their visible text independently of
     // the accepted long-form narration kept in speaker notes.
-    presentationTheme: materialized.presentationTheme,
-    designBrief: materialized.designBrief,
+    presentationTheme: materializedWithCards.presentationTheme,
+    designBrief: materializedWithCards.designBrief,
     slides: finalSlides,
   }, { recovery: true });
+}
+
+/** Rebuild only weak generated cards without touching accepted speech or
+ * non-target slides. The local projection performs no provider/image call. */
+export function rebuildWeakSlidesLocally(
+  presentation: PresentationDocument,
+  project: ProjectInput,
+  narrationText: string,
+  slideOrders: readonly number[],
+) {
+  const targets = new Set(slideOrders);
+  if (!targets.size || targets.size > 2) return presentation;
+  const local = buildLocalPresentationFromAcceptedNarration(project, presentation.sources, narrationText);
+  const localCards = new Map((local.slideCards || []).map((card) => [card.slideOrder, card]));
+  const localSlides = new Map(local.slides.map((slide) => [slide.order, slide]));
+  return presentationSchema.parse({
+    ...presentation,
+    slideCards: (presentation.slideCards || []).map((card) => localCards.get(card.slideOrder) && targets.has(card.slideOrder) ? localCards.get(card.slideOrder)! : card),
+    slides: presentation.slides.map((slide) => {
+      if (!targets.has(slide.order)) return slide;
+      const replacement = localSlides.get(slide.order);
+      if (!replacement) return slide;
+      return {
+        ...replacement,
+        sourceRefs: slide.sourceRefs,
+        canvas: slide.canvas?.elements.some((element) => element.id === `${slide.id}-custom-canvas-marker`) ? slide.canvas : replacement.canvas,
+        showSourceAttribution: false,
+      };
+    }),
+    speechScript: presentation.speechScript,
+  });
 }
 
 function localNarrativeFields(sectionText: string) {
   const sentence = sectionText.split(/(?<=[.!?])\s+/)[0]?.trim() || sectionText;
   const keyMessage = sentence.length <= 160 ? sentence : `${sentence.slice(0, 156).replace(/\s+\S*$/, "").trim()}.`;
   return { slidePurpose: keyMessage, keyMessage, evidenceOrExplanation: keyMessage, whyItMatters: keyMessage };
-}
-
-function shortLocalBullet(value: string) {
-  const words = value.split(/\s+/).filter(Boolean);
-  return words.length <= 5 ? value : `${words.slice(0, 4).join(" ")}.`;
 }
 
 function localSectionBullets(sectionText: string, fallback: string[]) {
@@ -341,7 +391,7 @@ function localSectionBullets(sectionText: string, fallback: string[]) {
     bullets.push(candidate);
     if (bullets.length === 3) break;
   }
-  return bullets.length >= 2 ? bullets : fallback.slice(0, 3).map(shortLocalBullet);
+  return bullets.length >= 2 ? bullets : fallback.slice(0, 3);
 }
 
 function relevantSourceIds(sectionText: string, sources: Source[]) {

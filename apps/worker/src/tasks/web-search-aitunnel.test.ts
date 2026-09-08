@@ -22,9 +22,11 @@ describe("AITUNNEL web-search provider selection", () => {
         { title: "University Saturn", url: "https://physics.example.edu/saturn", excerpt: "University observations describe Saturn." },
         { title: "Saturn overview", url: "https://example.org/saturn", excerpt: "Saturn is studied in planetary science." },
       ],
+      rubCostAtEvent: "0.12345678",
     });
 
-    const sources = await searchWebSources({ title: "Saturn", prompt: "Topic: Saturn planetary science" });
+    let providerUsageRub: string | undefined;
+    const sources = await searchWebSources({ title: "Saturn", prompt: "Topic: Saturn planetary science", onProviderUsage: (value) => { providerUsageRub = value; } });
 
     expect(searchAitunnelWebSearch).toHaveBeenCalledTimes(1);
     expect(sources.map((source) => source.url)).toEqual(expect.arrayContaining([
@@ -33,6 +35,7 @@ describe("AITUNNEL web-search provider selection", () => {
       "https://example.org/saturn",
     ]));
     expect(sources.every((source) => source.type === "WEB" && source.excerpt)).toBe(true);
+    expect(providerUsageRub).toBe("0.12345678");
   });
 
   it("returns the mandatory insufficient-source semantic without a hidden second search", async () => {

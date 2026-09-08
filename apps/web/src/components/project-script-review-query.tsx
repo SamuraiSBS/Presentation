@@ -157,7 +157,7 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
       </div>
 
       {isWaitingForText && !isTextReady ? <JobStatusPanel title="Готовим текст выступления" detail="Подбираем материалы и собираем черновик. Когда он будет готов, он появится здесь автоматически." /> : null}
-      {isFinalGeneration ? <JobStatusPanel title="Собираем презентацию" detail="Используем принятый текст. Редактор откроется автоматически после завершения." /> : null}
+      {isFinalGeneration ? <JobStatusPanel title="Собираем презентацию" detail={project.latestPresentationJob?.progressLabel || "Используем принятый текст. Редактор откроется автоматически после завершения."} /> : null}
 
       {isTextReady && !isFinalGeneration ? (
         <section className="panel script-editor-panel" aria-labelledby="speech-review-title">

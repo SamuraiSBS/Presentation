@@ -29,6 +29,7 @@ export type AitunnelWebSearchRun = {
   toolUsed: boolean;
   results: AitunnelWebSearchResult[];
   responseId?: string;
+  rubCostAtEvent?: string;
 };
 
 export type AitunnelWebSearchDependencies = {
@@ -77,7 +78,7 @@ export async function searchAitunnelWebSearch(
   const parsed = parseAitunnelWebSearchResponse(response);
   if (!parsed.toolUsed) throw new Error("AITUNNEL web search response was malformed");
 
-  await recordAiUsage({
+  const usageRecord = await recordAiUsage({
     provider: "aitunnel",
     model,
     operation: "web_search",
@@ -103,6 +104,7 @@ export async function searchAitunnelWebSearch(
     toolUsed: parsed.toolUsed,
     results: parsed.results,
     responseId: stringValue(asRecord(response)?.id),
+    ...(usageRecord?.rubCostAtEvent ? { rubCostAtEvent: usageRecord.rubCostAtEvent } : {}),
   };
 }
 

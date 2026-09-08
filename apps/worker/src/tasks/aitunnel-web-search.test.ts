@@ -41,6 +41,7 @@ describe("AITUNNEL web search adapter", () => {
     });
     createAitunnelSearchClient.mockReturnValue({ responses: { create } });
     currentUsageContext.mockReturnValue({ userId: "user-1", projectId: "project-1", generationJobId: "job-1" });
+    recordAiUsage.mockResolvedValue({ status: "succeeded", rubCostAtEvent: "0.01234567" });
     vi.stubEnv("AITUNNEL_SEARCH_MODEL", "gpt-5.6-luna");
     vi.stubEnv("AITUNNEL_WEB_SEARCH_ENGINE", "auto");
     vi.stubEnv("AITUNNEL_WEB_SEARCH_MAX_RESULTS", "5");
@@ -54,7 +55,7 @@ describe("AITUNNEL web search adapter", () => {
       tool_choice: "required",
       tools: [{ type: "aitunnel:web_search", parameters: { engine: "auto", max_results: 5, max_uses: 1 } }],
     }));
-    expect(result).toMatchObject({ model: "gpt-5.6-luna", toolUsed: true, responseId: "resp-1" });
+    expect(result).toMatchObject({ model: "gpt-5.6-luna", toolUsed: true, responseId: "resp-1", rubCostAtEvent: "0.01234567" });
     expect(result.results).toHaveLength(3);
     expect(recordAiUsage).toHaveBeenCalledWith(expect.objectContaining({ provider: "aitunnel", model: "gpt-5.6-luna", operation: "web_search" }));
     expect(recordCostEvent).toHaveBeenCalledWith(expect.objectContaining({ category: "web_search", provider: "aitunnel", unit: "request" }));

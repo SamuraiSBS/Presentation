@@ -7,6 +7,7 @@ import { currentUsageContext, recordCostEvent } from "../usage-ledger.js";
 import { releaseCostEnvelope, reserveCostEnvelope, settleCostEnvelope } from "../cost-envelope.js";
 import { aitunnelImageConfig, aitunnelImageFailureDetails, generateAitunnelImage, type AitunnelImageFailureDetails, type GeneratedAitunnelImage } from "../aitunnel-image.js";
 import { isManagedSlideCount, visualQuotaForSlideCount } from "./presentation/visual-policy.js";
+import { planDeckCompositions } from "./presentation/planning/builders.js";
 
 type ProjectInput = {
   id: string;
@@ -145,7 +146,13 @@ export async function enrichPresentationImages(
       slides.push(fallback ? fallbackSlideForMissingPhoto(slide, direction) : slide);
       continue;
     }
-    if (!shouldSearchForSlideImage(slide, direction)) {
+    if (direction?.imageStrategy === "generated_illustration" && !useAitunnelImages) {
+      const fallback = safeVisualFallback(direction, slide);
+      if (fallback) fallbackDirections.set(fallback.slideOrder, fallback);
+      slides.push(fallbackSlideForMissingPhoto(slide, direction));
+      continue;
+    }
+    if (direction?.imageStrategy !== "generated_illustration" && !shouldSearchForSlideImage(slide, direction)) {
       slides.push(slide);
       continue;
     }
@@ -323,38 +330,64 @@ export async function enrichPresentationImages(
     }
   }
 
+  const slideDirections = presentation.designBrief && fallbackDirections.size
+    ? planDeckCompositions(
+      { slideCount: presentation.slideCount || presentation.slides.length },
+      presentation.designBrief.slideDirections.map((direction) => fallbackDirections.get(direction.slideOrder) || direction),
+    )
+    : presentation.designBrief?.slideDirections;
   return {
     ...presentation,
     slides,
-    designBrief: presentation.designBrief && fallbackDirections.size
+    designBrief: presentation.designBrief && slideDirections
       ? {
           ...presentation.designBrief,
-          slideDirections: presentation.designBrief.slideDirections.map((direction) => fallbackDirections.get(direction.slideOrder) || direction),
+          slideDirections,
         }
       : presentation.designBrief,
   };
 }
 
 function fallbackUnavailableManagedPhotos(presentation: PresentationDocument): PresentationDocument {
-  if (!isManagedSlideCount(presentation.slideCount || presentation.slides.length)) return presentation;
+  if (!isManagedSlideCount(presentation.slideCount || presentation.slides.length) && !presentation.slideCards) return presentation;
   const fallbackDirections = new Map<number, DesignBriefSlideDirection>();
   const slides = presentation.slides.map((slide) => {
     const direction = presentation.designBrief?.slideDirections.find((item) => item.slideOrder === slide.order);
-    if (direction?.imageStrategy !== "real_photo" || slide.visual.image) return slide;
+    if ((direction?.imageStrategy !== "real_photo" && direction?.imageStrategy !== "generated_illustration") || slide.visual.image) return slide;
     const fallback = safeVisualFallback(direction, slide);
     if (fallback) fallbackDirections.set(fallback.slideOrder, fallback);
     return fallbackSlideForMissingPhoto(slide, direction);
   });
+  const slideDirections = presentation.designBrief && fallbackDirections.size
+    ? planDeckCompositions(
+      { slideCount: presentation.slideCount || presentation.slides.length },
+      presentation.designBrief.slideDirections.map((direction) => fallbackDirections.get(direction.slideOrder) || direction),
+    )
+    : presentation.designBrief?.slideDirections;
   return {
     ...presentation,
     slides,
-    designBrief: presentation.designBrief && fallbackDirections.size
+    designBrief: presentation.designBrief && slideDirections
       ? {
         ...presentation.designBrief,
-        slideDirections: presentation.designBrief.slideDirections.map((direction) => fallbackDirections.get(direction.slideOrder) || direction),
+        slideDirections,
       }
       : presentation.designBrief,
+    slideCards: presentation.slideCards?.map((card) => {
+      if (!fallbackDirections.has(card.slideOrder)) return card;
+      return {
+        ...card,
+        visualStrategy: "diagram" as const,
+        composition: slideDirections?.find((direction) => direction.slideOrder === card.slideOrder)?.composition || fallbackCompositionForCard(card.composition),
+      };
+    }),
   };
+}
+
+function fallbackCompositionForCard(
+  composition: NonNullable<PresentationDocument["slideCards"]>[number]["composition"],
+): NonNullable<PresentationDocument["slideCards"]>[number]["composition"] {
+  return composition === "timeline" || composition === "comparison" ? "process" : "relationship_map";
 }
 
 export function buildSlideImageQuery(
@@ -384,7 +417,7 @@ export function buildAitunnelImagePrompt(
 ) {
   const query = buildSlideImageQuery(project, slide, direction);
   return shorten(
-    `Create a realistic horizontal editorial image for an educational presentation. Subject: ${query}. Preserve the slide-specific entity, place, people, and era when present. Use a clear documentary composition with the main subject readable at presentation size. Do not include text, labels, logos, watermarks, borders, or UI screenshots.`,
+    `${direction?.imageStrategy === "generated_illustration" ? "Create a concrete horizontal editorial illustration" : "Create a realistic horizontal editorial image"} for an educational presentation. Subject: ${query}. Preserve the slide-specific entity, place, people, action, and era when present. Use a clear documentary composition with the main subject readable at presentation size. Do not include text, labels, logos, watermarks, borders, or UI screenshots.`,
     900,
   );
 }
@@ -409,10 +442,10 @@ function permittedPhotoSlideOrders(presentation: PresentationDocument) {
   const directions = presentation.designBrief?.slideDirections || [];
   return new Set(
     directions
-      .filter((direction) => direction.imageStrategy === "real_photo")
+      .filter((direction) => direction.imageStrategy === "real_photo" || direction.imageStrategy === "generated_illustration")
       .filter((direction) => {
         const slide = presentation.slides.find((item) => item.order === direction.slideOrder);
-        return Boolean(slide && shouldSearchForSlideImage(slide, direction));
+        return Boolean(slide && (direction.imageStrategy === "generated_illustration" ? Boolean(cleanText(direction.visualPrompt)) : shouldSearchForSlideImage(slide, direction)));
       })
       .slice(0, limit)
       .map((direction) => direction.slideOrder),
@@ -895,7 +928,7 @@ function safeVisualFallback(
   direction: DesignBriefSlideDirection | undefined,
   slide: PresentationDocument["slides"][number],
 ) {
-  if (!direction || direction.imageStrategy !== "real_photo" || slide.visual.image) return undefined;
+  if (!direction || (direction.imageStrategy !== "real_photo" && direction.imageStrategy !== "generated_illustration") || slide.visual.image) return undefined;
   return {
     ...direction,
     layoutIntent: "diagram" as const,
@@ -911,7 +944,7 @@ function fallbackSlideForMissingPhoto(
   slide: PresentationDocument["slides"][number],
   direction?: DesignBriefSlideDirection,
 ) {
-  if (direction?.imageStrategy !== "real_photo" || slide.visual.image) return slide;
+  if ((direction?.imageStrategy !== "real_photo" && direction?.imageStrategy !== "generated_illustration") || slide.visual.image) return slide;
   const points = [...slide.bullets, slide.thesis, slide.title]
     .map(cleanText)
     .filter(Boolean)

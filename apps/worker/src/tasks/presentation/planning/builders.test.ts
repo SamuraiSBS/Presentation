@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDesignBrief, buildSlideTextPlans, isSemanticSlideTextV2Enabled } from "./builders.js";
+import { buildDesignBrief, buildSlideCards, buildSlideTextPlans, isSemanticSlideTextV2Enabled, planDeckCompositions } from "./builders.js";
 import { ensureDesignBriefDirections } from "../normalization/presentation.js";
 
 const visualProject = (slideCount: number) => ({
@@ -124,6 +124,86 @@ describe("buildSlideTextPlans", () => {
 
     expect(plans[1].supportPoints).toEqual([]);
     expect(plans[1].bullets).toEqual([]);
+  });
+
+  it("binds one canonical slide card to each accepted speech section", () => {
+    const project = { ...visualProject(6), id: "slide-card-contract" };
+    const narration = Array.from({ length: 6 }, (_, index) => [
+      `${index + 1}: Section ${index + 1}`,
+      `The accepted speech section ${index + 1} explains one concrete part of the topic and ends with a complete thought.`,
+      "The speaker can use this section as the notes for the matching slide.",
+    ].join("\n")).join("\n\n");
+    const brief = buildDesignBrief(project, visualResearch, visualNarrative(project.slideCount));
+    const presentation = {
+      slides: Array.from({ length: project.slideCount }, (_, index) => ({
+        order: index + 1,
+        id: `slide-${index + 1}`,
+        slideKind: index === project.slideCount - 1 ? "summary" : "content",
+        title: `Section ${index + 1}`,
+        thesis: `The accepted speech section ${index + 1} explains one concrete part of the topic.`,
+        speakerNotes: "",
+        visual: {
+          type: "process_diagram",
+          description: "A concrete explanatory visual for the slide topic.",
+          items: [{ label: "Cause", text: "A real visual element" }, { label: "Effect", text: "A connected result" }],
+          rows: [],
+        },
+      })),
+    } as any;
+
+    const cards = buildSlideCards(project as any, narration, presentation, brief);
+
+    expect(cards).toHaveLength(6);
+    expect(cards.map((card) => [card.slideOrder, card.speechSectionOrder])).toEqual([
+      [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6],
+    ]);
+    expect(cards.every((card) => card.speakerNotes.includes(`accepted speech section ${card.slideOrder}`))).toBe(true);
+    expect(cards.every((card) => /[.!?]$/u.test(card.screenThought))).toBe(true);
+    expect(cards.every((card) => card.visualLabels.every((label) => label.split(/\s+/u).length <= 4))).toBe(true);
+    expect(cards.every((card) => card.allowedBullets.length <= 3)).toBe(true);
+    expect(new Set(cards.map((card) => card.composition)).size).toBeGreaterThanOrEqual(4);
+    expect(cards.some((card, index) => index >= 2
+      && cards[index - 2]!.composition === cards[index - 1]!.composition
+      && cards[index - 1]!.composition === card.composition)).toBe(false);
+  });
+
+  it("assigns deck-wide variety without inventing comparison or timeline semantics", () => {
+    const directions = Array.from({ length: 6 }, (_, index) => ({
+      slideOrder: index + 1,
+      visualRole: index === 5 ? "summary" as const : "explain" as const,
+      layoutIntent: index === 5 ? "summary" as const : "cards" as const,
+      imageStrategy: "none" as const,
+      visualPrompt: `Plain explanation ${index + 1}`,
+    }));
+    const planned = planDeckCompositions({ slideCount: 6 }, directions as any, visualNarrative(6));
+
+    expect(new Set(planned.map((direction) => direction.composition)).size).toBeGreaterThanOrEqual(4);
+    expect(planned.some((direction) => direction.composition === "comparison" || direction.composition === "timeline")).toBe(false);
+    expect(planned.some((direction, index) => index >= 2
+      && planned[index - 2]!.composition === planned[index - 1]!.composition
+      && planned[index - 1]!.composition === direction.composition)).toBe(false);
+  });
+
+  it("uses a process composition for evidence directions only when accepted narration describes an explanation", () => {
+    const directions = Array.from({ length: 6 }, (_, index) => ({
+      slideOrder: index + 1,
+      visualRole: index === 5 ? "summary" as const : "evidence" as const,
+      layoutIntent: index === 5 ? "summary" as const : "diagram" as const,
+      imageStrategy: index === 5 ? "none" as const : "diagram" as const,
+      visualPrompt: `Evidence ${index + 1}`,
+    }));
+    const narrative = directions.map((direction) => ({
+      slideOrder: direction.slideOrder,
+      slideTitle: `Section ${direction.slideOrder}`,
+      keyMessage: direction.slideOrder === 2 ? "The system mechanism connects cause and effect." : "A source-grounded observation.",
+      slidePurpose: "Explain the evidence.",
+    }));
+
+    const planned = planDeckCompositions({ slideCount: 6 }, directions as any, narrative as any);
+
+    expect(planned[1]?.composition).toBe("process");
+    expect(planned[2]?.composition).not.toBe("process");
+    expect(planned.some((direction) => direction.composition === "comparison" || direction.composition === "timeline")).toBe(false);
   });
 });
 

@@ -36,9 +36,10 @@ const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, finalizeFaile
     operationalEvent: { create: vi.fn().mockResolvedValue({}) },
     project: { update: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn() },
     generationJob: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
+    generationFailureArtifact: { create: vi.fn() },
     presentation: { findUnique: vi.fn(), upsert: vi.fn() },
     userActivityEvent: { create: vi.fn() },
-    $transaction: vi.fn(),
+    $transaction: vi.fn((operations: Promise<unknown>[]) => Promise.all(operations)),
   },
 }));
 
@@ -470,7 +471,7 @@ describe("prepareGenerationSources", () => {
       expect(settleCostEnvelope).toHaveBeenCalledWith({
         envelopeId: "envelope-aitunnel-insufficient",
         idempotencyKey: "envelope-aitunnel-insufficient:mandatory-source-search:1",
-        actualRub: "0.50000000",
+        actualRub: "1.50000000",
         reason: "mandatory_source_search_insufficient",
         exhaustEnvelope: true,
       });
@@ -959,6 +960,10 @@ describe("handleGenerationJob failed narration envelope finalization", () => {
     expect(generatePresentationFromNarration).toHaveBeenCalledTimes(1);
     expect(buildLocalPresentationFromAcceptedNarration).toHaveBeenCalledTimes(1);
     expect(searchWebSources).not.toHaveBeenCalled();
+    // This isolated fixture predates slide cards, so it exercises the legacy
+    // recovery path: its one release check happens before persistence. Real
+    // canonical card recovery is covered separately with the actual local
+    // builder and is re-checked at finalizeCanonicalDeck.
     expect(productionQualityReleaseResult).toHaveBeenCalledTimes(1);
     expect(prismaMock.presentation.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ document: expect.objectContaining({ generatedText: acceptedNarration, sources: snapshotSources }) }) }));
     expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "ready" } }));
@@ -966,7 +971,7 @@ describe("handleGenerationJob failed narration envelope finalization", () => {
     expect(finalizeFailedCostEnvelope).not.toHaveBeenCalled();
   });
 
-  it("does not finalize a terminal presentation failure through the narration helper", async () => {
+  it("finalizes a terminal presentation envelope without touching narration state", async () => {
     prismaMock.project.findUniqueOrThrow.mockResolvedValue(narrationProject("Accepted narration text"));
     generatePresentationFromNarration.mockRejectedValue(new Error("presentation schema failure"));
     buildLocalPresentationFromAcceptedNarration.mockImplementation(() => { throw new Error("presentation schema failure"); });
@@ -974,7 +979,7 @@ describe("handleGenerationJob failed narration envelope finalization", () => {
     await expect(handleGenerationJob(queueJob({ name: "generate-presentation", costEnvelopeId: "envelope-presentation" })))
       .rejects.toThrow("presentation schema failure");
 
-    expect(finalizeFailedCostEnvelope).not.toHaveBeenCalled();
+    expect(finalizeFailedCostEnvelope).toHaveBeenCalledWith({ envelopeId: "envelope-presentation" });
   });
 
   it("does not finalize while a presentation failure is scheduled for retry", async () => {

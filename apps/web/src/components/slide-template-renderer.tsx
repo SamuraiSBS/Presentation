@@ -148,11 +148,11 @@ function SlidePlaceholderNotice({ slide }: { slide: Slide }) {
   );
 }
 
-function VisualImage({ image }: { image: NonNullable<Slide["visual"]["image"]> }) {
+function VisualImage({ image, showSourceAttribution = true }: { image: NonNullable<Slide["visual"]["image"]>; showSourceAttribution?: boolean }) {
   return (
     <figure className="visual-image">
       <NextImage src={image.url} alt={image.alt || ""} width={1600} height={900} unoptimized />
-      {image.sourceTitle || image.sourceUrl ? <figcaption>{image.sourceTitle || image.sourceUrl}</figcaption> : null}
+      {showSourceAttribution && (image.sourceTitle || image.sourceUrl) ? <figcaption>{image.sourceTitle || image.sourceUrl}</figcaption> : null}
     </figure>
   );
 }
@@ -189,7 +189,7 @@ function SlideImageLayout({ slide, className, children }: { slide: Slide; classN
   return (
     <div className={`${className} slide-with-image ${reverse ? "slide-with-image-reverse" : ""}`}>
       <div className="slide-text-stack">{children}</div>
-      <VisualImage image={image} />
+      <VisualImage image={image} showSourceAttribution={slide.showSourceAttribution !== false} />
     </div>
   );
 }
@@ -318,7 +318,7 @@ function ImageFocusSlide({ slide }: { slide: Slide }) {
         {slide.thesis ? <p>{slide.thesis}</p> : null}
         {slide.bullets.length ? <MiniPointRow items={slide.bullets.slice(0, 3)} /> : null}
       </div>
-      {slide.visual.image ? <VisualImage image={slide.visual.image} /> : null}
+      {slide.visual.image ? <VisualImage image={slide.visual.image} showSourceAttribution={slide.showSourceAttribution !== false} /> : null}
     </div>
   );
 }
@@ -416,7 +416,7 @@ function MetricsSlide({ slide }: { slide: Slide }) {
 
 function EvidenceSlide({ slide }: { slide: Slide }) {
   const items = compactItems(slide).filter((item) => !isDuplicateDisplayText(item, slide.thesis)).slice(0, 4);
-  const sources = compactSourceRefs(slide.sourceRefs, 3);
+  const sources = slide.showSourceAttribution === false ? [] : compactSourceRefs(slide.sourceRefs, 3);
   return (
     <SlideImageLayout slide={slide} className="slide-content slide-layout-evidence">
       <h2 className="slide-title">{slide.title}</h2>
@@ -503,7 +503,7 @@ function hasSlideVisualContent(slide: Slide) {
 function VisualBlock({ slide }: { slide: Slide }) {
   const visual = slide.visual;
   const image = visual?.image;
-  const imageFigure = image ? <VisualImage image={image} /> : null;
+  const imageFigure = image ? <VisualImage image={image} showSourceAttribution={slide.showSourceAttribution !== false} /> : null;
   const visualTitle = visual?.title && !isDuplicateDisplayText(visual.title, slide.title) ? visual.title : "";
   if (!visual || visual.type === "none") {
     return imageFigure ? <section className="visual-card visual-image-card">{imageFigure}</section> : null;

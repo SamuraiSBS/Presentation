@@ -162,6 +162,30 @@ export async function finalizeFailedCostEnvelope(input: { envelopeId: string }) 
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
+/**
+ * Closes a successful generation envelope only after every reservation has
+ * reached a terminal accounting state. The generation job and the envelope
+ * must agree on terminality; leaving a successful envelope active makes the
+ * persisted ledger impossible to reconcile with the AI usage events.
+ */
+export async function completeCostEnvelope(input: { envelopeId: string }) {
+  return getPrisma().$transaction(async (tx) => {
+    const envelope = await lockEnvelope(tx, input.envelopeId);
+    if (envelope.status !== "active") {
+      return { status: envelope.status as "completed" | "cancelled" | "exhausted", idempotent: true };
+    }
+    const unresolved = await tx.costEnvelopeReservation.findMany({
+      where: { envelopeId: envelope.id, status: { in: ["reserved", "provider_error", "unknown_usage"] } },
+      select: { id: true, status: true },
+    });
+    if (unresolved.length || toScaled(envelope.reservedRub.toString()) !== 0n) {
+      return { status: "blocked" as const, reason: "unresolved_reservations" };
+    }
+    await tx.costEnvelope.update({ where: { id: envelope.id }, data: { status: "completed" } });
+    return { status: "completed" as const, idempotent: false };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
 async function lockEnvelope(tx: Prisma.TransactionClient, id: string) {
   const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`SELECT "id" FROM "CostEnvelope" WHERE "id" = ${id} FOR UPDATE`);
   if (!rows.length) throw new Error("cost_envelope_not_found");

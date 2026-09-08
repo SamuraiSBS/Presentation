@@ -47,7 +47,7 @@ export async function recordAiUsage(input: {
   error?: unknown;
 }) {
   const store = currentUsageContext();
-  if (!store) return;
+  if (!store) return undefined;
   const finishedAt = input.finishedAt || new Date();
   const usage = input.usage;
   const price = priceFor(input.provider, input.model, input.startedAt);
@@ -107,6 +107,10 @@ export async function recordAiUsage(input: {
   } catch (error) {
     logger.error({ ...errorLogFields(error), provider: input.provider, operation: input.operation }, "AI usage telemetry could not be persisted");
   }
+  return {
+    status,
+    rubCostAtEvent: sourceCost && exchangeRate ? multiply(sourceCost, exchangeRate) : null,
+  };
 }
 
 export async function recordCostEvent(input: {
