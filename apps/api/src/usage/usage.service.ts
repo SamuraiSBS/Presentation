@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable } from "@nestjs/common";
+import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { PlanCode, Prisma } from "@prisma/client";
 import { planLimits } from "@studydeck/shared";
@@ -26,7 +26,10 @@ export type PlanEntitlement = {
 
 @Injectable()
 export class UsageService {
-  constructor(private readonly prisma: PrismaService, private readonly config: ConfigService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(ConfigService) private readonly config: ConfigService,
+  ) {}
 
   currentPeriod(reset: "month" | "week", now = new Date(), timeZone = DEFAULT_TIME_ZONE) {
     const parts = zonedParts(now, timeZone);
