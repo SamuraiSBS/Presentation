@@ -19,7 +19,10 @@ COPY tsconfig.base.json ./
 COPY packages/shared ./packages/shared
 COPY packages/pptxgenjs ./packages/pptxgenjs
 COPY apps/worker ./apps/worker
-RUN npm run prisma:generate
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+RUN HTTPS_PROXY="$HTTPS_PROXY" HTTP_PROXY="$HTTP_PROXY" NO_PROXY="$NO_PROXY" npm run prisma:generate
 RUN npm run build -w @studydeck/shared
 RUN npm run build -w @studydeck/worker
 

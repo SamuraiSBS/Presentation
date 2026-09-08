@@ -28,7 +28,10 @@ RUN --mount=type=cache,id=studydeck-npm,target=/root/.npm \
 # Prisma generation only depends on the schema. Keeping it before application
 # sources prevents ordinary UI edits from invalidating this layer.
 COPY prisma ./prisma
-RUN npm run prisma:generate
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+RUN HTTPS_PROXY="$HTTPS_PROXY" HTTP_PROXY="$HTTP_PROXY" NO_PROXY="$NO_PROXY" npm run prisma:generate
 
 COPY tsconfig.base.json ./
 COPY packages/shared ./packages/shared
