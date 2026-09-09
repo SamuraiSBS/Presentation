@@ -9,6 +9,8 @@ export function projectStatusLabel(status: string) {
     script_ready: "Текст готов",
     queued: "В очереди",
     generating: "Собираем презентацию",
+    design_review: "Проверяем дизайн",
+    design_finalizing: "Собираем презентацию",
     ready: "Готово",
     failed: "Нужно повторить",
   } as Record<string, string>)[status] || "Обновляем";
@@ -26,6 +28,12 @@ export function formatShortDate(value: string) {
 
 export function planLabel(planCode: UsageSummary["planCode"]) {
   return ({ free: "Бесплатный", student: "Студенческий", plus: "Плюс", pro: "Профессиональный" } as const)[planCode];
+}
+
+export function projectHref(projectId: string, status: string) {
+  if (status === "design_review" || status === "design_finalizing") return `/projects/${projectId}/design-review`;
+  if (["draft", "uploading", "script_queued", "script_generating", "script_ready", "queued", "generating", "failed"].includes(status)) return `/projects/${projectId}/script`;
+  return `/projects/${projectId}/editor`;
 }
 
 export function formatResetDate(usage: UsageSummary) {

@@ -112,3 +112,8 @@ export type UpdateNarrationInput = z.infer<typeof updateNarrationInputSchema>;
 
 export const generatePresentationInputSchema = updateNarrationInputSchema.partial();
 export type GeneratePresentationInput = z.infer<typeof generatePresentationInputSchema>;
+
+export const approveDesignCandidateInputSchema = z.object({ expectedRevision: z.number().int().min(1), version: z.number().int().min(1) }).strict();
+export type ApproveDesignCandidateInput = z.infer<typeof approveDesignCandidateInputSchema>;
+export const regenerateDesignCandidateInputSchema = z.object({ expectedRevision: z.number().int().min(1), comment: z.string().trim().min(3).max(1000) }).strict();
+export type RegenerateDesignCandidateInput = z.infer<typeof regenerateDesignCandidateInputSchema>;

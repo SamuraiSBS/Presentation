@@ -81,6 +81,7 @@ async function demoPreviewResponse(path: string): Promise<unknown | null> {
     demoDashboard,
     demoDefenseProject,
     demoDefenseWorkspace,
+    demoDesignReview,
     demoFolders,
     demoProfile,
     demoProject,
@@ -91,6 +92,7 @@ async function demoPreviewResponse(path: string): Promise<unknown | null> {
   if (path === "/projects/demo") return demoProject;
   if (path === "/projects/defense-demo") return demoDefenseProject;
   if (path === "/projects/defense-demo/defense") return demoDefenseWorkspace;
+  if (path === "/projects/demo/design-review") return demoDesignReview;
   if (path === "/projects/script-review-demo") return demoScriptReviewProject;
   if (path === "/dashboard") return demoDashboard;
   if (path === "/folders") return demoFolders;

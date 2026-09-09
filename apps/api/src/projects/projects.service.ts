@@ -12,6 +12,8 @@ import {
   type CreateProjectInput,
   type DuplicateProjectInput,
   type GeneratePresentationInput,
+  type ApproveDesignCandidateInput,
+  type RegenerateDesignCandidateInput,
   type PresentationDocument,
   type ProjectListQuery,
   type UpdateNarrationInput,
@@ -22,6 +24,7 @@ import {
   aitunnelCatalogSnapshot,
   assessFullSpeechContract,
   standardGenerationCostPolicy,
+  designReviewRegenerationCostPolicy,
   hasCustomSlideCanvas,
   ensureEditableCanvas,
   defensePlanSchema,
@@ -34,6 +37,7 @@ import {
   type PublicGenerationErrorCategory,
   type PublicNarrationState,
   slideCanvasSchema,
+  auditSlideCanvas,
 } from "@studydeck/shared";
 import { ProjectAccessService } from "../access/project-access.service.js";
 import { badRequest, conflict, resourceNotFound } from "../errors/api-error.js";
@@ -706,8 +710,85 @@ export class ProjectsService {
     return this.getAccessible(userId, projectId);
   }
 
+  async getDesignReview(userId: string, projectId: string) {
+    await this.access.requireViewer(userId, projectId);
+    const review = await this.prisma.designReview.findUnique({ where: { projectId }, include: { candidates: { orderBy: [{ slideOrder: "asc" }, { version: "asc" }] } } });
+    if (!review) throw new NotFoundException("Дизайн слайдов ещё не готов к проверке");
+    return review;
+  }
+
+  async approveDesignCandidate(userId: string, projectId: string, slideId: string, input: ApproveDesignCandidateInput) {
+    await this.access.requireEditor(userId, projectId);
+    const finalized = await this.prisma.$transaction(async (tx) => {
+      const review = await tx.designReview.findUnique({ where: { projectId }, include: { candidates: true } });
+      if (!review) throw new NotFoundException("Дизайн слайдов ещё не готов к проверке");
+      if (review.revision !== input.expectedRevision) throw revisionConflict(review.revision);
+      if (review.status !== "active") throw conflict("DESIGN_REVIEW_UNAVAILABLE", "Сейчас нельзя менять варианты дизайна");
+      const candidate = review.candidates.find((item) => item.slideId === slideId && item.version === input.version);
+      if (!candidate || candidate.status === "failed" || candidate.status === "regenerating") throw new NotFoundException("Готовая версия слайда не найдена");
+      await tx.designReviewCandidate.updateMany({ where: { reviewId: review.id, slideId, status: "approved" }, data: { status: "pending" } });
+      await tx.designReviewCandidate.update({ where: { id: candidate.id }, data: { status: "approved", error: null } });
+      const candidates = review.candidates.map((item) => item.id === candidate.id ? { ...item, status: "approved" } : item.slideId === slideId && item.status === "approved" ? { ...item, status: "pending" } : item);
+      const document = presentationSchema.parse(review.document) as PresentationDocument;
+      const allApproved = new Set(candidates.filter((item) => item.status === "approved").map((item) => item.slideId)).size === document.slides.length;
+      if (!allApproved) {
+        await tx.designReview.update({ where: { id: review.id }, data: { revision: { increment: 1 } } });
+        return false;
+      }
+      const approved = new Map(candidates.filter((item) => item.status === "approved").map((item) => [item.slideId, item]));
+      const finalDocument = { ...document, slides: document.slides.map((slide) => ({ ...slide, canvas: slideCanvasSchema.parse(approved.get(slide.id)?.canvas) })) };
+      const qualityIssues = finalDocument.slides.flatMap((slide) => auditSlideCanvas(slide.canvas!).map((issue) => `Слайд ${slide.order}: ${issue}`));
+      if (qualityIssues.length) {
+        await tx.designReview.update({ where: { id: review.id }, data: { status: "failed", error: qualityIssues.slice(0, 3).join("; ") } });
+        throw badRequest("DESIGN_FINALIZATION_QUALITY_FAILED", "Утверждённые варианты не прошли проверку качества");
+      }
+      await tx.designReview.update({ where: { id: review.id }, data: { status: "finalizing", revision: { increment: 1 }, error: null } });
+      await tx.project.update({ where: { id: projectId }, data: { status: "design_finalizing", error: null } });
+      await tx.presentation.upsert({ where: { projectId }, create: { projectId, document: finalDocument }, update: { document: finalDocument, revision: { increment: 1 } } });
+      await tx.project.update({ where: { id: projectId }, data: { status: "ready", error: null } });
+      return true;
+    });
+    return finalized ? this.getAccessible(userId, projectId) : this.getDesignReview(userId, projectId);
+  }
+
+  async regenerateDesignCandidate(userId: string, projectId: string, slideId: string, input: RegenerateDesignCandidateInput) {
+    await this.access.requireEditor(userId, projectId);
+    const queued = await this.prisma.$transaction(async (tx) => {
+      const review = await tx.designReview.findUnique({ where: { projectId }, include: { candidates: true } });
+      if (!review) throw new NotFoundException("Дизайн слайдов ещё не готов к проверке");
+      if (review.revision !== input.expectedRevision) throw revisionConflict(review.revision);
+      if (review.status !== "active") throw conflict("DESIGN_REVIEW_UNAVAILABLE", "Сейчас нельзя переделать дизайн");
+      const document = presentationSchema.parse(review.document) as PresentationDocument;
+      const slide = document.slides.find((item) => item.id === slideId);
+      if (!slide) throw new NotFoundException("Слайд не найден");
+      const currentVersion = Math.max(0, ...review.candidates.filter((item) => item.slideId === slideId).map((item) => item.version));
+      const previous = review.candidates.find((item) => item.slideId === slideId && item.version === currentVersion);
+      if (!previous) throw new NotFoundException("Текущая версия слайда не найдена");
+      const created = await tx.designReviewCandidate.create({ data: { reviewId: review.id, slideId, slideOrder: slide.order, version: currentVersion + 1, status: "regenerating", canvas: previous.canvas as Prisma.InputJsonValue, comment: input.comment, visualAssets: previous.visualAssets === null ? Prisma.JsonNull : previous.visualAssets as Prisma.InputJsonValue, diagramModel: previous.diagramModel === null ? Prisma.JsonNull : previous.diagramModel as Prisma.InputJsonValue } });
+      const generationJob = await tx.generationJob.create({ data: { projectId, kind: "presentation", status: "queued", requestKey: `design-review:${review.id}:${slideId}:${created.version}` } });
+      const policy = designReviewRegenerationCostPolicy();
+      const envelope = await tx.costEnvelope.create({ data: { projectId, presentationJobId: generationJob.id, policyVersion: policy.version, limitRub: policy.limitRub, policySnapshot: policy, catalogSnapshot: aitunnelCatalogSnapshot() } });
+      await tx.designReview.update({ where: { id: review.id }, data: { revision: { increment: 1 }, error: null } });
+      return { candidate: created, generationJob, envelope, revision: review.revision + 1 };
+    });
+    try {
+      const queueJob = await this.generationQueue.add("regenerate-slide-design", { projectId, userId, generationJobId: queued.generationJob.id, costEnvelopeId: queued.envelope.id, designReviewCandidateId: queued.candidate.id, designReviewRevision: queued.revision, traceContext: injectTraceContext() }, { ...generationJobOptions(), attempts: 1 });
+      await this.prisma.generationJob.update({ where: { id: queued.generationJob.id }, data: { queueJobId: queueJob.id } });
+      return { ...queued.candidate, queueJobId: queueJob.id };
+    } catch (error) {
+      await this.prisma.$transaction([
+        this.prisma.designReviewCandidate.update({ where: { id: queued.candidate.id }, data: { status: "failed", error: "Не удалось поставить переделку дизайна в очередь" } }),
+        this.prisma.generationJob.update({ where: { id: queued.generationJob.id }, data: { status: "failed", error: "queue_unavailable" } }),
+        this.prisma.costEnvelope.update({ where: { id: queued.envelope.id }, data: { status: "cancelled" } }),
+      ]);
+      throw error;
+    }
+  }
+
   async updateSlide(userId: string, projectId: string, slideId: string, input: UpdateSlideInput) {
     await this.access.requireEditor(userId, projectId);
+    const project = await this.prisma.project.findUnique({ where: { id: projectId }, select: { status: true } });
+    if (project?.status !== "ready") throw badRequest("DESIGN_REVIEW_REQUIRED", "Утвердите дизайн всех слайдов перед открытием редактора");
     const presentation = await this.prisma.presentation.findUnique({ where: { projectId } });
     if (!presentation) throw new NotFoundException("Presentation not generated yet");
     if (presentation.revision !== input.expectedRevision) {
@@ -849,6 +930,7 @@ export class ProjectsService {
         folder: { select: { id: true, name: true, color: true } },
         sources: true,
         presentation: true,
+        designReview: { include: { candidates: { orderBy: [{ slideOrder: "asc" }, { version: "asc" }] } } },
         jobs: { orderBy: { createdAt: "desc" }, take: 20 },
         exports: { orderBy: { createdAt: "desc" } },
       },

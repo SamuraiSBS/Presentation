@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ArrowRight, Plus, Presentation } from "lucide-react";
 import { useProjects, type ProjectPayload } from "@/lib/project-queries";
+import { projectHref } from "@/lib/project-ui";
 
 export function DashboardProjectList({ initialProjects }: { initialProjects: ProjectPayload[] }) {
   const { data: projects = initialProjects, isFetching } = useProjects(initialProjects);
@@ -11,7 +12,7 @@ export function DashboardProjectList({ initialProjects }: { initialProjects: Pro
     <section className="project-list" aria-busy={isFetching}>
       {projects.length ? (
         projects.map((project) => (
-          <Link className="card project-card" href={`/projects/${project.id}/editor`} key={project.id}>
+          <Link className="card project-card" href={projectHref(project.id, project.status)} key={project.id}>
             <span className="icon-surface"><Presentation aria-hidden="true" size={23} /></span>
             <div className="project-card-copy">
               <strong>{project.title}</strong>
@@ -41,6 +42,8 @@ function statusLabel(status: string) {
     script_ready: "Текст готов",
     queued: "В очереди",
     generating: "Собираем презентацию",
+    design_review: "Проверяем дизайн",
+    design_finalizing: "Собираем презентацию",
     ready: "Готово",
     failed: "Нужно повторить",
   };

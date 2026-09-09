@@ -20,10 +20,10 @@ const nextConfig: NextConfig = {
       "@studydeck/shared": "../../packages/shared/dist/index.js",
     },
   },
-  // npm workspace scripts can preserve the repository as process.cwd().
-  // Derive from this config file instead, otherwise `../..` resolves to D:\\
-  // on Windows and Watchpack scans the entire drive during local E2E.
-  outputFileTracingRoot: process.env.E2E_TEST_MODE === "true" ? webRoot : workspaceRoot,
+  // Next 16 requires outputFileTracingRoot and turbopack.root to agree. Keep
+  // both rooted at the monorepo so workspace-installed Next and shared code
+  // remain resolvable during the local E2E server startup.
+  outputFileTracingRoot: workspaceRoot,
   // `@studydeck/shared` is built to its ESM entry point before the web build.
   // Let Next resolve that entry point directly: transpiling this workspace in
   // Turbopack 16 can turn runtime re-exports into undefined during page-data

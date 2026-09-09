@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { LazyRichTextField as RichTextField } from "@/components/editor/lazy-rich-text-field";
 import { Select } from "@/components/ui/select";
-import type { CanvasElement, CanvasImageElement, CanvasShapeElement, CanvasTextElement, Slide } from "@studydeck/shared";
+import type { CanvasDiagramElement, CanvasElement, CanvasImageElement, CanvasShapeElement, CanvasTextElement, Slide } from "@studydeck/shared";
 import { elementLabel } from "./editor-errors";
 import { Icon } from "./editor-icons";
 import type { ElementPatch } from "./editor-types";
@@ -100,6 +100,7 @@ export function PropertiesPanel({
             {selected.type === "image" ? (
               <ImageContentProperties selected={selected} onUpdate={onUpdate} />
             ) : null}
+            {selected.type === "diagram" ? <DiagramContentProperties selected={selected} onUpdate={onUpdate} /> : null}
           </PropertySection>
 
           <PropertySection
@@ -438,6 +439,12 @@ export function ShapeContentProperties({
       />
     </label>
   );
+}
+
+function DiagramContentProperties({ selected, onUpdate }: { selected: CanvasDiagramElement; onUpdate: (patch: ElementPatch) => void }) {
+  const model = selected.model;
+  if (model.kind === "scheme") return <div className="field"><span>Подписи схемы</span>{model.nodes.map((node, index) => <input className="input" key={node.id} value={node.label} onChange={(event) => onUpdate({ model: { ...model, nodes: model.nodes.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item) } } as Partial<CanvasDiagramElement>)} />)}<small>Структура и связи зафиксированы для этого слайда.</small></div>;
+  return <div className="field"><span>Подписи и значения</span>{model.categories.map((category, index) => <div className="property-grid" key={`${category}-${index}`}><input className="input" value={category} onChange={(event) => onUpdate({ model: { ...model, categories: model.categories.map((item, itemIndex) => itemIndex === index ? event.target.value : item) } } as Partial<CanvasDiagramElement>)} />{model.series.map((series, seriesIndex) => <input className="input" key={series.name} type="number" value={series.values[index] ?? 0} onChange={(event) => onUpdate({ model: { ...model, series: model.series.map((item, itemIndex) => itemIndex === seriesIndex ? { ...item, values: item.values.map((value, valueIndex) => valueIndex === index ? Number(event.target.value) : value) } : item) } } as Partial<CanvasDiagramElement>)} />)}</div>)}</div>;
 }
 
 export function ShapeStyleProperties({

@@ -27,6 +27,8 @@ enum ProjectStatus {
   script_ready
   queued
   generating
+  design_review
+  design_finalizing
   ready
   failed
 }
@@ -357,6 +359,7 @@ model Project {
   folder               Folder?             @relation(fields: [folderId], references: [id], onDelete: SetNull)
   sources              Source[]
   presentation         Presentation?
+  designReview         DesignReview?
   jobs                 GenerationJob[]
   exports              Export[]
   members              ProjectMember[]
@@ -622,6 +625,54 @@ model GenerationJob {
   @@unique([projectId, kind, requestKey])
   @@index([projectId, createdAt])
   @@index([projectId, kind, createdAt])
+}
+
+enum DesignReviewStatus {
+  active
+  finalizing
+  failed
+}
+
+enum DesignCandidateStatus {
+  pending
+  approved
+  regenerating
+  failed
+}
+
+// The review owns generated candidates.  Presentation remains the immutable
+// post-review editor/export document, so legacy ready projects keep working.
+model DesignReview {
+  id        String             @id @default(cuid())
+  projectId String             @unique
+  document  Json
+  revision  Int                @default(1)
+  status    DesignReviewStatus @default(active)
+  error     String?            @db.Text
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+  project   Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  candidates DesignReviewCandidate[]
+}
+
+model DesignReviewCandidate {
+  id           String                @id @default(cuid())
+  reviewId     String
+  slideId      String
+  slideOrder   Int
+  version      Int
+  status       DesignCandidateStatus @default(pending)
+  canvas       Json
+  visualAssets Json?
+  diagramModel Json?
+  comment      String?               @db.Text
+  error        String?               @db.Text
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+  review       DesignReview          @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, slideId, version])
+  @@index([reviewId, slideOrder, version])
 }
 
 // Private, redacted terminal-generation diagnostics. The JSON payload is a

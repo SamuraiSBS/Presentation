@@ -1703,6 +1703,7 @@ function generatedElementSignature(element: CanvasElement) {
   const base = [element.type, element.x, element.y, element.w, element.h, element.zIndex, element.opacity];
   if (element.type === "text") return [...base, element.text, element.fontSize, element.autoFit, element.align, element.valign].join("|");
   if (element.type === "image") return [...base, element.objectKey, element.fit].join("|");
+  if (element.type === "diagram") return [...base, JSON.stringify(element.model), element.caption].join("|");
   return [...base, element.shape, element.strokeWidth].join("|");
 }
 

@@ -453,14 +453,17 @@ function permittedPhotoSlideOrders(presentation: PresentationDocument) {
 }
 
 async function reserveImageBucket(slideOrder: number, slideCount: number): Promise<ImageReservationResult> {
-  const envelopeId = currentUsageContext()?.costEnvelopeId;
+  const usage = currentUsageContext();
+  const envelopeId = usage?.costEnvelopeId;
   if (!envelopeId) return undefined;
   const idempotencyKey = `${envelopeId}:presentation-image:${slideOrder}`;
   // Split the image bucket across the exact visual-policy photo quota. The v13
   // bucket is large enough for several provider-reported AITunnel raster
   // charges while the global envelope still bounds the whole generation run.
   const imageLimit = economicPhotoLimit(slideCount);
-  const amountRub = String(Number(COST_ENVELOPE_BUCKETS.images) / Math.max(1, imageLimit));
+  const policyBucket = (usage?.costEnvelopeSnapshot?.policy as { buckets?: Record<string, unknown> } | undefined)?.buckets?.images;
+  const imageBucketRub = typeof policyBucket === "string" ? policyBucket : COST_ENVELOPE_BUCKETS.images;
+  const amountRub = String(Number(imageBucketRub) / Math.max(1, imageLimit));
   const reservation = await reserveCostEnvelope({
     envelopeId,
     idempotencyKey,

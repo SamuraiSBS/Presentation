@@ -1,6 +1,6 @@
 import type { CSSProperties, KeyboardEvent, PointerEvent, RefObject } from "react";
 import NextImage from "next/image";
-import type { CanvasElement, PresentationTheme, Slide } from "@studydeck/shared";
+import type { CanvasDiagramElement, CanvasElement, PresentationTheme, Slide } from "@studydeck/shared";
 import { buildSlideCanvas, canvasBackgroundCss, sortCanvasElements } from "@studydeck/shared";
 import { elementStyle, shapeStyle, textStyle } from "./editor-geometry";
 
@@ -123,6 +123,7 @@ export function ReadonlyCanvasElement({
       </div>
     );
   }
+  if (element.type === "diagram") return <DiagramElement element={element} style={elementStyle(element)} />;
   return (
     <div
       {...interactiveProps}
@@ -250,6 +251,7 @@ export function CanvasElementView({
       </div>
     );
   }
+  if (element.type === "diagram") return <div className="canvas-element-shell" style={style}><div {...elementProps}><DiagramElement element={element} /></div>{resizeHandle}</div>;
 
   return (
     <div className="canvas-element-shell" style={style}>
@@ -296,6 +298,7 @@ function canvasElementLabel(element: CanvasElement, position: number) {
       ? `Изображение ${position}: ${preview}`
       : `Изображение ${position} без описания`;
   }
+  if (element.type === "diagram") return `Диаграмма ${position}`;
   const shapeNames: Record<typeof element.shape, string> = {
     ellipse: "эллипс",
     line: "линия",
@@ -303,6 +306,14 @@ function canvasElementLabel(element: CanvasElement, position: number) {
     roundRect: "скруглённый прямоугольник",
   };
   return `Фигура ${position}: ${shapeNames[element.shape]}`;
+}
+
+function DiagramElement({ element, style }: { element: CanvasDiagramElement; style?: CSSProperties }) {
+  const model = element.model;
+  const labels = model.kind === "scheme"
+    ? model.nodes.map((node) => node.label)
+    : model.categories.map((category, index) => `${category}: ${model.series.map((series) => series.values[index] ?? 0).join(" / ")}`);
+  return <div className="canvas-diagram-element" style={{ ...style, display: "grid", gridTemplateColumns: `repeat(${Math.min(3, Math.max(1, labels.length))}, minmax(0, 1fr))`, gap: 8, padding: 10, border: "1px solid #77859a", borderRadius: 8, color: "#1d2a3c", fontSize: 16, fontWeight: 700, alignItems: "center", textAlign: "center" }}>{labels.map((label, index) => <span key={`${label}-${index}`}>{label}</span>)}</div>;
 }
 
 function accessiblePreview(value: string) {

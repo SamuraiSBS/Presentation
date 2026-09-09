@@ -16,15 +16,52 @@ const mandatorySourceSnapshot = {
   ],
 };
 
-const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, finalizeFailedCostEnvelope, captureGenerationError, generateNarrationDraft, generatePresentationFromNarration, buildLocalPresentationFromAcceptedNarration, enrichPresentationImages, materializePlannedVisuals, productionQualityReleaseResult, finalCanvasSafetyIssues, costEnvelope, prismaMock } = vi.hoisted(() => ({
+function designReviewFixture() {
+  return presentationSchema.parse({
+    id: "presentation-review",
+    title: "Design review",
+    scenario: "general",
+    level: "general",
+    slideCount: 1,
+    generationMode: "aitunnel",
+    generatedText: "Слайд 1: Главный тезис\nПервое предложение объясняет предмет. Второе предложение добавляет конкретную деталь.",
+    sources: [],
+    outline: ["Главный тезис"],
+    narrativePlan: [],
+    speechScript: [{ slideOrder: 1, slideTitle: "Главный тезис", text: "Первое предложение объясняет предмет. Второе предложение добавляет конкретную деталь." }],
+    slides: [{
+      id: "slide-1",
+      order: 1,
+      title: "Главный тезис",
+      slideKind: "title",
+      layout: "hero",
+      thesis: "Первое предложение объясняет предмет.",
+      bullets: [],
+      definition: null,
+      keyConcepts: [],
+      visual: { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] },
+      highlights: [],
+      blocks: [{ type: "callout", content: "Второе предложение добавляет конкретную деталь." }],
+      canvas: { width: 1280, height: 720, background: "#FFFFFF", elements: [] },
+      speakerNotes: "Первое предложение объясняет предмет. Второе предложение добавляет конкретную деталь.",
+      timingSeconds: 45,
+      sourceRefs: [],
+    }],
+  });
+}
+
+const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, finalizeFailedCostEnvelope, completeCostEnvelope, captureGenerationError, generateNarrationDraft, generatePresentationFromNarration, buildLocalPresentationFromAcceptedNarration, generateStructuredWithProvider, selectAiProviders, enrichPresentationImages, materializePlannedVisuals, productionQualityReleaseResult, finalCanvasSafetyIssues, costEnvelope, prismaMock } = vi.hoisted(() => ({
   reserveCostEnvelope: vi.fn(),
   settleCostEnvelope: vi.fn(),
   failCostEnvelope: vi.fn(),
   finalizeFailedCostEnvelope: vi.fn(),
+  completeCostEnvelope: vi.fn(),
   captureGenerationError: vi.fn(),
   generateNarrationDraft: vi.fn(),
   generatePresentationFromNarration: vi.fn(),
   buildLocalPresentationFromAcceptedNarration: vi.fn(),
+  generateStructuredWithProvider: vi.fn(),
+  selectAiProviders: vi.fn(),
   enrichPresentationImages: vi.fn(),
   materializePlannedVisuals: vi.fn((presentation) => presentation),
   productionQualityReleaseResult: vi.fn(),
@@ -38,8 +75,10 @@ const { reserveCostEnvelope, settleCostEnvelope, failCostEnvelope, finalizeFaile
     generationJob: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
     generationFailureArtifact: { create: vi.fn() },
     presentation: { findUnique: vi.fn(), upsert: vi.fn() },
+    designReview: { upsert: vi.fn(), findUniqueOrThrow: vi.fn() },
+    designReviewCandidate: { deleteMany: vi.fn(), createMany: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     userActivityEvent: { create: vi.fn() },
-    $transaction: vi.fn((operations: Promise<unknown>[]) => Promise.all(operations)),
+    $transaction: vi.fn((action: Promise<unknown>[] | ((tx: unknown) => Promise<unknown>)) => typeof action === "function" ? action(prismaMock) : Promise.all(action)),
   },
 }));
 
@@ -69,6 +108,8 @@ vi.mock("./presentation.js", () => ({
   generateNarrationDraft,
   generatePresentationFromNarration,
   buildLocalPresentationFromAcceptedNarration,
+  generateStructuredWithProvider,
+  selectAiProviders,
 }));
 
 vi.mock("./presentation-quality.js", () => ({
@@ -84,6 +125,7 @@ vi.mock("../cost-envelope.js", () => ({
   settleCostEnvelope,
   failCostEnvelope,
   finalizeFailedCostEnvelope,
+  completeCostEnvelope,
 }));
 
 vi.mock("../observability.js", () => ({
@@ -603,6 +645,7 @@ describe("handleGenerationJob v6 narration persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     finalizeFailedCostEnvelope.mockReset();
+    failCostEnvelope.mockResolvedValue({ status: "failed" });
     prismaMock.project.update.mockResolvedValue({});
     prismaMock.project.findUnique.mockResolvedValue({ speechDraft: null });
     prismaMock.project.findUniqueOrThrow.mockResolvedValue({
@@ -633,7 +676,10 @@ describe("handleGenerationJob v6 narration persistence", () => {
     prismaMock.presentation.findUnique.mockResolvedValue(null);
     prismaMock.userActivityEvent.create.mockResolvedValue({});
     costEnvelope.findUnique.mockResolvedValue({ sourceSnapshot: mandatorySourceSnapshot, status: "active" });
-    prismaMock.$transaction.mockImplementation(async (operations: Promise<unknown>[]) => Promise.all(operations));
+    prismaMock.designReview.upsert.mockResolvedValue({ id: "review-1" });
+    prismaMock.designReviewCandidate.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.designReviewCandidate.createMany.mockResolvedValue({ count: 1 });
+    prismaMock.$transaction.mockImplementation(async (action: Promise<unknown>[] | ((tx: unknown) => Promise<unknown>)) => typeof action === "function" ? action(prismaMock) : Promise.all(action));
   });
 
   it("persists an editable v6 draft at the real job boundary without presentation, accept, or retry work", async () => {
@@ -965,8 +1011,9 @@ describe("handleGenerationJob failed narration envelope finalization", () => {
     // canonical card recovery is covered separately with the actual local
     // builder and is re-checked at finalizeCanonicalDeck.
     expect(productionQualityReleaseResult).toHaveBeenCalledTimes(1);
-    expect(prismaMock.presentation.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ document: expect.objectContaining({ generatedText: acceptedNarration, sources: snapshotSources }) }) }));
-    expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "ready" } }));
+    expect(prismaMock.designReview.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ document: expect.objectContaining({ generatedText: acceptedNarration, sources: snapshotSources }) }) }));
+    expect(prismaMock.designReviewCandidate.createMany).toHaveBeenCalledTimes(1);
+    expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "design_review", error: null } }));
     expect(prismaMock.generationJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "completed" }) }));
     expect(finalizeFailedCostEnvelope).not.toHaveBeenCalled();
   });
@@ -1019,5 +1066,92 @@ describe("handleGenerationJob failed narration envelope finalization", () => {
       stage: "failed_envelope_finalization",
       projectId: "terminal-narration-project",
     }));
+  });
+
+  it("regenerates one selected slide and settles its separate cost envelope", async () => {
+    const document = designReviewFixture();
+    const candidate = {
+      id: "candidate-1",
+      reviewId: "review-1",
+      slideId: "slide-1",
+      slideOrder: 1,
+      version: 1,
+      status: "regenerating",
+      comment: "Сделайте композицию спокойнее",
+      canvas: document.slides[0].canvas,
+      visualAssets: [],
+      diagramModel: null,
+      review: { id: "review-1", projectId: "terminal-narration-project", revision: 5, document },
+    };
+    prismaMock.project.findUniqueOrThrow.mockResolvedValue({ id: "terminal-narration-project", title: document.title, prompt: "Explain the subject", sources: [] });
+    prismaMock.designReviewCandidate.findUniqueOrThrow.mockResolvedValue(candidate);
+    prismaMock.designReview.findUniqueOrThrow.mockResolvedValue({ revision: 5 });
+    costEnvelope.findUnique.mockResolvedValue({ policyVersion: "design-review-regeneration-v1", policySnapshot: { buckets: { design_regeneration: "2.00000000", images: "1.20000000" } }, catalogSnapshot: {} });
+    selectAiProviders.mockReturnValue(["yandex"]);
+    generateStructuredWithProvider.mockResolvedValue({ layout: "statement", imagePrompt: "", imageStrategy: "none" });
+    enrichPresentationImages.mockImplementation(async (_project, value) => value);
+
+    const job = queueJob({ name: "generate-presentation", costEnvelopeId: "design-envelope-1" }) as any;
+    job.name = "regenerate-slide-design";
+    job.data = {
+      ...job.data,
+      designReviewCandidateId: "candidate-1",
+      designReviewRevision: 5,
+    };
+
+    await expect(handleGenerationJob(job)).resolves.toBeUndefined();
+
+    expect(generateStructuredWithProvider).toHaveBeenCalledWith(expect.objectContaining({
+      schemaName: "studydeck_slide_design_regeneration",
+      prompt: expect.stringContaining("User design comment: Сделайте композицию спокойнее"),
+    }));
+    expect(prismaMock.designReviewCandidate.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "candidate-1" },
+      data: expect.objectContaining({ status: "pending", error: null }),
+    }));
+    expect(prismaMock.generationJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "completed" }) }));
+    expect(completeCostEnvelope).toHaveBeenCalledWith({ envelopeId: "design-envelope-1" });
+  });
+
+  it("fails the candidate and its isolated cost envelope when the provider rejects", async () => {
+    const document = designReviewFixture();
+    prismaMock.project.findUniqueOrThrow.mockResolvedValue({ id: "terminal-narration-project", title: document.title, prompt: "Explain the subject", sources: [] });
+    prismaMock.designReviewCandidate.findUniqueOrThrow.mockResolvedValue({
+      id: "candidate-1", reviewId: "review-1", slideId: "slide-1", slideOrder: 1, version: 1, status: "regenerating", comment: "Сделайте вариант строже", canvas: document.slides[0].canvas,
+      review: { id: "review-1", projectId: "terminal-narration-project", revision: 5, document },
+    });
+    costEnvelope.findUnique.mockResolvedValue({ policyVersion: "design-review-regeneration-v1", policySnapshot: { buckets: { design_regeneration: "2.00000000", images: "1.20000000" } }, catalogSnapshot: {} });
+    selectAiProviders.mockReturnValue(["yandex"]);
+    generateStructuredWithProvider.mockRejectedValue(new Error("provider unavailable"));
+
+    const job = queueJob({ name: "generate-presentation", costEnvelopeId: "design-envelope-1" }) as any;
+    job.name = "regenerate-slide-design";
+    job.data = { ...job.data, designReviewCandidateId: "candidate-1", designReviewRevision: 5 };
+
+    await expect(handleGenerationJob(job)).resolves.toBeUndefined();
+
+    expect(prismaMock.designReviewCandidate.updateMany).toHaveBeenCalledWith({ where: { id: "candidate-1" }, data: { status: "failed", error: "Не удалось создать новый вариант дизайна" } });
+    expect(prismaMock.generationJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "failed" }) }));
+    expect(failCostEnvelope).toHaveBeenCalledWith(expect.objectContaining({ envelopeId: "design-envelope-1", reason: "design_review_regeneration_failed" }));
+    expect(completeCostEnvelope).not.toHaveBeenCalled();
+  });
+
+  it("fails a stale design candidate without writing a new canvas or retrying payment", async () => {
+    const document = designReviewFixture();
+    prismaMock.project.findUniqueOrThrow.mockResolvedValue({ id: "terminal-narration-project", title: document.title, prompt: "Explain the subject", sources: [] });
+    prismaMock.designReviewCandidate.findUniqueOrThrow.mockResolvedValue({
+      id: "candidate-1", reviewId: "review-1", slideId: "slide-1", slideOrder: 1, version: 1, status: "regenerating", comment: "Другой вариант", canvas: document.slides[0].canvas, review: { id: "review-1", projectId: "terminal-narration-project", revision: 4, document },
+    });
+    costEnvelope.findUnique.mockResolvedValue({ policyVersion: "design-review-regeneration-v1", policySnapshot: { buckets: { design_regeneration: "2.00000000", images: "1.20000000" } }, catalogSnapshot: {} });
+
+    const job = queueJob({ name: "generate-presentation", costEnvelopeId: "design-envelope-1" }) as any;
+    job.name = "regenerate-slide-design";
+    job.data = { ...job.data, designReviewCandidateId: "candidate-1", designReviewRevision: 5 };
+
+    await expect(handleGenerationJob(job)).resolves.toBeUndefined();
+
+    expect(generateStructuredWithProvider).not.toHaveBeenCalled();
+    expect(prismaMock.designReviewCandidate.updateMany).toHaveBeenCalledWith({ where: { id: "candidate-1" }, data: { status: "failed", error: "Не удалось создать новый вариант дизайна" } });
+    expect(failCostEnvelope).toHaveBeenCalledWith(expect.objectContaining({ envelopeId: "design-envelope-1", reason: "design_review_regeneration_failed" }));
   });
 });

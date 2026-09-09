@@ -40,7 +40,7 @@ export type AitunnelNarrationFallbackStage = `narration_section_${AitunnelNarrat
 export type AitunnelNarrationGlobalRewriteStage = "narration_global_rewrite";
 export type AitunnelNarrationSectionStage = AitunnelNarrationCandidateStage | AitunnelNarrationFallbackStage | AitunnelNarrationGlobalRewriteStage;
 export type AitunnelFullNarrationStage = "narration_full_candidate" | "narration_full_rewrite" | "narration_targeted_repair";
-export type AitunnelStage = "narrative_plan" | "design_brief" | "quality_critique" | AitunnelNarrationSectionStage | AitunnelFullNarrationStage | "narration" | "narration_rewrite" | "presentation" | "slide_text_repair" | "quality_repair";
+export type AitunnelStage = "narrative_plan" | "design_brief" | "quality_critique" | AitunnelNarrationSectionStage | AitunnelFullNarrationStage | "narration" | "narration_rewrite" | "presentation" | "design_regeneration" | "slide_text_repair" | "quality_repair";
 export type AitunnelNarrationReasoningEffort = "minimal" | "low" | "medium" | "high";
 export type AitunnelNarrationBudgetConfig = { budgetRub: string; maxOutputTokens: number; reasoningEffort: AitunnelNarrationReasoningEffort };
 export type AitunnelNarrationUsage = { inputTokens?: number; outputTokens?: number; reasoningTokens?: number };
@@ -70,6 +70,7 @@ const STAGE_POLICIES: Record<AitunnelStage, { model: "economy" | "primary"; maxO
   narration: { model: "economy", maxOutputTokens: 2400, reasoningEffort: "minimal" },
   narration_rewrite: { model: "economy", maxOutputTokens: 2400, reasoningEffort: "minimal" },
   presentation: { model: "economy", maxOutputTokens: 6000, reasoningEffort: "minimal" },
+  design_regeneration: { model: "economy", maxOutputTokens: 1600, reasoningEffort: "minimal" },
   slide_text_repair: { model: "economy", maxOutputTokens: 2400, reasoningEffort: "minimal" },
   quality_repair: { model: "economy", maxOutputTokens: 3600, reasoningEffort: "minimal" },
 };

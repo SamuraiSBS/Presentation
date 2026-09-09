@@ -1,6 +1,7 @@
 import { ExportPanelQuery } from "@/components/export-panel-query";
 import { ProjectUnavailable } from "@/components/project-unavailable";
 import { InternalApiError, internalFetch } from "@/lib/internal-api";
+import { redirect } from "next/navigation";
 import { sanitizeProjectForDisplay } from "@/lib/presentation-display";
 import type { ProjectDetail } from "@/lib/account-types";
 
@@ -10,6 +11,7 @@ export default async function ExportPage({ params }: { params: Promise<{ id: str
   const { id } = await params;
   try {
     const project = sanitizeProjectForDisplay(await internalFetch<ProjectDetail>(`/projects/${id}`));
+    if (project.status === "design_review" || project.status === "design_finalizing") redirect(`/projects/${id}/design-review`);
 
     return (
       <main className="page">

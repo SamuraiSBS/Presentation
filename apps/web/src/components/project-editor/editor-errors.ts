@@ -3,6 +3,7 @@ import type { CanvasElement } from "@studydeck/shared";
 export function elementLabel(element: CanvasElement) {
   if (element.type === "text") return "Текст";
   if (element.type === "image") return "Изображение";
+  if (element.type === "diagram") return "Диаграмма";
   return "Фигура";
 }
 
@@ -15,6 +16,8 @@ export function projectStatusLabel(status: string) {
     script_ready: "Текст готов",
     queued: "В очереди",
     generating: "Собираем презентацию",
+    design_review: "Проверяем дизайн",
+    design_finalizing: "Собираем презентацию",
     ready: "Готово",
     failed: "Нужно повторить",
   };

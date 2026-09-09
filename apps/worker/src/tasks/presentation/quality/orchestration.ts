@@ -1055,6 +1055,11 @@ export function assertPresentationQuality(presentation: PresentationDocument, pr
     issues.push(...contentContractIssues.map((issue) => `slide ${presentation.slides.find((slide) => slide.id === issue.slideId)?.order || "?"} ${issue.message}`));
   }
 
+  // Narration is intentionally checked as a separate projection.  It may
+  // contain more detail than the canvas, but it must not leak planner or
+  // transition language into the speech that a presenter will read aloud.
+  issues.push(...narrationQualityDiagnostics(presentation));
+
   if (!/Слайд\s+1\s*:/i.test(presentation.generatedText)) {
     issues.push("generatedText is not divided into slide narration");
   }
@@ -1191,11 +1196,9 @@ export function visiblePresentationText(presentation: PresentationDocument) {
   return cleanMultilineText(
     [
       presentation.title,
-      presentation.generatedText,
       ...presentation.slides.flatMap((slide) => [
         slide.title,
         slide.thesis,
-        slide.speakerNotes,
         ...slide.bullets,
         ...(slide.definition ? [slide.definition.term, slide.definition.text] : []),
         slide.visual.title,
@@ -1204,9 +1207,30 @@ export function visiblePresentationText(presentation: PresentationDocument) {
         ...slide.visual.rows.flatMap((row) => [row.label, row.left, row.right]),
         ...slide.blocks.flatMap((block) => (block.type === "bullets" ? block.items : [block.content])),
       ]),
-      ...presentation.speechScript.flatMap((item) => [item.slideTitle, item.text]),
     ].join("\n"),
   );
+}
+
+function narrationQualityDiagnostics(presentation: PresentationDocument) {
+  const entries = [
+    ...presentation.slides.map((slide) => ({ slideOrder: slide.order, field: "speakerNotes", value: slide.speakerNotes })),
+    ...presentation.speechScript.map((item) => ({ slideOrder: item.slideOrder, field: "speechScript", value: item.text })),
+    ...parseNarrationSections(presentation.generatedText).map((section) => ({
+      slideOrder: section.order,
+      field: "generatedText",
+      value: section.text,
+    })),
+  ];
+
+  return entries
+    .filter((entry) => entry.value && (findForbiddenTemplatePhrase(entry.value) || hasNarrationMetaPhrase(entry.value)))
+    .map((entry) => `slide ${entry.slideOrder} narration ${entry.field} contains meta or template text`);
+}
+
+function hasNarrationMetaPhrase(value: string) {
+  const normalized = normalizeExactForQuality(value);
+  return GENERIC_NARRATION_PHRASES.some((phrase) => normalized.includes(normalizeExactForQuality(phrase)))
+    || /(?:на|в)\s+этом\s+слайде|этот\s+слайд|текст\s+на\s+слайде|заметк[аи]\s+докладчика|(?:этот|следующий|данный)\s+раздел|переход\s+(?:к|дальше)|подводит\s+(?:рассказ\s+)?к\s+следующ/iu.test(value);
 }
 
 export function qualityIssuesForText(value: string, project: ProjectInput, checkPromptRepeat = true) {

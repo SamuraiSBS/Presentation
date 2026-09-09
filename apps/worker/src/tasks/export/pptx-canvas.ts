@@ -4,6 +4,7 @@ import {
   exportFontFamily,
   sortCanvasElements,
   type CanvasImageElement,
+  type CanvasDiagramElement,
   type CanvasShapeElement,
   type CanvasTextElement,
   type SlideCanvas,
@@ -42,6 +43,7 @@ export async function renderPptxCanvasSlide(
     if (element.opacity <= 0) continue;
     if (element.type === "text") renderCanvasText(slide, element, theme);
     else if (element.type === "shape") renderCanvasShape(pptx, slide, element);
+    else if (element.type === "diagram") renderCanvasDiagram(slide, element, theme);
     else await renderCanvasImage(slide, element, dependencies);
   }
 }
@@ -49,6 +51,13 @@ export async function renderPptxCanvasSlide(
 function renderCanvasText(slide: PptxSlide, element: CanvasTextElement, theme: ExportTheme) {
   const runs = element.runs.length ? element.runs.map((run) => ({ text: run.text, options: { bold: run.bold ?? element.bold, italic: false, underline: run.underline ?? element.underline, color: pptxColor(run.color || element.color) } })) : element.text;
   slide.addText(runs, { ...canvasBox(element), fontFace: exportFontFamily(element.fontFamily || theme.fonts.body), fontSize: pixelsToPoints(element.fontSize), bold: element.bold, italic: false, underline: element.underline, color: pptxColor(element.color), align: element.align, valign: element.valign === "middle" ? "mid" : element.valign, rotate: element.rotation, fit: "none", lineSpacingMultiple: canvasTextLineHeight(element), margin: 0 });
+}
+
+function renderCanvasDiagram(slide: PptxSlide, element: CanvasDiagramElement, theme: ExportTheme) {
+  const text = element.model.kind === "scheme"
+    ? element.model.nodes.map((node) => node.label).join(" → ")
+    : element.model.series.map((series) => `${series.name}: ${series.values.join(", ")}`).join(" · ");
+  slide.addText(text, { ...canvasBox(element), fontFace: exportFontFamily(theme.fonts.body), fontSize: 14, color: pptxColor(theme.colors.text), align: "center", valign: "mid", margin: 0, breakLine: false });
 }
 
 function renderCanvasShape(pptx: PptxApi, slide: PptxSlide, element: CanvasShapeElement) {

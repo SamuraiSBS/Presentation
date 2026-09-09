@@ -135,6 +135,27 @@ export const demoPresentation: PresentationDocument = ensureEditableCanvas({
   slides: slides as PresentationDocument["slides"],
 });
 
+export const demoDesignReview = {
+  id: "design-review-demo",
+  projectId: "demo",
+  revision: 1,
+  status: "active" as const,
+  document: demoPresentation,
+  candidates: demoPresentation.slides.map((slide) => ({
+    id: `design-candidate-${slide.id}`,
+    slideId: slide.id,
+    slideOrder: slide.order,
+    version: 1,
+    status: "pending" as const,
+    canvas: slide.canvas!,
+    visualAssets: [],
+    diagramModel: null,
+    comment: null,
+    error: null,
+  })),
+  error: null,
+};
+
 export const demoProject = {
   id: "demo",
   title: demoPresentation.title,

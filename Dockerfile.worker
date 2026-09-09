@@ -5,6 +5,7 @@ ENV NPM_CONFIG_REGISTRY=$NPM_REGISTRY
 ENV NPM_CONFIG_REPLACE_REGISTRY_HOST=always
 RUN apk upgrade --no-cache && printf '%s\n' "$ALPINE_SECURITY_REFRESH" >/dev/null
 WORKDIR /app
+ENV NPM_CONFIG_REPLACE_REGISTRY_HOST=always
 COPY package*.json ./
 COPY apps/web/package.json apps/web/package.json
 COPY apps/api/package.json apps/api/package.json

@@ -1,6 +1,7 @@
 import type { ConfigService } from "@nestjs/config";
 import type { Queue } from "bullmq";
 import { Prisma } from "@prisma/client";
+import { presentationSchema } from "@studydeck/shared";
 import { describe, expect, it, vi } from "vitest";
 import type { ProjectAccessService } from "../access/project-access.service.js";
 import type { PrismaService } from "../prisma/prisma.service.js";
@@ -47,6 +48,40 @@ function project(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function designReviewDocument() {
+  return presentationSchema.parse({
+    id: "presentation-review",
+    title: "Design review",
+    scenario: "general",
+    level: "general",
+    slideCount: 1,
+    generationMode: "aitunnel",
+    generatedText: "Слайд 1: Главный тезис\nПервое предложение объясняет предмет. Второе предложение добавляет конкретную деталь.",
+    sources: [],
+    outline: ["Главный тезис"],
+    narrativePlan: [],
+    speechScript: [{ slideOrder: 1, slideTitle: "Главный тезис", text: "Первое предложение объясняет предмет. Второе предложение добавляет конкретную деталь." }],
+    slides: [{
+      id: "slide-1",
+      order: 1,
+      title: "Главный тезис",
+      slideKind: "title",
+      layout: "hero",
+      thesis: "Первое предложение объясняет предмет.",
+      bullets: [],
+      definition: null,
+      keyConcepts: [],
+      visual: { type: "none", title: "", description: "", leftLabel: "", rightLabel: "", items: [], rows: [] },
+      highlights: [],
+      blocks: [{ type: "callout", content: "Второе предложение добавляет конкретную деталь." }],
+      canvas: { width: 1280, height: 720, background: "#FFFFFF", elements: [] },
+      speakerNotes: "Первое предложение объясняет предмет. Второе предложение добавляет конкретную деталь.",
+      timingSeconds: 45,
+      sourceRefs: [],
+    }],
+  });
+}
+
 function createHarness() {
   const tx = {
     user: {
@@ -63,6 +98,7 @@ function createHarness() {
     generationJob: {
       create: vi.fn().mockResolvedValue({ id: "job-1" }),
       findFirst: vi.fn().mockResolvedValue(null),
+      update: vi.fn(),
     },
     costEnvelope: {
       findFirst: vi.fn().mockResolvedValue(null),
@@ -70,9 +106,18 @@ function createHarness() {
       create: vi.fn().mockResolvedValue({ id: "envelope-1" }),
       update: vi.fn(),
     },
+    designReview: {
+      findUnique: vi.fn(),
+      update: vi.fn(),
+    },
+    designReviewCandidate: {
+      create: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
   };
   const prisma = {
-    $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+    $transaction: vi.fn(async (callbackOrQueries: ((client: typeof tx) => unknown) | Promise<unknown>[]) => typeof callbackOrQueries === "function" ? callbackOrQueries(tx) : Promise.all(callbackOrQueries)),
     project: {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
@@ -87,6 +132,16 @@ function createHarness() {
     generationJob: {
       findFirst: vi.fn(),
       create: vi.fn(),
+      update: vi.fn(),
+    },
+    designReview: {
+      findUnique: vi.fn(),
+    },
+    designReviewCandidate: {
+      findUnique: vi.fn(),
+      update: vi.fn(),
+    },
+    costEnvelope: {
       update: vi.fn(),
     },
   };
@@ -409,6 +464,7 @@ describe("ProjectsService generation", () => {
 describe("ProjectsService revision protection", () => {
   it("returns a 409 conflict before writing a stale slide revision", async () => {
     const { prisma, service } = createHarness();
+    prisma.project.findUnique.mockResolvedValueOnce({ status: "ready" });
     prisma.presentation.findUnique.mockResolvedValueOnce({
       projectId: "project-1",
       revision: 4,
@@ -517,7 +573,90 @@ describe("ProjectsService public generation errors", () => {
     expect(result.generationErrorCategory).toBe("quality");
     expect(result.latestNarrationJob).toMatchObject({ kind: "narration", error: null });
     expect(result.latestPresentationJob).toMatchObject({ kind: "presentation", errorCategory: "quality" });
-    expect(result.error).toContain("не прошла финальную проверку качества");
+    expect(result.error).toContain("не удалось довести до качества");
+  });
+});
+
+describe("ProjectsService design review", () => {
+  it("rejects a stale regeneration before creating a candidate or spending a budget", async () => {
+    const { service, tx } = createHarness();
+    tx.designReview.findUnique.mockResolvedValue({
+      id: "review-1",
+      projectId: "project-1",
+      revision: 4,
+      status: "active",
+      document: designReviewDocument(),
+      candidates: [],
+    });
+
+    await expect(service.regenerateDesignCandidate("user-1", "project-1", "slide-1", {
+      expectedRevision: 3,
+      comment: "Сделайте композицию спокойнее",
+    })).rejects.toMatchObject({ status: 409 });
+
+    expect(tx.designReviewCandidate.create).not.toHaveBeenCalled();
+    expect(tx.costEnvelope.create).not.toHaveBeenCalled();
+  });
+
+  it("creates an isolated candidate, job, and design-review cost envelope before queueing regeneration", async () => {
+    const { service, tx, queue, prisma } = createHarness();
+    const document = designReviewDocument();
+    tx.designReview.findUnique.mockResolvedValue({
+      id: "review-1",
+      projectId: "project-1",
+      revision: 4,
+      status: "active",
+      document,
+      candidates: [{
+        id: "candidate-1",
+        reviewId: "review-1",
+        slideId: "slide-1",
+        slideOrder: 1,
+        version: 1,
+        status: "pending",
+        canvas: document.slides[0].canvas,
+        visualAssets: [],
+        diagramModel: null,
+      }],
+    });
+    tx.designReviewCandidate.create.mockResolvedValue({ id: "candidate-2", reviewId: "review-1", slideId: "slide-1", slideOrder: 1, version: 2, status: "regenerating", canvas: document.slides[0].canvas, visualAssets: [], diagramModel: null, comment: "Сделайте композицию спокойнее" });
+    tx.generationJob.create.mockResolvedValue({ id: "design-job-1" });
+    tx.costEnvelope.create.mockResolvedValue({ id: "design-envelope-1" });
+
+    const result = await service.regenerateDesignCandidate("user-1", "project-1", "slide-1", {
+      expectedRevision: 4,
+      comment: "Сделайте композицию спокойнее",
+    });
+
+    expect(result).toMatchObject({ id: "candidate-2", version: 2, queueJobId: "queue-job-1" });
+    expect(tx.costEnvelope.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        projectId: "project-1",
+        presentationJobId: "design-job-1",
+        policySnapshot: expect.objectContaining({ buckets: { design_regeneration: "2.00000000", images: "1.20000000" } }),
+      }),
+    }));
+    expect(queue.add).toHaveBeenCalledWith(
+      "regenerate-slide-design",
+      expect.objectContaining({ generationJobId: "design-job-1", costEnvelopeId: "design-envelope-1", designReviewCandidateId: "candidate-2", designReviewRevision: 5 }),
+      expect.objectContaining({ attempts: 1 }),
+    );
+    expect(prisma.generationJob.update).toHaveBeenCalledWith({ where: { id: "design-job-1" }, data: { queueJobId: "queue-job-1" } });
+  });
+
+  it("marks the candidate and its isolated accounting records failed when the queue is unavailable", async () => {
+    const { service, tx, queue, prisma } = createHarness();
+    const document = designReviewDocument();
+    tx.designReview.findUnique.mockResolvedValue({ id: "review-1", projectId: "project-1", revision: 4, status: "active", document, candidates: [{ id: "candidate-1", reviewId: "review-1", slideId: "slide-1", slideOrder: 1, version: 1, status: "pending", canvas: document.slides[0].canvas, visualAssets: [], diagramModel: null }] });
+    tx.designReviewCandidate.create.mockResolvedValue({ id: "candidate-2", reviewId: "review-1", slideId: "slide-1", slideOrder: 1, version: 2, status: "regenerating", canvas: document.slides[0].canvas, visualAssets: [], diagramModel: null, comment: "Нужна другая композиция" });
+    tx.generationJob.create.mockResolvedValue({ id: "design-job-1" });
+    tx.costEnvelope.create.mockResolvedValue({ id: "design-envelope-1" });
+    queue.add.mockRejectedValueOnce(new Error("Redis unavailable"));
+
+    await expect(service.regenerateDesignCandidate("user-1", "project-1", "slide-1", { expectedRevision: 4, comment: "Нужна другая композиция" })).rejects.toThrow("Redis unavailable");
+
+    expect(prisma.costEnvelope.update).toHaveBeenCalledWith({ where: { id: "design-envelope-1" }, data: { status: "cancelled" } });
+    expect(prisma.generationJob.update).toHaveBeenCalledWith({ where: { id: "design-job-1" }, data: { status: "failed", error: "queue_unavailable" } });
   });
 });
 

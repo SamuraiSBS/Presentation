@@ -257,7 +257,11 @@ export function NewProjectForm({ usage }: { usage: UsageSummary }) {
   const filesNeedReselection = restoredDraft && sourceMode === "files" && !files.length;
 
   return (
-    <section className="wizard panel new-workspace" aria-label="Создание презентации">
+    <section
+      className="wizard panel new-workspace"
+      aria-label="Создание презентации"
+      data-testid={draftReady ? "new-project-ready" : undefined}
+    >
       <nav ref={progressRef} className="wizard-progress" aria-label="Шаги создания презентации">
         {[
           { label: "Тема", complete: Boolean(normalizedTopic) },

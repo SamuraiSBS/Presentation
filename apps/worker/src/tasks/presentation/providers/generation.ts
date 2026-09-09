@@ -1556,6 +1556,7 @@ async function reservePersistedAitunnelStageEnvelope(provider: "openai" | "aitun
     "narrative_plan",
     "design_brief",
     "presentation",
+    "design_regeneration",
     "quality_critique",
     "quality_repair",
     "slide_text_repair",

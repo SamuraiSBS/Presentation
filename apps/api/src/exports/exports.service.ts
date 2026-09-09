@@ -54,6 +54,7 @@ export class ExportsService {
         },
       });
       if (!project || project.userId !== access.project.userId) throw new NotFoundException("Project not found");
+      if (project.status !== "ready") throw new BadRequestException("Утвердите дизайн всех слайдов перед экспортом");
       if (!project.presentation) throw new BadRequestException("Generate the presentation before export");
 
       const allowed = planLimits[project.user.planCode].exports;

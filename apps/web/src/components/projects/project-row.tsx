@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { Folder, Presentation, Users } from "lucide-react";
 import type { FolderSummary, ProjectSummary, UsageSummary } from "@/lib/account-types";
-import { accessRoleLabel, formatShortDate, projectStatusLabel } from "@/lib/project-ui";
+import { accessRoleLabel, formatShortDate, projectHref, projectStatusLabel } from "@/lib/project-ui";
 import { ProjectActionsMenu } from "@/components/projects/project-actions-menu";
 
 export function ProjectRow({ project, folders, usage }: { project: ProjectSummary; folders: FolderSummary[]; usage: UsageSummary }) {
   return (
     <article className="projects-row">
-      <Link className="projects-row-main" href={`/projects/${project.id}/editor`}>
+      <Link className="projects-row-main" href={projectHref(project.id, project.status)}>
         <span className={`project-icon project-icon-${project.status}`}><Presentation size={22} aria-hidden="true" /></span>
         <div className="projects-row-copy">
           <strong>{project.title}</strong>

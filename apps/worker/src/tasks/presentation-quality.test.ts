@@ -47,7 +47,7 @@ import {
   findLongSlideTextIssues,
   isVisibleTextTooLong,
 } from "./presentation/quality/visible-text-rules.js";
-import { applyNarrationFallbacks, applySlideTextRepairs, buildQualityRepairPrompt, preserveAcceptedGeneratedText, preserveAcceptedNarration, repairReleaseCandidate } from "./presentation/quality/orchestration.js";
+import { applyNarrationFallbacks, applySlideTextRepairs, assertNoForbiddenTemplateText, assertPresentationQuality, buildQualityRepairPrompt, preserveAcceptedGeneratedText, preserveAcceptedNarration, repairReleaseCandidate, visiblePresentationText } from "./presentation/quality/orchestration.js";
 
 const source = {
   id: "source-1",
@@ -174,6 +174,40 @@ function makeSlide(order: number, title: string, thesis: string, bullets: string
 }
 
 describe("presentation quality checks", () => {
+  it("rejects meta transition language in visible title, bullets, and visual text", () => {
+    const base = makePresentation();
+    const bad = presentationSchema.parse({
+      ...base,
+      slides: [{
+        ...base.slides[0],
+        title: "На этом слайде показан результат",
+        bullets: ["Переход к следующему разделу объясняет следующий шаг"],
+        visual: { ...base.slides[0].visual, title: "Текст на слайде" },
+      }, base.slides[1]],
+    });
+
+    expect(visiblePresentationText(bad)).not.toContain(base.slides[0].speakerNotes);
+    expect(() => assertNoForbiddenTemplateText(bad)).toThrow(/template phrase detected|AI generation quality check failed/u);
+    expect(() => assertPresentationQuality(bad, { id: "meta-visible", title: "Quality deck", prompt: "Quality deck", scenario: "lesson", level: "beginner", mode: "with_sources", slideCount: 2 }, "yandex")).toThrow(/slide 1 visible text/u);
+  });
+
+  it("keeps narration meta checks separate and accepts ordinary subject text", () => {
+    const base = makePresentation();
+    const narrationMeta = presentationSchema.parse({
+      ...base,
+      slides: [{ ...base.slides[0], speakerNotes: "На этом слайде видна главная мысль. The rest of the narration gives a concrete explanation." }, base.slides[1]],
+    });
+    expect(() => assertPresentationQuality(narrationMeta, { id: "meta-narration", title: "Quality deck", prompt: "Quality deck", scenario: "lesson", level: "beginner", mode: "with_sources", slideCount: 2 }, "yandex")).toThrow(/slide 1 narration speakerNotes/u);
+
+    const ordinary = presentationSchema.parse({
+      ...base,
+      generatedText: base.slides.map((slide) => `Слайд ${slide.order}: ${slide.title}\n${slide.speakerNotes}`).join("\n\n"),
+      speechScript: base.slides.map((slide) => ({ slideOrder: slide.order, slideTitle: slide.title, text: slide.speakerNotes })),
+    });
+    expect(() => assertNoForbiddenTemplateText(ordinary)).not.toThrow();
+    expect(visiblePresentationText(ordinary)).toContain(ordinary.slides[0].title);
+  });
+
   it("enforces the content-slide thesis and support-point contract while allowing an explanatory diagram", () => {
     const valid = makePresentation({ slides: [{ ...makeSlide(1, "Evidence", "The experiment changed the measured result.", ["The control group kept the original condition.", "The observed difference supports the conclusion."]), slideKind: "content", layout: "bullets" }] as any });
     expect(findContentSlideContractIssues(valid)).toEqual([]);

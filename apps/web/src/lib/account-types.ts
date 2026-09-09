@@ -10,6 +10,7 @@ import type {
   ProjectStatus,
   ProjectSummary,
   ProjectWorkflow,
+  DesignReview,
   PublicNarrationState,
   PublicGenerationErrorCategory,
   Source,
@@ -58,6 +59,7 @@ export type ProjectDetail = {
   sources?: Source[];
   exports?: ExportSummary[];
   presentation?: { document: PresentationDocument } | null;
+  designReview?: DesignReview | null;
   slideCount?: number;
   updatedAt?: string;
   accessRole: ProjectAccessRole;

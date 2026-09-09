@@ -47,6 +47,11 @@ export function ProjectScriptReviewQuery({ initialProject }: { initialProject: P
   }, [dirty, project.speechDraft]);
 
   useEffect(() => {
+    if (project.status === "design_review" && !redirectedRef.current) {
+      redirectedRef.current = true;
+      router.replace(`/projects/${project.id}/design-review`);
+      return;
+    }
     if (project.status !== "ready" || redirectedRef.current) return;
     redirectedRef.current = true;
     router.replace(`/projects/${project.id}/editor`);
@@ -247,6 +252,8 @@ function statusLabel(status: string, canEdit: boolean) {
   if (status === "script_ready") return "Текст готов";
   if (status === "queued") return "Слайды в очереди";
   if (status === "generating") return "Собираем слайды";
+  if (status === "design_review") return "Проверяем дизайн";
+  if (status === "design_finalizing") return "Собираем презентацию";
   if (status === "ready") return "Презентация готова";
   if (status === "failed") return "Не удалось завершить шаг";
   return "Проект сохранён";

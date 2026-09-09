@@ -2,8 +2,12 @@ import { defineConfig, devices } from "@playwright/test";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3020";
-const skipWebServer = process.env.PLAYWRIGHT_SKIP_WEBSERVER === "true";
+const realGenerationE2E = process.env.REAL_GENERATION_E2E === "true";
+const baseURL = process.env.PLAYWRIGHT_BASE_URL || (realGenerationE2E ? "http://localhost:3010" : "http://localhost:3020");
+if (realGenerationE2E && baseURL !== "http://localhost:3010") {
+  throw new Error("REAL_GENERATION_E2E requires PLAYWRIGHT_BASE_URL=http://localhost:3010");
+}
+const skipWebServer = realGenerationE2E || process.env.PLAYWRIGHT_SKIP_WEBSERVER === "true";
 const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || findInstalledPlaywrightChrome();
 const webServerCommand = process.platform === "win32"
   ? "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-web-fast.ps1 -Port 3020 -DemoPreview -E2E"
@@ -56,7 +60,7 @@ export default defineConfig({
   },
   webServer: skipWebServer ? undefined : {
     command: webServerCommand,
-    url: `${baseURL}/api/internal-health`,
+    url: `${baseURL}/`,
     reuseExistingServer: false,
     timeout: 120_000,
   },

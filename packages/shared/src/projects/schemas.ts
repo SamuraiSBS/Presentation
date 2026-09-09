@@ -19,6 +19,8 @@ export const projectStatusSchema = z.enum([
   "script_ready",
   "queued",
   "generating",
+  "design_review",
+  "design_finalizing",
   "ready",
   "failed",
 ]);

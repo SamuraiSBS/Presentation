@@ -9,7 +9,11 @@ import {
   publicNarrationFailureMessage,
   type PresentationDocument,
   type Source,
+  slideLayoutSchema,
+  resolvePresentationTheme,
+  buildSlideCanvas,
 } from "@studydeck/shared";
+import { z } from "zod";
 import { finalCanvasSafetyIssues, materializePlannedVisuals, productionQualityReleaseResult } from "./presentation-quality.js";
 import { preparePresentationForExport } from "./export-preflight.js";
 import { captureGenerationError, errorLogFields, logger, type TraceCarrier, withTraceSpan } from "../observability.js";
@@ -26,14 +30,16 @@ import {
   publicNarrationFailureState,
   type GenerationProgressStage,
 } from "./job-progress.js";
-import { buildLocalPresentationFromAcceptedNarration, generateNarrationDraft, generatePresentationFromNarration, rebuildWeakSlidesLocally } from "./presentation.js";
+import { buildLocalPresentationFromAcceptedNarration, generateNarrationDraft, generatePresentationFromNarration, rebuildWeakSlidesLocally, generateStructuredWithProvider, selectAiProviders } from "./presentation.js";
 import { buildSlideCards, compileSlideCardsToSlides } from "./presentation/planning/builders.js";
 import { isManagedSlideCount } from "./presentation/visual-policy.js";
 import { assessFullNarrationDocument } from "./presentation/narration/processing.js";
 import { searchWebSources } from "./web-search.js";
 import { enrichPresentationImages } from "./image-search.js";
 import { runWithUsageContext } from "../usage-ledger.js";
-import { failCostEnvelope, finalizeFailedCostEnvelope, reserveCostEnvelope, settleCostEnvelope } from "../cost-envelope.js";
+import { completeCostEnvelope, failCostEnvelope, finalizeFailedCostEnvelope, reserveCostEnvelope, settleCostEnvelope } from "../cost-envelope.js";
+import { AitunnelProjectBudget, runWithAitunnelProjectBudget } from "../aitunnel-narration-budget.js";
+import { createAitunnelClient } from "../openai-client.js";
 import { EconomicReleaseGateError, evaluateEconomicReleaseGate } from "../economic-release-gate.js";
 import { createMandatorySourceSnapshot, parseMandatorySourceSnapshot, snapshotSources } from "../source-snapshot.js";
 import { captureWorkerProductAnalytics } from "../product-analytics.js";
@@ -63,6 +69,8 @@ type GenerationJobData = {
   presentationRetry?: boolean;
   rebuildSlideOrders?: number[];
   expectedPresentationRevision?: number;
+  designReviewCandidateId?: string;
+  designReviewRevision?: number;
   traceContext?: TraceCarrier;
 };
 
@@ -75,7 +83,7 @@ export async function handleGenerationJob(job: Job<GenerationQueueJobData>) {
   if (job.name === "check-defense-compliance") {
     return handleDefenseComplianceJob(job as Job<DefenseComplianceJobData>);
   }
-  if (job.name !== "generate-narration" && job.name !== "generate-presentation") {
+  if (job.name !== "generate-narration" && job.name !== "generate-presentation" && job.name !== "regenerate-slide-design") {
     throw new Error(`Unsupported generation job: ${job.name}`);
   }
   const generationJob = job as Job<GenerationJobData>;
@@ -99,8 +107,71 @@ export async function handleGenerationJob(job: Job<GenerationQueueJobData>) {
     costEnvelopePolicyVersion: envelope?.policyVersion,
     costEnvelopeSnapshot: envelope ? { policy: envelope.policySnapshot, catalog: envelope.catalogSnapshot } : undefined,
     queueJobId: generationJob.id ? String(generationJob.id) : undefined,
-    stage: kind === "narration" ? "drafting_speech" : "building_slides",
-  }, () => runGenerationJob(generationJob, kind, traceContext));
+    stage: generationJob.name === "regenerate-slide-design" ? "design_regeneration" : kind === "narration" ? "drafting_speech" : "building_slides",
+  }, () => generationJob.name === "regenerate-slide-design"
+    ? runDesignReviewRegenerationJob(generationJob)
+    : runGenerationJob(generationJob, kind, traceContext));
+}
+
+const designRegenerationSchema = z.object({
+  layout: slideLayoutSchema,
+  imagePrompt: z.string().trim().max(260).default(""),
+  imageStrategy: z.enum(["real_photo", "generated_illustration", "none"]).default("none"),
+});
+
+async function runDesignReviewRegenerationJob(job: Job<GenerationJobData>) {
+  const prisma = getPrisma();
+  const { projectId, designReviewCandidateId, designReviewRevision } = job.data;
+  const where = regularGenerationJobWhere(projectId, job.id, "presentation", job.data.generationJobId);
+  if (!designReviewCandidateId || !Number.isInteger(designReviewRevision)) throw new Error("design_review_regeneration_payload_invalid");
+  await prisma.generationJob.updateMany({ where, data: { status: "active", progressStage: "building_slides", progressLabel: "Переделываем дизайн слайда", progressPercent: 20, stageStartedAt: new Date() } });
+  try {
+    const [project, candidate] = await Promise.all([
+      prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { sources: true } }),
+      prisma.designReviewCandidate.findUniqueOrThrow({ where: { id: designReviewCandidateId }, include: { review: true } }),
+    ]);
+    if (candidate.review.projectId !== projectId || candidate.review.revision !== designReviewRevision || candidate.status !== "regenerating") throw new Error("design_review_regeneration_stale");
+    const document = presentationSchema.parse(candidate.review.document) as PresentationDocument;
+    const slide = document.slides.find((item) => item.id === candidate.slideId);
+    if (!slide) throw new Error("design_review_slide_missing");
+    const provider = selectAiProviders()[0];
+    if (!provider) throw new Error("design_review_provider_unavailable");
+    const prompt = [
+      "Redesign exactly one StudyDeck slide. Return only the requested JSON.",
+      "Do not change visible text, speaker notes, facts, theme, slide order, or other slides.",
+      `Slide title: ${slide.title}`,
+      `Fixed thesis: ${slide.thesis}`,
+      `Fixed bullets: ${slide.bullets.join(" | ")}`,
+      `User design comment: ${candidate.comment || "Create a clearer alternative."}`,
+      "Choose a different suitable layout and, only if useful, a text-free image direction.",
+    ].join("\n");
+    const design = await (provider === "aitunnel"
+      ? runWithAitunnelProjectBudget(new AitunnelProjectBudget(), () => generateStructuredWithProvider({ provider, system: "You are a restrained editorial presentation art director.", prompt, schema: designRegenerationSchema, schemaName: "studydeck_slide_design_regeneration", openAIClient: createAitunnelClient(), aitunnelStage: "design_regeneration" }))
+      : generateStructuredWithProvider({ provider, system: "You are a restrained editorial presentation art director.", prompt, schema: designRegenerationSchema, schemaName: "studydeck_slide_design_regeneration", yandexApiKey: process.env.YANDEX_API_KEY }));
+    const direction = document.designBrief?.slideDirections.find((item) => item.slideOrder === slide.order);
+    const redesignedSlide = { ...slide, layout: design.layout, visual: { ...slide.visual, description: design.imagePrompt || slide.visual.description } };
+    const redesignedDirection = direction ? { ...direction, imageStrategy: design.imageStrategy, visualPrompt: design.imagePrompt || direction.visualPrompt } : undefined;
+    const singleSlideDocument = {
+      ...document,
+      slideCount: 1,
+      slides: [redesignedSlide],
+      designBrief: document.designBrief ? { ...document.designBrief, slideDirections: redesignedDirection ? [redesignedDirection] : [] } : undefined,
+    };
+    const enriched = await enrichPresentationImages(project, singleSlideDocument, { attemptedSlideOrders: new Set<number>() });
+    const enrichedSlide = enriched.slides[0]!;
+    const canvas = buildSlideCanvas(enrichedSlide, resolvePresentationTheme(document), { designDirection: redesignedDirection });
+    await prisma.$transaction(async (tx) => {
+      const review = await tx.designReview.findUniqueOrThrow({ where: { id: candidate.reviewId }, select: { revision: true } });
+      if (review.revision !== designReviewRevision) throw new Error("design_review_regeneration_revision_changed");
+      await tx.designReviewCandidate.update({ where: { id: candidate.id }, data: { status: "pending", canvas, visualAssets: canvas.elements.filter((element) => element.type === "image").map((element) => element.objectKey || element.url), diagramModel: canvas.elements.find((element) => element.type === "diagram")?.model, error: null } });
+    });
+    if (job.data.costEnvelopeId) await completeCostEnvelope({ envelopeId: job.data.costEnvelopeId });
+    await prisma.generationJob.updateMany({ where, data: { status: "completed", progressStage: "completed", progressLabel: "Новый вариант готов", progressPercent: 100 } });
+  } catch (error) {
+    await prisma.designReviewCandidate.updateMany({ where: { id: designReviewCandidateId }, data: { status: "failed", error: "Не удалось создать новый вариант дизайна" } });
+    await prisma.generationJob.updateMany({ where, data: { status: "failed", progressStage: "failed", progressLabel: "Не удалось переделать дизайн", progressPercent: 100, error: error instanceof Error ? error.message : "design_review_regeneration_failed" } });
+    if (job.data.costEnvelopeId) await failCostEnvelope({ envelopeId: job.data.costEnvelopeId, idempotencyKey: `${job.data.costEnvelopeId}:${job.data.generationJobId || "direct"}:design_regeneration`, reason: "design_review_regeneration_failed" }).catch(() => undefined);
+  }
 }
 
 async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" | "presentation", traceContext?: TraceCarrier) {
@@ -622,17 +693,33 @@ async function runGenerationJob(job: Job<GenerationJobData>, kind: "narration" |
         await tx.project.update({ where: { id: projectId }, data: { status: "ready" } });
       });
     } else {
-      await prisma.$transaction([
-        prisma.presentation.upsert({
+      // A freshly generated deck is no longer published directly.  Keep the
+      // canonical structured document and every canvas candidate in the
+      // review boundary; only finalisation may create Presentation.
+      await prisma.$transaction(async (tx) => {
+        const review = await tx.designReview.upsert({
           where: { projectId },
           create: { projectId, document: presentation },
-          update: { document: presentation, revision: { increment: 1 } },
-        }),
-        prisma.project.update({ where: { id: projectId }, data: { status: "ready" } }),
-        ...(job.data.costEnvelopeId
-          ? [prisma.costEnvelope.update({ where: { id: job.data.costEnvelopeId }, data: { status: "completed" } })]
-          : []),
-      ]);
+          update: { document: presentation, revision: { increment: 1 }, status: "active", error: null },
+          select: { id: true },
+        });
+        await tx.designReviewCandidate.deleteMany({ where: { reviewId: review.id } });
+        await tx.designReviewCandidate.createMany({
+          data: presentation.slides.map((slide) => ({
+            reviewId: review.id,
+            slideId: slide.id,
+            slideOrder: slide.order,
+            version: 1,
+            canvas: slide.canvas!,
+            visualAssets: slide.canvas!.elements
+              .filter((element) => element.type === "image")
+              .map((element) => element.objectKey || element.url),
+            diagramModel: slide.canvas!.elements.find((element) => element.type === "diagram")?.model,
+          })),
+        });
+        await tx.project.update({ where: { id: projectId }, data: { status: "design_review", error: null } });
+        if (job.data.costEnvelopeId) await tx.costEnvelope.update({ where: { id: job.data.costEnvelopeId }, data: { status: "completed" } });
+      });
     }
     finishStage("saving");
     await setStage("completed");

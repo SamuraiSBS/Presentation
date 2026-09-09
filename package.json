@@ -26,7 +26,7 @@
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:deploy": "prisma migrate deploy",
+    "prisma:deploy": "node node_modules/prisma/build/index.js migrate deploy",
     "legacy:start": "node server.js",
     "legacy:check": "node --check server.js"
   },

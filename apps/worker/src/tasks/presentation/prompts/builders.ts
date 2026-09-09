@@ -132,6 +132,7 @@ export function buildDesignBriefPrompt(
       ? "Build Gamma-like visual rhythm while preserving clarity for the requested audience: strong cover, short text-led moments, image-led scenes only when grounded, diagrams for explanation, evidence support, and a strong final takeaway."
       : "Build Gamma-like visual rhythm while preserving university clarity: strong cover, short text-led moments, image-led scenes only when grounded, diagrams for explanation, evidence support, and a strong final takeaway.",
     "Visible slide text must follow SlideTextPlan v2: one thesis plus 2-3 linked support points by default, with up to five only for a genuinely structured composition. Use complete independent sentences, or short labels only when a diagram or schema needs them. Full explanation belongs in narration and speaker notes.",
+    "Visible slide text must never contain meta, planner, or transition language: do not mention the slide, presentation, narration, speaker, source labels, next section, or how the material should be explained. Write the subject matter itself; keep transition/meta checks separate for narration.",
     "Do not repeat the same layoutIntent three times in a row. Do not make every slide a card grid.",
     "Choose sceneTextMode for every slide: hero_phrase, talk_sentences, visual_labels, or takeaway.",
     "Use hero_phrase for the cover, title-like claims, quote spreads, and transition moments; use talk_sentences for 3-4 short spoken beats; use visual_labels for diagrams/photos; use takeaway for the final slide.",

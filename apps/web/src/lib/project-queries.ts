@@ -31,7 +31,7 @@ export const projectKeys = {
   export: (projectId: string, exportId: string) => [...projectKeys.detail(projectId), "exports", exportId] as const,
 };
 
-const activeProjectStatuses = new Set(["uploading", "script_queued", "script_generating", "queued", "generating"]);
+const activeProjectStatuses = new Set(["uploading", "script_queued", "script_generating", "queued", "generating", "design_finalizing"]);
 const activeExportStatuses = new Set(["queued", "processing"]);
 
 export function isActiveProjectStatus(status: string | undefined) {

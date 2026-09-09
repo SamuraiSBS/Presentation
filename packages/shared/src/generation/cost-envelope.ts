@@ -61,8 +61,18 @@ export const HISTORICAL_COST_ENVELOPE_V5_BUCKETS = {
   export_infra: "0.75000000",
 } as const;
 
-export type CostEnvelopeBucket = keyof typeof COST_ENVELOPE_BUCKETS | keyof typeof HISTORICAL_COST_ENVELOPE_V5_BUCKETS;
+export type CostEnvelopeBucket = keyof typeof COST_ENVELOPE_BUCKETS | keyof typeof HISTORICAL_COST_ENVELOPE_V5_BUCKETS | "design_regeneration";
 export type CostEnvelopePolicy = { version: string; limitRub: string; buckets: Record<string, string> };
+
+// A review retry is a separate, small purchase boundary. It never reopens the
+// completed deck envelope or authorises a whole-presentation rerun.
+export const DESIGN_REVIEW_REGENERATION_COST_POLICY: CostEnvelopePolicy = {
+  version: "design-review-regeneration-v1",
+  limitRub: "3.20000000",
+  buckets: { design_regeneration: "2.00000000", images: "1.20000000" },
+};
+export type DesignReviewCostEnvelopeBucket = CostEnvelopeBucket;
+export function designReviewRegenerationCostPolicy(): CostEnvelopePolicy { return { ...DESIGN_REVIEW_REGENERATION_COST_POLICY, buckets: { ...DESIGN_REVIEW_REGENERATION_COST_POLICY.buckets } }; }
 
 export const AITUNNEL_APPROVED_MODELS = ["gpt-5.6-luna", "gpt-5.6-terra"] as const;
 export type AitunnelApprovedModel = typeof AITUNNEL_APPROVED_MODELS[number];

@@ -1,4 +1,4 @@
-import { canvasTextLineHeight, exportPdfFontStack, type CanvasElement, type CanvasImageElement, type CanvasShapeElement, type CanvasTextElement } from "@studydeck/shared";
+import { canvasTextLineHeight, exportPdfFontStack, type CanvasDiagramElement, type CanvasElement, type CanvasImageElement, type CanvasShapeElement, type CanvasTextElement } from "@studydeck/shared";
 
 export type PdfCanvasDependencies = {
   readObjectBuffer: (key: string) => Promise<Buffer>;
@@ -11,8 +11,15 @@ export async function renderPdfCanvasElement(element: CanvasElement, dependencie
   const style = [`left:${element.x}px`, `top:${element.y}px`, `width:${element.w}px`, `height:${element.h}px`, `z-index:${element.zIndex}`, `opacity:${element.opacity}`, `transform:rotate(${element.rotation}deg)`].join(";");
   if (element.type === "text") return `<div class="element text" data-canvas-element="${escapeHtml(element.id)}" style="${style};${pdfTextStyle(element)}">${renderPdfText(element)}</div>`;
   if (element.type === "shape") return `<div class="element" data-canvas-element="${escapeHtml(element.id)}" style="${style}"><div class="shape" style="${pdfShapeStyle(element)}"></div></div>`;
+  if (element.type === "diagram") return `<div class="element text" data-canvas-element="${escapeHtml(element.id)}" style="${style};display:flex;align-items:center;justify-content:center;text-align:center;border:1px solid #7C8AA5;border-radius:8px;font:600 18px Arial">${escapeHtml(diagramText(element))}</div>`;
   const src = await pdfImageSrc(element, dependencies);
   return src ? `<div class="element" data-canvas-element="${escapeHtml(element.id)}" style="${style};overflow:hidden"><img class="image" src="${escapeHtml(src)}" alt="${escapeHtml(element.alt)}" style="object-fit:${element.fit}" /></div>` : "";
+}
+
+function diagramText(element: CanvasDiagramElement) {
+  return element.model.kind === "scheme"
+    ? element.model.nodes.map((node) => node.label).join(" → ")
+    : element.model.series.map((series) => `${series.name}: ${series.values.join(", ")}`).join(" · ");
 }
 
 function renderPdfText(element: CanvasTextElement) {

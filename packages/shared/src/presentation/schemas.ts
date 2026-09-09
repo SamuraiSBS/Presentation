@@ -341,10 +341,36 @@ export const canvasShapeElementSchema = canvasElementBaseSchema.extend({
 });
 export type CanvasShapeElement = z.infer<typeof canvasShapeElementSchema>;
 
+// A diagram is one canvas object.  Its model is deliberately constrained so
+// the editor can expose labels and values without letting v1 break topology.
+export const canvasDiagramNodeSchema = z.object({ id: z.string().min(1).max(80), label: z.string().max(160) });
+export const canvasDiagramEdgeSchema = z.object({ from: z.string().min(1).max(80), to: z.string().min(1).max(80), label: z.string().max(120).optional() });
+export const canvasDiagramSchemeSchema = z.object({
+  kind: z.literal("scheme"),
+  template: z.enum(["flow", "cycle", "hierarchy"]).default("flow"),
+  nodes: z.array(canvasDiagramNodeSchema).min(1).max(12),
+  edges: z.array(canvasDiagramEdgeSchema).max(20).default([]),
+});
+export const canvasDiagramDataSchema = z.object({
+  kind: z.literal("data"),
+  chart: z.enum(["bar", "line", "pie"]).default("bar"),
+  categories: z.array(z.string().min(1).max(80)).min(1).max(12),
+  series: z.array(z.object({ name: z.string().min(1).max(80), values: z.array(z.number().finite()).min(1).max(12) })).min(1).max(6),
+});
+export const canvasDiagramModelSchema = z.discriminatedUnion("kind", [canvasDiagramSchemeSchema, canvasDiagramDataSchema]);
+export type CanvasDiagramModel = z.infer<typeof canvasDiagramModelSchema>;
+export const canvasDiagramElementSchema = canvasElementBaseSchema.extend({
+  type: z.literal("diagram"),
+  model: canvasDiagramModelSchema,
+  caption: z.string().max(160).default(""),
+});
+export type CanvasDiagramElement = z.infer<typeof canvasDiagramElementSchema>;
+
 export const canvasElementSchema = z.discriminatedUnion("type", [
   canvasTextElementSchema,
   canvasImageElementSchema,
   canvasShapeElementSchema,
+  canvasDiagramElementSchema,
 ]);
 export type CanvasElement = z.infer<typeof canvasElementSchema>;
 

@@ -4,6 +4,8 @@ import {
   createProjectInputSchema,
   duplicateProjectInputSchema,
   generatePresentationInputSchema,
+  approveDesignCandidateInputSchema,
+  regenerateDesignCandidateInputSchema,
   projectListQuerySchema,
   updateNarrationInputSchema,
   updateProjectMetadataInputSchema,
@@ -63,6 +65,21 @@ export class ProjectsController {
   @Post(":id/generate")
   generate(@Req() request: InternalRequest, @Param("id") id: string, @Body() body: unknown) {
     return this.projects.enqueueGeneration(request.userId, id, parseInput(generatePresentationInputSchema, body || {}));
+  }
+
+  @Get(":id/design-review")
+  getDesignReview(@Req() request: InternalRequest, @Param("id") id: string) {
+    return this.projects.getDesignReview(request.userId, id);
+  }
+
+  @Post(":id/design-review/:slideId/approve")
+  approveDesign(@Req() request: InternalRequest, @Param("id") id: string, @Param("slideId") slideId: string, @Body() body: unknown) {
+    return this.projects.approveDesignCandidate(request.userId, id, slideId, parseInput(approveDesignCandidateInputSchema, body));
+  }
+
+  @Post(":id/design-review/:slideId/regenerate")
+  regenerateDesign(@Req() request: InternalRequest, @Param("id") id: string, @Param("slideId") slideId: string, @Body() body: unknown) {
+    return this.projects.regenerateDesignCandidate(request.userId, id, slideId, parseInput(regenerateDesignCandidateInputSchema, body));
   }
 
   @Patch(":id/sources/:sourceId")
