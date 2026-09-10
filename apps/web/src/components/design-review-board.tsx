@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, LoaderCircle, RefreshCw, WandSparkles } from "lucide-react";
+import { Check, Columns2, Image as ImageIcon, LoaderCircle, PencilRuler, RefreshCw, WandSparkles } from "lucide-react";
 import { type DesignReview } from "@studydeck/shared";
 import { ReadonlyCanvasElement } from "@/components/project-editor/editor-canvas";
 import { Button } from "@/components/ui/button";
@@ -15,12 +15,17 @@ export function DesignReviewBoard({ initialReview, title, accessRole }: Props) {
   const [selectedSlideId, setSelectedSlideId] = useState(initialReview.document.slides[0]?.id || "");
   const [selectedVersion, setSelectedVersion] = useState(1);
   const [comment, setComment] = useState("");
+  const [previewMode, setPreviewMode] = useState<"editable" | "concept" | "compare">("editable");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const editable = accessRole !== "viewer" && review.status === "active";
   const candidates = review.candidates.filter((candidate) => candidate.slideId === selectedSlideId);
   const candidate = candidates.find((item) => item.version === selectedVersion) || candidates.at(-1);
   const slide = review.document.slides.find((item) => item.id === selectedSlideId);
+  const conceptAvailable = candidate?.engine === "ai_scene_v2" && Boolean(candidate.conceptObjectKey);
+  const conceptUrl = candidate && conceptAvailable
+    ? `/api/projects/${review.projectId}/design-review/candidates/${candidate.id}/assets/concept`
+    : "";
 
   async function reload() {
     const response = await fetch(`/api/projects/${review.projectId}/design-review`, { cache: "no-store" });
@@ -64,12 +69,23 @@ export function DesignReviewBoard({ initialReview, title, accessRole }: Props) {
         const active = item.id === selectedSlideId; const approved = review.candidates.some((candidate) => candidate.slideId === item.id && candidate.status === "approved");
         return <button className={`design-review-thumb${active ? " active" : ""}`} key={item.id} onClick={() => { setSelectedSlideId(item.id); setSelectedVersion(review.candidates.filter((candidate) => candidate.slideId === item.id && candidate.status === "approved")[0]?.version || review.candidates.find((candidate) => candidate.slideId === item.id)?.version || 1); }} type="button"><span>{item.order}</span><strong>{item.title}</strong><small>{approved ? "Утверждён" : "Ожидает решения"}</small></button>;
       })}</nav>
-      <div className="design-review-stage">{slide && candidate ? <div className="design-review-canvas" style={{ width: candidate.canvas.width, height: candidate.canvas.height, background: candidate.canvas.background }}>
-        {candidate.canvas.elements.map((element) => <ReadonlyCanvasElement element={element} key={element.id} onSelect={() => undefined} />)}
+      <div className="design-review-stage">{slide && candidate ? <div className="design-review-preview-wrap">
+        {conceptAvailable ? <div className="design-review-preview-switch" role="group" aria-label="Режим просмотра варианта">
+          <Button type="button" size="sm" variant={previewMode === "concept" ? "default" : "ghost"} onClick={() => setPreviewMode("concept")}><ImageIcon size={15} />AI эскиз</Button>
+          <Button type="button" size="sm" variant={previewMode === "editable" ? "default" : "ghost"} onClick={() => setPreviewMode("editable")}><PencilRuler size={15} />Редактируемый</Button>
+          <Button type="button" size="sm" variant={previewMode === "compare" ? "default" : "ghost"} onClick={() => setPreviewMode("compare")}><Columns2 size={15} />Сравнить</Button>
+        </div> : null}
+        <div className={`design-review-comparison${previewMode === "compare" && conceptAvailable ? " compare" : ""}`}>
+          {(previewMode === "concept" || previewMode === "compare") && conceptAvailable ? <figure className="design-review-concept"><figcaption>AI эскиз — визуальный ориентир</figcaption><img src={conceptUrl} alt={`AI эскиз: ${slide.title}`} /></figure> : null}
+          {(previewMode !== "concept" || !conceptAvailable) ? <figure className="design-review-editable"><figcaption>Редактируемая версия — именно её можно утвердить</figcaption><div className="design-review-canvas" style={{ width: candidate.canvas.width, height: candidate.canvas.height, background: candidate.canvas.background }}>
+            {candidate.canvas.elements.map((element) => <ReadonlyCanvasElement element={element} key={element.id} onSelect={() => undefined} />)}
+          </div></figure> : null}
+        </div>
       </div> : <p>Выберите слайд.</p>}</div>
       <aside className="design-review-actions"><h2>Слайд {slide?.order}</h2><p>{candidate?.status === "approved" ? "Этот вариант утверждён." : candidate?.status === "regenerating" ? "AI создаёт новый вариант. Утверждённые слайды не меняются." : candidate?.status === "failed" ? "Этот вариант не удалось создать. Выберите другую версию или повторите запрос." : "Выберите вариант или попросите переделать дизайн."}</p>
         {candidates.length > 1 ? <label className="field">Версия<select className="input" value={candidate?.version || ""} onChange={(event) => setSelectedVersion(Number(event.target.value))}>{candidates.map((item) => <option key={item.id} value={item.version}>Версия {item.version}</option>)}</select></label> : null}
         {editable ? <><Button type="button" onClick={approve} disabled={busy || !candidate || candidate.status === "regenerating" || candidate.status === "failed"}>{busy ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}Утвердить дизайн</Button><label className="field">Комментарий для нового варианта<textarea className="textarea" value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Например: сделайте схему спокойнее и добавьте больше воздуха" /></label><Button type="button" variant="secondary" onClick={regenerate} disabled={busy || !candidate || candidate.status === "regenerating"}><WandSparkles size={17} />Переделать дизайн</Button></> : null}
+        {candidate?.engine === "ai_scene_v2" ? <p className={`design-review-quality${candidate.qualityReport?.passed ? " passed" : ""}`}>{candidate.qualityReport?.passed ? "Проверки canvas пройдены; перед утверждением сверяйте эскиз и редактируемую версию." : "Проверки AI-сцены ещё не завершены; утверждение заблокировано."}{candidate.contentHash ? ` Content hash: ${candidate.contentHash.slice(0, 12)}…` : ""}</p> : null}
         {candidate?.comment ? <p className="design-review-comment">Последний комментарий: {candidate.comment}</p> : null}{error ? <p className="form-error">{error}</p> : null}
       </aside>
     </div>

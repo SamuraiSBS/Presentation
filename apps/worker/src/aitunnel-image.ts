@@ -25,6 +25,8 @@ export type GeneratedAitunnelImage = {
   providerRequestId?: string;
 };
 
+export type AitunnelImagePurpose = "illustration" | "slide_concept" | "background_layer";
+
 export type AitunnelImageFailureDetails = {
   provider: "aitunnel";
   model: string;
@@ -129,17 +131,21 @@ export function aitunnelImageFailureDetails(error: unknown, env: EnvLike = proce
   };
 }
 
-export async function generateAitunnelImage(prompt: string, env: EnvLike = process.env): Promise<GeneratedAitunnelImage> {
+export async function generateAitunnelImage(
+  prompt: string,
+  env: EnvLike = process.env,
+  options: { purpose?: AitunnelImagePurpose } = {},
+): Promise<GeneratedAitunnelImage> {
   const config = aitunnelImageConfig(env);
   if (!config) throw new Error("AITUNNEL_API_KEY and a valid AITUNNEL_IMAGE_MODEL are required");
 
-  if (config.mode === "chat_svg") return generateAitunnelSvgImage(prompt, config, env);
+  if (config.mode === "chat_svg") return generateAitunnelSvgImage(prompt, config, env, options);
 
   const controller = new AbortController();
   const timeoutMs = imageTimeoutMs(env, "raster");
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${config.baseURL}/images/generations`, {
+    const response = await createAitunnelFetch(env)(`${config.baseURL}/images/generations`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
@@ -204,12 +210,17 @@ export async function generateAitunnelImage(prompt: string, env: EnvLike = proce
   }
 }
 
-async function generateAitunnelSvgImage(prompt: string, config: AitunnelImageConfig, env: EnvLike): Promise<GeneratedAitunnelImage> {
+async function generateAitunnelSvgImage(
+  prompt: string,
+  config: AitunnelImageConfig,
+  env: EnvLike,
+  options: { purpose?: AitunnelImagePurpose },
+): Promise<GeneratedAitunnelImage> {
   const controller = new AbortController();
   const timeoutMs = imageTimeoutMs(env, "chat_svg");
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${config.baseURL}/chat/completions`, {
+    const response = await createAitunnelFetch(env)(`${config.baseURL}/chat/completions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
@@ -220,7 +231,9 @@ async function generateAitunnelSvgImage(prompt: string, config: AitunnelImageCon
         messages: [
           {
             role: "system",
-            content: "Return only one self-contained SVG illustration. Use a 16:9 viewBox, simple geometric shapes and gradients, no external resources, no text, no logos, no scripts, no foreignObject, no event handlers, and no embedded raster data.",
+            content: options.purpose === "slide_concept"
+              ? "Return only one self-contained SVG concept mockup for a 16:9 presentation slide. Use simple geometric shapes, gradients and the exact supplied Russian text in SVG text elements. No external resources, logos, scripts, foreignObject, event handlers or embedded raster data. This is an artistic reference, not the editable final slide."
+              : "Return only one self-contained SVG illustration. Use a 16:9 viewBox, simple geometric shapes and gradients, no external resources, no text, no logos, no scripts, no foreignObject, no event handlers, and no embedded raster data.",
           },
           {
             role: "user",
@@ -322,3 +335,4 @@ function clampNumber(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) return min;
   return Math.max(min, Math.min(max, Math.trunc(value)));
 }
+import { createAitunnelFetch } from "./openai-client.js";

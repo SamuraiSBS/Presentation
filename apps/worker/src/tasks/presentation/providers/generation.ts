@@ -1560,6 +1560,9 @@ async function reservePersistedAitunnelStageEnvelope(provider: "openai" | "aitun
     "quality_critique",
     "quality_repair",
     "slide_text_repair",
+    "style_direction",
+    "scene_analysis",
+    "scene_repair",
   ]);
   const context = currentUsageContext();
   const envelopeId = provider === "aitunnel" && stage && persistedStages.has(stage) ? context?.costEnvelopeId : undefined;

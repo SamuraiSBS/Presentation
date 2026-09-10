@@ -61,6 +61,10 @@ export function ensureEditableCanvas(
     ...document,
     presentationTheme: theme,
     slides: document.slides.map((slide) => {
+      // A v2 scene is already the canonical editable projection.  In
+      // particular, do not run it through the editorial compatibility
+      // builder: that would discard the AI-authored composition.
+      if (slide.canvas?.origin === "ai_scene_v2") return slide;
       const designDirection = document.designBrief?.slideDirections.find((direction) => direction.slideOrder === slide.order);
       const generatedCanvas = buildSlideCanvas(slide, theme, { designDirection, recovery });
       const hasExplicitCustomCanvas = slide.canvas?.elements.some(

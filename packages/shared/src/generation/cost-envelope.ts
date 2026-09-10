@@ -61,7 +61,22 @@ export const HISTORICAL_COST_ENVELOPE_V5_BUCKETS = {
   export_infra: "0.75000000",
 } as const;
 
-export type CostEnvelopeBucket = keyof typeof COST_ENVELOPE_BUCKETS | keyof typeof HISTORICAL_COST_ENVELOPE_V5_BUCKETS | "design_regeneration";
+export const AI_SCENE_V2_PROTOTYPE_COST_POLICY: CostEnvelopePolicy = {
+  // This is deliberately separate from the standard deck envelope: the
+  // two-slide stop/go run must not debit or reopen a finished presentation.
+  version: "ai-scene-v2-prototype-v1",
+  limitRub: "24.00000000",
+  buckets: {
+    style_direction: "1.00000000",
+    slide_concept: "8.00000000",
+    scene_analysis: "2.00000000",
+    layer_generation: "8.00000000",
+    scene_repair: "5.00000000",
+  },
+};
+
+export type AiSceneCostEnvelopeBucket = keyof typeof AI_SCENE_V2_PROTOTYPE_COST_POLICY.buckets;
+export type CostEnvelopeBucket = keyof typeof COST_ENVELOPE_BUCKETS | keyof typeof HISTORICAL_COST_ENVELOPE_V5_BUCKETS | "design_regeneration" | AiSceneCostEnvelopeBucket;
 export type CostEnvelopePolicy = { version: string; limitRub: string; buckets: Record<string, string> };
 
 // A review retry is a separate, small purchase boundary. It never reopens the
@@ -85,6 +100,7 @@ export const AITUNNEL_PROVIDER_CATALOG: Record<AitunnelApprovedModel, AitunnelCa
 
 export function standardGenerationCostPolicy(): CostEnvelopePolicy { return { version: COST_ENVELOPE_POLICY_VERSION, limitRub: COST_ENVELOPE_LIMIT_RUB, buckets: { ...COST_ENVELOPE_BUCKETS } }; }
 export function historicalStandardGenerationCostPolicyV5(): CostEnvelopePolicy { return { version: "standard-generation-cost-envelope-v5", limitRub: "18.20000000", buckets: { ...HISTORICAL_COST_ENVELOPE_V5_BUCKETS } }; }
+export function aiScenePrototypeCostPolicy(): CostEnvelopePolicy { return { ...AI_SCENE_V2_PROTOTYPE_COST_POLICY, buckets: { ...AI_SCENE_V2_PROTOTYPE_COST_POLICY.buckets } }; }
 export function costEnvelopePolicyIsValid(policy: unknown = standardGenerationCostPolicy()) {
   if (!policy || typeof policy !== "object") return false;
   const candidate = policy as Partial<CostEnvelopePolicy>;

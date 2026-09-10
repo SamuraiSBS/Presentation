@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
+import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import {
   createProjectInputSchema,
@@ -80,6 +80,19 @@ export class ProjectsController {
   @Post(":id/design-review/:slideId/regenerate")
   regenerateDesign(@Req() request: InternalRequest, @Param("id") id: string, @Param("slideId") slideId: string, @Body() body: unknown) {
     return this.projects.regenerateDesignCandidate(request.userId, id, slideId, parseInput(regenerateDesignCandidateInputSchema, body));
+  }
+
+  @Get(":id/design-review/candidates/:candidateId/assets/:kind")
+  getDesignReviewCandidateAsset(
+    @Req() request: InternalRequest,
+    @Param("id") projectId: string,
+    @Param("candidateId") candidateId: string,
+    @Param("kind") kind: string,
+  ) {
+    if (kind !== "concept" && kind !== "editable-preview" && kind !== "background") {
+      throw new NotFoundException("Артефакт дизайна не найден");
+    }
+    return this.projects.getDesignReviewCandidateAssetDownloadUrl(request.userId, projectId, candidateId, kind);
   }
 
   @Patch(":id/sources/:sourceId")

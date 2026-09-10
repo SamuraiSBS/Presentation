@@ -364,3 +364,49 @@ export const generationBriefSchema = z.object({
   exportTarget: z.enum(["web_and_pptx_pdf"]).default("web_and_pptx_pdf"),
 });
 export type GenerationBrief = z.infer<typeof generationBriefSchema>;
+
+const sceneColorSchema = z.string().trim().regex(/^#[0-9a-fA-F]{6}$/, "scene colors must be #RRGGBB");
+
+/** One art-direction contract shared by every v2 scene in a deck. */
+export const deckStyleSpecSchema = z.object({
+  version: z.number().int().positive().default(1),
+  palette: z.object({
+    background: sceneColorSchema,
+    surface: sceneColorSchema,
+    text: sceneColorSchema,
+    mutedText: sceneColorSchema,
+    accent: sceneColorSchema,
+    accentSecondary: sceneColorSchema,
+  }),
+  atmosphere: z.string().trim().min(12).max(600),
+  typography: z.object({
+    title: z.string().trim().min(1).max(80),
+    body: z.string().trim().min(1).max(80),
+    hierarchy: z.string().trim().min(12).max(400),
+  }),
+  imageStyle: z.string().trim().min(12).max(400),
+  diagramStyle: z.string().trim().min(12).max(400),
+  whitespaceRule: z.string().trim().min(12).max(400),
+  allowedEffects: z.array(z.enum(["soft_shadow", "glow", "transparent_overlay", "grain", "none"])).min(1).max(4),
+  forbiddenTechniques: z.array(z.string().trim().min(3).max(160)).min(1).max(8),
+  generationPrompt: z.string().trim().min(24).max(1800),
+});
+export type DeckStyleSpec = z.infer<typeof deckStyleSpecSchema>;
+
+export const slideContentLockTextSchema = z.object({
+  key: z.string().trim().regex(/^(?:title|thesis|label:[a-z0-9_-]+|sentence:[a-z0-9_-]+|diagram\.(?:node|edge):[a-z0-9_-]+)$/i),
+  text: z.string().trim().min(1).max(360),
+});
+
+/** The immutable visible-content boundary between approved speech and design. */
+export const slideContentLockSchema = z.object({
+  slideId: z.string().trim().min(1),
+  slideOrder: z.number().int().positive(),
+  composition: slideTextCompositionSchema,
+  title: z.string().trim().min(1).max(180),
+  thesis: z.string().trim().min(1).max(420),
+  text: z.array(slideContentLockTextSchema).min(2).max(18),
+  facts: z.array(z.string().trim().min(1).max(160)).max(10).default([]),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+});
+export type SlideContentLock = z.infer<typeof slideContentLockSchema>;

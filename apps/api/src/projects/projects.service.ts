@@ -38,6 +38,8 @@ import {
   type PublicNarrationState,
   slideCanvasSchema,
   auditSlideCanvas,
+  candidateQualityReportSchema,
+  slideContentLockSchema,
 } from "@studydeck/shared";
 import { ProjectAccessService } from "../access/project-access.service.js";
 import { badRequest, conflict, resourceNotFound } from "../errors/api-error.js";
@@ -726,6 +728,14 @@ export class ProjectsService {
       if (review.status !== "active") throw conflict("DESIGN_REVIEW_UNAVAILABLE", "Сейчас нельзя менять варианты дизайна");
       const candidate = review.candidates.find((item) => item.slideId === slideId && item.version === input.version);
       if (!candidate || candidate.status === "failed" || candidate.status === "regenerating") throw new NotFoundException("Готовая версия слайда не найдена");
+      if (candidate.engine === "ai_scene_v2") {
+        const contentLock = slideContentLockSchema.safeParse(candidate.contentLock);
+        const quality = candidateQualityReportSchema.safeParse(candidate.qualityReport);
+        const artifactReady = Boolean(candidate.conceptObjectKey && candidate.renderedPreviewObjectKey);
+        if (!contentLock.success || candidate.contentHash !== contentLock.data.contentHash || !quality.success || !quality.data.passed || quality.data.contentHash !== candidate.contentHash || !artifactReady) {
+          throw badRequest("AI_SCENE_CANDIDATE_NOT_READY", "AI-сцена не прошла обязательные проверки или потеряла связь с зафиксированным содержанием");
+        }
+      }
       await tx.designReviewCandidate.updateMany({ where: { reviewId: review.id, slideId, status: "approved" }, data: { status: "pending" } });
       await tx.designReviewCandidate.update({ where: { id: candidate.id }, data: { status: "approved", error: null } });
       const candidates = review.candidates.map((item) => item.id === candidate.id ? { ...item, status: "approved" } : item.slideId === slideId && item.status === "approved" ? { ...item, status: "pending" } : item);
@@ -764,7 +774,17 @@ export class ProjectsService {
       const currentVersion = Math.max(0, ...review.candidates.filter((item) => item.slideId === slideId).map((item) => item.version));
       const previous = review.candidates.find((item) => item.slideId === slideId && item.version === currentVersion);
       if (!previous) throw new NotFoundException("Текущая версия слайда не найдена");
-      const created = await tx.designReviewCandidate.create({ data: { reviewId: review.id, slideId, slideOrder: slide.order, version: currentVersion + 1, status: "regenerating", canvas: previous.canvas as Prisma.InputJsonValue, comment: input.comment, visualAssets: previous.visualAssets === null ? Prisma.JsonNull : previous.visualAssets as Prisma.InputJsonValue, diagramModel: previous.diagramModel === null ? Prisma.JsonNull : previous.diagramModel as Prisma.InputJsonValue } });
+      const created = await tx.designReviewCandidate.create({ data: {
+        reviewId: review.id, slideId, slideOrder: slide.order, version: currentVersion + 1, status: "regenerating", canvas: previous.canvas as Prisma.InputJsonValue, comment: input.comment,
+        visualAssets: previous.visualAssets === null ? Prisma.JsonNull : previous.visualAssets as Prisma.InputJsonValue,
+        diagramModel: previous.diagramModel === null ? Prisma.JsonNull : previous.diagramModel as Prisma.InputJsonValue,
+        ...(previous.engine === "ai_scene_v2" ? {
+          engine: "ai_scene_v2",
+          contentLock: previous.contentLock === null ? Prisma.JsonNull : previous.contentLock as Prisma.InputJsonValue,
+          contentHash: previous.contentHash,
+          sceneSpec: previous.sceneSpec === null ? Prisma.JsonNull : previous.sceneSpec as Prisma.InputJsonValue,
+        } : {}),
+      } });
       const generationJob = await tx.generationJob.create({ data: { projectId, kind: "presentation", status: "queued", requestKey: `design-review:${review.id}:${slideId}:${created.version}` } });
       const policy = designReviewRegenerationCostPolicy();
       const envelope = await tx.costEnvelope.create({ data: { projectId, presentationJobId: generationJob.id, policyVersion: policy.version, limitRub: policy.limitRub, policySnapshot: policy, catalogSnapshot: aitunnelCatalogSnapshot() } });
@@ -783,6 +803,36 @@ export class ProjectsService {
       ]);
       throw error;
     }
+  }
+
+  async getDesignReviewCandidateAssetDownloadUrl(
+    userId: string,
+    projectId: string,
+    candidateId: string,
+    kind: "concept" | "editable-preview" | "background",
+  ) {
+    await this.access.requireViewer(userId, projectId);
+    const candidate = await this.prisma.designReviewCandidate.findFirst({
+      where: { id: candidateId, review: { projectId } },
+      select: { conceptObjectKey: true, renderedPreviewObjectKey: true, canvas: true },
+    });
+    if (!candidate) throw new NotFoundException("Вариант дизайна не найден");
+    const parsedCanvas = slideCanvasSchema.safeParse(candidate.canvas);
+    const background = parsedCanvas.success
+      ? parsedCanvas.data.elements.find((element): element is CanvasImageElement => element.id === "ai-scene-background" && element.type === "image")
+      : undefined;
+    const objectKey = kind === "concept"
+      ? candidate.conceptObjectKey
+      : kind === "editable-preview"
+        ? candidate.renderedPreviewObjectKey
+        : background?.objectKey;
+    if (!objectKey) throw new NotFoundException("Артефакт дизайна недоступен");
+    const url = await getSignedUrl(
+      this.getS3(),
+      new GetObjectCommand({ Bucket: this.config.getOrThrow<string>("S3_BUCKET"), Key: objectKey }),
+      { expiresIn: 60 * 5 },
+    );
+    return { url };
   }
 
   async updateSlide(userId: string, projectId: string, slideId: string, input: UpdateSlideInput) {

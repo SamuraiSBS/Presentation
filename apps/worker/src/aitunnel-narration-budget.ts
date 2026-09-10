@@ -40,7 +40,7 @@ export type AitunnelNarrationFallbackStage = `narration_section_${AitunnelNarrat
 export type AitunnelNarrationGlobalRewriteStage = "narration_global_rewrite";
 export type AitunnelNarrationSectionStage = AitunnelNarrationCandidateStage | AitunnelNarrationFallbackStage | AitunnelNarrationGlobalRewriteStage;
 export type AitunnelFullNarrationStage = "narration_full_candidate" | "narration_full_rewrite" | "narration_targeted_repair";
-export type AitunnelStage = "narrative_plan" | "design_brief" | "quality_critique" | AitunnelNarrationSectionStage | AitunnelFullNarrationStage | "narration" | "narration_rewrite" | "presentation" | "design_regeneration" | "slide_text_repair" | "quality_repair";
+export type AitunnelStage = "narrative_plan" | "design_brief" | "quality_critique" | AitunnelNarrationSectionStage | AitunnelFullNarrationStage | "narration" | "narration_rewrite" | "presentation" | "design_regeneration" | "slide_text_repair" | "quality_repair" | "style_direction" | "scene_analysis" | "scene_repair";
 export type AitunnelNarrationReasoningEffort = "minimal" | "low" | "medium" | "high";
 export type AitunnelNarrationBudgetConfig = { budgetRub: string; maxOutputTokens: number; reasoningEffort: AitunnelNarrationReasoningEffort };
 export type AitunnelNarrationUsage = { inputTokens?: number; outputTokens?: number; reasoningTokens?: number };
@@ -73,6 +73,11 @@ const STAGE_POLICIES: Record<AitunnelStage, { model: "economy" | "primary"; maxO
   design_regeneration: { model: "economy", maxOutputTokens: 1600, reasoningEffort: "minimal" },
   slide_text_repair: { model: "economy", maxOutputTokens: 2400, reasoningEffort: "minimal" },
   quality_repair: { model: "economy", maxOutputTokens: 3600, reasoningEffort: "minimal" },
+  // One bounded recovery call is allowed for a truncated style JSON. At the
+  // Luna tariff this remains inside the prototype's separate 1 RUB slot.
+  style_direction: { model: "economy", maxOutputTokens: 2200, reasoningEffort: "minimal" },
+  scene_analysis: { model: "economy", maxOutputTokens: 2600, reasoningEffort: "minimal" },
+  scene_repair: { model: "economy", maxOutputTokens: 2600, reasoningEffort: "minimal" },
 };
 const SCALE = 100_000_000n;
 const MILLION = 1_000_000n;
@@ -147,6 +152,24 @@ export class AitunnelProjectBudget {
     this.reservations.delete(key);
     const model = STAGE_POLICIES[active.stage].model === "economy" ? AITUNNEL_ECONOMY_MODEL : AITUNNEL_PRIMARY_MODEL;
     const actualCostRub = costRub(usage.inputTokens, usage.outputTokens, aitunnelPriceForModel(model)!);
+    this.projectSettled = add(this.projectSettled, actualCostRub);
+    if (active.stage.startsWith("narration_section_") || active.stage === "narration_global_rewrite" || active.stage === "narration_full_candidate" || active.stage === "narration_full_rewrite" || active.stage === "narration_targeted_repair" || active.stage === "narration" || active.stage === "narration_rewrite") this.narrationSettled = add(this.narrationSettled, actualCostRub);
+    const overrun = decimalToScaled(actualCostRub) > decimalToScaled(active.reservation.costRub) || decimalToScaled(this.projectSettled) > decimalToScaled(this.config.projectBudgetRub) || decimalToScaled(this.narrationSettled) > decimalToScaled(this.config.narrationBudgetRub);
+    if (overrun) this.blocked = true;
+    return { status: overrun ? "aitunnel_project_budget_overrun" as const : "settled" as const, actualCostRub, reservation: active.reservation, projectRemaining: remainingBudget(this.config.projectBudgetRub, this.projectSettled), narrationRemaining: remainingBudget(this.config.narrationBudgetRub, this.narrationSettled) };
+  }
+  /**
+   * AITUNNEL may return an authoritative `cost-rub` HTTP header without token
+   * counts. Treat it as a settled provider-reported amount instead of silently
+   * continuing with an unknown cost.
+   */
+  settleReportedCost(key: string, actualCostRub: string) {
+    const active = this.reservations.get(key);
+    if (!active || !/^\d+(?:\.\d+)?$/.test(actualCostRub) || decimalToScaled(actualCostRub) < 0n) {
+      this.blocked = true;
+      return { status: "aitunnel_usage_unavailable" as const };
+    }
+    this.reservations.delete(key);
     this.projectSettled = add(this.projectSettled, actualCostRub);
     if (active.stage.startsWith("narration_section_") || active.stage === "narration_global_rewrite" || active.stage === "narration_full_candidate" || active.stage === "narration_full_rewrite" || active.stage === "narration_targeted_repair" || active.stage === "narration" || active.stage === "narration_rewrite") this.narrationSettled = add(this.narrationSettled, actualCostRub);
     const overrun = decimalToScaled(actualCostRub) > decimalToScaled(active.reservation.costRub) || decimalToScaled(this.projectSettled) > decimalToScaled(this.config.projectBudgetRub) || decimalToScaled(this.narrationSettled) > decimalToScaled(this.config.narrationBudgetRub);

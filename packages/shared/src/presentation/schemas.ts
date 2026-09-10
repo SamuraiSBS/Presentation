@@ -405,6 +405,10 @@ export type CanvasBackgroundStyle = z.infer<typeof canvasBackgroundStyleSchema>;
 
 export const slideCanvasSchema = z.object({
   version: z.number().int().min(1).optional(),
+  // `ai_scene_v2` canvases are authored by the scene compiler.  This marker
+  // prevents compatibility helpers from mistaking a freeform scene for an
+  // older generated template and rebuilding it.
+  origin: z.enum(["template", "ai_scene_v2"]).optional(),
   width: z.number().int().positive().default(1280),
   height: z.number().int().positive().default(720),
   background: presentationThemeColorSchema.default("#F7F8FA"),

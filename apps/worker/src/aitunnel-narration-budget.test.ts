@@ -77,4 +77,13 @@ describe("AITUNNEL narration budget", () => {
     const reservation = reserveNarrationCall({ estimatedInputTokens: 1, maxOutputTokens: AITUNNEL_NARRATION_SECTION_MAX_OUTPUT_TOKENS });
     expect(settleCall({ reservation, actualUsage: undefined })).toEqual({ status: "usage_unavailable" });
   });
+
+  it("uses AITUNNEL's provider-reported ruble header when token usage is absent", () => {
+    const budget = new AitunnelProjectBudget({ AITUNNEL_PROJECT_BUDGET_RUB: "2", AITUNNEL_NARRATION_JOB_BUDGET_RUB: "2" });
+    expect(budget.reserve("style", "style_direction", { prompt: "style" }).status).toBe("reserved");
+    expect(budget.settleReportedCost("style", "0.25000000")).toMatchObject({ status: "settled", actualCostRub: "0.25000000" });
+    expect(budget.reserve("next", "presentation", { prompt: "next" }).status).toBe("reserved");
+    expect(budget.settleReportedCost("next", "not-a-cost")).toEqual({ status: "aitunnel_usage_unavailable" });
+    expect(budget.reserve("blocked", "presentation", { prompt: "later" })).toEqual({ status: "aitunnel_project_budget_overrun" });
+  });
 });

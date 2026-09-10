@@ -17,7 +17,8 @@ export async function renderHtmlToPdf(
     // Headless Chromium in the Alpine worker has no usable Vulkan/EGL
     // surface. Disabling GPU initialization avoids renderer crashes while
     // keeping Chromium's software fallback available for page rendering.
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--font-render-hinting=medium"],
+    protocolTimeout: 60_000,
     headless: true,
   });
 
@@ -39,7 +40,7 @@ export async function renderHtmlToPdf(
       preferCSSPageSize: true,
     }));
   } finally {
-    await browser.close();
+    await browser.close().catch(() => undefined);
   }
 }
 
@@ -50,6 +51,8 @@ export function chromiumExecutablePath() {
     "/usr/bin/chromium-browser",
     "/usr/bin/chromium",
     "/usr/bin/google-chrome-stable",
+    process.platform === "win32" ? `${process.env.ProgramFiles || "C:\\Program Files"}\\Google\\Chrome\\Application\\chrome.exe` : undefined,
+    process.platform === "win32" ? `${process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)"}\\Microsoft\\Edge\\Application\\msedge.exe` : undefined,
   ].filter(Boolean) as string[];
   const executable = candidates.find((candidate) => existsSync(candidate));
   if (!executable) {

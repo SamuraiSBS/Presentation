@@ -649,6 +649,9 @@ model DesignReview {
   revision  Int                @default(1)
   status    DesignReviewStatus @default(active)
   error     String?            @db.Text
+  deckStyleSpec Json?
+  designEngine  String          @default("template")
+  styleVersion  Int             @default(1)
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
   project   Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -667,12 +670,22 @@ model DesignReviewCandidate {
   diagramModel Json?
   comment      String?               @db.Text
   error        String?               @db.Text
+  conceptObjectKey String?
+  renderedPreviewObjectKey String?
+  sceneSpec Json?
+  contentLock Json?
+  contentHash String?
+  qualityReport Json?
+  providerMetadata Json?
+  engine String @default("template")
+  generationDurationMs Int?
   createdAt    DateTime              @default(now())
   updatedAt    DateTime              @updatedAt
   review       DesignReview          @relation(fields: [reviewId], references: [id], onDelete: Cascade)
 
   @@unique([reviewId, slideId, version])
   @@index([reviewId, slideOrder, version])
+  @@index([reviewId, engine])
 }
 
 // Private, redacted terminal-generation diagnostics. The JSON payload is a
