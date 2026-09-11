@@ -97,7 +97,7 @@ export async function generateNarrationDraft(project: ProjectInput, sources: Sou
           const narrativePlan = await generateNarrativePlanWithProvider(provider, project, sources, researchBrief, { openAIClient: client, openAIModel: config.narrationModel });
           const deckStory = buildDeckStory(project, researchBrief, narrativePlan, sources);
           const designBrief = buildDesignBrief(project, researchBrief, narrativePlan);
-          const narrationOutcome = ["standard-generation-cost-envelope-v6", "standard-generation-cost-envelope-v7", "standard-generation-cost-envelope-v8", "standard-generation-cost-envelope-v9", "standard-generation-cost-envelope-v10", "standard-generation-cost-envelope-v11", "standard-generation-cost-envelope-v12", "standard-generation-cost-envelope-v13", "standard-generation-cost-envelope-v14"].includes(currentUsageContext()?.costEnvelopePolicyVersion || "")
+          const narrationOutcome = ["standard-generation-cost-envelope-v6", "standard-generation-cost-envelope-v7", "standard-generation-cost-envelope-v8", "standard-generation-cost-envelope-v9", "standard-generation-cost-envelope-v10", "standard-generation-cost-envelope-v11", "standard-generation-cost-envelope-v12", "standard-generation-cost-envelope-v13", "standard-generation-cost-envelope-v14", "standard-generation-cost-envelope-v15"].includes(currentUsageContext()?.costEnvelopePolicyVersion || "")
             ? await generateAitunnelFullNarrationOutcome(client, project, sources, narrativePlan)
             : undefined;
           // Every v6 outcome is narration-only. It must reach the persistence

@@ -17,7 +17,7 @@ const { prismaMock, transactionMock } = vi.hoisted(() => {
 vi.mock("./prisma.js", () => ({ getPrisma: () => prismaMock }));
 
 describe("standard generation cost envelope policy", () => {
-  it("has the exact v14 23.75 RUB cap with current Luna pricing and provider-reported web search", () => {
+  it("has the exact v15 24.30 RUB cap with current Luna pricing and Flare image capacity", () => {
     const policy = standardGenerationCostPolicy();
     expect(policy.limitRub).toBe(COST_ENVELOPE_LIMIT_RUB);
     expect(policy.buckets).toEqual(COST_ENVELOPE_BUCKETS);
@@ -28,14 +28,14 @@ describe("standard generation cost envelope policy", () => {
     expect(policy.buckets.sources).toBe("2.50000000");
     expect(policy.buckets.presentation).toBe("4.20000000");
     expect(AITUNNEL_PROVIDER_CATALOG["gpt-5.6-luna"]).toMatchObject({ inputRubPerMillion: "40", outputRubPerMillion: "240", version: "aitunnel-gpt-5.6-luna-pricing-2026-09-07", effectiveFrom: "2026-09-07T00:00:00.000Z" });
-    expect(policy.buckets.images).toBe("2.00000000");
+    expect(policy.buckets.images).toBe("2.55000000");
     expect(costEnvelopePolicyIsValid(policy)).toBe(true);
   });
 
-  it("keeps all v14 narration reservations and provider stages inside the cap", () => {
+  it("keeps all v15 narration reservations and provider stages inside the cap", () => {
     const policy = standardGenerationCostPolicy();
     expect(Number(policy.buckets.narration_full_candidate) + Number(policy.buckets.narration_full_rewrite) + Number(policy.buckets.narration_targeted_repair)).toBeCloseTo(6.5, 8);
-    expect(Object.values(policy.buckets).reduce((sum, amount) => sum + Number(amount), 0)).toBeCloseTo(23.75, 8);
+    expect(Object.values(policy.buckets).reduce((sum, amount) => sum + Number(amount), 0)).toBeCloseTo(24.3, 8);
   });
 
   it("continues to validate persisted v5 snapshots without treating them as v6", () => {

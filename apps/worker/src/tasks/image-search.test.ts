@@ -210,7 +210,7 @@ describe("image search helpers", () => {
       {
         generateImage: async (prompt) => {
           generatedPrompt = prompt;
-          return { buffer: generatedBuffer, contentType: "image/png", model: "gpt-image-1-mini", costRub: "0.40800000" };
+          return { buffer: generatedBuffer, contentType: "image/png", model: "gpt-image-2.5-flare", costRub: "0.85000000" };
         },
         reserveImageBucket: async () => ({ envelopeId: "aitunnel-envelope", idempotencyKey: "aitunnel-image", amountRub: "0.50000000" }),
         settleImageBucket: async (_reservation, actualRub) => {
@@ -228,7 +228,7 @@ describe("image search helpers", () => {
       url: "/api/projects/aitunnel-recovery/slides/slide-1/assets/visual-image",
     });
     expect(enriched.slides[0].visual.image?.objectKey).toMatch(/slide-1-aitunnel-[a-f0-9]{12}\.jpg$/);
-    expect(settledCost).toBe("0.40800000");
+    expect(settledCost).toBe("0.85000000");
   });
 
   it("uses the full managed photo quota for several AITunnel raster images", async () => {
@@ -259,7 +259,7 @@ describe("image search helpers", () => {
       {
         generateImage: async () => {
           generated += 1;
-          return { buffer: generatedBuffer, contentType: "image/png", model: "gpt-image-1-mini", costRub: "0.60000000" };
+          return { buffer: generatedBuffer, contentType: "image/png", model: "gpt-image-2.5-flare", costRub: "0.85000000" };
         },
         reserveImageBucket: async () => {
           reservations += 1;

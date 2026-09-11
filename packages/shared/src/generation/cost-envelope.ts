@@ -1,9 +1,9 @@
-export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v14";
-// v14 applies the 2026-09-07 AITunnel Luna tariff to every Luna-token stage
-// and gives the single mandatory AITunnel web-search request a full
-// provider-reported source-search reservation. The previous fixed 0.50 RUB
-// slot could not reconcile the real search token event.
-export const COST_ENVELOPE_LIMIT_RUB = "23.75000000";
+export const COST_ENVELOPE_POLICY_VERSION = "standard-generation-cost-envelope-v15";
+// v15 keeps the v14 AITunnel Luna tariff and provider-reported web-search
+// reservation, while raising the raster image bucket for gpt-image-2.5-flare.
+// Its catalog minimum is 0.85 RUB per image, so the managed six-slide quota
+// needs 3 * 0.85 = 2.55 RUB before any provider-reported variance.
+export const COST_ENVELOPE_LIMIT_RUB = "24.30000000";
 export const COST_ENVELOPE_BUCKETS = {
   // A source snapshot is valid only when at least three sources pass the
   // relevance gate. Reserve three bounded Tavily attempts so a weak first
@@ -25,7 +25,7 @@ export const COST_ENVELOPE_BUCKETS = {
   quality_critique: "0.60000000",
   quality_repair: "2.00000000",
   slide_text_repair: "1.20000000",
-  images: "2.00000000",
+  images: "2.55000000",
   export_infra: "0.75000000",
 } as const;
 

@@ -19,7 +19,7 @@ describe("AITunnel image generation", () => {
     expect(aitunnelImageConfig({ AITUNNEL_API_KEY: "key" })).toEqual({
       apiKey: "key",
       baseURL: "https://api.aitunnel.ru/v1",
-      mode: "chat_svg",
+      mode: "raster",
       imageModel: AITUNNEL_DEFAULT_IMAGE_MODEL,
       size: AITUNNEL_DEFAULT_IMAGE_SIZE,
       quality: AITUNNEL_DEFAULT_IMAGE_QUALITY,
@@ -35,9 +35,9 @@ describe("AITunnel image generation", () => {
       status: 200,
       text: async () => JSON.stringify({
         id: "gen-1",
-        model: "gpt-image-1-mini",
+        model: "gpt-image-2.5-flare",
         data: [{ b64_json: Buffer.from("generated-image").toString("base64"), media_type: "image/png" }],
-        usage: { cost_rub: 0.408 },
+        usage: { cost_rub: 0.85 },
       }),
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -45,7 +45,7 @@ describe("AITunnel image generation", () => {
     const generated = await generateAitunnelImage("horizontal classroom photo", {
       AITUNNEL_API_KEY: "key",
       AITUNNEL_BASE_URL: "https://gateway.example/v1/",
-      AITUNNEL_IMAGE_MODEL: "gpt-image-1-mini",
+      AITUNNEL_IMAGE_MODEL: "gpt-image-2.5-flare",
       AITUNNEL_IMAGE_SIZE: "1536x1024",
       AITUNNEL_IMAGE_QUALITY: "low",
       AITUNNEL_IMAGE_OUTPUT_FORMAT: "jpeg",
@@ -54,7 +54,7 @@ describe("AITunnel image generation", () => {
     expect(fetchMock).toHaveBeenCalledWith("https://gateway.example/v1/images/generations", expect.objectContaining({ method: "POST" }));
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(JSON.parse(String(request.body))).toMatchObject({
-      model: "gpt-image-1-mini",
+      model: "gpt-image-2.5-flare",
       prompt: "horizontal classroom photo",
       n: 1,
       size: "1536x1024",
@@ -64,8 +64,8 @@ describe("AITunnel image generation", () => {
     expect(generated).toMatchObject({
       buffer: Buffer.from("generated-image"),
       contentType: "image/png",
-      model: "gpt-image-1-mini",
-      costRub: "0.40800000",
+      model: "gpt-image-2.5-flare",
+      costRub: "0.85000000",
       providerRequestId: "gen-1",
     });
   });
@@ -95,16 +95,16 @@ describe("AITunnel image generation", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      text: async () => JSON.stringify({ id: "gen-no-image", model: "gpt-image-1-mini", data: [], usage: { cost_rub: 0.77 } }),
+      text: async () => JSON.stringify({ id: "gen-no-image", model: "gpt-image-2.5-flare", data: [], usage: { cost_rub: 0.85 } }),
     }));
 
     await expect(generateAitunnelImage("Solar system", {
       AITUNNEL_API_KEY: "key",
-      AITUNNEL_IMAGE_MODEL: "gpt-image-1-mini",
+      AITUNNEL_IMAGE_MODEL: "gpt-image-2.5-flare",
       AITUNNEL_IMAGE_MODE: "raster",
     })).rejects.toMatchObject({
       name: "AitunnelImageProviderError",
-      details: { reason: "no_base64_image", costRub: "0.77000000", providerRequestId: "gen-no-image" },
+      details: { reason: "no_base64_image", costRub: "0.85000000", providerRequestId: "gen-no-image" },
     });
   });
 
@@ -115,7 +115,7 @@ describe("AITunnel image generation", () => {
 
     await expect(generateAitunnelImage("Solar system", {
       AITUNNEL_API_KEY: "key",
-      AITUNNEL_IMAGE_MODEL: "gpt-image-1-mini",
+      AITUNNEL_IMAGE_MODEL: "gpt-image-2.5-flare",
       AITUNNEL_IMAGE_MODE: "raster",
       AITUNNEL_IMAGE_TIMEOUT_MS: "5000",
     })).rejects.toMatchObject({

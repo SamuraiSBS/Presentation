@@ -1,6 +1,6 @@
 type EnvLike = Record<string, string | undefined>;
 
-export const AITUNNEL_DEFAULT_IMAGE_MODEL = "gpt-5.6-luna";
+export const AITUNNEL_DEFAULT_IMAGE_MODEL = "gpt-image-2.5-flare";
 export const AITUNNEL_DEFAULT_IMAGE_SIZE = "1536x1024";
 export const AITUNNEL_DEFAULT_IMAGE_QUALITY = "low";
 export const AITUNNEL_DEFAULT_IMAGE_OUTPUT_FORMAT = "jpeg";
