@@ -4,5 +4,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["live-generation-smoke.ts", "live-generation-smoke.test.ts", "validate-production-config.ts"]
+  "include": ["live-generation-smoke.ts", "live-generation-smoke.test.ts", "validate-production-config.ts", "ai-scene-v3-gate0-smoke.ts", "ai-scene-v3-gate1-input-preflight.ts", "ai-scene-v3-gate1-smoke.ts"]
 }

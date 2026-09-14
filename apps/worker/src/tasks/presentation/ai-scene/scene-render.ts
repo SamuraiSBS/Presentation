@@ -1,5 +1,5 @@
 import sharp from "sharp";
-import type { CanvasElement, SlideCanvas } from "@studydeck/shared";
+import { canvasTextLineHeight, type CanvasElement, type SlideCanvas } from "@studydeck/shared";
 
 /** A deterministic PNG of the editable canvas for review and visual comparison. */
 export async function renderAiSceneCanvas(canvas: SlideCanvas, background: Buffer) {
@@ -36,7 +36,8 @@ function renderText(element: Extract<CanvasElement, { type: "text" }>) {
   if (line) lines.push(line);
   const anchor = element.align === "center" ? "middle" : element.align === "right" ? "end" : "start";
   const x = element.align === "center" ? element.x + element.w / 2 : element.align === "right" ? element.x + element.w : element.x;
-  return `<text x="${x}" y="${element.y + element.fontSize}" text-anchor="${anchor}" fill="${element.color}" font-family="Arial" font-size="${element.fontSize}" font-weight="${element.bold ? 700 : 400}">${lines.map((line, index) => `<tspan x="${x}" dy="${index ? Math.round(element.fontSize * 1.14) : 0}">${escapeXml(line)}</tspan>`).join("")}</text>`;
+  const lineHeight = canvasTextLineHeight(element);
+  return `<text x="${x}" y="${element.y + element.fontSize}" text-anchor="${anchor}" fill="${element.color}" font-family="${escapeXml(element.fontFamily)}" font-size="${element.fontSize}" font-weight="${element.bold ? 700 : 400}">${lines.map((line, index) => `<tspan x="${x}" dy="${index ? Math.round(element.fontSize * lineHeight) : 0}">${escapeXml(line)}</tspan>`).join("")}</text>`;
 }
 
 function renderDiagram(element: Extract<CanvasElement, { type: "diagram" }>) {

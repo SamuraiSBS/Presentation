@@ -12,7 +12,7 @@ export type AitunnelImageConfig = {
   mode: "raster" | "chat_svg";
   imageModel: string;
   size: string;
-  quality: "auto" | "low" | "medium" | "high";
+  quality: "auto" | "low" | "medium" | "high" | "xhigh" | "max";
   outputFormat: "png" | "jpeg" | "webp";
   maxOutputTokens: number;
 };
@@ -25,7 +25,23 @@ export type GeneratedAitunnelImage = {
   providerRequestId?: string;
 };
 
-export type AitunnelImagePurpose = "illustration" | "slide_concept" | "background_layer";
+export type AitunnelImagePurpose = "illustration" | "slide_concept" | "background_layer" | "ai_scene_v3_background";
+
+/** AITunnel's documented input image shape for image generation/editing. */
+export type AitunnelImageReference = {
+  type: "image_url";
+  image_url: { url: string };
+};
+
+export type AitunnelImageGenerationOptions = {
+  purpose?: AitunnelImagePurpose;
+  /**
+   * References are intentionally explicit instead of being inferred from a
+   * prompt. Callers remain responsible for their provenance and provider
+   * capability preflight. The adapter validates shape before a billable call.
+   */
+  inputReferences?: readonly AitunnelImageReference[];
+};
 
 export type AitunnelImageFailureDetails = {
   provider: "aitunnel";
@@ -86,7 +102,7 @@ export function aitunnelImageConfig(env: EnvLike = process.env): AitunnelImageCo
   if (!apiKey || !imageModel || imageModel.toLowerCase() === "auto" || /\s/.test(imageModel) || !mode) return undefined;
 
   const quality = env.AITUNNEL_IMAGE_QUALITY?.trim().toLowerCase();
-  const normalizedQuality = quality === "auto" || quality === "low" || quality === "medium" || quality === "high"
+  const normalizedQuality = quality === "auto" || quality === "low" || quality === "medium" || quality === "high" || quality === "xhigh" || quality === "max"
     ? quality
     : AITUNNEL_DEFAULT_IMAGE_QUALITY;
   const outputFormat = env.AITUNNEL_IMAGE_OUTPUT_FORMAT?.trim().toLowerCase();
@@ -134,12 +150,13 @@ export function aitunnelImageFailureDetails(error: unknown, env: EnvLike = proce
 export async function generateAitunnelImage(
   prompt: string,
   env: EnvLike = process.env,
-  options: { purpose?: AitunnelImagePurpose } = {},
+  options: AitunnelImageGenerationOptions = {},
 ): Promise<GeneratedAitunnelImage> {
   const config = aitunnelImageConfig(env);
   if (!config) throw new Error("AITUNNEL_API_KEY and a valid AITUNNEL_IMAGE_MODEL are required");
 
   if (config.mode === "chat_svg") return generateAitunnelSvgImage(prompt, config, env, options);
+  const inputReferences = normalizeInputReferences(options.inputReferences);
 
   const controller = new AbortController();
   const timeoutMs = imageTimeoutMs(env, "raster");
@@ -158,6 +175,7 @@ export async function generateAitunnelImage(
         size: config.size,
         quality: config.quality,
         output_format: config.outputFormat,
+        ...(inputReferences.length ? { input_references: inputReferences } : {}),
       }),
       signal: controller.signal,
     });
@@ -214,7 +232,7 @@ async function generateAitunnelSvgImage(
   prompt: string,
   config: AitunnelImageConfig,
   env: EnvLike,
-  options: { purpose?: AitunnelImagePurpose },
+  options: AitunnelImageGenerationOptions,
 ): Promise<GeneratedAitunnelImage> {
   const controller = new AbortController();
   const timeoutMs = imageTimeoutMs(env, "chat_svg");
@@ -283,6 +301,18 @@ async function generateAitunnelSvgImage(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function normalizeInputReferences(references: readonly AitunnelImageReference[] | undefined): AitunnelImageReference[] {
+  if (!references?.length) return [];
+  if (references.length > 16) throw new Error("AITunnel image generation accepts at most 16 input references");
+  return references.map((reference) => {
+    const url = reference?.image_url?.url?.trim();
+    if (reference?.type !== "image_url" || !url || !/^(?:https?:|data:image\/)/i.test(url)) {
+      throw new Error("AITunnel image generation received an invalid input reference");
+    }
+    return { type: "image_url", image_url: { url } };
+  });
 }
 
 function detailsReason(error: unknown) {

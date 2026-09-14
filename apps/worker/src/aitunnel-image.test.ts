@@ -70,6 +70,22 @@ describe("AITunnel image generation", () => {
     });
   });
 
+  it("passes explicit provider-readable input references without putting them into the prompt", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      text: async () => JSON.stringify({ data: [{ b64_json: Buffer.from("generated-image").toString("base64"), media_type: "image/png" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await generateAitunnelImage("textless scientific background", {
+      AITUNNEL_API_KEY: "key", AITUNNEL_IMAGE_MODEL: "gpt-image-2.5-flare", AITUNNEL_IMAGE_MODE: "raster",
+    }, { inputReferences: [{ type: "image_url", image_url: { url: "https://assets.example.test/reference.png" } }] });
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      prompt: "textless scientific background",
+      input_references: [{ type: "image_url", image_url: { url: "https://assets.example.test/reference.png" } }],
+    });
+  });
+
   it("uses GPT-5.6 chat mode for the current key and rasterizes its safe SVG later", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
