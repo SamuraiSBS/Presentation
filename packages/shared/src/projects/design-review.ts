@@ -1,5 +1,11 @@
 import { z } from "zod";
 import { deckStyleSpecSchema, slideContentLockSchema } from "../generation/schemas.js";
+import {
+  candidateQualityReportV3Schema,
+  candidateSetV3Schema,
+  slideSemanticBriefV3Schema,
+  textLayoutV3Schema,
+} from "../generation/ai-scene-v3.js";
 import { presentationSchema } from "../presentation/document.js";
 import { canvasDiagramModelSchema, slideCanvasSchema } from "../presentation/schemas.js";
 
@@ -50,13 +56,18 @@ export const designReviewCandidateSchema = z.object({
   conceptObjectKey: z.string().nullable().optional(), renderedPreviewObjectKey: z.string().nullable().optional(),
   sceneSpec: aiSceneSpecSchema.nullable().optional(), contentLock: slideContentLockSchema.nullable().optional(),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(), qualityReport: candidateQualityReportSchema.nullable().optional(),
-  providerMetadata: z.record(z.unknown()).nullable().optional(), engine: z.enum(["template", "ai_scene_v2"]).default("template"),
+  providerMetadata: z.record(z.unknown()).nullable().optional(), engine: z.enum(["template", "ai_scene_v2", "ai_scene_v3"]).default("template"),
+  candidateSetId: z.string().nullable().optional(), variantOrdinal: z.number().int().positive().nullable().optional(),
+  backgroundObjectKey: z.string().nullable().optional(), textLayout: textLayoutV3Schema.nullable().optional(),
+  semanticBrief: slideSemanticBriefV3Schema.nullable().optional(), qualityReportV3: candidateQualityReportV3Schema.nullable().optional(),
+  selectionState: z.enum(["unselected", "auto_selected", "user_selected", "warning_override"]).nullable().optional(), selectionReason: z.string().nullable().optional(),
   generationDurationMs: z.number().int().nonnegative().nullable().optional(),
 });
 export const designReviewSchema = z.object({
   id: z.string(), projectId: z.string(), revision: z.number().int().positive(), status: designReviewStatusSchema,
   document: presentationSchema, candidates: z.array(designReviewCandidateSchema), error: z.string().nullable().optional(),
-  deckStyleSpec: deckStyleSpecSchema.nullable().optional(), designEngine: z.enum(["template", "ai_scene_v2"]).default("template"), styleVersion: z.number().int().positive().default(1),
+  deckStyleSpec: deckStyleSpecSchema.nullable().optional(), designEngine: z.enum(["template", "ai_scene_v2", "ai_scene_v3"]).default("template"), styleVersion: z.number().int().positive().default(1),
+  candidateSets: z.array(candidateSetV3Schema).default([]),
 });
 export type DesignReview = z.infer<typeof designReviewSchema>;
 export type DesignReviewCandidate = z.infer<typeof designReviewCandidateSchema>;

@@ -75,7 +75,22 @@ export const AI_SCENE_V2_PROTOTYPE_COST_POLICY: CostEnvelopePolicy = {
   },
 };
 
-export type AiSceneCostEnvelopeBucket = keyof typeof AI_SCENE_V2_PROTOTYPE_COST_POLICY.buckets;
+/**
+ * A separate acceptance-run envelope. It covers exactly six A/B backgrounds
+ * plus one text-layout and one high-detail vision review per candidate; C is
+ * deliberately excluded and needs a separate user-approved run.
+ */
+export const AI_SCENE_V3_GATE_1_COST_POLICY: CostEnvelopePolicy = {
+  version: "ai-scene-v3-gate-1-v1",
+  limitRub: "150.00000000",
+  buckets: {
+    backgrounds: "90.00000000",
+    native_text_layout: "24.00000000",
+    high_detail_vision: "36.00000000",
+  },
+};
+
+export type AiSceneCostEnvelopeBucket = keyof typeof AI_SCENE_V2_PROTOTYPE_COST_POLICY.buckets | keyof typeof AI_SCENE_V3_GATE_1_COST_POLICY.buckets;
 export type CostEnvelopeBucket = keyof typeof COST_ENVELOPE_BUCKETS | keyof typeof HISTORICAL_COST_ENVELOPE_V5_BUCKETS | "design_regeneration" | AiSceneCostEnvelopeBucket;
 export type CostEnvelopePolicy = { version: string; limitRub: string; buckets: Record<string, string> };
 
@@ -101,6 +116,7 @@ export const AITUNNEL_PROVIDER_CATALOG: Record<AitunnelApprovedModel, AitunnelCa
 export function standardGenerationCostPolicy(): CostEnvelopePolicy { return { version: COST_ENVELOPE_POLICY_VERSION, limitRub: COST_ENVELOPE_LIMIT_RUB, buckets: { ...COST_ENVELOPE_BUCKETS } }; }
 export function historicalStandardGenerationCostPolicyV5(): CostEnvelopePolicy { return { version: "standard-generation-cost-envelope-v5", limitRub: "18.20000000", buckets: { ...HISTORICAL_COST_ENVELOPE_V5_BUCKETS } }; }
 export function aiScenePrototypeCostPolicy(): CostEnvelopePolicy { return { ...AI_SCENE_V2_PROTOTYPE_COST_POLICY, buckets: { ...AI_SCENE_V2_PROTOTYPE_COST_POLICY.buckets } }; }
+export function aiSceneV3Gate1CostPolicy(): CostEnvelopePolicy { return { ...AI_SCENE_V3_GATE_1_COST_POLICY, buckets: { ...AI_SCENE_V3_GATE_1_COST_POLICY.buckets } }; }
 export function costEnvelopePolicyIsValid(policy: unknown = standardGenerationCostPolicy()) {
   if (!policy || typeof policy !== "object") return false;
   const candidate = policy as Partial<CostEnvelopePolicy>;

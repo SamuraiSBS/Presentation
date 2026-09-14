@@ -21,6 +21,8 @@ export { SLIDE_LAYOUT_DEFINITIONS, PRESENTATION_LAYOUT_CAPACITY, slideLayoutDefi
 export type { LayoutCapacity } from "./presentation/layouts.js";
 export { generationProgressStageSchema, generationJobKindSchema, entityAssertionSchema, factualTopicProfileSchema, slideNarrativeSchema, deckStorySchema, slideTextPlanSchema, researchBriefSchema, sceneTextModeSchema, designBriefSlideDirectionSchema, designBriefSchema, slideBlueprintSchema, visualStrategySchema, diagramSpecSchema, qualityIssueSchema, qualityDimensionScoreSchema, qualityDimensionsSchema, qualityCritiqueSchema, generationPipelineArtifactsSchema, generationBriefSchema, deckStyleSpecSchema, slideContentLockTextSchema, slideContentLockSchema } from "./generation/schemas.js";
 export type { GenerationProgressStage, GenerationJobKind, EntityAssertion, FactualTopicProfile, SlideNarrative, DeckStory, SlideTextComposition, SlideSupportPointRole, SlideSupportPoint, SlideTextPlan, ResearchBrief, SceneTextMode, CanonicalComposition, DesignBriefSlideDirection, DesignBrief, SlideBlueprint, VisualStrategy, DiagramSpec, QualityIssue, QualityDimensionScore, QualityDimensions, QualityCritique, GenerationPipelineArtifacts, GenerationBrief, DeckStyleSpec, SlideContentLock } from "./generation/schemas.js";
+export { AI_SCENE_V3_READABILITY_MINIMUMS, aiSceneV3MinimumFontSize, aiSceneV3TextIdSchema, editableTextValueSchema, compositionTypeV3Schema, deckArtDirectionV3Schema, slideSemanticBriefV3Schema, compositionPlanV3Schema, textLayoutV3Schema, candidateQualityReportV3Schema, providerCapabilitySnapshotSchema, aiSceneV3CandidateSchema, candidateSetV3Schema } from "./generation/ai-scene-v3.js";
+export type { AiSceneV3TextId, EditableTextValue, CompositionTypeV3, DeckArtDirectionV3, SlideSemanticAnchorV3, SlideSemanticBriefV3, CompositionPlanV3, TextLayoutV3, CandidateQualityReportV3, ProviderCapabilitySnapshot, AiSceneV3Candidate, CandidateSetV3 } from "./generation/ai-scene-v3.js";
 export { generationFailureCategoryValues, safeGenerationRecovery } from "./generation/recovery.js";
 export {
   publicNarrationStateValues,
@@ -33,7 +35,7 @@ export { RUSSIAN_STUDENT_SPEECH_WORDS_PER_MINUTE, RUSSIAN_STUDENT_SPEECH_WORD_RA
 export type { SpeechTimingBudget, SpeechTimingProject, SpeechTimingSectionBounds } from "./generation/speech-timing.js";
 export { assessFullSpeechContract } from "./generation/narration-contract.js";
 export type { FullSpeechContractAssessment, FullSpeechContractIssue } from "./generation/narration-contract.js";
-export { COST_ENVELOPE_POLICY_VERSION, COST_ENVELOPE_LIMIT_RUB, COST_ENVELOPE_BUCKETS, HISTORICAL_COST_ENVELOPE_V5_BUCKETS, DESIGN_REVIEW_REGENERATION_COST_POLICY, AI_SCENE_V2_PROTOTYPE_COST_POLICY, AITUNNEL_APPROVED_MODELS, AITUNNEL_PROVIDER_CATALOG_VERSION, AITUNNEL_PROVIDER_CATALOG, standardGenerationCostPolicy, historicalStandardGenerationCostPolicyV5, designReviewRegenerationCostPolicy, aiScenePrototypeCostPolicy, costEnvelopePolicyIsValid, isApprovedAitunnelModel, aitunnelCatalogSnapshot, aitunnelPriceForApprovedModel } from "./generation/cost-envelope.js";
+export { COST_ENVELOPE_POLICY_VERSION, COST_ENVELOPE_LIMIT_RUB, COST_ENVELOPE_BUCKETS, HISTORICAL_COST_ENVELOPE_V5_BUCKETS, DESIGN_REVIEW_REGENERATION_COST_POLICY, AI_SCENE_V2_PROTOTYPE_COST_POLICY, AI_SCENE_V3_GATE_1_COST_POLICY, AITUNNEL_APPROVED_MODELS, AITUNNEL_PROVIDER_CATALOG_VERSION, AITUNNEL_PROVIDER_CATALOG, standardGenerationCostPolicy, historicalStandardGenerationCostPolicyV5, designReviewRegenerationCostPolicy, aiScenePrototypeCostPolicy, aiSceneV3Gate1CostPolicy, costEnvelopePolicyIsValid, isApprovedAitunnelModel, aitunnelCatalogSnapshot, aitunnelPriceForApprovedModel } from "./generation/cost-envelope.js";
 export type { CostEnvelopeBucket, DesignReviewCostEnvelopeBucket, AiSceneCostEnvelopeBucket, CostEnvelopePolicy, AitunnelApprovedModel, AitunnelCatalogPrice } from "./generation/cost-envelope.js";
 export { presentationSchema } from "./presentation/document.js";
 export type { PresentationDocument } from "./presentation/document.js";
@@ -44,7 +46,7 @@ export { PREMIUM_PRESENTATION_THEMES, PREMIUM_PRESENTATION_THEME_IDS, resolvePre
 export type { PremiumPresentationThemeId } from "./presentation/themes.js";
 export { auditSlideCanvas, auditGeneratedCanvasText, auditCanonicalSlideCanvas } from "./presentation/canvas-audit.js";
 export { canvasBackgroundCss, slideBackgroundStyle } from "./presentation/canvas-background.js";
-export { sortCanvasElements, compactCanvasTextToFit, minimumReadableFontSize, minimumTextColumnWidth, textSlotCapacity } from "./presentation/canvas-helpers.js";
+export { sortCanvasElements, compactCanvasTextToFit, estimatedCharactersPerLine, estimatedTextHeight, minimumReadableFontSize, minimumTextColumnWidth, textSlotCapacity } from "./presentation/canvas-helpers.js";
 export { presentationTypography, typographyForCanvasText, typographyRoleForCanvasText, canvasTextLineHeight } from "./presentation/typography.js";
 export type { PresentationTypographyRole } from "./presentation/typography.js";
 export { PRESENTATION_FONT_FAMILY, PRESENTATION_FONT_STACK } from "./presentation/fonts.js";
