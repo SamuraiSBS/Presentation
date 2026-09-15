@@ -93,6 +93,7 @@ DeckContentLock
     renderMode: image_text_lift | native_evidence
     matching speech trace for every semantic string
     optional source refs that verify the speech claim
+    provenance: speech_grounded | repeated_accepted_speech | fallback_added
     contentHash
 ```
 
@@ -107,6 +108,7 @@ DeckContentLock
 - номер страницы не является model text: он создаётся нативно и locked;
 - каждая смысловая строка имеет обязательный trace к своему matching accepted speech section;
 - source excerpt может подтвердить факт, но не может добавить на слайд новый смысл, отсутствующий в matching speech section;
+- при дефиците уникальных grounded statements exact count имеет приоритет: повторённая строка получает `repeated_accepted_speech` и `repeatedFromSemanticId`; нейтральная навигационная fallback-строка получает `fallback_added`. Эти строки и lock-level `fallbackDiagnostics` обязательны, хэшируются и не должны показываться как новые speech-grounded claims;
 - hash вычисляется по точным строкам и меняется при их изменении;
 - старые документы без нового artifact остаются валидными.
 
@@ -157,8 +159,8 @@ Model adapter должен быть инъецируемым. В production rout
 1. Не выполнять второй платный text call.
 2. Построить deterministic best-effort lock только из matching sections принятой речи; известные source refs использовать для проверки.
 3. Сохранить diagnostics о fallback.
-4. Всё равно выдать точное N, не выдумывая содержание.
-5. Если даже grounded deterministic lock невозможен из-за отсутствия принятой речи, остановить генерацию до любых image-вызовов с понятной пользовательской ошибкой.
+4. Всё равно выдать точное N: при дефиците unique claims повторить grounded строку с явной provenance или добавить нейтральный fallback-слайд с явной provenance; exact-count conflict не является blocker.
+5. Остановить генерацию до любых image-вызовов можно только при отсутствующей или malformed accepted speech; дефицит unique claims не даёт `PreImageContentBlockerError`.
 
 ## Этап 5. Экономический контракт
 
@@ -208,7 +210,7 @@ Model adapter должен быть инъецируемым. В production rout
 
 - один model call формирует весь deck;
 - 600–800 слов корректно распределяются на 6 и 14 слайдов;
-- тонкий материал всё равно даёт exact N через grounded паузы/определения;
+- тонкий материал, включая два unique claims для requested 10, всё равно даёт exact N через provenance-маркированные повторы или added fallback; exact-count conflict не блокирует flow;
 - избыток материала не меняет N и не уменьшает шрифт;
 - механическое обрезание, незавершённая фраза, invented fact и unsupported conclusion отклоняются;
 - точная таблица/график/формула классифицируется как native evidence;
