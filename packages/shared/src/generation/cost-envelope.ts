@@ -91,7 +91,8 @@ export const AI_SCENE_V3_GATE_1_COST_POLICY: CostEnvelopePolicy = {
 };
 
 export type AiSceneCostEnvelopeBucket = keyof typeof AI_SCENE_V2_PROTOTYPE_COST_POLICY.buckets | keyof typeof AI_SCENE_V3_GATE_1_COST_POLICY.buckets;
-export type CostEnvelopeBucket = keyof typeof COST_ENVELOPE_BUCKETS | keyof typeof HISTORICAL_COST_ENVELOPE_V5_BUCKETS | "design_regeneration" | AiSceneCostEnvelopeBucket;
+export type ImageFirstEditableCostEnvelopeBucket = "source_search" | "narration" | "deck_content_lock" | "images" | "manual_regeneration";
+export type CostEnvelopeBucket = keyof typeof COST_ENVELOPE_BUCKETS | keyof typeof HISTORICAL_COST_ENVELOPE_V5_BUCKETS | "design_regeneration" | AiSceneCostEnvelopeBucket | ImageFirstEditableCostEnvelopeBucket;
 export type CostEnvelopePolicy = { version: string; limitRub: string; buckets: Record<string, string> };
 
 // A review retry is a separate, small purchase boundary. It never reopens the
@@ -117,6 +118,28 @@ export function standardGenerationCostPolicy(): CostEnvelopePolicy { return { ve
 export function historicalStandardGenerationCostPolicyV5(): CostEnvelopePolicy { return { version: "standard-generation-cost-envelope-v5", limitRub: "18.20000000", buckets: { ...HISTORICAL_COST_ENVELOPE_V5_BUCKETS } }; }
 export function aiScenePrototypeCostPolicy(): CostEnvelopePolicy { return { ...AI_SCENE_V2_PROTOTYPE_COST_POLICY, buckets: { ...AI_SCENE_V2_PROTOTYPE_COST_POLICY.buckets } }; }
 export function aiSceneV3Gate1CostPolicy(): CostEnvelopePolicy { return { ...AI_SCENE_V3_GATE_1_COST_POLICY, buckets: { ...AI_SCENE_V3_GATE_1_COST_POLICY.buckets } }; }
+/**
+ * A new immutable snapshot for the disabled image-first route. Every paid
+ * non-image operation belongs to one 1 RUB bucket; image calls are modelled
+ * at one RUB per deck slide.  Existing policy snapshots remain untouched.
+ */
+export function imageFirstEditableInitialCostPolicy(slideCount: 6 | 8 | 10 | 12 | 14): CostEnvelopePolicy {
+  return {
+    version: `image-first-editable-v1-initial-${slideCount}`,
+    limitRub: `${slideCount + 1}.00000000`,
+    buckets: {
+      source_search: "0.20000000",
+      narration: "0.20000000",
+      deck_content_lock: "0.60000000",
+      images: `${slideCount}.00000000`,
+    },
+  };
+}
+
+/** Manual regeneration is a distinct purchase boundary and cannot debit an initial deck. */
+export function imageFirstEditableManualRegenerationCostPolicy(): CostEnvelopePolicy {
+  return { version: "image-first-editable-v1-manual-regeneration", limitRub: "1.00000000", buckets: { manual_regeneration: "1.00000000" } };
+}
 export function costEnvelopePolicyIsValid(policy: unknown = standardGenerationCostPolicy()) {
   if (!policy || typeof policy !== "object") return false;
   const candidate = policy as Partial<CostEnvelopePolicy>;

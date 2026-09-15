@@ -9,6 +9,12 @@ export async function renderHtmlToPdf(
     pageWidth?: string;
     pageHeight?: string;
     format?: "A4";
+    /**
+     * Native-first proof fixtures compare against an Arial-authored canvas.
+     * Keep the normal embedded export font as the product default, while
+     * allowing that isolated proof to use the local canvas-compatible stack.
+     */
+    embedNunito?: boolean;
   } = {},
 ) {
   const puppeteer = await import("puppeteer-core");
@@ -29,7 +35,7 @@ export async function renderHtmlToPdf(
       height: options.viewportHeight || 720,
       deviceScaleFactor: 1,
     });
-    await page.setContent(await withEmbeddedNunitoFont(html), { waitUntil: "domcontentloaded" });
+    await page.setContent(options.embedNunito === false ? html : await withEmbeddedNunitoFont(html), { waitUntil: "domcontentloaded" });
     await page.evaluate(async () => { await document.fonts.ready; });
     return Buffer.from(await page.pdf({
       printBackground: true,

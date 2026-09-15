@@ -6,9 +6,21 @@ export type { CostEnvelopeBucket, CostEnvelopePolicy } from "@studydeck/shared";
 
 const SCALE = 100_000_000n;
 
+/** Provider settlement is authoritative; until it arrives the full reserve is unavailable. */
+export function uncertainCostEnvelopeRub(reservations: readonly { status: string; reservedRub: string | { toString(): string } }[]) {
+  const uncertain = reservations
+    .filter((reservation) => ["reserved", "provider_error", "unknown_usage"].includes(reservation.status))
+    .reduce((total, reservation) => total + toScaled(typeof reservation.reservedRub === "string" ? reservation.reservedRub : reservation.reservedRub.toString()), 0n);
+  return fromScaled(uncertain);
+}
+
 /** The complete, immutable input saved with every standard-generation run. */
 export async function createCostEnvelope(projectId: string) {
-  const policy = standardGenerationCostPolicy();
+  return createCostEnvelopeWithPolicy(projectId, standardGenerationCostPolicy());
+}
+
+/** Persists an explicit versioned policy without mutating historical snapshots. */
+export async function createCostEnvelopeWithPolicy(projectId: string, policy: CostEnvelopePolicy) {
   if (!costEnvelopePolicyIsValid(policy)) throw new Error("cost_envelope_policy_invalid");
   return getPrisma().costEnvelope.create({
     data: {
@@ -49,7 +61,9 @@ export async function reserveCostEnvelope(input: ReserveInput) {
     const policy = parsePolicy(envelope.policySnapshot);
     const bucketCap = policy.buckets[input.bucket];
     const bucketReserved = await tx.costEnvelopeReservation.aggregate({
-      where: { envelopeId: envelope.id, bucket: input.bucket, status: { in: ["reserved", "provider_error", "unknown_usage"] } },
+      // A settled/failed call has consumed its reserved ceiling too. Counting
+      // it makes stage caps true hard caps and blocks hidden paid retries.
+      where: { envelopeId: envelope.id, bucket: input.bucket, status: { in: ["reserved", "provider_error", "unknown_usage", "settled", "overrun"] } },
       _sum: { reservedRub: true },
     });
     if (toScaled(bucketReserved._sum.reservedRub?.toString() || "0") + toScaled(amount) > toScaled(bucketCap)) {

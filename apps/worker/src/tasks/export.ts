@@ -359,9 +359,18 @@ function renderPptxPlaceholders(
   });
 }
 
-export async function createPdf(presentation: ReturnType<typeof presentationSchema.parse>) {
-  const html = await renderPdfHtml(exportCanvasDocument(presentation));
-  return renderHtmlToPdf(html, { viewportWidth: 1280, viewportHeight: 720, pageWidth: "1280px", pageHeight: "720px" });
+export async function createPdf(
+  presentation: ReturnType<typeof presentationSchema.parse>,
+  options: { embedNunito?: boolean; canvasFontStack?: string; canvasLetterSpacing?: string } = {},
+) {
+  const html = await renderPdfHtml(exportCanvasDocument(presentation), options);
+  return renderHtmlToPdf(html, {
+    viewportWidth: 1280,
+    viewportHeight: 720,
+    pageWidth: "1280px",
+    pageHeight: "720px",
+    ...options,
+  });
 }
 
 function exportCanvasDocument(presentation: ReturnType<typeof presentationSchema.parse>) {
@@ -374,7 +383,10 @@ function exportCanvasDocument(presentation: ReturnType<typeof presentationSchema
   return presentation.designBrief ? ensureEditableCanvas(presentation) : presentation;
 }
 
-export async function renderPdfHtml(presentation: ReturnType<typeof presentationSchema.parse>) {
+export async function renderPdfHtml(
+  presentation: ReturnType<typeof presentationSchema.parse>,
+  options: { canvasFontStack?: string; canvasLetterSpacing?: string } = {},
+) {
   const theme = exportTheme(presentation);
   const slides = await Promise.all(
     presentation.slides.map(async (slide) => {
@@ -383,6 +395,8 @@ export async function renderPdfHtml(presentation: ReturnType<typeof presentation
           readObjectBuffer,
           contentTypeFromObjectKey,
           warn: (fields, message) => logger.warn(fields, message),
+          canvasFontStack: options.canvasFontStack,
+          canvasLetterSpacing: options.canvasLetterSpacing,
         })));
         return `<section class="slide canvas-slide" style="background:${escapeHtml(canvasBackgroundCss(slide.canvas.backgroundStyle, slide.canvas.background))}">${elements.join("")}${pdfPlaceholderWarnings(slide)}</section>`;
       }
@@ -467,7 +481,10 @@ export async function renderPdfHtml(presentation: ReturnType<typeof presentation
   .template-explain-notes { display: grid; gap: 24px; }
   .template-explain-notes section { border-bottom: 1px solid var(--slide-line); padding-bottom: 16px; }
   .element { position: absolute; transform-origin: center; overflow: hidden; }
-  .text { white-space: pre-wrap; overflow: hidden; }
+  /* Canvas text must preserve the canonical editor's visible native overflow.
+     The slide still clips at its own safe boundary; this prevents a short
+     authored text box from silently deleting a wrapped semantic line in PDF. */
+  .text { white-space: pre-wrap; overflow: visible; }
   .image { width: 100%; height: 100%; display: block; border-radius: 18px; }
   .shape { width: 100%; height: 100%; }
   .template-attribution { position: absolute; z-index: 15; left: 72px; right: 72px; bottom: 16px; margin: 0; color: var(--slide-muted); font-size: 10px; line-height: 1.1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

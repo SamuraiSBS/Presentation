@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { sourceSchema } from "../projects/schemas.js";
 import { designBriefSchema, slideNarrativeSchema } from "../generation/schemas.js";
+import { imageFirstEditableDeckContentLockSchema, imageFirstEditableEditableValuesSchema } from "../generation/image-first-editable.js";
 import { presentationThemeSchema, slideCardSchema, slideSchema, speechScriptItemSchema } from "./schemas.js";
 export const productionQualityGateSchema = z.object({
   version: z.literal(1),
@@ -31,6 +32,10 @@ export const presentationSchema = z.object({
   // Optional for legacy saved decks. New generation writes one card for each
   // accepted speech section and uses it as the canonical slide projection.
   slideCards: z.array(slideCardSchema).optional(),
+  // Optional preserves every persisted legacy presentation. The immutable
+  // generated lock and later user edits intentionally have separate lineage.
+  imageFirstEditableContentLock: imageFirstEditableDeckContentLockSchema.optional(),
+  imageFirstEditableEditableValues: imageFirstEditableEditableValuesSchema.optional(),
   speechScript: z.array(speechScriptItemSchema),
   slides: z.array(slideSchema),
 });

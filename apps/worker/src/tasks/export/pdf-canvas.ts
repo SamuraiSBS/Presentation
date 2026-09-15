@@ -4,16 +4,18 @@ export type PdfCanvasDependencies = {
   readObjectBuffer: (key: string) => Promise<Buffer>;
   contentTypeFromObjectKey: (key: string) => string;
   warn: (fields: Record<string, unknown>, message: string) => void;
+  canvasFontStack?: string;
+  canvasLetterSpacing?: string;
 };
 
 /** HTML projection of saved canvas elements, isolated from document templates. */
 export async function renderPdfCanvasElement(element: CanvasElement, dependencies: PdfCanvasDependencies) {
   const style = [`left:${element.x}px`, `top:${element.y}px`, `width:${element.w}px`, `height:${element.h}px`, `z-index:${element.zIndex}`, `opacity:${element.opacity}`, `transform:rotate(${element.rotation}deg)`].join(";");
-  if (element.type === "text") return `<div class="element text" data-canvas-element="${escapeHtml(element.id)}" style="${style};${pdfTextStyle(element)}">${renderPdfText(element)}</div>`;
-  if (element.type === "shape") return `<div class="element" data-canvas-element="${escapeHtml(element.id)}" style="${style}"><div class="shape" style="${pdfShapeStyle(element)}"></div></div>`;
-  if (element.type === "diagram") return `<div class="element" data-canvas-element="${escapeHtml(element.id)}" style="${style}">${renderPdfDiagram(element)}</div>`;
+  if (element.type === "text") return `<div class="element text" data-canvas-element="${escapeHtml(element.id)}" style="${escapeHtml(`${style};${pdfTextStyle(element, dependencies.canvasFontStack, dependencies.canvasLetterSpacing)}`)}">${renderPdfText(element)}</div>`;
+  if (element.type === "shape") return `<div class="element" data-canvas-element="${escapeHtml(element.id)}" style="${escapeHtml(style)}"><div class="shape" style="${escapeHtml(pdfShapeStyle(element))}"></div></div>`;
+  if (element.type === "diagram") return `<div class="element" data-canvas-element="${escapeHtml(element.id)}" style="${escapeHtml(style)}">${renderPdfDiagram(element)}</div>`;
   const src = await pdfImageSrc(element, dependencies);
-  return src ? `<div class="element" data-canvas-element="${escapeHtml(element.id)}" style="${style};overflow:hidden"><img class="image" src="${escapeHtml(src)}" alt="${escapeHtml(element.alt)}" style="object-fit:${element.fit}" /></div>` : "";
+  return src ? `<div class="element" data-canvas-element="${escapeHtml(element.id)}" style="${escapeHtml(`${style};overflow:hidden`)}"><img class="image" src="${escapeHtml(src)}" alt="${escapeHtml(element.alt)}" style="object-fit:${escapeHtml(element.fit)}" /></div>` : "";
 }
 
 function renderPdfDiagram(element: CanvasDiagramElement) {
@@ -36,8 +38,8 @@ function renderPdfText(element: CanvasTextElement) {
   return element.runs.map((run) => `<span style="${[(run.bold ?? element.bold) ? "font-weight:800" : "", (run.underline ?? element.underline) ? "text-decoration:underline" : "", run.color ? `color:${run.color}` : ""].filter(Boolean).join(";")}">${escapeHtml(run.text)}</span>`).join("");
 }
 
-function pdfTextStyle(element: CanvasTextElement) {
-  return [`color:${element.color}`, `font-family:${exportPdfFontStack(element.fontFamily)}`, `font-size:${element.fontSize}px`, `font-weight:${element.bold ? 800 : 400}`, "font-style:normal", `text-decoration:${element.underline ? "underline" : "none"}`, `text-align:${element.align}`, "display:flex", "flex-direction:column", `justify-content:${element.valign === "middle" ? "center" : element.valign === "bottom" ? "flex-end" : "flex-start"}`, `line-height:${canvasTextLineHeight(element)}`, "overflow-wrap:anywhere", "word-break:normal"].join(";");
+function pdfTextStyle(element: CanvasTextElement, canvasFontStack?: string, canvasLetterSpacing?: string) {
+  return [`color:${element.color}`, `font-family:${canvasFontStack || exportPdfFontStack(element.fontFamily)}`, `font-size:${element.fontSize}px`, `font-weight:${element.bold ? 700 : 400}`, "font-style:normal", `text-decoration:${element.underline ? "underline" : "none"}`, `text-align:${element.align}`, "display:flex", "flex-direction:column", `justify-content:${element.valign === "middle" ? "center" : element.valign === "bottom" ? "flex-end" : "flex-start"}`, `line-height:${canvasTextLineHeight(element)}`, element.typographyRole === "slideTitle" || !canvasLetterSpacing ? "" : `letter-spacing:${canvasLetterSpacing}`, "overflow-wrap:anywhere", "word-break:normal"].filter(Boolean).join(";");
 }
 
 function pdfShapeStyle(element: CanvasShapeElement) {

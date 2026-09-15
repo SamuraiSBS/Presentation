@@ -10,6 +10,7 @@ import {
   visualTypeSchema,
 } from "../presentation/schemas.js";
 import type { PresentationThemePreset } from "../presentation/schemas.js";
+import { imageFirstEditableDeckContentLockSchema, imageFirstEditableEditableValuesSchema } from "./image-first-editable.js";
 export const generationProgressStageSchema = z.enum([
   "queued",
   "extracting_sources",
@@ -353,6 +354,9 @@ export const generationPipelineArtifactsSchema = z.object({
   visualStrategies: z.array(visualStrategySchema).default([]),
   diagramSpecs: z.array(diagramSpecSchema).default([]),
   qualityCritique: qualityCritiqueSchema.optional(),
+  // Optional until the guarded image-first route is explicitly enabled.
+  imageFirstEditableContentLock: imageFirstEditableDeckContentLockSchema.optional(),
+  imageFirstEditableEditableValues: imageFirstEditableEditableValuesSchema.optional(),
 });
 export type GenerationPipelineArtifacts = z.infer<typeof generationPipelineArtifactsSchema>;
 
