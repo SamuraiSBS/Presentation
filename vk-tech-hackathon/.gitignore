@@ -1,0 +1,7 @@
+.next/
+.data/
+.agent-state/
+.env*
+!.env.example
+fixtures/templates/**/*.pptx
+tsconfig.tsbuildinfo
